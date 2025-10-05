@@ -19,9 +19,9 @@ from grwhs.utils.logging_utils import progress
 
 def _split_groups(p: int, groups: List[List[int]]) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
-    ???:
-      - group_id: shape [p], ????????????
-      - group_sizes: shape [G]
+    Returns:
+      - group_id: shape [p], integer group index for each feature
+      - group_sizes: shape [G], size of each group
     """
     G = len(groups)
     gid = np.empty(p, dtype=np.int32)
@@ -34,7 +34,8 @@ def _split_groups(p: int, groups: List[List[int]]) -> Tuple[jnp.ndarray, jnp.nda
 
 def _gather_beta_from_groups(beta_groups: List[jnp.ndarray], groups: List[List[int]], p: int) -> jnp.ndarray:
     """
-    ?????? ?_g ??? ? ????????p??    """
+    Assemble full beta vector of length p from per-group beta blocks.
+    """
     beta = jnp.zeros((p,))
     for g, idxs in enumerate(groups):
         beta = beta.at[jnp.array(idxs)].set(beta_groups[g])
@@ -53,7 +54,7 @@ class GRwHS_SVI_Numpyro:
     seed: int = 42
     batch_size: Optional[int] = None  # None = full batch
 
-    # ????????    coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
+    # Posterior mean of coefficients (computed after fit)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)  # [S, p]
     sigma_mean_: Optional[float] = field(default=None, init=False)
     tau_mean_: Optional[float] = field(default=None, init=False)
@@ -61,13 +62,16 @@ class GRwHS_SVI_Numpyro:
     lambda_mean_: Optional[np.ndarray] = field(default=None, init=False)   # [p]
     intercept_: float = field(default=0.0, init=False)
 
-    # ?????    groups_: Optional[List[List[int]]] = field(default=None, init=False)
+    # Group structure used during fitting
     group_id_: Optional[jnp.ndarray] = field(default=None, init=False)
     group_sizes_: Optional[jnp.ndarray] = field(default=None, init=False)
 
     def _model(self, X: jnp.ndarray, y: jnp.ndarray, groups: List[List[int]]):
         """
-        ?????????????????        - ??? sample ?_g ???_g???j ?????? ? ?????        """
+        Probabilistic model:
+          - Samples group-specific local scales phi_g and coefficients beta_g by group
+          - Applies regularized horseshoe-style shrinkage with group structure
+        """
         n, p = X.shape
         G = len(groups)
         group_id, group_sizes = _split_groups(p, groups)
@@ -107,8 +111,9 @@ class GRwHS_SVI_Numpyro:
 
     def _guide(self, X: jnp.ndarray, y: jnp.ndarray, groups: List[List[int]]):
         """
-        ???????????          - ????????joint q([?_g, log ?_g]) = MVN(loc, L L??)
-          - log ?_j, log ?, log ? ~ Normal
+        Variational guide:
+          - Joint q([beta_g, log phi_g]) per group is MVN(loc, L L^T)
+          - log lambda_j, log tau, log sigma ~ Normal (reparameterized via Delta(exp(.)))
         """
         n, p = X.shape
         G = len(groups)
@@ -153,12 +158,12 @@ class GRwHS_SVI_Numpyro:
             numpyro.sample(f"phi_g_{g}", dist.Delta(jnp.exp(log_phi_g)))
 
     # ---------------------------
-    # ??? API
+    # Public API
     # ---------------------------
     def fit(self, X: np.ndarray, y: np.ndarray, groups: Optional[List[List[int]]] = None,
             num_steps: Optional[int] = None, lr: Optional[float] = None, num_samples_export: int = 1000) -> "GRwHS_SVI_Numpyro":
         """
-        ??? SVI????????batch?? ?????unit-variance?? ???????????? preprocess ????????
+        Fit with SVI on full batch (or provided batch size). Inputs are assumed preprocessed to approximately unit variance.
         """
         X = np.asarray(X, dtype=np.float32)
         y = np.asarray(y, dtype=np.float32)
@@ -177,7 +182,7 @@ class GRwHS_SVI_Numpyro:
         optimizer = Adam(learn_rate)
 
         svi = SVI(self._model, self._guide, optimizer, loss=Trace_ELBO())
-        # ??? batch????????????
+        # SVI optimization over batches (currently full batch)
         init_state = svi.init(rng_key, jnp.array(X), jnp.array(y), groups)
 
         # Track ELBO during optimization
@@ -189,17 +194,17 @@ class GRwHS_SVI_Numpyro:
 
         params = svi.get_params(state)
 
-        # ???????????? guide??        # ??? Predictive?????guide
+        # Sample from the guide using Predictive with learned params
         pred = Predictive(self._guide, params=params, num_samples=num_samples_export, return_sites=[
             "tau", "sigma", "lambda",
-            # ?????? ?, ?
+            # Export group-wise phi and beta
             *[f"phi_g_{g}" for g in range(len(groups))],
             *[f"beta_g_{g}" for g in range(len(groups))],
         ])
 
         post = pred(rng_key, jnp.array(X), jnp.array(y), groups)
 
-        # ???
+        # Reconstruct per-sample full beta from group blocks
         beta_samples = []
         for s in range(num_samples_export):
             beta_groups = [post[f"beta_g_{g}"][s] for g in range(len(groups))]
@@ -210,7 +215,8 @@ class GRwHS_SVI_Numpyro:
         self.coef_samples_ = coef_samples
         self.coef_mean_ = coef_samples.mean(axis=0)
 
-        # ??????????        self.sigma_mean_ = float(np.asarray(post["sigma"]).mean())
+        # Posterior means for scales
+        self.sigma_mean_ = float(np.asarray(post["sigma"]).mean())
         self.tau_mean_ = float(np.asarray(post["tau"]).mean())
         self.lambda_mean_ = np.asarray(post["lambda"]).mean(axis=0)
 
