@@ -1,4 +1,18 @@
-﻿# Scenario C: dense weak signals with strong correlation; stress-tests stability and calibration
+# ========================================
+# Scenario C — Dense weak signals, strong correlation
+# ----------------------------------------
+# Purpose
+# - Stress-test stability and calibration when most coefficients are non-zero.
+# - Strong correlation (compound symmetry) challenges over-shrinkage.
+#
+# Inference choice
+# - Default: SVI (dense regime and larger p). For small data, you may try Gibbs
+#   by setting model.name = "grwhs_gibbs", but expect longer runtime.
+#
+# Baselines
+# - Compare against ridge (smooth shrinkage) and group_lasso (group-aware).
+# ========================================
+
 defaults: "configs/base.yaml"
 
 data:
@@ -9,7 +23,7 @@ data:
     type: "cs"
     rho: 0.6
   signal:
-    sparsity: 0.60            # Majority of coefficients active; emphasises shrinkage smoothness
+    sparsity: 0.60            # Majority of coefficients active; emphasizes shrinkage smoothness
     strong_frac: 0.05         # Few truly strong effects atop a sea of weak coefficients
     beta_scale_strong: 0.8
     beta_scale_weak: 0.2
@@ -41,3 +55,4 @@ experiments:
 
 logging:
   level: "INFO"
+

@@ -1,0 +1,62 @@
+# Sweep: run all models on base.yaml, compare results
+name: all_models_base
+output_dir: outputs/sweeps/all_models_base
+
+# Optional shared tweaks across all variations
+common_overrides:
+  # Keep HS/RHS runtime moderate; Gibbs/SVI unaffected by these keys
+  inference:
+    nuts:
+      num_warmup: 500
+      num_samples: 500
+      num_chains: 1
+      thinning: 1
+
+variations:
+  - name: grwhs_gibbs
+    overrides:
+      model:
+        name: grwhs_gibbs
+        # Optionally adjust iterations (defaults to 2000 in registry)
+        # iters: 3000
+
+  - name: grwhs_svi
+    overrides:
+      model:
+        name: grwhs_svi
+
+  - name: ridge
+    overrides:
+      model:
+        name: ridge
+
+  - name: lasso
+    overrides:
+      model:
+        name: lasso
+
+  - name: elastic_net
+    overrides:
+      model:
+        name: elastic_net
+
+  - name: group_lasso
+    overrides:
+      model:
+        name: group_lasso
+
+  - name: sparse_group_lasso
+    overrides:
+      model:
+        name: sparse_group_lasso
+
+  - name: horseshoe
+    overrides:
+      model:
+        name: horseshoe
+
+  - name: regularized_horseshoe
+    overrides:
+      model:
+        name: regularized_horseshoe
+

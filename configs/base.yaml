@@ -1,68 +1,93 @@
-﻿# =========================
-# Global defaults for GRwHS variants and baselines
-# =========================
+# ========================================
+# Base Configuration for GRwHS and Baselines
+# ----------------------------------------
+# How to use this file
+# - Include in a scenario via:  defaults: "configs/base.yaml"
+# - Override only the fields you need inside that scenario YAML
+# - All keys/values below are safe defaults; comments explain how to tune
+#
+# Conventions and tips
+# - Prefer standardizing X to zero mean and unit variance for probabilistic
+#   models (Gibbs, SVI). For convex baselines (lasso/group-lasso), unit_l2 can
+#   be convenient; internal code adjusts the tau0 heuristic accordingly.
+# - If you do not provide groups, the code will fall back to singleton groups.
+# - Small-scale problems (modest n, p): prefer Gibbs (exact MCMC).
+#   Large-scale problems (large p, many runs): prefer SVI (faster, scalable).
+# ========================================
+
 seed: 42
-device: "cpu"            # Execution backend: "cpu" (works for all solvers) | "gpu" (NumPyro builds only)
+device: "cpu"            # Execution backend: "cpu" (all solvers) | "gpu" (NumPyro SVI only)
 output_dir: "outputs"
 
 standardization:
-  X: "unit_variance"     # Feature scaling: "unit_variance" suits probabilistic inference, "unit_l2" matches convex solvers
-  y_center: true
+  X: "unit_variance"     # Feature scaling:
+                         # - "unit_variance" (recommended for GRwHS/Gibbs/SVI)
+                         # - "unit_l2" (useful for convex baselines)
+  y_center: true         # Center response to zero mean
 
 # -------------------------
 # Data settings
 # -------------------------
 data:
-  type: "synthetic"      # "synthetic": generate data on the fly | "loader": read from disk via data.loader paths
+  type: "synthetic"      # Data source:
+                          # - "synthetic": generate data using built-in generators
+                          # - "loader": read from disk via the loader.* paths below
   n: 1000
   p: 200
   G: 20
-  group_sizes: "equal"   # "equal" or [g1, g2, ...]; required by group-aware baselines and GRwHS group shrinkage
+  group_sizes: "equal"   # Group structure:
+                          # - "equal": split features evenly into G groups
+                          # - explicit list: e.g. [8, 12, 10, ...]
 
   # Correlation structure for synthetic design matrices
   correlation:
-    type: "block"        # "block" | "ar1" | "cs" (compound symmetry); reused across all model families
+    type: "block"        # "block" | "ar1" | "cs" (compound symmetry)
     rho: 0.5
-    block_size: 10       # Only used when type="block"
+    block_size: 10       # Only used when type == "block"
 
-  # Signal mechanism (controls the ground-truth regression coefficients)
+  # Signal mechanism (controls ground-truth beta)
   signal:
-    sparsity: 0.10       # Fraction of non-zero coefficients overall
-    strong_frac: 0.05    # Fraction of strong signals among the non-zeros
-    group_sparsity: null # If set (e.g. 0.3) only ~30% of groups contain non-zeros; null leaves group sparsity unconstrained
-    beta_scale_strong: 2.0
-    beta_scale_weak: 0.4
-    sign_mix: "random"   # "random" | "positive" | "negative"
+    sparsity: 0.10       # Overall fraction of non-zero coefficients (0..1)
+    strong_frac: 0.05    # Among non-zeros, fraction that are strong signals
+    group_sparsity: null # If set (e.g. 0.3), only ~30% of groups contain non-zeros; null = unconstrained
+    beta_scale_strong: 2.0   # Std of strong effects (in sigma units)
+    beta_scale_weak: 0.4     # Std of weak effects
+    sign_mix: "random"   # Sign pattern for non-zeros: "random" | "positive" | "negative"
 
   noise_sigma: 1.0
-  test_ratio: 0.2
-  val_ratio: 0.1
+  test_ratio: 0.2        # Fraction of data held out for test
+  val_ratio: 0.1         # Fraction of remaining data used for validation
 
-  # Real-data loader settings (used when data.type="loader")
+  # Real-data loader settings (active when data.type == "loader")
   loader:
-    path_X: ""
-    path_y: ""
-    group_map: ""        # Optional: CSV/JSON mapping from feature name to group id; enables learned group structures
+    path_X: ""           # Path to features (e.g., .npy, .csv)
+    path_y: ""           # Path to response
+    group_map: ""        # Optional CSV/JSON feature->group mapping; if empty, uses singleton groups
 
 # -------------------------
 # Model settings (shared interface)
 # -------------------------
 model:
-  name: "grwhs_svi"      # grwhs_svi | grwhs_gibbs | ridge | lasso | elastic_net | group_lasso | sparse_group_lasso | horseshoe | regularized_horseshoe
+  name: "grwhs_svi"      # Select model:
+                          # - grwhs_svi: NumPyro SVI (scalable, large p)
+                          # - grwhs_gibbs: Gibbs sampler (exact, small/medium scale)
+                          # - ridge | lasso | elastic_net: convex baselines
+                          # - group_lasso | sparse_group_lasso: group-aware convex baselines
+                          # - horseshoe | regularized_horseshoe: non-group HS baselines
 
   # Regularized Horseshoe slab width (GRwHS + regularized horseshoe)
   c: 1.5
 
-  # Heuristic for the global sparsity scale tau; ignored if model.tau0 is set explicitly
+  # Heuristic for the global sparsity scale tau; ignored if an explicit tau0 is set
   tau0_heuristic:
     s: 20                # Prior guess for the number of relevant coefficients
-    mode: "unit_variance"  # When standardization.X="unit_l2" the code multiplies by sqrt(n)
+    mode: "unit_variance"  # If standardization.X == "unit_l2", internal code multiplies by sqrt(n)
 
-  # Group shrinkage scale phi_g ~ HalfNormal(eta / sqrt(p_g)) (GRwHS only)
+  # Group shrinkage: phi_g ~ HalfNormal(eta / sqrt(p_g)) (GRwHS only)
   eta: 0.5
-  size_adjust: true      # Scale group-wise penalties by group size
+  size_adjust: true      # If true, divide by sqrt(p_g) to avoid favoring small groups
 
-  # Half-Cauchy(scale=s0) prior for sigma (SVI/Gibbs); convex baselines ignore this
+  # Noise prior: Half-Cauchy(scale=s0) on sigma (SVI/Gibbs). Convex baselines ignore this.
   halfcauchy_sigma_scale: 1.0
 
 # -------------------------
@@ -70,52 +95,53 @@ model:
 # -------------------------
 inference:
   svi:
-    steps: 2000
-    lr: 1.0e-2
-    mc_samples: 3          # Monte Carlo samples for stochastic ELBO terms
-    batch_size: 256
-    natural_grad: true
-    elbo_eval_every: 100
-    clip_grad_norm: 10.0
+    steps: 2000            # Number of optimization steps
+    lr: 1.0e-2             # Adam learning rate
+    mc_samples: 3          # MC samples for non-analytic ELBO terms
+    batch_size: 256        # Minibatch size; omit/null for full-batch
+    natural_grad: true     # Enable natural-gradient preconditioning
+    elbo_eval_every: 100   # Log/validate ELBO every N steps
+    clip_grad_norm: 10.0   # Gradient norm clipping
     jitter: 1.0e-8         # Numerical jitter for Cholesky/stability
     seed: 123
 
   gibbs:
-    iters: 4000
-    burn_in: 2000
-    thin: 2
-    adapt_slice: true
-    jitter: 1.0e-8
+    iters: 4000           # Total iterations per chain
+    burn_in: 2000         # Burn-in iterations discarded
+    thin: 2               # Keep every k-th draw post burn-in
+    adapt_slice: true     # Enable adaptive stepping in slice/MH moves
+    jitter: 1.0e-8        # Numerical jitter for linear algebra
     seed: 123
 
 # -------------------------
 # Experiment orchestration
 # -------------------------
 experiments:
-  repeats: 5
-  save_posterior: true      # SVI: variational parameters; Gibbs: thinned samples; convex baselines skip this
-  diagnostics: true
-  metrics: ["mse", "r2", "tpr", "fpr", "auc"]
+  repeats: 1                 # Number of independent repeats (different seeds)
+  save_posterior: true       # Save posterior/variational artifacts when available
+  diagnostics: true          # Compute shrinkage/variance diagnostics after fit
+  metrics: ["mse", "r2", "tpr", "fpr", "auc"]  # Evaluation metrics
   threshold:
-    type: "magnitude"        # "magnitude" | "topk" | "credible" (if posterior draws/intervals are available)
-    value: 0.05              # For type="magnitude": select when |beta_hat| > value; for type="topk": number of coefficients
-  runtime_profile: false     # Enable to emit timing / memory diagnostics
+    type: "magnitude"       # Selection rule: "magnitude" | "topk" | "credible"
+    value: 0.05             # If magnitude: |beta_hat| > value; if topk: K features
+  runtime_profile: false    # If true, log timing/memory profiles
 
 # -------------------------
 # Logging & IO
 # -------------------------
 logging:
-  level: "INFO"              # "DEBUG" | "INFO" | "WARNING"
-  progress: true
+  level: "INFO"             # "DEBUG" | "INFO" | "WARNING"
+  progress: true            # Show progress bars during training
 
 checkpointing:
-  enable: true
-  keep_last: 3
-  save_every_steps: 200      # Applies to iterative inference (SVI/Gibbs)
+  enable: true              # Enable checkpointing for iterative solvers
+  keep_last: 3              # Keep last N checkpoints
+  save_every_steps: 200     # Save frequency (in steps)
 
 # -------------------------
 # Visualization defaults
 # -------------------------
 viz:
-  dpi: 150
-  style: "default"
+  dpi: 150                 # Default DPI for plots
+  style: "default"         # Matplotlib style or custom theme key
+

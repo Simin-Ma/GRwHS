@@ -1,4 +1,17 @@
-﻿# Scenario D: large-scale (p >> n); benchmark throughput, memory, and stability
+# ========================================
+# Scenario D — Large scale (p >> n)
+# ----------------------------------------
+# Purpose
+# - Benchmark throughput, memory, and stability in extreme dimensionality.
+# - Uses unit_l2 scaling to align with convex baselines; tau0 heuristic rescales.
+#
+# Inference choice
+# - Prefer SVI at this scale (default). Gibbs is generally impractical here.
+#
+# Baselines
+# - To compare, set model.name to ridge | lasso | group_lasso | sparse_group_lasso.
+# ========================================
+
 defaults: "configs/base.yaml"
 
 data:
@@ -50,3 +63,4 @@ experiments:
 
 logging:
   level: "INFO"
+

@@ -1,4 +1,19 @@
-﻿# Scenario A: sparse regime with light correlation; good for validating support recovery
+# ========================================
+# Scenario A — Sparse regime, light correlation
+# ----------------------------------------
+# Purpose
+# - Validate support recovery and calibration under strong sparsity.
+# - Light AR(1) correlation to avoid confounding while still realistic.
+#
+# When to use which inference
+# - Small/medium problems: set model.name = "grwhs_gibbs" to use Gibbs sampler.
+# - Larger runs / multiple sweeps: keep SVI (model.name = "grwhs_svi").
+#
+# Baselines
+# - Swap model.name to: ridge | lasso | group_lasso | horseshoe | regularized_horseshoe
+# - Keep other fields unchanged; the runner will apply appropriate defaults.
+# ========================================
+
 defaults: "configs/base.yaml"
 
 data:
@@ -15,7 +30,7 @@ data:
     beta_scale_weak: 0.4
 
 model:
-  name: "grwhs_svi"
+  name: "grwhs_svi"        # For small n,p you may set "grwhs_gibbs" instead
   c: 1.5
   eta: 0.4                  # Stronger group pooling for sparse truth; relax toward 0.6+ for looser shrinkage
   size_adjust: true
@@ -41,3 +56,4 @@ experiments:
 
 logging:
   level: "INFO"
+

@@ -1,4 +1,19 @@
-﻿# Scenario B: mixed strong/weak signals with moderate block correlation; highlights shrinkage calibration
+# ========================================
+# Scenario B — Mixed strong/weak signals, block correlation
+# ----------------------------------------
+# Purpose
+# - Highlights calibration of shrinkage across strong and weak effects.
+# - Moderate block correlation to reflect clustered features.
+#
+# Inference choice
+# - Default: SVI for speed at p=500. For smaller data, switch to Gibbs by
+#   setting model.name = "grwhs_gibbs".
+#
+# Baselines
+# - Swap model.name to ridge | lasso | group_lasso | horseshoe | regularized_horseshoe
+#   to compare calibration and selection.
+# ========================================
+
 defaults: "configs/base.yaml"
 
 data:
@@ -18,7 +33,7 @@ data:
 model:
   name: "grwhs_svi"
   c: 1.5
-  eta: 0.6                 # Moderately loose group pooling to avoid over-shrinking weak signals
+  eta: 0.6                  # Moderately loose group pooling to avoid over-shrinking weak signals
   size_adjust: true
   tau0_heuristic:
     s: 30
@@ -42,3 +57,4 @@ experiments:
 
 logging:
   level: "INFO"
+
