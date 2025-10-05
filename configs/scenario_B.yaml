@@ -1,0 +1,44 @@
+﻿# Scenario B: mixed strong/weak signals with moderate block correlation; highlights shrinkage calibration
+defaults: "configs/base.yaml"
+
+data:
+  n: 1000
+  p: 500
+  G: 50
+  correlation:
+    type: "block"
+    rho: 0.5
+    block_size: 10
+  signal:
+    sparsity: 0.12          # Moderately sparse: retains a background of weak coefficients
+    strong_frac: 0.10       # 10% of the active set uses beta_scale_strong; remainder follow beta_scale_weak
+    beta_scale_strong: 2.0
+    beta_scale_weak: 0.35
+
+model:
+  name: "grwhs_svi"
+  c: 1.5
+  eta: 0.6                 # Moderately loose group pooling to avoid over-shrinking weak signals
+  size_adjust: true
+  tau0_heuristic:
+    s: 30
+    mode: "unit_variance"
+
+inference:
+  svi:
+    steps: 3000
+    lr: 1.0e-2
+    batch_size: 512
+    mc_samples: 3
+    natural_grad: true
+    elbo_eval_every: 100
+
+experiments:
+  repeats: 5
+  metrics: ["mse", "r2", "tpr", "fpr", "auc"]
+  threshold:
+    type: "magnitude"
+    value: 0.04
+
+logging:
+  level: "INFO"

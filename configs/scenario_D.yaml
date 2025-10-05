@@ -1,0 +1,52 @@
+﻿# Scenario D: large-scale (p >> n); benchmark throughput, memory, and stability
+defaults: "configs/base.yaml"
+
+data:
+  n: 2000
+  p: 10000
+  G: 200
+  group_sizes: "equal"
+  correlation:
+    type: "block"
+    rho: 0.4
+    block_size: 20
+  signal:
+    sparsity: 0.08           # Sparse truth to test discovery at extreme dimensionality
+    strong_frac: 0.08        # Matching strong/weak split keeps effect sizes comparable to base config
+    beta_scale_strong: 1.6
+    beta_scale_weak: 0.25
+  noise_sigma: 1.0
+  test_ratio: 0.2
+  val_ratio: 0.1
+
+standardization:
+  X: "unit_l2"               # Align features with convex baselines; tau heuristic rescales internally by sqrt(n)
+  y_center: true
+
+model:
+  name: "grwhs_svi"          # Swap to grwhs_gibbs / ridge / lasso / group_lasso / sparse_group_lasso for comparisons
+  c: 1.5
+  eta: 0.6
+  size_adjust: true
+  tau0_heuristic:
+    s: 150
+    mode: "unit_l2"
+
+inference:
+  svi:
+    steps: 3000
+    lr: 1.2e-2
+    batch_size: 1024
+    mc_samples: 2            # Keep low to maintain mini-batch throughput on large problems
+    natural_grad: true
+    elbo_eval_every: 100
+    jitter: 1.0e-7
+
+experiments:
+  repeats: 3                  # Fewer repeats to control wallclock cost at this scale
+  diagnostics: true
+  metrics: ["mse", "r2"]
+  runtime_profile: true       # Log detailed timing/memory if supported by the runner
+
+logging:
+  level: "INFO"

@@ -1,0 +1,43 @@
+﻿# Scenario A: sparse regime with light correlation; good for validating support recovery
+defaults: "configs/base.yaml"
+
+data:
+  n: 800
+  p: 300
+  G: 30
+  correlation:
+    type: "ar1"
+    rho: 0.2
+  signal:
+    sparsity: 0.05          # ~5% active coefficients; stresses precision/recall trade-offs
+    strong_frac: 0.40       # 40% of actives draw from beta_scale_strong, remainder use beta_scale_weak
+    beta_scale_strong: 2.5
+    beta_scale_weak: 0.4
+
+model:
+  name: "grwhs_svi"
+  c: 1.5
+  eta: 0.4                  # Stronger group pooling for sparse truth; relax toward 0.6+ for looser shrinkage
+  size_adjust: true
+  tau0_heuristic:
+    s: 15                   # Slightly tighter global sparsity prior than base defaults
+    mode: "unit_variance"
+
+inference:
+  svi:
+    steps: 2500
+    lr: 8.0e-3
+    batch_size: 256
+    mc_samples: 3
+    natural_grad: true
+    elbo_eval_every: 100
+
+experiments:
+  repeats: 5
+  metrics: ["mse", "r2", "tpr", "fpr", "auc"]
+  threshold:
+    type: "magnitude"
+    value: 0.05
+
+logging:
+  level: "INFO"
