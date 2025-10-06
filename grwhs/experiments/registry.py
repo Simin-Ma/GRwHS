@@ -317,8 +317,37 @@ def _build_grwhs_svi(cfg: Dict[str, Any]) -> Any:
     batch_size = _get(cfg, "inference.svi.batch_size", None)
     if batch_size is not None:
         svi_kwargs["batch_size"] = int(batch_size)
+    natural_grad = bool(_get(cfg, "inference.svi.natural_grad", False))
+    use_hutch = bool(_get(cfg, "inference.svi.use_hutchinson", natural_grad))
+    hutch_samples = int(_get(cfg, "inference.svi.hutchinson_samples", 8))
+    cg_tol = float(_get(cfg, "inference.svi.cg_tol", 1e-5))
+    cg_max_iters = int(_get(cfg, "inference.svi.cg_maxiter", 50))
+    natgrad_damping = float(_get(cfg, "inference.svi.natgrad_damping", 1e-3))
+    coupling_clip_raw = _get(cfg, "inference.svi.coupling_clip", 3.0)
+    if coupling_clip_raw is None:
+        coupling_clip_val = None
+    else:
+        try:
+            coupling_clip_val = float(coupling_clip_raw)
+        except (TypeError, ValueError):
+            coupling_clip_val = None
+    cov_damping = float(_get(cfg, "inference.svi.cov_damping", 0.0))
 
-    svi = GRwHS_SVI(c=c, tau0=tau0, eta=eta, s0=s0, **svi_kwargs)  # type: ignore
+    svi = GRwHS_SVI(
+        c=c,
+        tau0=tau0,
+        eta=eta,
+        s0=s0,
+        natural_gradient=natural_grad,
+        use_hutchinson=use_hutch,
+        hutchinson_samples=hutch_samples,
+        cg_tol=cg_tol,
+        cg_max_iters=cg_max_iters,
+        natgrad_damping=natgrad_damping,
+        coupling_clip=coupling_clip_val,
+        covariance_damping=cov_damping,
+        **svi_kwargs,
+    )  # type: ignore
     return svi
 
 
@@ -371,4 +400,3 @@ def build_from_config(cfg: Dict[str, Any]) -> Any:
     name = get_model_name_from_config(cfg)
     builder = get_builder(name)
     return builder(cfg)
-

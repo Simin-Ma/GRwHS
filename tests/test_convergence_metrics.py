@@ -64,7 +64,7 @@ def test_run_experiment_outputs_convergence(tmp_path):
             "gibbs": {"iters": 30, "burn_in": 10, "thin": 1, "seed": 321}
         },
         "experiments": {
-            "metrics": ["mse"],
+            "metrics": ["RMSE"],
             "save_posterior": True,
         },
     }

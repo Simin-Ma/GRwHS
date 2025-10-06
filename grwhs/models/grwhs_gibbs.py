@@ -8,6 +8,8 @@ import numpy as np
 from numpy.random import Generator, default_rng
 from scipy.linalg import cho_factor, cho_solve
 
+from grwhs.utils.logging_utils import progress
+
 # Prefer the stable GIG sampler implemented in inference/gig.py
 # Expected signature: sample_gig(lambda_param: float, chi: float, psi: float, size: int | tuple[int, ...] = 1, rng: Optional[Generator] = None) -> np.ndarray
 from grwhs.inference.gig import sample_gig
@@ -171,7 +173,7 @@ class GRwHS_Gibbs:
         # Precompute matrices
         # Note: the algorithm repeatedly uses C0 = D_beta^{-1} = diag(φ_g^2 τ^2 \tildeλ_j^2 σ^2)
         #       and the Cholesky of M = X C0 X^T + σ^2 I_n
-        for it in range(self.iters):
+        for it in progress(range(self.iters), total=self.iters, desc="Gibbs sampling"):
             # ---- 1) Compute tilde_lambda, prior precision d_j, and inverse C0 (prior covariance diag)
             tilde_lam = (self.c * lam) / np.sqrt(self.c ** 2 + (tau ** 2) * (lam ** 2))
             # prior variance v_j = φ_g^2 τ^2 \tildeλ_j^2 σ^2

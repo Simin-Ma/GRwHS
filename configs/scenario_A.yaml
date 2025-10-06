@@ -49,11 +49,7 @@ inference:
 
 experiments:
   repeats: 5
-  metrics: ["mse", "r2", "tpr", "fpr", "auc"]
-  threshold:
-    type: "magnitude"
-    value: 0.05
+  coverage_level: 0.9
 
 logging:
   level: "INFO"
-

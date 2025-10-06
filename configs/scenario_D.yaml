@@ -58,9 +58,8 @@ inference:
 experiments:
   repeats: 3                  # Fewer repeats to control wallclock cost at this scale
   diagnostics: true
-  metrics: ["mse", "r2"]
+  coverage_level: 0.9
   runtime_profile: true       # Log detailed timing/memory if supported by the runner
 
 logging:
   level: "INFO"
-

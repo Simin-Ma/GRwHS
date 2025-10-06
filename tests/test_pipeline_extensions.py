@@ -48,7 +48,7 @@ def _make_basic_config(tmp_path: Path) -> dict:
         },
         "standardization": {"X": "unit_variance", "y_center": True},
         "model": {"name": "ridge", "alpha": 0.5, "fit_intercept": False},
-        "experiments": {"metrics": ["mse", "r2"]},
+        "experiments": {"metrics": ["RMSE", "PredictiveLogLikelihood"], "coverage_level": 0.9},
     }
 
 
@@ -92,14 +92,14 @@ def test_load_real_dataset_and_runner(tmp_path):
         },
         "standardization": {"X": "unit_variance", "y_center": True},
         "model": {"name": "ridge", "alpha": 1.0, "fit_intercept": False},
-        "experiments": {"metrics": ["mse", "r2"]},
+        "experiments": {"metrics": ["RMSE", "PredictiveLogLikelihood"], "coverage_level": 0.9},
     }
 
     out_dir = tmp_path / "run_single"
     result = run_experiment(config, out_dir)
     assert result["status"] == "OK"
     metrics_payload = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
-    assert "mse" in metrics_payload
+    assert "RMSE" in metrics_payload
 
     run_root = tmp_path / "multi_runs"
     run_root.mkdir()
@@ -108,8 +108,8 @@ def test_load_real_dataset_and_runner(tmp_path):
 
     summary = aggregate_runs(run_root)
     assert summary["total_runs"] == 2
-    assert "mse" in summary["metrics"]
-    assert summary["metrics"]["mse"]["count"] == 2
+    assert "RMSE" in summary["metrics"]
+    assert summary["metrics"]["RMSE"]["count"] == 2
     assert (run_root / "aggregate_summary.json").exists()
 
 

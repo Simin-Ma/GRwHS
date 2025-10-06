@@ -13,9 +13,10 @@ from data.preprocess import StandardizationConfig, apply_standardization
 from data.splits import train_val_test_split
 from data.loaders import load_real_dataset
 from grwhs.experiments.registry import build_from_config, get_model_name_from_config
-from grwhs.metrics import regression
+from grwhs.metrics.evaluation import evaluate_model_metrics
 from grwhs.models.baselines import Ridge
 from grwhs.diagnostics.convergence import summarize_convergence
+from grwhs.utils.logging_utils import progress
 
 
 def _to_serializable(value: Any) -> Any:
@@ -30,34 +31,6 @@ def _to_serializable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     return value
-
-
-def _auc_from_scores(y_true: np.ndarray, scores: np.ndarray) -> float | None:
-    y = np.asarray(y_true, dtype=int)
-    s = np.asarray(scores, dtype=float)
-    pos = int(y.sum())
-    neg = int(y.size - pos)
-    if pos == 0 or neg == 0:
-        return None
-    order = np.argsort(s)
-    ranks = np.arange(1, y.size + 1)
-    sum_pos = ranks[order][y[order] == 1].sum()
-    auc = (sum_pos - pos * (pos + 1) / 2) / (pos * neg)
-    return float(auc)
-
-
-def _selection_predictions(beta_hat: np.ndarray, threshold_cfg: Dict[str, Any]) -> np.ndarray | None:
-    kind = str(threshold_cfg.get("type", "magnitude")).lower()
-    if kind != "magnitude":
-        return None
-    value = float(threshold_cfg.get("value", 0.0))
-    return (np.abs(beta_hat) > value).astype(int)
-
-
-def _false_positive_rate(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    fp = np.logical_and(y_true == 0, y_pred == 1).sum()
-    tn = np.logical_and(y_true == 0, y_pred == 0).sum()
-    return float(fp / (fp + tn + 1e-8))
 
 
 def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
@@ -160,51 +133,30 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
 
     if y_train is None:
         raise ValueError("Experiment requires targets after preprocessing.")
-    model.fit(X_train, y_train)
+
+    for _ in progress(range(1), total=1, desc=f"Training {model_name}"):
+        model.fit(X_train, y_train)
 
     metrics_cfg = config.get("experiments", {})
-    requested_metrics: List[str] = list(metrics_cfg.get("metrics", ["mse", "r2"]))
-    threshold_cfg = metrics_cfg.get("threshold", {"type": "magnitude", "value": 0.0})
 
-    results: Dict[str, Any] = {}
-    if y_test is not None and X_test.size:
-        y_pred = model.predict(X_test)
-        for metric in requested_metrics:
-            name = metric.lower()
-            if name == "mse":
-                results[metric] = regression.mse(y_test, y_pred)
-            elif name == "mae":
-                results[metric] = regression.mae(y_test, y_pred)
-            elif name == "r2":
-                results[metric] = regression.r2(y_test, y_pred)
-            else:
-                results[metric] = None
-    else:
-        y_pred = None
-        for metric in requested_metrics:
-            results[metric] = None
+    coverage_level = float(metrics_cfg.get("coverage_level", 0.9))
+    group_index = np.zeros(X_train.shape[1], dtype=int)
+    for gid, idxs in enumerate(groups):
+        group_index[np.asarray(idxs, dtype=int)] = gid
 
-    beta_hat = getattr(model, "coef_", None)
-    selection_truth = None if beta_truth is None else (np.abs(beta_truth) > 1e-8).astype(int)
-    if beta_hat is not None and selection_truth is not None:
-        preds_binary = _selection_predictions(beta_hat, threshold_cfg)
-        if preds_binary is not None:
-            if "tpr" in requested_metrics:
-                tp = np.logical_and(selection_truth == 1, preds_binary == 1).sum()
-                fn = np.logical_and(selection_truth == 1, preds_binary == 0).sum()
-                results["tpr"] = float(tp / (tp + fn + 1e-8))
-            if "fpr" in requested_metrics:
-                results["fpr"] = _false_positive_rate(selection_truth, preds_binary)
-        if "auc" in requested_metrics:
-            auc = _auc_from_scores(selection_truth, np.abs(beta_hat))
-            results["auc"] = auc
-    else:
-        if "auc" in requested_metrics:
-            results.setdefault("auc", None)
-        if "tpr" in requested_metrics:
-            results.setdefault("tpr", None)
-        if "fpr" in requested_metrics:
-            results.setdefault("fpr", None)
+    slab_width = config.get("model", {}).get("c", None)
+
+    results = evaluate_model_metrics(
+        model=model,
+        X_train=X_train,
+        X_test=X_test if X_test.size else None,
+        y_train=y_train,
+        y_test=y_test,
+        beta_truth=beta_truth,
+        group_index=group_index,
+        coverage_level=coverage_level,
+        slab_width=slab_width,
+    )
 
     metrics_serializable = {k: _to_serializable(v) for k, v in results.items()}
 

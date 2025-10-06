@@ -104,6 +104,13 @@ inference:
     clip_grad_norm: 10.0   # Gradient norm clipping
     jitter: 1.0e-8         # Numerical jitter for Cholesky/stability
     seed: 123
+    use_hutchinson: true   # Enable Hutchinson trace estimator with CG solves
+    hutchinson_samples: 12 # Number of Hutchinson probes per gradient step
+    cg_tol: 1.0e-3         # CG tolerance for matrix-free solves
+    cg_maxiter: 200        # CG maximum iterations (None = scipy default)
+    natgrad_damping: 1.0e-3  # Fisher damping to stabilise natural gradients
+    coupling_clip: 3.0     # Clip shared-factor couplings (set null to disable)
+    cov_damping: 0.1       # Blend factor between gradient and natural gradient
 
   gibbs:
     iters: 4000           # Total iterations per chain
@@ -120,11 +127,17 @@ experiments:
   repeats: 1                 # Number of independent repeats (different seeds)
   save_posterior: true       # Save posterior/variational artifacts when available
   diagnostics: true          # Compute shrinkage/variance diagnostics after fit
-  metrics: ["mse", "r2", "tpr", "fpr", "auc"]  # Evaluation metrics
-  threshold:
-    type: "magnitude"       # Selection rule: "magnitude" | "topk" | "credible"
-    value: 0.05             # If magnitude: |beta_hat| > value; if topk: K features
-  runtime_profile: false    # If true, log timing/memory profiles
+  metrics:
+    - RMSE
+    - PredictiveLogLikelihood
+    - WAIC
+    - AUC-PR
+    - F1
+    - Coverage90
+    - IntervalWidth90
+    - MeanKappa
+  coverage_level: 0.9        # Nominal interval level for calibration metrics
+  runtime_profile: false     # If true, log timing/memory profiles
 
 # -------------------------
 # Logging & IO
@@ -144,4 +157,3 @@ checkpointing:
 viz:
   dpi: 150                 # Default DPI for plots
   style: "default"         # Matplotlib style or custom theme key
-

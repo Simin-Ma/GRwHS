@@ -14,6 +14,7 @@ from grwhs.diagnostics.shrinkage import (
     shrinkage_kappa,
     slab_spike_ratio,
     variance_budget_omegas,
+    estimate_kappa_hutchinson_cg,
 )
 
 
@@ -82,6 +83,7 @@ def test_compute_diagnostics_matches_manual_components():
         tau=tau_samples,
         phi=phi_samples,
         sigma=sigma_samples,
+        use_hutchinson=False,
     )
 
     assert result.samples_used == T
@@ -140,3 +142,31 @@ def test_compute_diagnostics_matches_manual_components():
     npt.assert_allclose(result.per_coeff["r"], ratio_expected, rtol=1e-10)
     npt.assert_allclose(result.per_coeff["Pr_r_gt_1"], pr_ratio_gt_one, rtol=1e-10)
     npt.assert_allclose(result.per_group["edf"], edf_expected, rtol=1e-10)
+
+
+def test_variance_budget_normalizes_with_negative_logs():
+    phi = np.array([0.5, 2.0, 1.5], dtype=float)
+    tau = 0.7
+    tilde = np.array([0.8, 0.4, 1.2], dtype=float)
+    omegas = variance_budget_omegas(phi, tau, tilde, eps=1e-8)
+    total = omegas["omega_group"] + omegas["omega_tau"] + omegas["omega_lambda"]
+    npt.assert_allclose(total, np.ones_like(total), atol=1e-8)
+
+
+def test_hutchinson_kappa_matches_direct_diagonal_identity():
+    X = np.eye(4)
+    sigma = 0.75
+    prior_prec = np.array([0.5, 1.0, 2.0, 0.8], dtype=float)
+    rng = np.random.default_rng(0)
+    kappa_hutch, _ = estimate_kappa_hutchinson_cg(
+        X,
+        sigma,
+        prior_prec,
+        num_probes=512,
+        tol=1e-10,
+        probe_space="coef",
+        rng=rng,
+    )
+    XtX_diag = np.ones(4)
+    kappa_direct = shrinkage_kappa(XtX_diag, sigma**2, prior_prec)
+    npt.assert_allclose(kappa_hutch, kappa_direct, rtol=1e-2, atol=1e-2)

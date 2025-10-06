@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
+from numpy.random import Generator, default_rng
 
 from .shrinkage import (
     regularized_lambda,
@@ -86,12 +87,19 @@ def _safe_optional_pandas(per_coeff: Dict[str, Array], per_group: Dict[str, Arra
         return None
 
 
+r"""End-to-end diagnostics per paper's Algorithm "Post-processing"."""
 def compute_diagnostics_from_samples(
     *,
     X: Array,
     group_index: Array,
     c: float,
     eps: float,
+    use_hutchinson: bool = False,
+    hutchinson_samples: int = 10,
+    cg_tol: float = 1e-3,
+    cg_maxiter: Optional[int] = None,
+    probe_space: str = "coef",
+    rng: Optional[Any] = None,
     # Samples: shapes (T, p) or (T, G) or (T,)
     beta: Optional[Array] = None,             # unused for diagnostics here, but kept for extensibility
     lambda_: Array,                           # (T, p)
@@ -99,7 +107,7 @@ def compute_diagnostics_from_samples(
     phi: Array,                               # (T, G)
     sigma: Array,                             # (T,)
 ) -> DiagnosticsResult:
-    """
+    r"""
     End-to-end diagnostics per paper's Algorithm "Post-processing".
 
     Given posterior samples of (phi_g, tau, lambda_j, sigma) and design X,
@@ -115,6 +123,21 @@ def compute_diagnostics_from_samples(
     group_index : (p,) int array mapping coefficient j -> group g in [0, G-1].
     c : slab width (>0)
     eps : small positive for numerical stability in omega budget.
+    use_hutchinson : bool, optional
+        If True, estimate :math:`\kappa_j` via Hutchinson + CG rather than
+        the diagonal proxy.
+    hutchinson_samples : int, optional
+        Number of Hutchinson probes when ``use_hutchinson=True``.
+    cg_tol : float, optional
+        Tolerance for conjugate-gradient solves when Hutchinson probes are used.
+    cg_maxiter : Optional[int], optional
+        Maximum CG iterations (defaults to scipy default when ``None``).
+    probe_space : {"coef", "data"}, optional
+        Probe space for Hutchinson estimator. ``"coef"`` estimates
+        coefficient-space shrinkage (default). ``"data"`` additionally
+        estimates the diagonal of the hat matrix.
+    rng : Optional[int | numpy.random.Generator]
+        Random number generator or seed for Hutchinson probes.
     beta : (T, p) optional posterior samples of beta (not needed here).
     lambda_ : (T, p) local scales samples (>0)
     tau : (T,) global scale samples (>0)
@@ -124,6 +147,9 @@ def compute_diagnostics_from_samples(
     Returns
     -------
     DiagnosticsResult
+        Contains per-coefficient shrinkage summaries, omega diagnostics,
+        slab/spike ratios, per-group effective degrees of freedom, and
+        (optionally) hat-matrix diagnostics when ``probe_space == 'data'``.
     """
     X = np.asarray(X)
     gidx = np.asarray(group_index).astype(int)
@@ -150,7 +176,7 @@ def compute_diagnostics_from_samples(
         raise ValueError(f"sigma must be (T,), got {sig.shape}")
 
     # Precompute diagonal of X^T X
-    XtX_diag = np.sum(X * X, axis=0)  # shape (p,)
+    XtX_diag = None if use_hutchinson else np.sum(X * X, axis=0)
 
     # Storage for per-draw/per-j diagnostics
     K = np.empty((T, p), dtype=float)
@@ -160,6 +186,17 @@ def compute_diagnostics_from_samples(
     R = np.empty((T, p), dtype=float)
     # per-group EDF
     EDF = np.empty((T, G), dtype=float)
+    hat_diag_draws: Optional[list[np.ndarray]] = [] if (use_hutchinson and probe_space.lower() == "data") else None
+
+    if use_hutchinson:
+        if hutchinson_samples <= 0:
+            raise ValueError("hutchinson_samples must be positive when use_hutchinson=True")
+        if isinstance(rng, Generator):
+            rng_obj = rng
+        else:
+            rng_obj = default_rng(rng)
+    else:
+        rng_obj = None
 
     # Map phi per draw to length-p vector by indexing group
     for t in range(T):
@@ -173,7 +210,21 @@ def compute_diagnostics_from_samples(
         tilde = np.sqrt(tls)
 
         d = prior_precision(phi_j, tau_t, tls, sig_t)  # (p,)
-        kappa = shrinkage_kappa(XtX_diag, sig_t * sig_t, d)  # (p,)
+        if use_hutchinson:
+            kappa, hat_diag = estimate_kappa_hutchinson_cg(
+                X,
+                sig_t,
+                d,
+                num_probes=hutchinson_samples,
+                tol=cg_tol,
+                maxiter=cg_maxiter,
+                probe_space=probe_space,
+                rng=rng_obj,
+            )
+            if hat_diag_draws is not None and hat_diag is not None:
+                hat_diag_draws.append(hat_diag)
+        else:
+            kappa = shrinkage_kappa(XtX_diag, sig_t * sig_t, d)  # (p,)
         omegas = variance_budget_omegas(phi_j, tau_t, tilde, eps=eps)
         r = slab_spike_ratio(tau_t, lam_t, c)
 
@@ -237,7 +288,18 @@ def compute_diagnostics_from_samples(
         "c": float(c),
         "has_beta_samples": beta is not None,
         "notes": "Diagnostics computed per theory: kappa, omegas (priors-only), r, edf",
+        "use_hutchinson": bool(use_hutchinson),
+        "hutchinson_samples": int(hutchinson_samples) if use_hutchinson else None,
+        "cg_tol": float(cg_tol) if use_hutchinson else None,
+        "cg_maxiter": None if cg_maxiter is None else int(cg_maxiter),
+        "probe_space": probe_space.lower(),
     }
+
+    if hat_diag_draws:
+        hat_arr = np.stack(hat_diag_draws, axis=0)
+        meta["hat_diag_median"] = np.median(hat_arr, axis=0)
+        meta["hat_diag_lo"] = np.quantile(hat_arr, 0.05, axis=0)
+        meta["hat_diag_hi"] = np.quantile(hat_arr, 0.95, axis=0)
 
     pandas_payload = _safe_optional_pandas(per_coeff, per_group)
 

@@ -48,11 +48,7 @@ inference:
 
 experiments:
   repeats: 5
-  metrics: ["mse", "r2"]
-  threshold:
-    type: "magnitude"
-    value: 0.03
+  coverage_level: 0.9
 
 logging:
   level: "INFO"
-

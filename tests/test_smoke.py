@@ -38,8 +38,8 @@ def test_run_experiment_creates_artifacts(tmp_path):
         "standardization": {"X": "unit_variance", "y_center": True},
         "model": {"name": "ridge", "alpha": 0.5, "fit_intercept": False},
         "experiments": {
-            "metrics": ["mse", "r2", "tpr"],
-            "threshold": {"type": "magnitude", "value": 0.05},
+            "metrics": ["RMSE", "PredictiveLogLikelihood"],
+            "coverage_level": 0.9,
         },
     }
 
@@ -51,8 +51,8 @@ def test_run_experiment_creates_artifacts(tmp_path):
     assert (out_dir / "dataset_meta.json").exists()
 
     metrics = result.get("metrics", {})
-    assert set(metrics.keys()) == {"mse", "r2", "tpr"}
-    assert metrics["mse"] is not None
+    assert "RMSE" in metrics and "PredictiveLogLikelihood" in metrics
+    assert metrics["RMSE"] is not None
 
     data = np.load(out_dir / "dataset.npz")
     assert data["X_train"].shape[0] > 0

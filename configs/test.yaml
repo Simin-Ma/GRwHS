@@ -1,0 +1,92 @@
+seed: 42
+device: cpu
+output_dir: outputs
+standardization:
+  X: unit_variance
+  y_center: true
+data:
+  type: synthetic
+  n: 1000
+  p: 200
+  G: 20
+  group_sizes: equal
+  correlation:
+    type: block
+    rho: 0.5
+    block_size: 10
+  signal:
+    sparsity: 0.1
+    strong_frac: 0.05
+    group_sparsity: null
+    beta_scale_strong: 2.0
+    beta_scale_weak: 0.4
+    sign_mix: random
+  noise_sigma: 1.0
+  test_ratio: 0.2
+  val_ratio: 0.1
+  loader:
+    path_X: ''
+    path_y: ''
+    group_map: ''
+model:
+  name: grwhs_svi
+  c: 1.5
+  tau0_heuristic:
+    s: 20
+    mode: unit_variance
+  eta: 0.5
+  size_adjust: true
+  halfcauchy_sigma_scale: 1.0
+inference:
+  svi:
+    steps: 20
+    lr: 0.01
+    mc_samples: 3
+    batch_size: 20
+    natural_grad: true
+    elbo_eval_every: 100
+    clip_grad_norm: 10.0
+    jitter: 1.0e-08
+    seed: 123
+  gibbs:
+    iters: 4000
+    burn_in: 2000
+    thin: 2
+    adapt_slice: true
+    jitter: 1.0e-08
+    seed: 123
+  nuts:
+    num_warmup: 500
+    num_samples: 500
+    num_chains: 1
+    thinning: 1
+experiments:
+  repeats: 1
+  save_posterior: true
+  diagnostics: true
+  metrics:
+  - RMSE
+  - PredictiveLogLikelihood
+  - WAIC
+  - AUC-PR
+  - F1
+  - Coverage90
+  - IntervalWidth90
+  - MeanKappa
+  coverage_level: 0.9
+  runtime_profile: false
+logging:
+  level: INFO
+  progress: true
+checkpointing:
+  enable: true
+  keep_last: 3
+  save_every_steps: 200
+viz:
+  dpi: 150
+  style: default
+name: grwhs_svi
+sweep:
+  sweep_name: all_models_base
+  variation: grwhs_svi
+  index: 1

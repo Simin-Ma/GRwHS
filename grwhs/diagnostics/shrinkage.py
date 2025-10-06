@@ -1,9 +1,11 @@
 r"""Shrinkage diagnostics utilities aligned with GRwHS theory."""
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
+from numpy.random import Generator, default_rng
+from scipy.sparse.linalg import LinearOperator, cg
 
 ArrayLike = np.ndarray
 
@@ -95,7 +97,7 @@ def variance_budget_omegas(
     *,
     eps: float = 1e-8,
 ) -> Dict[str, np.ndarray]:
-    """Compute normalized variance budget contributions (priors-only)."""
+    r"""Compute normalized variance budget contributions (priors-only)."""
 
     if eps <= 0:
         raise ValueError("eps must be positive for variance budget computation.")
@@ -115,20 +117,110 @@ def variance_budget_omegas(
     term_tau = 2.0 * np.log(tau_clip)
     term_lambda = 2.0 * np.log(tilde_clip)
 
-    L_star = term_group + term_tau + term_lambda
-    sign = np.where(L_star >= 0, 1.0, -1.0)
-    sign[L_star == 0.0] = 1.0
-    L_star_safe = np.where(np.abs(L_star) < eps, sign * eps, L_star)
+    def _sym_clip(x: np.ndarray) -> np.ndarray:
+        sign = np.where(x >= 0.0, 1.0, -1.0)
+        return sign * np.maximum(np.abs(x), eps)
 
-    omega_group = term_group / L_star_safe
-    omega_tau = term_tau / L_star_safe
-    omega_lambda = term_lambda / L_star_safe
+    clipped_group = _sym_clip(term_group)
+    clipped_tau = _sym_clip(term_tau)
+    clipped_lambda = _sym_clip(term_lambda)
+
+    denom = clipped_group + clipped_tau + clipped_lambda
+    denom = np.where(np.abs(denom) < eps, np.sign(denom + eps) * 3.0 * eps, denom)
+
+    omega_group = clipped_group / denom
+    omega_tau = clipped_tau / denom
+    omega_lambda = clipped_lambda / denom
 
     return {
         "omega_group": omega_group,
         "omega_tau": omega_tau,
         "omega_lambda": omega_lambda,
     }
+
+
+def _ensure_rng(rng: Optional[Union[int, Generator]]) -> Generator:
+    if isinstance(rng, Generator):
+        return rng
+    return default_rng(rng)
+
+
+def estimate_kappa_hutchinson_cg(
+    X: ArrayLike,
+    sigma: float,
+    prior_prec: ArrayLike,
+    *,
+    num_probes: int = 10,
+    tol: float = 1e-3,
+    maxiter: Optional[int] = None,
+    probe_space: str = "coef",
+    rng: Optional[Union[int, Generator]] = None,
+) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    r"""
+    Estimate coefficient-space shrinkage :math:`\kappa_j` via Hutchinson + CG.
+
+    Optionally also estimates the diagonal of the hat matrix in data-space
+    when ``probe_space == 'data'``.
+    """
+
+    X = np.asarray(X, dtype=float)
+    prior = _ensure_array(prior_prec, name="prior_prec")
+    if prior.ndim != 1:
+        raise ValueError("prior_prec must be a one-dimensional array.")
+    if X.ndim != 2:
+        raise ValueError("X must be a two-dimensional design matrix.")
+    n, p = X.shape
+    if prior.shape[0] != p:
+        raise ValueError("prior_prec length must match number of columns in X.")
+    if sigma <= 0:
+        raise ValueError("sigma must be positive in Hutchinson estimator.")
+    if num_probes <= 0:
+        raise ValueError("num_probes must be positive in Hutchinson estimator.")
+    if tol <= 0:
+        raise ValueError("tol must be positive in Hutchinson estimator.")
+
+    probe_space = probe_space.lower()
+    if probe_space not in {"coef", "data"}:
+        raise ValueError("probe_space must be 'coef' or 'data'.")
+
+    sigma2 = float(sigma) ** 2
+    sigma2_inv = 1.0 / sigma2
+    rng_obj = _ensure_rng(rng)
+
+    def matvec(vec: np.ndarray) -> np.ndarray:
+        return prior * vec + sigma2_inv * (X.T @ (X @ vec))
+
+    linear_op = LinearOperator((p, p), matvec=matvec)
+    accum = np.zeros(p, dtype=float)
+    hat_accum = np.zeros(n, dtype=float) if probe_space == "data" else None
+    dense_cache: Optional[np.ndarray] = None
+
+    def solve(vec: np.ndarray) -> np.ndarray:
+        nonlocal dense_cache
+        sol, info = cg(linear_op, vec, rtol=tol, atol=0.0, maxiter=maxiter)
+        if info != 0:
+            if dense_cache is None:
+                dense_cache = sigma2_inv * (X.T @ X) + np.diag(prior)
+            sol = np.linalg.solve(dense_cache, vec)
+        return sol
+
+    for _ in range(num_probes):
+        r = rng_obj.choice([-1.0, 1.0], size=p).astype(float)
+        s = solve(r)
+        v = X @ s
+        u = sigma2_inv * (X.T @ v)
+        accum += r * u
+
+        if hat_accum is not None:
+            z = rng_obj.choice([-1.0, 1.0], size=n).astype(float)
+            b = sigma2_inv * (X.T @ z)
+            s_data = solve(b)
+            h_vec = sigma2_inv * (X @ s_data)
+            hat_accum += z * h_vec
+
+    kappa_est = accum / float(num_probes)
+    hat_diag_est = None if hat_accum is None else hat_accum / float(num_probes)
+    return kappa_est, hat_diag_est
 
 
 def slab_spike_ratio(tau: float, lambda_raw: ArrayLike, c: float) -> np.ndarray:

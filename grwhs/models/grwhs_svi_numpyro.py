@@ -6,14 +6,17 @@ from typing import Optional, List, Dict, Any, Tuple
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax.nn import softplus
 from jax import random
+from jax.nn import softplus
+from jax.flatten_util import ravel_pytree
+from jax.scipy.sparse.linalg import cg
 
 import numpyro
 import numpyro.distributions as dist
 from numpyro.distributions import constraints
 from numpyro.infer import SVI, Trace_ELBO, Predictive
-from numpyro.optim import Adam
+from numpyro.infer.svi import SVIState, _make_loss_fn
+from numpyro.optim import Adam, _value_and_grad
 
 from grwhs.utils.logging_utils import progress
 
@@ -42,6 +45,21 @@ def _gather_beta_from_groups(beta_groups: List[jnp.ndarray], groups: List[List[i
     return beta
 
 
+def _hutchinson_trace(matvec_fn, dim: int, key: jax.Array, num_samples: int) -> jax.Array:
+    """Approximate ``trace(A)`` for a matrix via matrix-vector product callback."""
+    if num_samples <= 0:
+        raise ValueError("num_samples for Hutchinson estimator must be positive")
+
+    keys = random.split(key, num_samples)
+
+    def single(k):
+        z = random.rademacher(k, (dim,), dtype=jnp.float32)
+        return jnp.dot(z, matvec_fn(z))
+
+    estimates = jax.vmap(single)(keys)
+    return jnp.mean(estimates)
+
+
 @dataclass
 class GRwHS_SVI_Numpyro:
     c: float = 1.0
@@ -53,6 +71,14 @@ class GRwHS_SVI_Numpyro:
     lr: float = 1e-2
     seed: int = 42
     batch_size: Optional[int] = None  # None = full batch
+    use_hutchinson: bool = True
+    hutchinson_samples: int = 8
+    natural_gradient: bool = False
+    cg_tol: float = 1e-5
+    cg_max_iters: int = 50
+    natgrad_damping: float = 1e-3
+    coupling_clip: Optional[float] = 3.0
+    covariance_damping: float = 0.0
 
     # Posterior mean of coefficients (computed after fit)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)  # [S, p]
@@ -65,6 +91,10 @@ class GRwHS_SVI_Numpyro:
     # Group structure used during fitting
     group_id_: Optional[jnp.ndarray] = field(default=None, init=False)
     group_sizes_: Optional[jnp.ndarray] = field(default=None, init=False)
+    lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    phi_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
 
     def _model(self, X: jnp.ndarray, y: jnp.ndarray, groups: List[List[int]]):
         """
@@ -122,20 +152,38 @@ class GRwHS_SVI_Numpyro:
         mu_log_tau = numpyro.param("mu_log_tau", jnp.array(0.0))
         rho_log_tau = numpyro.param("rho_log_tau", jnp.array(-1.0))
         std_log_tau = softplus(rho_log_tau)
-        log_tau = numpyro.sample("log_tau_aux", dist.Normal(mu_log_tau, std_log_tau))
-        numpyro.sample("tau", dist.Delta(jnp.exp(log_tau)))
 
         mu_log_sigma = numpyro.param("mu_log_sigma", jnp.array(0.0))
         rho_log_sigma = numpyro.param("rho_log_sigma", jnp.array(-1.0))
         std_log_sigma = softplus(rho_log_sigma)
-        log_sigma = numpyro.sample("log_sigma_aux", dist.Normal(mu_log_sigma, std_log_sigma))
-        numpyro.sample("sigma", dist.Delta(jnp.exp(log_sigma)))
 
-        # ----- local scales (log-normal)
+        # ----- local scales (log-normal with shared factor coupling)
         mu_log_lam = numpyro.param("mu_log_lambda", jnp.zeros((p,)))
         rho_log_lam = numpyro.param("rho_log_lambda", -jnp.ones((p,)))
         std_log_lam = softplus(rho_log_lam)
-        log_lam = numpyro.sample("log_lambda_aux", dist.Normal(mu_log_lam, std_log_lam).to_event(1))
+
+        if self.coupling_clip is not None:
+            clip = float(self.coupling_clip)
+            coupling_constraint = constraints.interval(-clip, clip)
+        else:
+            coupling_constraint = constraints.real
+
+        coupling_a = numpyro.param("coupling_a", jnp.zeros((p,)), constraint=coupling_constraint)
+        coupling_rho = numpyro.param("coupling_rho", jnp.array(0.0), constraint=coupling_constraint)
+
+        u_shared = numpyro.sample("u_shared", dist.Normal(0.0, 1.0))
+
+        loc_tau = mu_log_tau + coupling_rho * u_shared
+        log_tau = numpyro.sample("log_tau_aux", dist.Normal(loc_tau, std_log_tau))
+        numpyro.sample("tau", dist.Delta(jnp.exp(log_tau)))
+
+        log_sigma = numpyro.sample("log_sigma_aux", dist.Normal(mu_log_sigma, std_log_sigma))
+        numpyro.sample("sigma", dist.Delta(jnp.exp(log_sigma)))
+
+        loc_lambda = mu_log_lam + coupling_a * u_shared
+        log_lam = numpyro.sample(
+            "log_lambda_aux", dist.Normal(loc_lambda, std_log_lam).to_event(1)
+        )
         numpyro.sample("lambda", dist.Delta(jnp.exp(log_lam)).to_event(1))
 
         # ----- group blocks: q([beta_g, log phi_g]) = MVN
@@ -181,14 +229,18 @@ class GRwHS_SVI_Numpyro:
         rng_key = random.PRNGKey(self.seed)
         optimizer = Adam(learn_rate)
 
-        svi = SVI(self._model, self._guide, optimizer, loss=Trace_ELBO())
-        # SVI optimization over batches (currently full batch)
-        init_state = svi.init(rng_key, jnp.array(X), jnp.array(y), groups)
+        num_particles = max(1, int(self.hutchinson_samples)) if self.use_hutchinson else 1
+        svi = SVI(self._model, self._guide, optimizer, loss=Trace_ELBO(num_particles=num_particles))
 
-        # Track ELBO during optimization
-        state = init_state
+        X_jax = jnp.array(X)
+        y_jax = jnp.array(y)
+        args = (X_jax, y_jax, groups)
+
+        # Initialize SVI state
+        state = svi.init(rng_key, *args)
+
         for step_idx in progress(range(steps), total=steps, desc="SVI training"):
-            state, loss = svi.update(state, jnp.array(X), jnp.array(y), groups)
+            state, loss = self._matrix_free_update(svi, state, args)
             if jnp.isnan(loss):
                 raise FloatingPointError("SVI loss produced NaN")
 
@@ -215,24 +267,100 @@ class GRwHS_SVI_Numpyro:
         self.coef_samples_ = coef_samples
         self.coef_mean_ = coef_samples.mean(axis=0)
 
-        # Posterior means for scales
-        self.sigma_mean_ = float(np.asarray(post["sigma"]).mean())
-        self.tau_mean_ = float(np.asarray(post["tau"]).mean())
-        self.lambda_mean_ = np.asarray(post["lambda"]).mean(axis=0)
+        lambda_samples = np.asarray(post["lambda"])
+        if lambda_samples.ndim == 1:
+            lambda_samples = lambda_samples.reshape(-1, 1)
+        self.lambda_samples_ = lambda_samples
+        self.lambda_mean_ = lambda_samples.mean(axis=0)
 
-        phi_samples = []
+        tau_samples = np.asarray(post["tau"]).reshape(-1)
+        self.tau_samples_ = tau_samples
+        self.tau_mean_ = float(tau_samples.mean())
+
+        sigma_samples = np.asarray(post["sigma"]).reshape(-1)
+        self.sigma_samples_ = sigma_samples
+        self.sigma_mean_ = float(sigma_samples.mean())
+
+        phi_samples_list = []
         for g in range(len(groups)):
             arr = np.asarray(post[f"phi_g_{g}"])
             if arr.ndim == 1:
-                phi_samples.append(arr)
+                phi_samples_list.append(arr)
             else:
                 reshaped = arr.reshape(arr.shape[0], -1)
-                phi_samples.append(reshaped[:, 0])
-        phi_mat = np.stack(phi_samples, axis=1)
+                phi_samples_list.append(reshaped[:, 0])
+        phi_mat = np.stack(phi_samples_list, axis=1)
+        self.phi_samples_ = phi_mat
         self.phi_mean_ = phi_mat.mean(axis=0)
 
         self.intercept_ = 0.0
         return self
+
+    def _matrix_free_update(self, svi: SVI, state: SVIState, args: Tuple[Any, ...]) -> Tuple[SVIState, jax.Array]:
+        rng_key, rng_key_step = random.split(state.rng_key)
+        loss_fn = _make_loss_fn(
+            svi.loss,
+            rng_key_step,
+            svi.constrain_fn,
+            svi.model,
+            svi.guide,
+            args,
+            {},
+            svi.static_kwargs,
+            mutable_state=state.mutable_state,
+        )
+        params = svi.optim.get_params(state.optim_state)
+        (loss, mutable_state), grads = _value_and_grad(loss_fn, x=params)
+        grads = self._apply_matrix_free(loss_fn, params, grads, rng_key_step)
+        optim_state = svi.optim.update(grads, state.optim_state, value=loss)
+        new_state = SVIState(optim_state, mutable_state, rng_key)
+        return new_state, loss
+
+    def _apply_matrix_free(self, loss_fn, params, grads, rng_key):
+        if self.natural_gradient:
+            return self._apply_natural_gradient(loss_fn, params, grads, rng_key)
+        return grads
+
+    def _apply_natural_gradient(self, loss_fn, params, grads, rng_key):
+        flat_params, unravel_params = ravel_pytree(params)
+        flat_grads, unravel_grads = ravel_pytree(grads)
+
+        grad_norm = jnp.linalg.norm(flat_grads)
+        if not jnp.isfinite(grad_norm) or grad_norm < 1e-12:
+            return grads
+
+        def scalar_loss(flat_values):
+            loss_value, _ = loss_fn(unravel_params(flat_values))
+            return loss_value
+
+        grad_loss_fn = jax.grad(scalar_loss)
+
+        def fisher_vec(vec):
+            hv = jax.jvp(grad_loss_fn, (flat_params,), (vec,))[1]
+            if self.natgrad_damping > 0:
+                hv = hv + self.natgrad_damping * vec
+            return hv
+
+        solution, info = cg(fisher_vec, flat_grads, tol=self.cg_tol, maxiter=self.cg_max_iters)
+        info = jnp.asarray(info)
+        solution = jax.lax.cond(info == 0, lambda val: val, lambda _: flat_grads, solution)
+
+        if self.use_hutchinson and self.hutchinson_samples > 0:
+            trace_est = _hutchinson_trace(
+                fisher_vec,
+                flat_params.shape[0],
+                rng_key,
+                self.hutchinson_samples,
+            )
+            denom = trace_est / (flat_params.shape[0] + 1e-8)
+            solution = solution / (denom + 1e-8)
+
+        if self.covariance_damping > 0:
+            gamma = jnp.clip(self.covariance_damping, 0.0, 1.0)
+            solution = gamma * solution + (1.0 - gamma) * flat_grads
+
+        natural_grads = unravel_grads(solution)
+        return natural_grads
 
     def predict(self, X: np.ndarray, use_posterior_mean: bool = True) -> np.ndarray:
         X = np.asarray(X, dtype=np.float32)
