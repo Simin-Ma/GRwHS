@@ -6,6 +6,7 @@ import argparse
 import json
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import random
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ import yaml
 from grwhs.cli.run_experiment import (
     _deep_update,
     _derive_run_dir,
+    _load_and_merge_configs,
     _maybe_call_runner,
     _parse_overrides,
     _save_resolved_config,
@@ -45,9 +47,30 @@ def _resolve_paths(paths: Iterable[str | Path], root: Path) -> List[Path]:
 def _merge_config_files(base: Dict[str, Any], files: Iterable[Path]) -> Dict[str, Any]:
     cfg = deepcopy(base)
     for cfg_path in files:
-        part = _load_yaml(cfg_path)
+        part = _load_and_merge_configs([cfg_path])
         deep_update(cfg, part)
     return cfg
+
+
+def _coerce_seed(value: Any) -> int | None:
+    try:
+        return None if value is None else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _detect_data_seed(cfg: Dict[str, Any]) -> int | None:
+    data_cfg = cfg.get("data")
+    if isinstance(data_cfg, dict):
+        seed = _coerce_seed(data_cfg.get("seed"))
+        if seed is not None:
+            return seed
+    seeds_cfg = cfg.get("seeds")
+    if isinstance(seeds_cfg, dict):
+        seed = _coerce_seed(seeds_cfg.get("data_generation"))
+        if seed is not None:
+            return seed
+    return None
 
 
 def parse_args() -> argparse.Namespace:
@@ -82,7 +105,7 @@ def main() -> None:
     if not sweep_config_path.exists():
         raise FileNotFoundError(f"Sweep config not found: {sweep_config_path}")
 
-    base_cfg = _load_yaml(base_config_path)
+    base_cfg = _load_and_merge_configs([base_config_path])
     sweep_root = sweep_config_path.parent
     sweep_spec = _load_yaml(sweep_config_path)
 
@@ -104,6 +127,12 @@ def main() -> None:
     common_tree = _prepare_override_tree(common_overrides_spec, common_override_cli)
 
     base_with_common = _merge_config_files(base_cfg, common_cfg_files)
+
+    shared_data_seed = _detect_data_seed(base_with_common)
+    if shared_data_seed is None:
+        shared_data_seed = random.randint(0, 2**32 - 1)
+    base_with_common.setdefault("data", {})["seed"] = shared_data_seed
+    base_with_common.setdefault("seeds", {})["data_generation"] = shared_data_seed
 
     sweep_name = sweep_spec.get("name") or sweep_config_path.stem
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -135,6 +164,8 @@ def main() -> None:
         resolved_cfg = _merge_config_files(base_with_common, var_cfg_files)
         deep_update(resolved_cfg, common_tree)
         deep_update(resolved_cfg, var_tree)
+        resolved_cfg.setdefault("data", {})["seed"] = shared_data_seed
+        resolved_cfg.setdefault("seeds", {})["data_generation"] = shared_data_seed
 
         resolved_cfg.setdefault("name", name)
         sweep_meta = resolved_cfg.setdefault("sweep", {})

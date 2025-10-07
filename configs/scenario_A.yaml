@@ -28,13 +28,16 @@ data:
 model:
   name: "grwhs_gibbs"
   s_guess: 24
-  tau0: 0.0029
-  eta: 0.65
+  tau0: 0.0065
+  eta: 0.60
+  c: 2.0
+  size_adjust: true
+  s0: 7.0
 
 inference:
   gibbs:
-    iters: 6000
-    burn_in: 3000
+    iters: 8000
+    burn_in: 4000
     thin: 1
     adapt_slice: true
-    jitter: 1.0e-8
+    jitter: 1.0e-6

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -40,7 +41,20 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
 
     data_cfg = config.get("data", {})
     data_type = str(data_cfg.get("type", "synthetic")).lower()
-    base_seed = config.get("seed")
+    seed_cfg = config.get("seeds", {})
+
+    def _resolve_seed(*candidates: Any) -> Optional[int]:
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            try:
+                return int(candidate)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    base_seed = _resolve_seed(seed_cfg.get("experiment"), config.get("seed"))
+    split_seed = _resolve_seed(seed_cfg.get("split"), base_seed)
 
     dataset_metadata: Dict[str, Any] = {}
     feature_names: Optional[List[str]] = None
@@ -52,9 +66,12 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
     beta_truth: Optional[np.ndarray]
     groups: List[List[int]] | None
     experiment_seed: Optional[int] = base_seed
+    data_seed: Optional[int] = _resolve_seed(data_cfg.get("seed"), seed_cfg.get("data_generation"), base_seed)
+    if data_seed is None:
+        data_seed = int(secrets.randbits(32))
 
     if data_type == "synthetic":
-        syn_cfg = synthetic_config_from_dict(data_cfg, seed=base_seed, name=config.get("name"))
+        syn_cfg = synthetic_config_from_dict(data_cfg, seed=data_seed, name=config.get("name"))
         dataset = generate_synthetic(syn_cfg)
         X_source = dataset.X
         y_source = dataset.y
@@ -107,7 +124,7 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         n=std_result.X.shape[0],
         val_ratio=float(data_cfg.get("val_ratio", 0.1)),
         test_ratio=float(data_cfg.get("test_ratio", 0.2)),
-        seed=base_seed,
+        seed=split_seed,
     )
 
     def _slice(arr: np.ndarray, idx: np.ndarray) -> np.ndarray:
@@ -208,6 +225,51 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
             conv_path = output_dir / "convergence.json"
             conv_path.write_text(json.dumps({k: _to_serializable(v) for k, v in convergence_summary.items()}, indent=2), encoding="utf-8")
 
+    inference_seeds: Dict[str, int] = {}
+    inference_cfg = config.get("inference", {})
+    if isinstance(inference_cfg, dict):
+        for key, section in inference_cfg.items():
+            if not isinstance(section, dict):
+                continue
+            stage_seed = _resolve_seed(section.get("seed"))
+            if stage_seed is not None:
+                inference_seeds[key] = stage_seed
+
+    runtime_cfg = config.get("runtime", {})
+    runtime_seed = _resolve_seed(runtime_cfg.get("seed"))
+    if runtime_seed is not None and "runtime" not in inference_seeds:
+        inference_seeds["runtime"] = runtime_seed
+
+    model_seed = _resolve_seed(config.get("model", {}).get("seed"))
+    if model_seed is not None:
+        inference_seeds.setdefault("model", model_seed)
+
+    split_seed_log: Dict[str, int] = {}
+    if split_seed is not None:
+        split_seed_log["train_test"] = split_seed
+        split_seed_log["train_val"] = split_seed + 1
+
+    data_seed_logged = _resolve_seed(dataset_metadata.get("seed"), data_seed, base_seed)
+
+    config_seed_defaults: Dict[str, int] = {}
+    if isinstance(seed_cfg, dict):
+        for key, value in seed_cfg.items():
+            resolved = _resolve_seed(value)
+            if resolved is not None:
+                config_seed_defaults[key] = resolved
+
+    seed_log: Dict[str, Any] = {}
+    if experiment_seed is not None:
+        seed_log["experiment"] = int(experiment_seed)
+    if data_seed_logged is not None:
+        seed_log["data_generation"] = int(data_seed_logged)
+    if split_seed_log:
+        seed_log["split"] = split_seed_log
+    if inference_seeds:
+        seed_log["inference"] = inference_seeds
+    if config_seed_defaults:
+        seed_log["config"] = config_seed_defaults
+
     metadata = {
         "n": int(X_source.shape[0]),
         "p": int(X_source.shape[1]),
@@ -231,6 +293,8 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         },
         "data": _to_serializable(dataset_metadata),
     }
+    if seed_log:
+        metadata["seeds"] = seed_log
     if strong_idx is not None:
         metadata["strong_idx"] = _to_serializable(strong_idx)
     if weak_idx is not None:

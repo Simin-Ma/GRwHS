@@ -19,6 +19,11 @@ seed: 42
 device: "cpu"            # Execution backend: "cpu" (all solvers) | "gpu" (NumPyro SVI only)
 output_dir: "outputs"
 
+seeds:
+  experiment: 42         # Global/default seed if a stage-specific override is not supplied
+  split: 42              # Seed controlling train/val/test partitioning (validation uses split+1 internally)
+  # data_generation: null  # Optional: set to reproduce a specific synthetic dataset; leave unset to sample anew each run
+
 standardization:
   X: "unit_variance"     # Feature scaling:
                          # - "unit_variance" (recommended for GRwHS/Gibbs/SVI)
