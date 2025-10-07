@@ -13,12 +13,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
-from sklearn.metrics import (
-    auc,
-    f1_score,
-    mean_squared_error,
-    precision_recall_curve,
-)
+from sklearn.metrics import auc, mean_squared_error, precision_recall_curve
 
 try:  # Optional plotting libraries (not used in automated metrics)
     import matplotlib.pyplot as plt  # noqa: F401
@@ -69,11 +64,10 @@ def predictive_metrics(
 def selection_metrics(
     y_true_binary: Optional[ArrayLike],
     scores: Optional[ArrayLike],
-    threshold: float = 0.5,
 ) -> Dict[str, Optional[float]]:
-    """Compute variable selection metrics (AUC-PR and F1)."""
+    """Compute variable selection metrics (AUC-PR and best-threshold F1)."""
 
-    metrics: Dict[str, Optional[float]] = {"AUC-PR": None, "F1": None}
+    metrics: Dict[str, Optional[float]] = {"AUC-PR": None, "F1": None, "F1_threshold": None}
 
     y = _as_numpy(y_true_binary)
     s = _as_numpy(scores)
@@ -85,17 +79,21 @@ def selection_metrics(
         return metrics
 
     try:
-        precision_curve, recall_curve, _ = precision_recall_curve(y, s)
+        precision_curve, recall_curve, thresholds = precision_recall_curve(y, s)
         if precision_curve.size > 1 and recall_curve.size > 1:
             metrics["AUC-PR"] = float(auc(recall_curve, precision_curve))
+        if precision_curve.size > 1 and recall_curve.size > 1:
+            denom = precision_curve[1:] + recall_curve[1:]
+            denom = np.where(denom == 0.0, 1.0, denom)
+            f1_scores = 2.0 * precision_curve[1:] * recall_curve[1:] / denom
+            if f1_scores.size > 0:
+                idx = int(np.nanargmax(f1_scores))
+                metrics["F1"] = float(f1_scores[idx])
+                if thresholds.size > 0:
+                    capped_idx = min(idx, thresholds.size - 1)
+                    metrics["F1_threshold"] = float(thresholds[capped_idx])
     except Exception:  # pragma: no cover - handles edge cases
         metrics["AUC-PR"] = None
-
-    try:
-        preds = (s >= threshold).astype(int)
-        metrics["F1"] = float(f1_score(y, preds, zero_division=0))
-    except Exception:  # pragma: no cover
-        metrics["F1"] = None
 
     return metrics
 
@@ -292,24 +290,42 @@ def evaluate_model_metrics(
     # Shrinkage diagnostics (mean kappa)
     mean_kappa = None
     edf_total = None
+    phi_samples = posterior.phi
+    lambda_samples = posterior.lambda_
+    tau_samples = posterior.tau
+    sigma_samples = posterior.sigma
     if (
         X_train is not None
-        and posterior.lambda_ is not None
-        and posterior.tau is not None
-        and posterior.phi is not None
-        and posterior.sigma is not None
+        and lambda_samples is not None
+        and tau_samples is not None
+        and sigma_samples is not None
         and group_index is not None
     ):
         try:
+            G = int(np.max(group_index)) + 1 if group_index.size else 1
+            if phi_samples is None:
+                phi_samples = np.ones((lambda_samples.shape[0], G), dtype=float)
+            elif phi_samples.shape[1] < G:
+                # Expand to full group count if necessary
+                S = phi_samples.shape[0]
+                expanded = np.ones((S, G), dtype=float)
+                expanded[:, :phi_samples.shape[1]] = phi_samples
+                phi_samples = expanded
+            slab_width = (
+                slab_width
+                or getattr(model, "slab_scale", None)
+                or getattr(model, "c", None)
+                or 2.0
+            )
             diag_res = compute_diagnostics_from_samples(
                 X=np.asarray(X_train),
                 group_index=np.asarray(group_index),
-                c=float(slab_width or getattr(model, "c", 1.0)),
+                c=float(slab_width),
                 eps=1e-8,
-                lambda_=posterior.lambda_,
-                tau=posterior.tau,
-                phi=posterior.phi,
-                sigma=posterior.sigma,
+                lambda_=lambda_samples,
+                tau=tau_samples,
+                phi=phi_samples,
+                sigma=sigma_samples,
             )
             mean_kappa = float(np.mean(diag_res.per_coeff["kappa"]))
             if "edf" in diag_res.per_group:

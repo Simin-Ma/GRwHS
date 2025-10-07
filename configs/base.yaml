@@ -77,20 +77,20 @@ model:
                           # - horseshoe | regularized_horseshoe: non-group HS baselines
 
   # Regularized Horseshoe slab width (GRwHS + regularized horseshoe)
-  c: 2.0
+  c: 1.5
 
   # Prior guess for number of relevant coefficients (ties into tau0 rule)
   s_guess: 108
 
   # Global scale following tau0 ≈ (s / (p - s)) / sqrt(n) (unit-variance columns)
-  tau0: 0.0056
+  tau0: 0.0045
 
   # Group shrinkage: phi_g ~ HalfNormal(eta / sqrt(p_g)) (GRwHS only)
-  eta: 0.8
+  eta: 0.65
   size_adjust: true      # If true, divide by sqrt(p_g) to avoid favoring small groups
 
   # Noise prior: Half-Cauchy(scale=s0) on sigma (SVI/Gibbs). Convex baselines ignore this.
-  s0: 2.0
+  s0: 3.0
 
   # Gibbs runtime controls (builder reads these keys directly)
   iters: 6000
@@ -100,8 +100,8 @@ model:
 # -------------------------
 inference:
   gibbs:
-    iters: 6000           # Total iterations per chain
-    burn_in: 3000         # Burn-in iterations discarded
+    iters: 8000           # Total iterations per chain
+    burn_in: 4000         # Burn-in iterations discarded
     thin: 1               # Keep every k-th draw post burn-in
     adapt_slice: true     # Enable adaptive stepping in slice/MH moves
     jitter: 1.0e-8        # Numerical jitter for linear algebra

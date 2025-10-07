@@ -27,8 +27,8 @@ data:
 model:
   name: "grwhs_gibbs"
   s_guess: 117
-  tau0: 0.0079
-  eta: 0.8
+  tau0: 0.0063
+  eta: 0.65
 
 inference:
   gibbs:
