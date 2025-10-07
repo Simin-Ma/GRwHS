@@ -77,15 +77,22 @@ def _autocorrelation(chain: Array) -> Array:
         return np.ones((n,) + chain.shape[1:])
     centered = chain - chain.mean(axis=0)
     var0 = np.mean(centered * centered, axis=0)
-    if np.all(var0 == 0):
+    zero_mask = var0 <= 1e-12
+    if np.all(zero_mask):
         shape = (n,) + chain.shape[1:]
         ac = np.zeros(shape, dtype=float)
         ac[0] = 1.0
         return ac
+    var0_safe = np.where(zero_mask, 1.0, var0)
     ac = np.empty((n,) + chain.shape[1:], dtype=float)
     for lag in range(n):
         prod = centered[: n - lag] * centered[lag:]
-        ac[lag] = np.mean(prod, axis=0) / var0
+        ac[lag] = np.mean(prod, axis=0) / var0_safe
+    if np.any(zero_mask):
+        ac_flat = ac.reshape(n, -1)
+        mask_flat = zero_mask.reshape(-1)
+        ac_flat[:, mask_flat] = 0.0
+        ac_flat[0, mask_flat] = 1.0
     return ac
 
 

@@ -1,55 +1,40 @@
 # ========================================
-# Scenario A — Sparse regime, light correlation
+# Scenario A – n ≫ p, mixed strong/weak signals
 # ----------------------------------------
 # Purpose
-# - Validate support recovery and calibration under strong sparsity.
-# - Light AR(1) correlation to avoid confounding while still realistic.
-#
-# When to use which inference
-# - Small/medium problems: set model.name = "grwhs_gibbs" to use Gibbs sampler.
-# - Larger runs / multiple sweeps: keep SVI (model.name = "grwhs_svi").
-#
-# Baselines
-# - Swap model.name to: ridge | lasso | group_lasso | horseshoe | regularized_horseshoe
-# - Keep other fields unchanged; the runner will apply appropriate defaults.
+# - Mid-sized regression where observations dominate features.
+# - Highlights calibration when strong and weak signals coexist across many groups.
+# - Moderate block correlation keeps shared-shrinkage helpful without degeneracy.
 # ========================================
 
 defaults: "configs/base.yaml"
 
 data:
-  n: 800
-  p: 300
+  n: 960
+  p: 240
   G: 30
+  group_sizes: "variable"
   correlation:
-    type: "ar1"
-    rho: 0.2
+    type: "block"
+    rho: 0.35
+    block_size: 8
   signal:
-    sparsity: 0.05          # ~5% active coefficients; stresses precision/recall trade-offs
-    strong_frac: 0.40       # 40% of actives draw from beta_scale_strong, remainder use beta_scale_weak
-    beta_scale_strong: 2.5
-    beta_scale_weak: 0.4
+    sparsity: 0.10
+    strong_frac: 0.22
+    beta_scale_strong: 1.7
+    beta_scale_weak: 0.45
+    group_sparsity: 0.6
 
 model:
-  name: "grwhs_svi"        # For small n,p you may set "grwhs_gibbs" instead
-  c: 1.5
-  eta: 0.4                  # Stronger group pooling for sparse truth; relax toward 0.6+ for looser shrinkage
-  size_adjust: true
-  tau0_heuristic:
-    s: 15                   # Slightly tighter global sparsity prior than base defaults
-    mode: "unit_variance"
+  name: "grwhs_gibbs"
+  s_guess: 24
+  tau0: 0.0036
+  eta: 0.8
 
 inference:
-  svi:
-    steps: 2500
-    lr: 8.0e-3
-    batch_size: 256
-    mc_samples: 3
-    natural_grad: true
-    elbo_eval_every: 100
-
-experiments:
-  repeats: 5
-  coverage_level: 0.9
-
-logging:
-  level: "INFO"
+  gibbs:
+    iters: 6000
+    burn_in: 3000
+    thin: 1
+    adapt_slice: true
+    jitter: 1.0e-8

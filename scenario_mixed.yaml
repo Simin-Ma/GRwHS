@@ -1,0 +1,39 @@
+defaults: "base.yaml"
+
+data:
+  type: "synthetic"
+  n: 400
+  p: 600
+  G: 30
+  group_sizes: "variable"
+  correlation: { type: "block", rho: 0.4, block_size: 20 }
+  signal:
+    sparsity: 0.12
+    strong_frac: 0.2
+    beta_scale_strong: 1.8
+    beta_scale_weak: 0.45
+    sign_mix: "random"
+    group_sparsity: 0.6
+  noise_sigma: 1.0
+
+standardization: { X: "unit_variance", y_center: true }
+
+model:
+  name: "grwhs_svi"
+  c: 1.5
+  eta: 0.6
+  s_guess: 72
+
+inference:
+  svi:
+    steps: 3000
+    lr: 8.0e-3
+    batch_size: 512
+    mc_samples: 3
+    natural_grad: true
+    elbo_eval_every: 100
+
+experiments:
+  repeats: 5
+  diagnostics: true
+  coverage_level: 0.9

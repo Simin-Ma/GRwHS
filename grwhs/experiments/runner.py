@@ -135,7 +135,10 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         raise ValueError("Experiment requires targets after preprocessing.")
 
     for _ in progress(range(1), total=1, desc=f"Training {model_name}"):
-        model.fit(X_train, y_train)
+        try:
+            model.fit(X_train, y_train, groups=groups)
+        except TypeError:
+            model.fit(X_train, y_train)
 
     metrics_cfg = config.get("experiments", {})
 

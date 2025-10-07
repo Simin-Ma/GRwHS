@@ -9,7 +9,7 @@ ensure well-tested implementations of common metrics.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -19,14 +19,6 @@ from sklearn.metrics import (
     mean_squared_error,
     precision_recall_curve,
 )
-
-try:  # Optional ArviZ for WAIC and diagnostics
-    import arviz as az
-
-    _HAS_ARVIZ = True
-except Exception:  # pragma: no cover - optional dependency
-    az = None  # type: ignore
-    _HAS_ARVIZ = False
 
 try:  # Optional plotting libraries (not used in automated metrics)
     import matplotlib.pyplot as plt  # noqa: F401
@@ -54,13 +46,9 @@ def predictive_metrics(
     y_pred: Optional[ArrayLike],
     loglik_samples: Optional[np.ndarray] = None,
 ) -> Dict[str, Optional[float]]:
-    """Compute predictive metrics (RMSE, predictive log-likelihood, WAIC)."""
+    """Compute predictive metrics (RMSE, predictive log-likelihood)."""
 
-    metrics: Dict[str, Optional[float]] = {
-        "RMSE": None,
-        "PredictiveLogLikelihood": None,
-        "WAIC": None,
-    }
+    metrics: Dict[str, Optional[float]] = {"RMSE": None, "PredictiveLogLikelihood": None}
 
     y = _as_numpy(y_true)
     pred = _as_numpy(y_pred)
@@ -73,26 +61,8 @@ def predictive_metrics(
         ll = np.asarray(loglik_samples, dtype=float)
         if ll.ndim == 1:
             metrics["PredictiveLogLikelihood"] = float(np.mean(ll))
-            if _HAS_ARVIZ:
-                try:
-                    inference_data = az.from_dict(
-                        observed_data={"y": y},
-                        log_likelihood={"y": ll[np.newaxis, :]},
-                    )
-                    metrics["WAIC"] = float(az.waic(inference_data, pointwise=False).waic)
-                except Exception:  # pragma: no cover - waic may fail for degenerate cases
-                    metrics["WAIC"] = None
         elif ll.ndim == 2:
             metrics["PredictiveLogLikelihood"] = float(ll.mean())
-            if _HAS_ARVIZ:
-                try:
-                    inference_data = az.from_dict(
-                        observed_data={"y": y},
-                        log_likelihood={"y": ll},
-                    )
-                    metrics["WAIC"] = float(az.waic(inference_data, pointwise=False).waic)
-                except Exception:  # pragma: no cover
-                    metrics["WAIC"] = None
     return metrics
 
 
@@ -136,10 +106,7 @@ def interval_metrics(
 ) -> Dict[str, Optional[float]]:
     """Empirical coverage and average width for predictive intervals."""
 
-    metrics: Dict[str, Optional[float]] = {
-        "Coverage-90": None,
-        "IntervalWidth-90": None,
-    }
+    metrics: Dict[str, Optional[float]] = {"Coverage90": None, "IntervalWidth90": None}
 
     y = _as_numpy(y_true)
     if intervals is None or y is None or y.size == 0:
@@ -151,18 +118,21 @@ def interval_metrics(
 
     lower, upper = arr[:, 0], arr[:, 1]
     covered = (y >= lower) & (y <= upper)
-    metrics["Coverage-90"] = float(np.mean(covered))
-    metrics["IntervalWidth-90"] = float(np.mean(upper - lower))
+    metrics["Coverage90"] = float(np.mean(covered))
+    metrics["IntervalWidth90"] = float(np.mean(upper - lower))
     return metrics
 
 
-def shrinkage_metrics(kappa: Optional[ArrayLike]) -> Dict[str, Optional[float]]:
-    """Mean shrinkage factor."""
+def shrinkage_metrics(
+    kappa: Optional[ArrayLike],
+    effective_dof: Optional[float],
+) -> Dict[str, Optional[float]]:
+    """Mean shrinkage factor and total effective degrees of freedom."""
 
     kap = _as_numpy(kappa)
-    if kap is None:
-        return {"MeanKappa": None}
-    return {"MeanKappa": float(np.mean(kap))}
+    mean_kappa = float(np.mean(kap)) if kap is not None else None
+    edf_val = None if effective_dof is None else float(effective_dof)
+    return {"MeanKappa": mean_kappa, "EffectiveDoF": edf_val}
 
 
 @dataclass
@@ -311,7 +281,7 @@ def evaluate_model_metrics(
         upper = np.quantile(pred_draws, 1 - (1 - coverage_level) / 2, axis=0)
         interval_array = np.column_stack([lower, upper])
     elif pred_mean is not None and posterior.sigma is not None:
-        sigma = posterior.sigma[0]
+        sigma = float(posterior.sigma[0])
         z = norm.ppf(0.5 + coverage_level / 2)
         lower = pred_mean - z * sigma
         upper = pred_mean + z * sigma
@@ -321,6 +291,7 @@ def evaluate_model_metrics(
 
     # Shrinkage diagnostics (mean kappa)
     mean_kappa = None
+    edf_total = None
     if (
         X_train is not None
         and posterior.lambda_ is not None
@@ -341,9 +312,12 @@ def evaluate_model_metrics(
                 sigma=posterior.sigma,
             )
             mean_kappa = float(np.mean(diag_res.per_coeff["kappa"]))
+            if "edf" in diag_res.per_group:
+                edf_total = float(np.sum(diag_res.per_group["edf"]))
         except Exception:  # pragma: no cover - diagnostics may fail for deterministics
             mean_kappa = None
+            edf_total = None
 
-    metrics.update(shrinkage_metrics(mean_kappa))
+    metrics.update(shrinkage_metrics(mean_kappa, edf_total))
 
     return metrics

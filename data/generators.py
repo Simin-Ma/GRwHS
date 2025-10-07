@@ -72,13 +72,47 @@ def make_groups(p: int, G: Optional[int], group_sizes: Union[str, Sequence[int],
 
     if isinstance(group_sizes, str):
         label = group_sizes.lower()
-        if label != "equal":
+        if label == "equal":
+            if G is None or G <= 0:
+                raise GeneratorError("Equal group sizing requires a positive G.")
+            base = p // G
+            remainder = p % G
+            sizes = [base + (1 if g < remainder else 0) for g in range(G)]
+        elif label == "variable":
+            if G is None or G <= 0:
+                raise GeneratorError("Variable group sizing requires a positive G.")
+            base = max(1, p // G)
+            if base >= 12:
+                min_size = max(4, min(int(math.floor(0.5 * base)), 8))
+            else:
+                min_size = max(2, int(math.floor(0.5 * base)))
+            if base <= 20:
+                max_size = max(min_size + 1, 20)
+            else:
+                max_size = max(min_size + 1, int(math.ceil(1.25 * base)))
+            pattern = (-2, 1, 0, 2, -1, 3, -3)
+            sizes = []
+            for idx in range(G):
+                size = base + pattern[idx % len(pattern)]
+                size = max(min_size, min(max_size, size))
+                sizes.append(size)
+            adjust = p - sum(sizes)
+            cursor = 0
+            safeguard = G * 10 + abs(adjust)
+            while adjust != 0 and safeguard > 0:
+                j = cursor % G
+                if adjust > 0 and sizes[j] < max_size:
+                    sizes[j] += 1
+                    adjust -= 1
+                elif adjust < 0 and sizes[j] > min_size:
+                    sizes[j] -= 1
+                    adjust += 1
+                cursor += 1
+                safeguard -= 1
+            if adjust != 0:
+                raise GeneratorError("Failed to construct variable group sizes matching p.")
+        else:
             raise GeneratorError(f"Unsupported group_sizes specifier '{group_sizes}'.")
-        if G is None or G <= 0:
-            raise GeneratorError("Equal group sizing requires a positive G.")
-        base = p // G
-        remainder = p % G
-        sizes = [base + (1 if g < remainder else 0) for g in range(G)]
     else:
         sizes = [int(s) for s in group_sizes]
         if any(s <= 0 for s in sizes):

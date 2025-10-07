@@ -93,33 +93,35 @@ Set `data.type=loader` and implement adapter in `data/loaders.py` (mapping to `(
 ## 4. Benchmark Workflow
 
 ### 4.1 Synthetic Benchmarks (Scenarios A-D)
-For systematic evaluation across models:
+Use the Gibbs sampler by default for all GRwHS comparisons. SVI should only be selected for very large problems (e.g., `p > 1500` or `n`/`p` beyond the Gibbs defaults).
+
+**Step 1 – Sweep all models on a scenario**
 
 ```bash
-# Ridge / Lasso / Elastic Net baselines
-for model in ridge lasso elastic_net; do
-  python -m grwhs.cli.run_experiment \
-    --config configs/base.yaml configs/scenario_A.yaml \
-    --name ${model}_A \
-    --override model.name=${model} data.n=1000 data.p=200
-  # Repeat for scenarios B, C, D by adjusting config list
-done
-
-# GRwHS-Gibbs
-python -m grwhs.cli.run_experiment \
-  --config configs/base.yaml configs/scenario_A.yaml \
-  --name grwhs_gibbs_A \
-  --override model.name=grwhs_gibbs inference.gibbs.iters=4000 \
-             inference.gibbs.burn_in=2000 inference.gibbs.thin=2
-
-# GRwHS-SVI (requires NumPyro/JAX)
-python -m grwhs.cli.run_experiment \
-  --config configs/base.yaml configs/scenario_B.yaml \
-  --name grwhs_svi_B \
-  --override model.name=grwhs_svi inference.svi.steps=3000 inference.svi.lr=1e-2
+# Scenario A comparison (GRwHS-Gibbs + convex baselines)
+python -m grwhs.cli.run_sweep \
+  --base-config configs/scenario_A.yaml \
+  --sweep-config configs/sweeps/all_models_base.yaml \
+  --outdir outputs/sweeps/scenario_A
 ```
 
-Repeat for scenarios C & D (adjust overrides for computational budget). Each run is tagged via `--name`, enabling easy aggregation.
+The sweep uses `configs/scenario_A.yaml` for shared settings and the variations defined in `configs/sweeps/all_models_base.yaml` (GRwHS-Gibbs plus ridge/lasso/elastic-net/group-lasso/sparse-group-lasso/horseshoe baselines). Repeat with `configs/scenario_B.yaml`, etc., by changing `--base-config` (and optionally `--outdir`).
+
+**Step 2 – Optional SVI runs for large-scale cases**
+
+Only if Scenario D (or a custom config) exceeds the practical Gibbs limit, run SVI explicitly:
+
+```bash
+python -m grwhs.cli.run_experiment \
+  --config configs/scenario_D.yaml \
+  --name grwhs_svi_D \
+  --override model.name=grwhs_svi \
+             inference.svi.steps=3000 \
+             inference.svi.lr=8e-3 \
+             inference.svi.batch_size=512
+```
+
+Keep the output directory pattern (`--name`) aligned with sweep naming so that reports group correctly.
 
 ### 4.2 Real Dataset Benchmarks
 1. Implement loader returning `(X, y, group_indices)` in `data/loaders.py`.
@@ -149,6 +151,24 @@ Repeat for scenarios C & D (adjust overrides for computational budget). Each run
 ### 4.3 Automation via Scripts or Sweeps
 - Use `grwhs/experiments/sweeps.py` to build custom grid/combinations.
 - Script loops (e.g., bash/PowerShell or Python) to iterate over models, scenarios, seeds.
+
+### 4.4 Capturing Results in Reports
+After each sweep or standalone run, update the consolidated report artifacts:
+
+```bash
+# Collect metrics for the freshest Scenario A sweep
+python -m grwhs.cli.make_report \
+  --run outputs/sweeps/scenario_A/* \
+  --outdir outputs/reports/scenario_A
+
+# Combine multiple scenarios into one summary
+python -m grwhs.cli.make_report \
+  --run outputs/sweeps/scenario_A/* \
+         outputs/sweeps/scenario_B/* \
+  --outdir outputs/reports/combined
+```
+
+The report command writes a `summary_index.json` plus per-run JSON summaries. Include the resulting report directory (e.g., `outputs/reports/scenario_A`) when drafting comparison tables or figures.
 
 ---
 

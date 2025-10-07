@@ -1,54 +1,39 @@
 # ========================================
-# Scenario C — Dense weak signals, strong correlation
+# Scenario C – n ≫ p with stronger block correlation
 # ----------------------------------------
 # Purpose
-# - Stress-test stability and calibration when most coefficients are non-zero.
-# - Strong correlation (compound symmetry) challenges over-shrinkage.
-#
-# Inference choice
-# - Default: SVI (dense regime and larger p). For small data, you may try Gibbs
-#   by setting model.name = "grwhs_gibbs", but expect longer runtime.
-#
-# Baselines
-# - Compare against ridge (smooth shrinkage) and group_lasso (group-aware).
+# - Same observation-rich regime as Scenario A but with tighter feature blocks.
+# - Encourages borrowing strength across correlated groups while keeping weak signals identifiable.
 # ========================================
 
 defaults: "configs/base.yaml"
 
 data:
-  n: 1200
-  p: 600
-  G: 60
+  n: 780
+  p: 210
+  G: 26
+  group_sizes: "variable"
   correlation:
-    type: "cs"
-    rho: 0.6
+    type: "block"
+    rho: 0.50
+    block_size: 8
   signal:
-    sparsity: 0.60            # Majority of coefficients active; emphasizes shrinkage smoothness
-    strong_frac: 0.05         # Few truly strong effects atop a sea of weak coefficients
-    beta_scale_strong: 0.8
-    beta_scale_weak: 0.2
+    sparsity: 0.12
+    strong_frac: 0.30
+    beta_scale_strong: 1.9
+    beta_scale_weak: 0.55
+    group_sparsity: 0.55
 
 model:
-  name: "grwhs_svi"
-  c: 2.0                      # Wider slab to keep dense weak signals from collapsing to zero
-  eta: 0.8                    # Loose group pooling so dense groups can stay active
-  size_adjust: true
-  tau0_heuristic:
-    s: 200
-    mode: "unit_variance"
+  name: "grwhs_gibbs"
+  s_guess: 25
+  tau0: 0.0048
+  eta: 0.8
 
 inference:
-  svi:
-    steps: 4000
-    lr: 8.0e-3
-    batch_size: 512
-    mc_samples: 4
-    natural_grad: true
-    elbo_eval_every: 100
-
-experiments:
-  repeats: 5
-  coverage_level: 0.9
-
-logging:
-  level: "INFO"
+  gibbs:
+    iters: 6000
+    burn_in: 3000
+    thin: 1
+    adapt_slice: true
+    jitter: 1.0e-8

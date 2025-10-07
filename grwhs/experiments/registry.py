@@ -8,6 +8,8 @@ environments can still import this module without errors.
 
 from typing import Callable, Dict, Any, Optional
 
+from data.generators import make_groups
+
 # Optional: GRwHS main models (if available)
 try:
     from grwhs.models.grwhs_svi_numpyro import GRwHS_SVI  # type: ignore
@@ -82,15 +84,17 @@ def _infer_groups(cfg: Dict[str, Any]) -> Optional[list[list[int]]]:
         group_sizes = "equal"
 
     if isinstance(group_sizes, str):
-        if group_sizes.lower() != "equal":
-            return None
         G = _get(cfg, "data.G", None)
         if G is None:
             return None
-        if p % G != 0:
-            raise ValueError("Cannot build equal-sized groups: 'data.p' not divisible by 'data.G'.")
-        size = p // G
-        return [list(range(g * size, (g + 1) * size)) for g in range(G)]
+        label = group_sizes.lower()
+        if label == "equal":
+            if p % G != 0:
+                raise ValueError("Cannot build equal-sized groups: 'data.p' not divisible by 'data.G'.")
+            size = p // G
+            return [list(range(g * size, (g + 1) * size)) for g in range(G)]
+        # Delegate to synthetic grouping helper for other presets (e.g., "variable")
+        return make_groups(int(p), int(G), group_sizes)
 
     try:
         sizes = [int(s) for s in group_sizes]

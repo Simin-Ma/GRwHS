@@ -32,26 +32,27 @@ data:
   type: "synthetic"      # Data source:
                           # - "synthetic": generate data using built-in generators
                           # - "loader": read from disk via the loader.* paths below
-  n: 1000
-  p: 200
-  G: 20
-  group_sizes: "equal"   # Group structure:
-                          # - "equal": split features evenly into G groups
-                          # - explicit list: e.g. [8, 12, 10, ...]
+  n: 600
+  p: 900
+  G: 36
+  group_sizes: "variable"   # Group structure:
+                            # - "equal": split features evenly into G groups
+                            # - "variable": draw heterogeneous sizes (min 6..8, max ~20)
+                            # - explicit list: e.g. [8, 12, 10, ...]
 
   # Correlation structure for synthetic design matrices
   correlation:
     type: "block"        # "block" | "ar1" | "cs" (compound symmetry)
-    rho: 0.5
-    block_size: 10       # Only used when type == "block"
+    rho: 0.4
+    block_size: 25       # Roughly p / G; adjust per-scenario if G changes
 
   # Signal mechanism (controls ground-truth beta)
   signal:
-    sparsity: 0.10       # Overall fraction of non-zero coefficients (0..1)
-    strong_frac: 0.05    # Among non-zeros, fraction that are strong signals
-    group_sparsity: null # If set (e.g. 0.3), only ~30% of groups contain non-zeros; null = unconstrained
-    beta_scale_strong: 2.0   # Std of strong effects (in sigma units)
-    beta_scale_weak: 0.4     # Std of weak effects
+    sparsity: 0.12       # Overall fraction of non-zero coefficients (0..1)
+    strong_frac: 0.22    # Among non-zeros, fraction that are strong signals
+    group_sparsity: 0.6  # Fraction of groups containing any non-zeros
+    beta_scale_strong: 1.8   # Std of strong effects (in sigma units)
+    beta_scale_weak: 0.45    # Std of weak effects
     sign_mix: "random"   # Sign pattern for non-zeros: "random" | "positive" | "negative"
 
   noise_sigma: 1.0
@@ -68,34 +69,46 @@ data:
 # Model settings (shared interface)
 # -------------------------
 model:
-  name: "grwhs_svi"      # Select model:
-                          # - grwhs_svi: NumPyro SVI (scalable, large p)
-                          # - grwhs_gibbs: Gibbs sampler (exact, small/medium scale)
+  name: "grwhs_gibbs"    # Default sampler:
+                          # - grwhs_gibbs: exact Gibbs sampler (preferred baseline)
+                          # - grwhs_svi: NumPyro SVI for large-scale runs (override when needed)
                           # - ridge | lasso | elastic_net: convex baselines
                           # - group_lasso | sparse_group_lasso: group-aware convex baselines
                           # - horseshoe | regularized_horseshoe: non-group HS baselines
 
   # Regularized Horseshoe slab width (GRwHS + regularized horseshoe)
-  c: 1.5
+  c: 2.0
 
-  # Heuristic for the global sparsity scale tau; ignored if an explicit tau0 is set
-  tau0_heuristic:
-    s: 20                # Prior guess for the number of relevant coefficients
-    mode: "unit_variance"  # If standardization.X == "unit_l2", internal code multiplies by sqrt(n)
+  # Prior guess for number of relevant coefficients (ties into tau0 rule)
+  s_guess: 108
+
+  # Global scale following tau0 ≈ (s / (p - s)) / sqrt(n) (unit-variance columns)
+  tau0: 0.0056
 
   # Group shrinkage: phi_g ~ HalfNormal(eta / sqrt(p_g)) (GRwHS only)
-  eta: 0.5
+  eta: 0.8
   size_adjust: true      # If true, divide by sqrt(p_g) to avoid favoring small groups
 
   # Noise prior: Half-Cauchy(scale=s0) on sigma (SVI/Gibbs). Convex baselines ignore this.
-  halfcauchy_sigma_scale: 1.0
+  s0: 2.0
+
+  # Gibbs runtime controls (builder reads these keys directly)
+  iters: 6000
 
 # -------------------------
 # Inference settings
 # -------------------------
 inference:
+  gibbs:
+    iters: 6000           # Total iterations per chain
+    burn_in: 3000         # Burn-in iterations discarded
+    thin: 1               # Keep every k-th draw post burn-in
+    adapt_slice: true     # Enable adaptive stepping in slice/MH moves
+    jitter: 1.0e-8        # Numerical jitter for linear algebra
+    seed: 123
+
   svi:
-    steps: 2000            # Number of optimization steps
+    steps: 4000            # (Optional override) Number of optimization steps
     lr: 1.0e-2             # Adam learning rate
     mc_samples: 3          # MC samples for non-analytic ELBO terms
     batch_size: 256        # Minibatch size; omit/null for full-batch
@@ -110,32 +123,24 @@ inference:
     cg_maxiter: 200        # CG maximum iterations (None = scipy default)
     natgrad_damping: 1.0e-3  # Fisher damping to stabilise natural gradients
     coupling_clip: 3.0     # Clip shared-factor couplings (set null to disable)
-    cov_damping: 0.1       # Blend factor between gradient and natural gradient
-
-  gibbs:
-    iters: 4000           # Total iterations per chain
-    burn_in: 2000         # Burn-in iterations discarded
-    thin: 2               # Keep every k-th draw post burn-in
-    adapt_slice: true     # Enable adaptive stepping in slice/MH moves
-    jitter: 1.0e-8        # Numerical jitter for linear algebra
-    seed: 123
+    cov_damping: 0.0       # Blend factor between gradient and natural gradient
 
 # -------------------------
 # Experiment orchestration
 # -------------------------
 experiments:
-  repeats: 1                 # Number of independent repeats (different seeds)
+  repeats: 5                 # Number of independent repeats (different seeds)
   save_posterior: true       # Save posterior/variational artifacts when available
   diagnostics: true          # Compute shrinkage/variance diagnostics after fit
   metrics:
     - RMSE
     - PredictiveLogLikelihood
-    - WAIC
     - AUC-PR
     - F1
     - Coverage90
     - IntervalWidth90
     - MeanKappa
+    - EffectiveDoF
   coverage_level: 0.9        # Nominal interval level for calibration metrics
   runtime_profile: false     # If true, log timing/memory profiles
 

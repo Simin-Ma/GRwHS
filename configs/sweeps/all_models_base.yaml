@@ -20,11 +20,6 @@ variations:
         # Optionally adjust iterations (defaults to 2000 in registry)
         # iters: 3000
 
-  - name: grwhs_svi
-    overrides:
-      model:
-        name: grwhs_svi
-
   - name: ridge
     overrides:
       model:
