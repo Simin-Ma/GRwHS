@@ -25,15 +25,38 @@ data:
     group_sparsity: 0.55
 
 model:
-  name: "grwhs_gibbs"
+  name: grwhs_gibbs
+  c: 1.2
   s_guess: 25
   tau0: 0.0039
   eta: 0.65
+  size_adjust: true
+  s0: 0.8
+  iters: 12000
 
 inference:
   gibbs:
-    iters: 6000
-    burn_in: 3000
+    iters: 12000
+    burn_in: 6000
     thin: 1
     adapt_slice: true
-    jitter: 1.0e-8
+    jitter: 1.0e-08
+    seed: 123
+    slice_w: 0.15
+  svi:
+    steps: 4000
+    lr: 0.01
+    mc_samples: 3
+    batch_size: 256
+    natural_grad: true
+    elbo_eval_every: 100
+    clip_grad_norm: 10.0
+    jitter: 1.0e-08
+    seed: 123
+    use_hutchinson: true
+    hutchinson_samples: 12
+    cg_tol: 0.001
+    cg_maxiter: 200
+    natgrad_damping: 0.001
+    coupling_clip: 3.0
+    cov_damping: 0.0
