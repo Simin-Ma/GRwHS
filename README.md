@@ -238,6 +238,30 @@ Integrate into scripts/notebooks to compare models across scenarios and real dat
 ```
 Use these to monitor mixing; consider raising iterations or modifying hyperparameters if R-hat exceeds ~1.1 or ESS is low.
 
+### 8.1 Diagnostics Plots CLI
+
+Use `scripts/plot_diagnostics.py` to produce the five reviewer-facing panels (trace, autocorrelation, β densities, group-level ϕ_g shrinkage, coverage–width calibration) with configurable options:
+
+```bash
+python scripts/plot_diagnostics.py \
+  --run-dir outputs/sweeps/scenario_A/grwhs_gibbs-<timestamp> \
+  --burn-in 1000 --max-lag 120 \
+  --strong-count 4 --weak-count 4 \
+  --groups-to-plot 10 \
+  --coverage-levels 0.5 0.7 0.8 0.9 0.95 \
+  --dest figures/scenario_A_gibbs --dpi 150
+```
+
+- `--run-dir` points to the target run (expects `posterior_samples.npz`, `dataset.npz`, and metadata).
+- `--burn-in` (or `--burn-in-frac`) trims early samples; the burn-in split is marked on trace plots.
+- `--strong-count` / `--weak-count` select how many strong vs. weak coefficients (with truth overlays) are shown.
+- `--groups-to-plot` limits the number of ϕ_g violins, sorted by posterior median to highlight selective shrinkage.
+- `--coverage-levels` sets the interval grid for the coverage–width calibration curve; the nominal target is annotated automatically.
+- Figures default to `<run>/figures/`, but `--dest` can redirect outputs to a publication assets folder.
+- The CLI also produces `posterior_reconstruction.png`, overlaying observed responses (gray crosses), posterior mean reconstructions (black dots), and the true signal trace (red) for quick visual assessment of recovery quality.
+
+The script reads group structure, seeds, and posterior arrays directly from the stored artifacts, so the same command works for any scenario/model without hard-coded indices.
+
 ---
 
 ## 9. Testing & Validation
