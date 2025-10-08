@@ -266,6 +266,24 @@ python scripts/plot_diagnostics.py \
 
 The script reads group structure, seeds, and posterior arrays directly from the stored artifacts, so the same command works for any scenario/model without hard-coded indices.
 
+### 8.2 Randomized Sweep Selector
+
+Use `scripts/random_sweep_selector.py` to randomly subsample `configs/sweeps/mixed_signal_grid.yaml`, execute the corresponding sweeps, and report the best (lowest) RMSE achieved by `grwhs_gibbs`:
+
+```bash
+python scripts/random_sweep_selector.py \
+  --base-config configs/scenario_A.yaml \
+  --sweep-config configs/sweeps/mixed_signal_grid.yaml \
+  --outdir outputs/sweeps/random_mixed \
+  --samples 5 \
+  --subset-size 4 \
+  --seed 2025
+```
+
+- Each sampled sweep writes to `outputs/sweeps/random_mixed/<name>`, producing its own `sweep_summary_*.json`.
+- After all runs finish, the script parses the summaries, locates the GRwHS run with the smallest RMSE, and prints the winning run directory and summary path.
+- Adjust `--samples`, `--subset-size`, and `--seed` to explore different random subsets or increase coverage.
+
 ---
 
 ## 9. Testing & Validation

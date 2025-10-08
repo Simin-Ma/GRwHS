@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
+from matplotlib.cm import ScalarMappable
 from matplotlib import gridspec
-from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm
+from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 import numpy as np
 import yaml
@@ -478,6 +480,640 @@ def group_shrinkage_landscape(
         plt.Line2D([0], [0], marker="o", color="gray", linestyle="", label="null group"),
     ]
     ax.legend(handles=legend_handles, loc="upper right", frameon=False)
+    _tight_layout(fig)
+    return fig
+
+
+def posterior_mean_heatmap_by_model(
+    beta_means: Sequence[np.ndarray],
+    *,
+    labels: Sequence[str],
+    groups: Sequence[Sequence[int]],
+    active_idx: Optional[Sequence[int]] = None,
+    cmap: str = "RdBu_r",
+    figsize: Optional[Tuple[int, int]] = None,
+) -> plt.Figure:
+    """Visualize posterior coefficient means for one or multiple models."""
+
+    if len(beta_means) != len(labels):
+        raise ValueError("beta_means and labels must have the same length.")
+    if not beta_means:
+        raise ValueError("beta_means must contain at least one entry.")
+
+    converted = [np.asarray(b, dtype=float).reshape(-1) for b in beta_means]
+    p = converted[0].size
+    if any(arr.size != p for arr in converted):
+        raise ValueError("All beta_means must share the same dimensionality.")
+
+    matrix = np.vstack(converted)
+    vmax = float(np.max(np.abs(matrix))) if np.max(np.abs(matrix)) > 0 else 1.0
+    norm = TwoSlopeNorm(vcenter=0.0, vmin=-vmax, vmax=vmax)
+
+    if figsize is None:
+        height = max(2.5, len(converted) * 1.8)
+        figsize = (12.0, height)
+
+    plt.style.use("seaborn-v0_8-paper")
+    fig, ax = plt.subplots(figsize=figsize)
+    image = ax.imshow(matrix, aspect="auto", cmap=cmap, norm=norm)
+    ax.set_yticks(np.arange(len(labels)))
+    ax.set_yticklabels(labels)
+    ax.set_xlabel("Coefficient index")
+    ax.set_ylabel("Model")
+    ax.set_title("Posterior mean of coefficients by model")
+
+    group_sizes = [len(g) for g in groups]
+    cumulative = np.cumsum(group_sizes)
+    for boundary in cumulative[:-1]:
+        ax.axvline(boundary - 0.5, color="black", linewidth=0.6, linestyle="--", alpha=0.6)
+
+    active_set = {int(i) for i in (active_idx or [])}
+    if active_set:
+        cols = np.asarray(sorted(active_set), dtype=float)
+        for row in range(matrix.shape[0]):
+            ax.scatter(
+                cols,
+                np.full(cols.shape, row, dtype=float),
+                marker="o",
+                facecolors="none",
+                edgecolors="black",
+                linewidths=0.8,
+                s=30,
+            )
+
+    cbar = fig.colorbar(image, ax=ax, fraction=0.035, pad=0.02)
+    cbar.set_label(r"$\mathbb{E}[\beta_j]$")
+    ax.set_xlim(-0.5, p - 0.5)
+    _tight_layout(fig)
+    return fig
+
+
+
+def group_scale_vs_lambda_panel(
+    lambda_samples: Sequence[np.ndarray],
+    *,
+    labels: Sequence[str],
+    groups: Sequence[Sequence[int]],
+    phi_samples: Optional[Sequence[Optional[np.ndarray]]] = None,
+    active_idx: Optional[Sequence[int]] = None,
+    figsize: Optional[Tuple[int, int]] = None,
+    beta_true: Optional[np.ndarray] = None,
+    normalize_truth: bool = True,
+    tau_samples: Optional[Sequence[Optional[np.ndarray]]] = None,
+    slab_widths: Optional[Sequence[float]] = None,
+    normalize_scales: bool = True,
+) -> plt.Figure:
+    """Compare group-level scales and normalized local scales across models."""
+
+    num_models = len(lambda_samples)
+    if num_models == 0:
+        raise ValueError("lambda_samples must contain at least one entry.")
+    if len(labels) != num_models:
+        raise ValueError("lambda_samples and labels must have the same length.")
+
+    phi_samples = phi_samples or [None] * num_models
+    if len(phi_samples) != num_models:
+        raise ValueError("phi_samples must match the number of models.")
+
+    if tau_samples is None:
+        tau_samples = [None] * num_models
+    if len(tau_samples) != num_models:
+        raise ValueError("tau_samples must match the number of models.")
+
+    if slab_widths is None:
+        slab_widths = [1.0] * num_models
+    if len(slab_widths) != num_models:
+        raise ValueError("slab_widths must match the number of models.")
+
+    lambda_arrays = [np.asarray(arr, dtype=float) for arr in lambda_samples]
+    p = lambda_arrays[0].shape[1]
+    if any(arr.ndim != 2 for arr in lambda_arrays):
+        raise ValueError("Each lambda_samples entry must be a 2D array (samples, coefficients).")
+    if any(arr.shape[1] != p for arr in lambda_arrays):
+        raise ValueError("All lambda_samples must share the same number of coefficients.")
+
+    tau_arrays: List[Optional[np.ndarray]] = []
+    for tau_entry in tau_samples:
+        if tau_entry is None:
+            tau_arrays.append(None)
+        else:
+            tau_arr = np.asarray(tau_entry, dtype=float)
+            if tau_arr.ndim != 1:
+                raise ValueError("tau_samples entries must be one-dimensional.")
+            tau_arrays.append(tau_arr)
+
+    beta_true_arr = None
+    if beta_true is not None:
+        beta_true_arr = np.asarray(beta_true, dtype=float).reshape(-1)
+        if beta_true_arr.size != p:
+            raise ValueError("beta_true length must match the coefficient dimensionality.")
+
+    phi_arrays: List[Optional[np.ndarray]] = []
+    for entry in phi_samples:
+        if entry is None:
+            phi_arrays.append(None)
+        else:
+            phi_arr = np.asarray(entry, dtype=float)
+            if phi_arr.ndim != 2:
+                raise ValueError("phi_samples entries must be 2D arrays (samples, groups).")
+            phi_arrays.append(phi_arr)
+
+    active_set = {int(i) for i in (active_idx or [])}
+    signal_flags = np.zeros(len(groups), dtype=bool)
+    for g, idxs in enumerate(groups):
+        if any(int(idx) in active_set for idx in idxs):
+            signal_flags[g] = True
+
+    truth_scale = 1.0
+    truth_by_group: Optional[np.ndarray] = None
+    truth_label = None
+    coef_truth: Optional[np.ndarray] = None
+    if beta_true_arr is not None:
+        truth_vals = []
+        for idxs in groups:
+            idx_array = np.asarray(list(idxs), dtype=int)
+            if idx_array.size == 0:
+                truth_vals.append(0.0)
+            else:
+                truth_vals.append(float(np.linalg.norm(beta_true_arr[idx_array], ord=2)))
+        truth_vals = np.asarray(truth_vals, dtype=float)
+        max_truth = float(np.max(np.abs(truth_vals))) if truth_vals.size else 0.0
+        if normalize_truth and max_truth > 0.0:
+            truth_scale = max_truth
+            truth_by_group = truth_vals / truth_scale
+            truth_label = r"True group amplitude (normalized $\|\beta_g\|_2$)"
+        else:
+            truth_by_group = truth_vals
+            truth_label = r"True group amplitude $\|\beta_g\|_2$"
+            truth_scale = 1.0 if max_truth == 0.0 else max_truth
+
+        abs_coef = np.abs(beta_true_arr)
+        if normalize_truth and truth_scale > 0.0:
+            coef_truth = abs_coef / truth_scale
+        else:
+            coef_truth = abs_coef
+
+    group_positions = np.arange(1, len(groups) + 1, dtype=float)
+    tick_labels = [f"g{g}" for g in range(len(groups))]
+    include_truth_panel = beta_true_arr is not None and truth_by_group is not None and coef_truth is not None
+
+    total_panels = num_models + (1 if include_truth_panel else 0)
+    if figsize is None:
+        height = max(3.0, total_panels * 2.6)
+        figsize = (12.0, height)
+
+    plt.style.use("seaborn-v0_8-paper")
+    fig, axes = plt.subplots(total_panels, 1, figsize=figsize, sharex=True)
+    axes = list(np.atleast_1d(axes))
+
+    lambda_stats_raw: List[Dict[str, np.ndarray]] = []
+    for lam_arr, tau_arr, slab in zip(lambda_arrays, tau_arrays, slab_widths):
+        if tau_arr is None:
+            raise ValueError("tau_samples are required to compute regularized local scales.")
+        tau_arr = np.asarray(tau_arr, dtype=float)
+        if tau_arr.shape[0] != lam_arr.shape[0]:
+            raise ValueError("tau_samples and lambda_samples must share the same number of draws.")
+        lam_tilde = np.empty_like(lam_arr)
+        for draw_idx in range(lam_arr.shape[0]):
+            lam_tilde[draw_idx] = np.sqrt(
+                regularized_lambda(lam_arr[draw_idx], float(tau_arr[draw_idx]), float(slab))
+            )
+        lambda_stats_raw.append(
+            {
+                "median": np.median(lam_tilde, axis=0),
+                "q25": np.quantile(lam_tilde, 0.25, axis=0),
+                "q75": np.quantile(lam_tilde, 0.75, axis=0),
+            }
+        )
+
+    phi_means_list: List[Optional[np.ndarray]] = []
+    phi_q10_list: List[Optional[np.ndarray]] = []
+    phi_q90_list: List[Optional[np.ndarray]] = []
+    for phi_entry in phi_arrays:
+        if phi_entry is None:
+            phi_means_list.append(None)
+            phi_q10_list.append(None)
+            phi_q90_list.append(None)
+        else:
+            phi_means_list.append(np.mean(phi_entry, axis=0))
+            q10, q90 = np.quantile(phi_entry, [0.10, 0.90], axis=0)
+            phi_q10_list.append(q10)
+            phi_q90_list.append(q90)
+
+    lambda_scale = 1.0
+    if normalize_scales:
+        maxima = [float(np.max(stats["median"])) for stats in lambda_stats_raw if np.any(stats["median"] > 0)]
+        if maxima:
+            lambda_scale = max(maxima)
+        if lambda_scale <= 0:
+            lambda_scale = 1.0
+
+    phi_scale = 1.0
+    if normalize_scales:
+        maxima = [float(np.max(mean)) for mean in phi_means_list if mean is not None and np.any(mean > 0)]
+        if maxima:
+            phi_scale = max(maxima)
+        if phi_scale <= 0:
+            phi_scale = 1.0
+
+    panel_idx = 0
+    if include_truth_panel:
+        truth_ax = axes[panel_idx]
+        panel_idx += 1
+        coef_color = "#fdd5a2"
+        for g_idx, idxs in enumerate(groups):
+            idxs_array = np.asarray(list(idxs), dtype=int)
+            if idxs_array.size == 0:
+                continue
+            jitter = (
+                np.linspace(-0.2, 0.2, idxs_array.size, dtype=float)
+                if idxs_array.size > 1
+                else np.zeros(1, dtype=float)
+            )
+            truth_ax.scatter(
+                np.full(idxs_array.size, group_positions[g_idx], dtype=float) + jitter,
+                coef_truth[idxs_array],
+                color=coef_color,
+                alpha=0.4,
+                s=28,
+                marker="o",
+                edgecolors="none",
+                zorder=3,
+            )
+
+        marker_signal = "#e75480"
+        marker_null = "#6897bb"
+        group_colors = np.where(signal_flags, marker_signal, marker_null)
+        truth_ax.scatter(
+            group_positions,
+            truth_by_group,
+            c=group_colors,
+            marker="+",
+            s=90,
+            linewidths=1.5,
+            zorder=4,
+            alpha=0.95,
+        )
+
+        legend_handles_truth: List[Line2D] = []
+        if np.any(signal_flags):
+            legend_handles_truth.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker="+",
+                    color=marker_signal,
+                    linestyle="",
+                    linewidth=1.5,
+                    markersize=9,
+                    markeredgewidth=1.8,
+                    markerfacecolor="none",
+                    label=r"Signal group truth ($\|\beta_g\|_2$)",
+                )
+            )
+        if np.any(~signal_flags):
+            legend_handles_truth.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker="+",
+                    color=marker_null,
+                    linestyle="",
+                    linewidth=1.5,
+                    markersize=9,
+                    markeredgewidth=1.8,
+                    markerfacecolor="none",
+                    label=r"Null group truth ($\|\beta_g\|_2$)",
+                )
+            )
+        legend_handles_truth.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color=coef_color,
+                linestyle="",
+                markersize=6,
+                alpha=0.6,
+                markeredgewidth=0.0,
+                label=r"Coefficient truth $|\beta_j|$",
+            )
+        )
+
+        truth_ax.set_ylabel(truth_label or r"$\|\beta_g\|_2$")
+        if normalize_truth:
+            truth_ax.set_ylim(-0.05, 1.05)
+        truth_ax.set_title("True shrinkage structure")
+        truth_ax.set_xticks(group_positions)
+        truth_ax.set_xticklabels(tick_labels)
+        truth_ax.legend(
+            handles=legend_handles_truth,
+            loc="center left",
+            bbox_to_anchor=(1.1, 0.5),
+            frameon=False,
+        )
+        truth_ax.tick_params(axis="x", labelbottom=False)
+
+    model_axes = axes[panel_idx:]
+    for model_idx, ax in enumerate(model_axes):
+        label = labels[model_idx]
+        phi_samples_model = phi_arrays[model_idx]
+        lambda_stats = lambda_stats_raw[model_idx]
+        lambda_median = lambda_stats["median"] / lambda_scale if normalize_scales else lambda_stats["median"]
+        lambda_q25 = lambda_stats["q25"] / lambda_scale if normalize_scales else lambda_stats["q25"]
+        lambda_q75 = lambda_stats["q75"] / lambda_scale if normalize_scales else lambda_stats["q75"]
+
+        ax.set_title(label)
+        phi_ax = ax if phi_samples_model is not None else None
+        lambda_ax = ax if phi_ax is None else ax.twinx()
+        legend_handles: List[Line2D] = []
+
+        if phi_ax is not None and phi_samples_model is not None:
+            phi_mean_raw = phi_means_list[model_idx]
+            phi_q10_raw = phi_q10_list[model_idx]
+            phi_q90_raw = phi_q90_list[model_idx]
+            if phi_mean_raw is None or phi_q10_raw is None or phi_q90_raw is None:
+                raise ValueError("Inconsistent phi_samples detected.")
+            phi_mean = phi_mean_raw / phi_scale if normalize_scales else phi_mean_raw
+            phi_q10 = phi_q10_raw / phi_scale if normalize_scales else phi_q10_raw
+            phi_q90 = phi_q90_raw / phi_scale if normalize_scales else phi_q90_raw
+            colors = np.where(signal_flags, "#d7191c", "#2c7bb6")
+            phi_ax.bar(group_positions, phi_mean, width=0.6, color=colors, alpha=0.45, label=r"$\phi_g$")
+            for g_idx in range(len(groups)):
+                phi_ax.errorbar(
+                    group_positions[g_idx],
+                    phi_mean[g_idx],
+                    yerr=[
+                        [phi_mean[g_idx] - phi_q10[g_idx]],
+                        [phi_q90[g_idx] - phi_mean[g_idx]],
+                    ],
+                    fmt="none",
+                    color=colors[g_idx],
+                    linewidth=1.0,
+                    alpha=0.7,
+                )
+            phi_ax.set_ylabel(
+                r"Normalized $\mathbb{E}[\phi_g]$" if normalize_scales else r"$\mathbb{E}[\phi_g]$"
+            )
+            phi_ax.set_ylim(bottom=0.0)
+            if np.any(signal_flags):
+                legend_handles.append(
+                    Line2D([0], [0], marker="s", color="#d7191c", linestyle="", label=r"signal $\phi_g$")
+                )
+            if np.any(~signal_flags):
+                legend_handles.append(
+                    Line2D([0], [0], marker="s", color="#2c7bb6", linestyle="", label=r"null $\phi_g$")
+                )
+
+        lambda_color = "#808080"
+        for g_idx, idxs in enumerate(groups):
+            idxs_array = np.asarray(list(idxs), dtype=int)
+            jitter = (
+                np.linspace(-0.18, 0.18, idxs_array.size, dtype=float)
+                if idxs_array.size > 1
+                else np.zeros(1, dtype=float)
+            )
+            lambda_ax.scatter(
+                np.full(idxs_array.size, group_positions[g_idx], dtype=float) + jitter,
+                lambda_median[idxs_array],
+                color=lambda_color,
+                alpha=0.75,
+                s=28,
+                edgecolors="none",
+            )
+            lambda_ax.vlines(
+                np.full(idxs_array.size, group_positions[g_idx], dtype=float) + jitter,
+                lambda_q25[idxs_array],
+                lambda_q75[idxs_array],
+                color=lambda_color,
+                linewidth=0.8,
+                alpha=0.5,
+            )
+
+        lambda_ax.set_ylabel(
+            r"Normalized median $\tilde{\lambda}_j$" if normalize_scales else r"Median $\tilde{\lambda}_j$"
+        )
+        lambda_ax.set_ylim(bottom=0.0)
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color=lambda_color,
+                linestyle="",
+                label=(
+                    r"Normalized median $\tilde{\lambda}_j$ (IQR)"
+                    if normalize_scales
+                    else r"Median $\tilde{\lambda}_j$ (IQR)"
+                ),
+                markerfacecolor=lambda_color,
+            )
+        )
+
+        if phi_ax is None:
+            ax.set_ylabel(
+                r"Normalized median $\tilde{\lambda}_j$"
+                if normalize_scales
+                else r"Median $\tilde{\lambda}_j$"
+            )
+
+        ax.set_xticks(group_positions)
+        ax.set_xticklabels(tick_labels, rotation=0)
+        if legend_handles:
+            ax.legend(
+                handles=legend_handles,
+                loc="center left",
+                bbox_to_anchor=(1.1, 0.5),
+                frameon=False,
+            )
+        if ax is not axes[-1]:
+            ax.tick_params(labelbottom=False)
+
+    axes[-1].set_xlabel("Group index")
+    _tight_layout(fig)
+    return fig
+
+def group_interval_calibration_scatter(
+    beta_samples: Sequence[np.ndarray],
+    *,
+    labels: Sequence[str],
+    groups: Sequence[Sequence[int]],
+    beta_true: np.ndarray,
+    level: float = 0.9,
+    normalize_width: bool = True,
+    figsize: Tuple[int, int] = (7, 5),
+) -> plt.Figure:
+    """Scatter plot comparing empirical coverage and interval widths per group."""
+
+    if not beta_samples:
+        raise ValueError("beta_samples must contain at least one entry.")
+    if len(beta_samples) != len(labels):
+        raise ValueError("beta_samples and labels must have the same length.")
+
+    beta_true = np.asarray(beta_true, dtype=float).reshape(-1)
+    converted = [np.asarray(samples, dtype=float) for samples in beta_samples]
+    p = beta_true.size
+    if any(arr.ndim != 2 for arr in converted):
+        raise ValueError("Each beta_samples entry must be a 2D array (samples, coefficients).")
+    if any(arr.shape[1] != p for arr in converted):
+        raise ValueError("All beta_samples must share the same coefficient dimension as beta_true.")
+
+    lower_q = (1.0 - level) / 2.0
+    upper_q = 1.0 - lower_q
+
+    coverages: Dict[str, np.ndarray] = {}
+    widths: Dict[str, np.ndarray] = {}
+
+    for label, draws in zip(labels, converted):
+        lower = np.quantile(draws, lower_q, axis=0)
+        upper = np.quantile(draws, upper_q, axis=0)
+        width_coef = upper - lower
+        contain = (beta_true >= lower) & (beta_true <= upper)
+
+        cov_group = []
+        width_group = []
+        for idxs in groups:
+            idx_array = np.asarray(list(idxs), dtype=int)
+            if idx_array.size == 0:
+                cov_group.append(np.nan)
+                width_group.append(np.nan)
+                continue
+            cov_group.append(float(np.mean(contain[idx_array])))
+            width_group.append(float(np.mean(width_coef[idx_array])))
+        coverages[label] = np.asarray(cov_group, dtype=float)
+        widths[label] = np.asarray(width_group, dtype=float)
+
+    width_chunks = [w[~np.isnan(w)] for w in widths.values() if np.any(~np.isnan(w))]
+    if width_chunks:
+        all_widths = np.concatenate(width_chunks, axis=0)
+        width_max = float(np.max(all_widths)) if all_widths.size else 1.0
+    else:
+        width_max = 1.0
+    if width_max <= 0:
+        width_max = 1.0
+
+    plt.style.use("seaborn-v0_8-paper")
+    fig, ax = plt.subplots(figsize=figsize)
+
+    markers = ["o", "s", "D", "^", "v"]
+    for idx, label in enumerate(labels):
+        cov = coverages[label]
+        wid = widths[label]
+        mask = ~np.isnan(cov) & ~np.isnan(wid)
+        if not np.any(mask):
+            continue
+        cov_valid = cov[mask]
+        wid_valid = wid[mask]
+        if normalize_width:
+            wid_plot = wid_valid / width_max
+        else:
+            wid_plot = wid_valid
+        ax.scatter(
+            cov_valid,
+            wid_plot,
+            label=label,
+            marker=markers[idx % len(markers)],
+            s=55,
+            alpha=0.8,
+        )
+
+    if normalize_width:
+        ax.plot([0.0, 1.0], [0.0, 1.0], color="black", linestyle="--", linewidth=0.9, label="45° reference")
+        ax.set_ylabel("Normalized interval width")
+    else:
+        ax.set_ylabel("Average interval width")
+
+    ax.axvline(level, color="#444444", linestyle=":", linewidth=0.9, label=f"Target coverage {level:.0%}")
+    ax.set_xlabel(f"Empirical coverage @ {level:.0%}")
+    ax.set_xlim(0.0, 1.0)
+    if normalize_width:
+        ax.set_ylim(0.0, 1.05)
+    ax.legend(loc="best", frameon=False)
+    _tight_layout(fig)
+    return fig
+
+
+def true_vs_estimated_panel(
+    beta_means: Sequence[np.ndarray],
+    *,
+    labels: Sequence[str],
+    beta_true: np.ndarray,
+    group_index: np.ndarray,
+    active_idx: Optional[Sequence[int]] = None,
+    figsize: Optional[Tuple[int, int]] = None,
+) -> plt.Figure:
+    """Scatter plot comparing true vs. estimated coefficients for one or multiple models."""
+
+    if len(beta_means) != len(labels):
+        raise ValueError("beta_means and labels must have the same length.")
+    if not beta_means:
+        raise ValueError("beta_means must contain at least one entry.")
+
+    beta_true = np.asarray(beta_true, dtype=float).reshape(-1)
+    group_index = np.asarray(group_index, dtype=int).reshape(-1)
+    converted = [np.asarray(b, dtype=float).reshape(-1) for b in beta_means]
+    p = beta_true.size
+    if any(arr.size != p for arr in converted):
+        raise ValueError("All beta_means must match the dimensionality of beta_true.")
+    if group_index.size != p:
+        raise ValueError("group_index length must match coefficient dimensionality.")
+
+    if figsize is None:
+        width = max(5.0, len(converted) * 4.0)
+        figsize = (width, 4.5)
+
+    plt.style.use("seaborn-v0_8-paper")
+    fig, axes = plt.subplots(1, len(converted), figsize=figsize, sharex=True, sharey=True)
+    if len(converted) == 1:
+        axes = [axes]  # type: ignore[assignment]
+
+    cmap = plt.get_cmap("tab20", int(group_index.max()) + 1 if group_index.size else 1)
+    limit = max(
+        np.max(np.abs(beta_true)),
+        max(np.max(np.abs(arr)) for arr in converted),
+        1e-3,
+    )
+    limit *= 1.05
+
+    active_set = {int(i) for i in (active_idx or [])}
+
+    for ax, beta_mean, label in zip(axes, converted, labels):
+        scatter = ax.scatter(
+            beta_true,
+            beta_mean,
+            c=group_index,
+            cmap=cmap,
+            s=24,
+            alpha=0.8,
+            edgecolors="none",
+        )
+        if active_set:
+            idxs = np.asarray(sorted(active_set), dtype=int)
+            ax.scatter(
+                beta_true[idxs],
+                beta_mean[idxs],
+                facecolors="none",
+                edgecolors="black",
+                linewidths=0.8,
+                s=50,
+            )
+        ax.axline((0.0, 0.0), slope=1.0, color="black", linestyle="--", linewidth=0.9)
+        ax.axhline(0.0, color="#888888", linewidth=0.6, linestyle=":")
+        ax.axvline(0.0, color="#888888", linewidth=0.6, linestyle=":")
+        ax.set_xlim(-limit, limit)
+        ax.set_ylim(-limit, limit)
+        ax.set_xlabel(r"True $\beta_j$")
+        ax.set_title(label)
+
+    axes[0].set_ylabel(r"Posterior mean $\hat{\beta}_j$")
+    norm = Normalize(vmin=float(group_index.min()) if group_index.size else 0.0, vmax=float(group_index.max()) if group_index.size else 1.0)
+    cbar = fig.colorbar(
+        ScalarMappable(norm=norm, cmap=cmap),
+        ax=axes,
+        fraction=0.03,
+        pad=0.02,
+    )
+    cbar.set_label("Group index")
     _tight_layout(fig)
     return fig
 
