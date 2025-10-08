@@ -1,5 +1,19 @@
 defaults: configs/base.yaml
+
+seed: 42
+device: cpu
+output_dir: outputs
+
+seeds:
+  experiment: 42
+  split: 42
+
+standardization:
+  X: unit_variance
+  y_center: true
+
 data:
+  type: synthetic
   n: 960
   p: 240
   G: 30
@@ -11,18 +25,28 @@ data:
   signal:
     sparsity: 0.1
     strong_frac: 0.22
+    group_sparsity: 0.6
     beta_scale_strong: 1.7
     beta_scale_weak: 0.45
-    group_sparsity: 0.6
+    sign_mix: random
+  noise_sigma: 1.0
+  test_ratio: 0.2
+  val_ratio: 0.1
+  loader:
+    path_X: ''
+    path_y: ''
+    group_map: ''
+
 model:
   name: grwhs_gibbs
+  c: 1.2
   s_guess: 24
   tau0: 0.001
-  eta: 0.05
-  c: 1.2
+  eta: 0.4
   size_adjust: true
   s0: 0.8
   iters: 12000
+
 inference:
   gibbs:
     iters: 12000
@@ -30,4 +54,54 @@ inference:
     thin: 1
     adapt_slice: false
     jitter: 1.0e-06
+    seed: 123
     slice_w: 0.15
+  svi:
+    steps: 4000
+    lr: 0.01
+    mc_samples: 3
+    batch_size: 256
+    natural_grad: true
+    elbo_eval_every: 100
+    clip_grad_norm: 10.0
+    jitter: 1.0e-08
+    seed: 123
+    use_hutchinson: true
+    hutchinson_samples: 12
+    cg_tol: 0.001
+    cg_maxiter: 200
+    natgrad_damping: 0.001
+    coupling_clip: 3.0
+    cov_damping: 0.0
+
+experiments:
+  repeats: 3
+  save_posterior: true
+  diagnostics: true
+  metrics:
+    - RMSE
+    - PredictiveLogLikelihood
+    - AUC-PR
+    - F1
+    - Coverage90
+    - IntervalWidth90
+    - MeanKappa
+    - EffectiveDoF
+  coverage_level: 0.9
+  runtime_profile: false
+
+logging:
+  level: INFO
+  progress: true
+
+checkpointing:
+  enable: true
+  keep_last: 3
+  save_every_steps: 200
+
+viz:
+  dpi: 150
+  style: default
+
+io:
+  run_dir: "D:\\grwhs\\outputs\\test_runs\\smoke-20251008-024320"

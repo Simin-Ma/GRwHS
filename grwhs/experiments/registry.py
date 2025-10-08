@@ -131,11 +131,20 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
         _get(cfg, "model.target_accept_prob", 0.99),
     )
     progress_bar = bool(_get(cfg, "model.progress_bar", _get(cfg, "runtime.progress_bar", False)))
-    seed_val = _get(
-        cfg,
+    seed_candidates = [
         "model.seed",
-        _get(cfg, "inference.seed", _get(cfg, "runtime.seed", _get(cfg, "seed", None))),
-    )
+        "inference.nuts.seed",
+        "inference.seed",
+        "inference.gibbs.seed",
+        "inference.svi.seed",
+        "runtime.seed",
+        "seed",
+    ]
+    seed_val = None
+    for path in seed_candidates:
+        seed_val = _get(cfg, path, None)
+        if seed_val is not None:
+            break
 
     kwargs: Dict[str, Any] = {
         "scale_intercept": scale_intercept,

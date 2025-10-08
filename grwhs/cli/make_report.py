@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List
+
+import yaml
 
 from grwhs.experiments.aggregator import aggregate_runs
 
@@ -61,6 +64,13 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _load_yaml(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return data or {}
+
+
 def _to_json(value):
     if isinstance(value, (int, float, str, bool)) or value is None:
         return value
@@ -73,12 +83,33 @@ def _to_json(value):
     return str(value)
 
 
+def _format_timestamp(ts: float) -> str:
+    """Convert epoch seconds into an ISO-8601 string with UTC timezone."""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _summarize_outputs(run_dir: Path) -> List[dict]:
+    outputs: List[dict] = []
+    for entry in sorted(run_dir.iterdir()):
+        stat = entry.stat()
+        outputs.append(
+            {
+                "name": entry.name,
+                "path": str(entry.relative_to(run_dir)),
+                "type": "directory" if entry.is_dir() else "file",
+                "size_bytes": stat.st_size,
+                "modified": _format_timestamp(stat.st_mtime),
+            }
+        )
+    return outputs
+
+
 def _summarize_run(run_dir: Path) -> dict:
     metrics = _load_json(run_dir / "metrics.json")
     meta = _load_json(run_dir / "dataset_meta.json")
     cfg_path = run_dir / "resolved_config.yaml"
-
     convergence = _load_json(run_dir / "convergence.json")
+    resolved_config = _load_yaml(cfg_path)
 
     summary = {
         "run_dir": str(run_dir.resolve()),
@@ -90,8 +121,12 @@ def _summarize_run(run_dir: Path) -> dict:
             "model": meta.get("model"),
         },
         "artifacts": meta.get("dataset_path"),
-        "posterior": meta.get("posterior"),
+        "posterior": _to_json(meta.get("posterior")),
+        "seeds": _to_json(meta.get("seeds")),
+        "dataset_meta": _to_json(meta) if meta else None,
+        "resolved_config": _to_json(resolved_config) if resolved_config else None,
         "convergence": convergence or None,
+        "outputs": _summarize_outputs(run_dir),
         "has_resolved_config": cfg_path.exists(),
     }
     return summary

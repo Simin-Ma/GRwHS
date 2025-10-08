@@ -1,0 +1,18 @@
+defaults:
+  - configs/scenario_A.yaml
+
+name: scenario_A_seeded
+
+data:
+  seed: 994312204
+
+seeds:
+  experiment: 42
+  split: 42
+  data_generation: 994312204
+
+inference:
+  gibbs:
+    seed: 123
+  svi:
+    seed: 123
