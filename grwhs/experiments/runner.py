@@ -66,7 +66,7 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
     beta_truth: Optional[np.ndarray]
     groups: List[List[int]] | None
     experiment_seed: Optional[int] = base_seed
-    data_seed: Optional[int] = _resolve_seed(data_cfg.get("seed"), seed_cfg.get("data_generation"), base_seed)
+    data_seed: Optional[int] = _resolve_seed(data_cfg.get("seed"), seed_cfg.get("data_generation"))
     if data_seed is None:
         data_seed = int(secrets.randbits(32))
 

@@ -1,5 +1,6 @@
 # grwhs/models/grwhs_gibbs.py
 from __future__ import annotations
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple
@@ -13,6 +14,26 @@ from grwhs.utils.logging_utils import progress
 # Prefer the stable GIG sampler implemented in inference/gig.py
 # Expected signature: sample_gig(lambda_param: float, chi: float, psi: float, size: int | tuple[int, ...] = 1, rng: Optional[Generator] = None) -> np.ndarray
 from grwhs.inference.gig import sample_gig
+
+_PHI_EPS = 1e-12
+_PHI_BASE_FLOOR = 2e-5
+_PHI_ADAPT_COEFF = 5e-7
+_FLOOR_MIN_WEIGHT = 0.002
+_TAU_MAX = 5e3
+_SIGMA2_FACTOR = 2.0
+_BURNIN_WARM = 1000
+_RIDGE_ALPHA = 1e-3
+_TAU_PENALTY = 5e-5
+
+
+def _burnin_weight(step: int, burnin: Optional[int], warm: int = 1000) -> float:
+    if burnin is None or burnin <= 0:
+        return 0.0
+    if step < burnin:
+        return 1.0
+    if step < burnin + warm:
+        return 1.0 - (step - burnin) / float(max(warm, 1))
+    return 0.0
 
 
 # ------------------------------
@@ -133,6 +154,9 @@ class GRwHS_Gibbs:
         y = np.asarray(y, dtype=float)
         n, p = X.shape
 
+        y_var = float(np.var(y)) if y.size else 1.0
+        sigma2_cap = _SIGMA2_FACTOR * max(y_var, self.jitter)
+
         if groups is None:
             groups = [[j] for j in range(p)]
         self.groups_ = groups
@@ -149,7 +173,13 @@ class GRwHS_Gibbs:
         eta_g = self.eta / np.sqrt(group_sizes)
 
         # Initialize parameters
-        beta = np.zeros(p)
+        try:
+            beta = np.linalg.solve(
+                X.T @ X + _RIDGE_ALPHA * np.eye(p),
+                X.T @ y,
+            )
+        except np.linalg.LinAlgError:
+            beta = np.zeros(p)
         sigma2 = 1.0
         tau = self.tau0
         phi = np.ones(G) * (self.eta / np.sqrt(np.mean(group_sizes)))
@@ -173,13 +203,20 @@ class GRwHS_Gibbs:
         # Precompute matrices
         # Note: the algorithm repeatedly uses C0 = D_beta^{-1} = diag(φ_g^2 τ^2 \tildeλ_j^2 σ^2)
         #       and the Cholesky of M = X C0 X^T + σ^2 I_n
+        xtx_diag = np.einsum("ij,ij->j", X, X)
+        tau_trace: List[float] = []
+        sigma_trace: List[float] = []
+        mean_kappa_trace: List[float] = []
         for it in progress(range(self.iters), total=self.iters, desc="Gibbs sampling"):
+            burnin_w = _burnin_weight(it, self.burnin, _BURNIN_WARM)
             # ---- 1) Compute tilde_lambda, prior precision d_j, and inverse C0 (prior covariance diag)
             tilde_lam = (self.c * lam) / np.sqrt(self.c ** 2 + (tau ** 2) * (lam ** 2))
             # prior variance v_j = φ_g^2 τ^2 \tildeλ_j^2 σ^2
-            v_prior = (phi[group_id] ** 2) * (tau ** 2) * (tilde_lam ** 2) * sigma2
+            phi_safe = np.maximum(phi, _PHI_EPS)
+            phi_group_safe = phi_safe[group_id]
+            v_prior = (phi_group_safe ** 2) * (tau ** 2) * (tilde_lam ** 2) * sigma2
             # Guard against numerical issues
-            v_prior = np.maximum(v_prior, self.jitter)
+            v_prior = np.maximum(v_prior, self.jitter * sigma2)
 
             # prior precision d_jj:
             d_prior = 1.0 / v_prior
@@ -189,7 +226,7 @@ class GRwHS_Gibbs:
 
             # ---- 3) Update λ_j: slice sample u_j = log λ_j (instead of MH)
             # log-target: -log(tildeλ_j) - β_j^2/(2 φ_g^2 τ^2 tildeλ_j^2 σ^2) - log(1+λ_j^2) + u_j
-            phi_g_map = phi[group_id]
+            phi_g_map = phi_group_safe
 
             def make_logp_u(j: int):
                 b2 = beta[j] ** 2
@@ -236,7 +273,13 @@ class GRwHS_Gibbs:
             theta = np.zeros(G)
             for g in range(G):
                 theta[g] = float(sample_gig(lambda_param=lam_gig[g], chi=chi_gig[g], psi=psi_gig[g], size=1, rng=self.rng)[0])
-            phi = np.sqrt(np.maximum(theta, self.jitter))
+            phi = np.sqrt(np.maximum(theta, 0.0))
+            adaptive_floor = max(_PHI_BASE_FLOOR, _PHI_ADAPT_COEFF * tau)
+            phi_floor_weight = max(_FLOOR_MIN_WEIGHT, burnin_w)
+            phi_floor_effective = max(_PHI_EPS, adaptive_floor * phi_floor_weight)
+            phi = np.maximum(phi, phi_floor_effective)
+            phi_safe = np.maximum(phi, _PHI_EPS)
+            phi_group_safe = phi_safe[group_id]
 
             # ---- 5) Global scale τ: slice sample v = log τ
             # log-target:
@@ -254,10 +297,11 @@ class GRwHS_Gibbs:
                 val = 0.0
                 val += -p * v  # -p log τ
                 val += -np.log(np.maximum(tl, 1e-300)).sum()
-                denom = (phi[group_id] ** 2) * (t ** 2) * tl2 * sigma2
+                denom = (phi_group_safe ** 2) * (t ** 2) * tl2 * sigma2
                 val += -(beta2 / (2.0 * denom)).sum()
                 # Half-Cauchy prior on τ with scale τ0: -log(1 + (τ/τ0)^2)
                 val += -math.log(1.0 + (t / self.tau0) ** 2)
+                val += -_TAU_PENALTY * burnin_w * (t ** 2)
                 # Jacobian
                 val += v
                 return float(val)
@@ -265,6 +309,7 @@ class GRwHS_Gibbs:
             v0 = math.log(tau)
             v_new = _slice_sample_1d(logp_v, v0, rng=self.rng, w=self.slice_w, m=self.slice_m)
             tau = math.exp(v_new)
+            tau = min(tau, _TAU_MAX)
 
             # Optional: refresh ξ_tau | τ^2
             xi_tau = _sample_invgamma(alpha=1.0, beta=(1.0 / (self.tau0 ** 2)) + 1.0 / (tau ** 2), rng=self.rng)
@@ -275,13 +320,27 @@ class GRwHS_Gibbs:
             resid = y - X @ beta
             RSS = float(resid @ resid)
             tl2 = np.maximum(((self.c * lam) / np.sqrt(self.c ** 2 + (tau ** 2) * (lam ** 2))) ** 2, self.jitter)
-            prior_quad = float((beta2 / (phi[group_id] ** 2 * (tau ** 2) * tl2)).sum())
+            prior_quad = float((beta2 / (phi_group_safe ** 2 * (tau ** 2) * tl2)).sum())
             alpha = 0.5 * (n + p + 1)
             beta_scale = 0.5 * (RSS + prior_quad) + 1.0 / xi_sigma
             sigma2 = _sample_invgamma(alpha=alpha, beta=beta_scale, rng=self.rng)
+            sigma2 = min(sigma2, sigma2_cap)
 
             # Refresh ξ_σ | σ^2
             xi_sigma = _sample_invgamma(alpha=1.0, beta=(1.0 / (self.s0 ** 2)) + 1.0 / sigma2, rng=self.rng)
+
+            # ---- Diagnostics trace logging (τ, σ, mean κ)
+            tilde_lam_log = (self.c * lam) / np.sqrt(self.c ** 2 + (tau ** 2) * (lam ** 2))
+            tilde_lam_log = np.maximum(tilde_lam_log, self.jitter)
+            v_prior_log = (phi_group_safe ** 2) * (tau ** 2) * (tilde_lam_log ** 2) * sigma2
+            v_prior_log = np.maximum(v_prior_log, self.jitter * sigma2)
+            d_prior_log = 1.0 / v_prior_log
+            q_diag = xtx_diag / sigma2
+            denom = q_diag + d_prior_log
+            kappa = np.divide(q_diag, denom, out=np.zeros_like(q_diag), where=denom > 0)
+            mean_kappa_trace.append(float(np.mean(kappa)))
+            tau_trace.append(float(tau))
+            sigma_trace.append(float(math.sqrt(max(sigma2, self.jitter))))
 
             # ---- Store draws
             if it >= self.burnin and ((it - self.burnin) % self.thin == 0):
@@ -300,6 +359,13 @@ class GRwHS_Gibbs:
         self.lambda_samples_ = lam_draws
         self.coef_mean_ = coef_draws.mean(axis=0) if kept > 0 else np.zeros(p)
         self.intercept_ = 0.0  # X and y are assumed centered/standardized
+
+        if tau_trace:
+            logger = logging.getLogger(__name__)
+            logger.info("tau_trace=%s", np.asarray(tau_trace))
+            logger.info("sigma_trace=%s", np.asarray(sigma_trace))
+            logger.info("mean_kappa_trace=%s", np.asarray(mean_kappa_trace))
+
         return self
 
     def predict(self, X: np.ndarray, use_posterior_mean: bool = True) -> np.ndarray:

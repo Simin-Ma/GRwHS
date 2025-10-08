@@ -1,43 +1,33 @@
-# ========================================
-# Scenario A – n ≫ p, mixed strong/weak signals
-# ----------------------------------------
-# Purpose
-# - Mid-sized regression where observations dominate features.
-# - Highlights calibration when strong and weak signals coexist across many groups.
-# - Moderate block correlation keeps shared-shrinkage helpful without degeneracy.
-# ========================================
-
-defaults: "configs/base.yaml"
-
+defaults: configs/base.yaml
 data:
   n: 960
   p: 240
   G: 30
-  group_sizes: "variable"
+  group_sizes: variable
   correlation:
-    type: "block"
+    type: block
     rho: 0.35
     block_size: 8
   signal:
-    sparsity: 0.10
+    sparsity: 0.1
     strong_frac: 0.22
     beta_scale_strong: 1.7
     beta_scale_weak: 0.45
     group_sparsity: 0.6
-
 model:
-  name: "grwhs_gibbs"
+  name: grwhs_gibbs
   s_guess: 24
-  tau0: 0.0065
-  eta: 0.60
-  c: 2.0
+  tau0: 0.001
+  eta: 0.05
+  c: 1.2
   size_adjust: true
-  s0: 7.0
-
+  s0: 0.8
+  iters: 12000
 inference:
   gibbs:
-    iters: 8000
-    burn_in: 4000
+    iters: 12000
+    burn_in: 6000
     thin: 1
-    adapt_slice: true
-    jitter: 1.0e-6
+    adapt_slice: false
+    jitter: 1.0e-06
+    slice_w: 0.15

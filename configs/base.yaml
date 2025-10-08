@@ -134,7 +134,7 @@ inference:
 # Experiment orchestration
 # -------------------------
 experiments:
-  repeats: 5                 # Number of independent repeats (different seeds)
+  repeats: 3                 # Number of independent repeats (different seeds)
   save_posterior: true       # Save posterior/variational artifacts when available
   diagnostics: true          # Compute shrinkage/variance diagnostics after fit
   metrics:

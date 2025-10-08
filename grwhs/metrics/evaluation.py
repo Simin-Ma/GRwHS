@@ -174,6 +174,9 @@ def _predictive_draws(
     X: np.ndarray,
     coef_samples: Optional[np.ndarray],
     intercept: float | np.ndarray,
+    sigma_samples: Optional[np.ndarray] = None,
+    *,
+    rng_seed: int = 0,
 ) -> Optional[np.ndarray]:
     if coef_samples is None:
         return None
@@ -182,6 +185,19 @@ def _predictive_draws(
         preds = preds + float(intercept)
     else:
         preds = preds + np.asarray(intercept)[..., np.newaxis]
+    if sigma_samples is not None:
+        sigma = np.asarray(sigma_samples, dtype=float).reshape(-1)
+        S, _ = preds.shape
+        if sigma.size == 1:
+            sigma = np.repeat(sigma, S)
+        elif sigma.size < S:
+            sigma = np.pad(sigma, (0, S - sigma.size), mode="edge")
+        elif sigma.size > S:
+            sigma = sigma[:S]
+        sigma = np.maximum(sigma, 1e-8)
+        rng = np.random.default_rng(rng_seed)
+        noise = rng.standard_normal(preds.shape) * sigma[:, np.newaxis]
+        preds = preds + noise
     return preds
 
 
@@ -247,7 +263,12 @@ def evaluate_model_metrics(
 
     pred_draws = None
     if Xte is not None and posterior.coef is not None:
-        pred_draws = _predictive_draws(Xte, posterior.coef, intercept_val)
+        pred_draws = _predictive_draws(
+            Xte,
+            posterior.coef,
+            intercept_val,
+            sigma_samples=posterior.sigma,
+        )
 
     loglik_samples = None
     if yte is not None and pred_draws is not None and posterior.sigma is not None:
