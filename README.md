@@ -259,6 +259,10 @@ python scripts/plot_diagnostics.py \
 - `--coverage-levels` sets the interval grid for the coverage–width calibration curve; the nominal target is annotated automatically.
 - Figures default to `<run>/figures/`, but `--dest` can redirect outputs to a publication assets folder.
 - The CLI also produces `posterior_reconstruction.png`, overlaying observed responses (gray crosses), posterior mean reconstructions (black dots), and the true signal trace (red) for quick visual assessment of recovery quality.
+- Additional hierarchy-focused outputs include:
+  * `group_shrinkage_landscape.png` – ϕ_g means/credible intervals with signal groups highlighted.
+  * `group_coefficient_heatmap.png` – per-group |β_j| posterior means with φ_g bars and truth boxes.
+  * `group_vs_individual_scatter.png` – co-variation of group-level ϕ_g and within-group λ_j medians.
 
 The script reads group structure, seeds, and posterior arrays directly from the stored artifacts, so the same command works for any scenario/model without hard-coded indices.
 

@@ -17,6 +17,9 @@ from grwhs.viz.diagnostics import (
     phi_violin_plot,
     posterior_density_grid,
     prepare_predictive_draws,
+    group_shrinkage_landscape,
+    group_coefficient_heatmap,
+    group_vs_individual_scatter,
     reconstruction_plot,
     trace_plot,
 )
@@ -109,6 +112,7 @@ def main() -> None:
     p = X_train.shape[1]
     groups = _resolve_groups(artifacts, p)
     group_index = _flatten_groups(groups, p)
+    active_idx = artifacts.dataset_meta.get("active_idx") or artifacts.dataset_meta.get("strong_idx") or []
 
     slab_width = 1.0
     if artifacts.resolved_config:
@@ -221,6 +225,29 @@ def main() -> None:
             burn_in=0,
         )
         recon_fig.savefig(dest / "posterior_reconstruction.png", dpi=args.dpi)
+
+    landscape_fig = group_shrinkage_landscape(
+        phi_samples=phi_samples,
+        groups=groups,
+        active_idx=active_idx,
+    )
+    landscape_fig.savefig(dest / "group_shrinkage_landscape.png", dpi=args.dpi)
+
+    heatmap_fig = group_coefficient_heatmap(
+        beta_samples=beta_trimmed,
+        phi_samples=phi_samples,
+        groups=groups,
+        active_idx=active_idx,
+    )
+    heatmap_fig.savefig(dest / "group_coefficient_heatmap.png", dpi=args.dpi)
+
+    scatter_fig = group_vs_individual_scatter(
+        phi_samples=phi_samples,
+        lambda_samples=lambda_samples,
+        groups=groups,
+        active_idx=active_idx,
+    )
+    scatter_fig.savefig(dest / "group_vs_individual_scatter.png", dpi=args.dpi)
 
     print(f"[OK] Figures written to {dest}")
 

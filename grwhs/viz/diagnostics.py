@@ -8,8 +8,12 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
+from matplotlib import gridspec
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.patches import Rectangle
 import numpy as np
 import yaml
+import warnings
 
 from grwhs.diagnostics.shrinkage import (
     prior_precision,
@@ -17,6 +21,17 @@ from grwhs.diagnostics.shrinkage import (
     shrinkage_kappa,
 )
 from grwhs.metrics.evaluation import _predictive_draws
+
+
+def _tight_layout(fig: plt.Figure) -> None:
+    """Apply tight_layout while silencing compatibility warnings."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="This figure includes Axes that are not compatible with tight_layout",
+            category=UserWarning,
+        )
+        fig.tight_layout()
 
 
 @dataclass
@@ -142,7 +157,7 @@ def trace_plot(
             ax.axvline(burn_in, color="red", linestyle="--", linewidth=1.0, label="burn-in")
             ax.legend(loc="upper right")
     axes[-1].set_xlabel("Iteration")
-    fig.tight_layout()
+    _tight_layout(fig)
     return fig
 
 
@@ -184,7 +199,7 @@ def autocorrelation_plot(
         ax.set_ylabel(key)
         ax.axhline(0.0, color="black", linewidth=0.8)
     axes[-1].set_xlabel("Lag")
-    fig.tight_layout()
+    _tight_layout(fig)
     return fig
 
 
@@ -219,7 +234,7 @@ def posterior_density_grid(
     # Hide unused axes
     for ax in axes.flat[len(idx) :]:
         ax.axis("off")
-    fig.tight_layout()
+    _tight_layout(fig)
     return fig
 
 
@@ -250,7 +265,7 @@ def phi_violin_plot(
     ax.set_xticklabels(labels, rotation=30, ha="right")
     ax.set_ylabel("ϕ_g")
     ax.set_title("Group-level shrinkage (ϕ_g)")
-    fig.tight_layout()
+    _tight_layout(fig)
     return fig
 
 
@@ -291,7 +306,7 @@ def coverage_width_curve(
     ax.set_ylabel("Empirical coverage")
     ax.set_title("Coverage vs. interval width")
     ax.legend()
-    fig.tight_layout()
+    _tight_layout(fig)
     return fig
 
 
@@ -370,17 +385,37 @@ def reconstruction_plot(
         if beta_true.size == X.shape[1]:
             y_true = X @ beta_true
 
+    # Use a publication-friendly style for consistent typography.
+    plt.style.use("seaborn-v0_8-paper")
     fig, ax = plt.subplots(figsize=figsize)
     idx = np.arange(y.size)
-    ax.scatter(idx, y, marker="x", color="grey", label="observed $y$")
+    ax.scatter(idx, y, marker="x", color="lightgray", alpha=0.4, label="observed $y$")
     ax.scatter(idx, y_post, color="black", s=15, label=r"posterior mean $\hat{y}$")
+
+    median_pred = None
+    lower = upper = None
+    if beta_samples.shape[0] > 1:
+        draws = X @ samples.T  # (n, S')
+        median_pred = np.median(draws, axis=1)
+        lower = np.quantile(draws, 0.1, axis=1)
+        upper = np.quantile(draws, 0.9, axis=1)
+
     if y_true is not None:
-        ax.plot(idx, y_true, color="red", linewidth=1.5, label="true signal")
+        ax.plot(idx, y_true, color="red", linewidth=1.5, alpha=0.8, label="true signal")
+    if median_pred is not None:
+        ax.plot(idx, median_pred, color="black", linewidth=1.0, linestyle="--", alpha=0.8)
     ax.set_xlabel("Sample index")
     ax.set_ylabel("Response")
     ax.set_title(title)
-    ax.legend()
-    fig.tight_layout()
+    all_values = [np.abs(y), np.abs(y_post)]
+    if y_true is not None:
+        all_values.append(np.abs(y_true))
+    if lower is not None and upper is not None:
+        all_values.extend([np.abs(lower), np.abs(upper)])
+    vmax = max(np.max(v) for v in all_values) if all_values else 1.0
+    ax.set_ylim(-1.1 * vmax, 1.1 * vmax)
+    ax.legend(loc="upper left", frameon=False)
+    _tight_layout(fig)
     return fig
 
 
@@ -389,3 +424,164 @@ def build_group_sizes(groups: Sequence[Sequence[int]], p: int) -> List[int]:
     if len(sizes) < 1:
         return [1] * p
     return sizes
+
+
+def group_shrinkage_landscape(
+    phi_samples: np.ndarray,
+    *,
+    groups: Sequence[Sequence[int]],
+    active_idx: Optional[Sequence[int]] = None,
+    figsize: Tuple[int, int] = (10, 4),
+) -> plt.Figure:
+    """Scatter plot of group-level shrinkage scales with signal highlighting."""
+
+    plt.style.use("seaborn-v0_8-paper")
+    phi_samples = np.asarray(phi_samples, dtype=float)
+    G = phi_samples.shape[1]
+    means = phi_samples.mean(axis=0)
+    ci_lower, ci_upper = np.quantile(phi_samples, [0.05, 0.95], axis=0)
+    variances = phi_samples.var(axis=0)
+    if np.allclose(variances.max(), 0.0):
+        alphas = np.ones(G)
+    else:
+        scaled = (variances - variances.min()) / max(variances.max() - variances.min(), 1e-12)
+        alphas = 0.3 + 0.7 * (1.0 - scaled)
+
+    active_idx = set(int(i) for i in (active_idx or []))
+    signal_mask = np.zeros(G, dtype=bool)
+    for g, idxs in enumerate(groups):
+        if any(int(j) in active_idx for j in idxs):
+            signal_mask[g] = True
+
+    x = np.arange(1, G + 1)
+    colors = np.where(signal_mask, "red", "gray")
+
+    fig, ax = plt.subplots(figsize=figsize)
+    for g in range(G):
+        ax.errorbar(
+            x[g],
+            means[g],
+            yerr=[[means[g] - ci_lower[g]], [ci_upper[g] - means[g]]],
+            fmt="o",
+            color=colors[g],
+            alpha=alphas[g],
+            ecolor=colors[g],
+            elinewidth=1.0,
+            capsize=3,
+        )
+
+    ax.set_xlabel("Group index")
+    ax.set_ylabel(r"Posterior mean $\phi_g$")
+    ax.set_title("Group-level shrinkage landscape")
+    legend_handles = [
+        plt.Line2D([0], [0], marker="o", color="red", linestyle="", label="signal group"),
+        plt.Line2D([0], [0], marker="o", color="gray", linestyle="", label="null group"),
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", frameon=False)
+    _tight_layout(fig)
+    return fig
+
+
+def group_coefficient_heatmap(
+    beta_samples: np.ndarray,
+    phi_samples: np.ndarray,
+    *,
+    groups: Sequence[Sequence[int]],
+    active_idx: Optional[Sequence[int]] = None,
+    figsize: Tuple[int, int] = (12, 5),
+) -> plt.Figure:
+    """Heatmap of posterior |beta_j| means by group with phi_g bars."""
+
+    plt.style.use("seaborn-v0_8-paper")
+    beta_samples = np.asarray(beta_samples, dtype=float)
+    phi_samples = np.asarray(phi_samples, dtype=float)
+    abs_mean = np.mean(np.abs(beta_samples), axis=0)
+    phi_mean = phi_samples.mean(axis=0)
+    G = len(groups)
+    p = abs_mean.size
+
+    heat = np.zeros((G, p), dtype=float)
+    for g, idxs in enumerate(groups):
+        idx_array = np.asarray(list(idxs), dtype=int)
+        heat[g, idx_array] = abs_mean[idx_array]
+
+    active_set = set(int(i) for i in (active_idx or []))
+
+    cmap = LinearSegmentedColormap.from_list(
+        "beta_heatmap",
+        ["#ffffff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"],
+    )
+    vmax = float(np.max(heat)) if np.max(heat) > 0 else 1.0
+    norm = Normalize(vmin=0.0, vmax=vmax)
+
+    fig = plt.figure(figsize=figsize)
+    gs = gridspec.GridSpec(1, 2, width_ratios=[5, 1], wspace=0.1)
+    ax = fig.add_subplot(gs[0, 0])
+    img = ax.imshow(heat, aspect="auto", cmap=cmap, norm=norm)
+    ax.set_yticks(np.arange(G))
+    ax.set_yticklabels([f"g{g}" for g in range(G)])
+    ax.set_xlabel("Coefficient index")
+    ax.set_ylabel("Group index")
+    ax.set_title(r"Group-wise posterior $|\beta_j|$ means")
+
+    for g, idxs in enumerate(groups):
+        for j in idxs:
+            if int(j) in active_set:
+                rect = Rectangle((j - 0.5, g - 0.5), 1, 1, fill=False, edgecolor="black", linewidth=0.8)
+                ax.add_patch(rect)
+
+    ax_bar = fig.add_subplot(gs[0, 1], sharey=ax)
+    ax_bar.barh(np.arange(G), phi_mean, color="#4c72b0")
+    ax_bar.set_xlabel(r"$\phi_g$")
+    ax_bar.set_title("Group scale")
+    ax_bar.invert_yaxis()
+    ax_bar.tick_params(labelleft=False)
+
+    cbar = fig.colorbar(img, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label(r"$\mathbb{E}[|\beta_j|]$")
+    _tight_layout(fig)
+    return fig
+
+
+def group_vs_individual_scatter(
+    phi_samples: np.ndarray,
+    lambda_samples: np.ndarray,
+    *,
+    groups: Sequence[Sequence[int]],
+    active_idx: Optional[Sequence[int]] = None,
+    figsize: Tuple[int, int] = (6, 5),
+) -> plt.Figure:
+    """Scatter plot illustrating relationship between group and individual shrinkage."""
+
+    plt.style.use("seaborn-v0_8-paper")
+    phi_samples = np.asarray(phi_samples, dtype=float)
+    lambda_samples = np.asarray(lambda_samples, dtype=float)
+    phi_mean = phi_samples.mean(axis=0)
+    lambda_med_coeff = np.median(lambda_samples, axis=0)
+
+    active_idx = set(int(i) for i in (active_idx or []))
+    phi_group = []
+    lambda_group = []
+    colores = []
+    sizes = []
+
+    for g, idxs in enumerate(groups):
+        idxs = [int(i) for i in idxs]
+        lambda_group.append(np.median(lambda_med_coeff[idxs]))
+        phi_group.append(phi_mean[g])
+        count_active = sum(1 for j in idxs if j in active_idx)
+        sizes.append(80 + 40 * count_active)
+        colores.append("red" if count_active > 0 else "gray")
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.scatter(phi_group, lambda_group, s=sizes, c=colores, alpha=0.8, edgecolor="black", linewidth=0.6)
+    ax.set_xlabel(r"$\mathbb{E}[\phi_g]$")
+    ax.set_ylabel(r"Median $\lambda_j$ within group")
+    ax.set_title("Group vs. individual shrinkage scales")
+    legend_elements = [
+        plt.Line2D([0], [0], marker="o", color="red", linestyle="", label="signal group"),
+        plt.Line2D([0], [0], marker="o", color="gray", linestyle="", label="null group"),
+    ]
+    ax.legend(handles=legend_elements, loc="upper left", frameon=False)
+    _tight_layout(fig)
+    return fig
