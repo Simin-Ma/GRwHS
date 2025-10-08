@@ -9,6 +9,18 @@
 
 defaults: "configs/base.yaml"
 
+seed: 42
+device: cpu
+output_dir: outputs
+
+seeds:
+  experiment: 42
+  split: 42
+
+standardization:
+  X: unit_variance
+  y_center: true
+
 data:
   n: 420
   p: 1200
@@ -24,6 +36,13 @@ data:
     beta_scale_strong: 1.9
     beta_scale_weak: 0.50
     group_sparsity: 0.65
+  noise_sigma: 1.0
+  test_ratio: 0.2
+  val_ratio: 0.1
+  loader:
+    path_X: ""
+    path_y: ""
+    group_map: ""
 
 model:
   name: grwhs_gibbs
@@ -61,3 +80,35 @@ inference:
     natgrad_damping: 0.001
     coupling_clip: 3.0
     cov_damping: 0.0
+
+experiments:
+  repeats: 3
+  save_posterior: true
+  diagnostics: true
+  metrics:
+    - RMSE
+    - PredictiveLogLikelihood
+    - AUC-PR
+    - F1
+    - Coverage90
+    - IntervalWidth90
+    - MeanKappa
+    - EffectiveDoF
+  coverage_level: 0.9
+  runtime_profile: false
+
+logging:
+  level: INFO
+  progress: true
+
+checkpointing:
+  enable: true
+  keep_last: 3
+  save_every_steps: 200
+
+viz:
+  dpi: 150
+  style: default
+
+io:
+  run_dir: "D:\\grwhs\\outputs\\test_runs\\smoke-20251008-024320"
