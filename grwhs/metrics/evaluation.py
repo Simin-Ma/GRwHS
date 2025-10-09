@@ -13,7 +13,17 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 from numpy.typing import ArrayLike
-from sklearn.metrics import auc, mean_squared_error, precision_recall_curve
+from sklearn.metrics import (
+    auc,
+    mean_squared_error,
+    precision_recall_curve,
+    accuracy_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+    log_loss,
+    brier_score_loss,
+)
 
 try:  # Optional plotting libraries (not used in automated metrics)
     import matplotlib.pyplot as plt  # noqa: F401
@@ -58,6 +68,88 @@ def predictive_metrics(
             metrics["PredictiveLogLikelihood"] = float(np.mean(ll))
         elif ll.ndim == 2:
             metrics["PredictiveLogLikelihood"] = float(ll.mean())
+    return metrics
+
+
+def classification_metrics(
+    y_true: Optional[ArrayLike],
+    prob_positive: Optional[ArrayLike],
+    pred_labels: Optional[ArrayLike],
+    *,
+    threshold: float = 0.5,
+) -> Dict[str, Optional[float]]:
+    """Compute binary classification metrics from probabilities or labels."""
+
+    metrics: Dict[str, Optional[float]] = {
+        "ClassAccuracy": None,
+        "ClassF1": None,
+        "ClassLogLoss": None,
+        "ClassBrier": None,
+        "ClassAUROC": None,
+        "ClassAveragePrecision": None,
+    }
+
+    y = _as_numpy(y_true)
+    if y is None or y.size == 0:
+        return metrics
+
+    y = y.reshape(-1)
+
+    prob: Optional[np.ndarray]
+    if prob_positive is None:
+        prob = None
+    else:
+        prob_arr = np.asarray(prob_positive, dtype=float)
+        if prob_arr.ndim == 2 and prob_arr.shape[1] >= 2:
+            prob = prob_arr[:, -1]
+        else:
+            prob = prob_arr.reshape(-1)
+        if prob.shape[0] != y.shape[0]:
+            prob = None
+
+    preds: Optional[np.ndarray]
+    if pred_labels is None:
+        preds = None
+    else:
+        preds_arr = np.asarray(pred_labels).reshape(-1)
+        preds = preds_arr if preds_arr.shape[0] == y.shape[0] else None
+
+    if prob is not None:
+        prob = np.clip(prob, 1e-7, 1 - 1e-7)
+        pred_binary = (prob >= threshold).astype(int)
+        metrics["ClassAccuracy"] = float(accuracy_score(y, pred_binary))
+        uniques = np.unique(y)
+        if uniques.size == 2:
+            try:
+                metrics["ClassF1"] = float(f1_score(y, pred_binary))
+            except ValueError:
+                metrics["ClassF1"] = None
+            try:
+                metrics["ClassAUROC"] = float(roc_auc_score(y, prob))
+            except ValueError:
+                metrics["ClassAUROC"] = None
+            try:
+                metrics["ClassAveragePrecision"] = float(average_precision_score(y, prob))
+            except ValueError:
+                metrics["ClassAveragePrecision"] = None
+        try:
+            metrics["ClassLogLoss"] = float(log_loss(y, np.column_stack([1.0 - prob, prob])))
+        except ValueError:
+            metrics["ClassLogLoss"] = None
+        try:
+            metrics["ClassBrier"] = float(brier_score_loss(y, prob))
+        except ValueError:
+            metrics["ClassBrier"] = None
+        if preds is None:
+            preds = pred_binary
+    elif preds is not None:
+        preds_binary = preds.astype(int)
+        metrics["ClassAccuracy"] = float(accuracy_score(y, preds_binary))
+        if np.unique(y).size == 2:
+            try:
+                metrics["ClassF1"] = float(f1_score(y, preds_binary))
+            except ValueError:
+                metrics["ClassF1"] = None
     return metrics
 
 
@@ -232,8 +324,16 @@ def evaluate_model_metrics(
     group_index: Optional[np.ndarray] = None,
     coverage_level: float = 0.9,
     slab_width: Optional[float] = None,
+    task: str = "regression",
+    classification_threshold: float = 0.5,
 ) -> Dict[str, Optional[float]]:
-    """Evaluate a fitted model across predictive, selection, calibration, and shrinkage metrics."""
+    """Evaluate a fitted model across predictive, classification, selection, and calibration metrics."""
+
+    task_label = str(task).lower()
+    if task_label in {"binary", "binary_classification", "cls"}:
+        task_label = "classification"
+    if task_label not in {"regression", "classification"}:
+        raise ValueError(f"Unsupported task '{task}'. Expected 'regression' or 'classification'.")
 
     metrics: Dict[str, Optional[float]] = {}
 
@@ -261,20 +361,42 @@ def evaluate_model_metrics(
     else:
         intercept_val = np.asarray(intercept)
 
+    prob_positive = None
+    if task_label == "classification" and Xte is not None:
+        proba_method = getattr(model, "predict_proba", None)
+        if callable(proba_method):
+            try:
+                proba = np.asarray(proba_method(Xte))
+                if proba.ndim == 1:
+                    prob_positive = proba
+                elif proba.ndim == 2 and proba.shape[1] >= 2:
+                    prob_positive = proba[:, -1]
+            except Exception:
+                prob_positive = None
+        if prob_positive is None:
+            decision_method = getattr(model, "decision_function", None)
+            if callable(decision_method):
+                try:
+                    decision_scores = np.asarray(decision_method(Xte), dtype=float).reshape(-1)
+                    prob_positive = 1.0 / (1.0 + np.exp(-np.clip(decision_scores, -60.0, 60.0)))
+                except Exception:
+                    prob_positive = None
+
     pred_draws = None
-    if Xte is not None and posterior.coef is not None:
-        pred_draws = _predictive_draws(
-            Xte,
-            posterior.coef,
-            intercept_val,
-            sigma_samples=posterior.sigma,
-        )
-
     loglik_samples = None
-    if yte is not None and pred_draws is not None and posterior.sigma is not None:
-        loglik_samples = _log_likelihood_samples(yte, pred_draws, posterior.sigma)
-
-    metrics.update(predictive_metrics(yte, pred_mean, loglik_samples))
+    if task_label == "regression":
+        if Xte is not None and posterior.coef is not None:
+            pred_draws = _predictive_draws(
+                Xte,
+                posterior.coef,
+                intercept_val,
+                sigma_samples=posterior.sigma,
+            )
+        if yte is not None and pred_draws is not None and posterior.sigma is not None:
+            loglik_samples = _log_likelihood_samples(yte, pred_draws, posterior.sigma)
+        metrics.update(predictive_metrics(yte, pred_mean, loglik_samples))
+    else:
+        metrics.update(classification_metrics(yte, prob_positive, pred_mean, threshold=classification_threshold))
 
     # Variable selection metrics
     beta_truth_bin = None
@@ -293,20 +415,19 @@ def evaluate_model_metrics(
 
     metrics.update(selection_metrics(beta_truth_bin, prob_scores))
 
-    # Predictive intervals
-    interval_array = None
-    if pred_draws is not None and pred_draws.shape[0] > 1:
-        lower = np.quantile(pred_draws, (1 - coverage_level) / 2, axis=0)
-        upper = np.quantile(pred_draws, 1 - (1 - coverage_level) / 2, axis=0)
-        interval_array = np.column_stack([lower, upper])
-    elif pred_mean is not None and posterior.sigma is not None:
-        sigma = float(posterior.sigma[0])
-        z = norm.ppf(0.5 + coverage_level / 2)
-        lower = pred_mean - z * sigma
-        upper = pred_mean + z * sigma
-        interval_array = np.column_stack([lower, upper])
-
-    metrics.update(interval_metrics(yte, interval_array))
+    if task_label == "regression":
+        interval_array = None
+        if pred_draws is not None and pred_draws.shape[0] > 1:
+            lower = np.quantile(pred_draws, (1 - coverage_level) / 2, axis=0)
+            upper = np.quantile(pred_draws, 1 - (1 - coverage_level) / 2, axis=0)
+            interval_array = np.column_stack([lower, upper])
+        elif pred_mean is not None and posterior.sigma is not None:
+            sigma = float(posterior.sigma[0])
+            z = norm.ppf(0.5 + coverage_level / 2)
+            lower = pred_mean - z * sigma
+            upper = pred_mean + z * sigma
+            interval_array = np.column_stack([lower, upper])
+        metrics.update(interval_metrics(yte, interval_array))
 
     # Shrinkage diagnostics (mean kappa)
     mean_kappa = None

@@ -85,7 +85,42 @@ python -m grwhs.cli.run_experiment \
 ```
 Supports dotted paths (`section.subsection.key=value`).
 
-### 3.4 Real Data Support
+### 3.4 Binary Classification Mode
+Binary outcomes are now first-class citizens. To switch any scenario to a logistic setup:
+
+1. Set `task: classification` (either in YAML or via `--override task=classification`).
+2. Provide logistic controls under `data.classification` (scales logits) and keep the signal block for sparsity.
+3. Select a classifier such as `model.name=logistic_regression` (defaults live under `model.logistic`).
+4. Disable target centering (`standardization.y_center=false`) when using classification.
+
+Example override snippet:
+```yaml
+task: classification
+standardization:
+  X: unit_variance
+  y_center: false
+model:
+  name: logistic_regression
+  logistic:
+    solver: lbfgs
+    max_iter: 400
+data:
+  classification:
+    scale: 0.9
+    bias: 0.0
+    noise_std: 0.1
+experiments:
+  classification_threshold: 0.5
+  metrics:
+    classification:
+      - ClassAccuracy
+      - ClassF1
+      - ClassAUROC
+      - ClassLogLoss
+```
+The evaluation pipeline automatically records both regression and classification metrics (e.g., `ClassAccuracy`, `ClassLogLoss`, `ClassBrier`) while retaining sparsity diagnostics such as `AUC-PR`/`F1` for synthetic ground truth comparisons.
+
+### 3.5 Real Data Support
 Set `data.type=loader` and implement adapter in `data/loaders.py` (mapping to `(X, y, groups)` tuple). Provide file paths under `data.loader.*`. You can mix real data config with overrides or scenario templates.
 
 ---

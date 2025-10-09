@@ -29,6 +29,7 @@ def _invoke_cli(main_fn, arguments):
 def _make_basic_config(tmp_path: Path) -> dict:
     return {
         "seed": 123,
+        "task": "regression",
         "data": {
             "type": "synthetic",
             "n": 32,
@@ -48,7 +49,14 @@ def _make_basic_config(tmp_path: Path) -> dict:
         },
         "standardization": {"X": "unit_variance", "y_center": True},
         "model": {"name": "ridge", "alpha": 0.5, "fit_intercept": False},
-        "experiments": {"metrics": ["RMSE", "PredictiveLogLikelihood"], "coverage_level": 0.9},
+        "experiments": {
+            "metrics": {
+                "regression": ["RMSE", "PredictiveLogLikelihood"],
+                "classification": ["ClassAccuracy", "ClassLogLoss"],
+            },
+            "coverage_level": 0.9,
+            "classification_threshold": 0.5,
+        },
     }
 
 
@@ -84,6 +92,7 @@ def test_load_real_dataset_and_runner(tmp_path):
     config = {
         "seed": 123,
         "name": "loader_run",
+        "task": "regression",
         "data": {
             "type": "loader",
             "loader": loader_cfg,
@@ -92,7 +101,11 @@ def test_load_real_dataset_and_runner(tmp_path):
         },
         "standardization": {"X": "unit_variance", "y_center": True},
         "model": {"name": "ridge", "alpha": 1.0, "fit_intercept": False},
-        "experiments": {"metrics": ["RMSE", "PredictiveLogLikelihood"], "coverage_level": 0.9},
+        "experiments": {
+            "metrics": {"regression": ["RMSE", "PredictiveLogLikelihood"]},
+            "coverage_level": 0.9,
+            "classification_threshold": 0.5,
+        },
     }
 
     out_dir = tmp_path / "run_single"
@@ -153,6 +166,57 @@ def test_make_report_aggregates(tmp_path):
     assert "runs" in summary_index and len(summary_index["runs"]) == 2
     assert summary_index.get("aggregates")
     assert (reports_dir / "aggregates_summary.json").exists()
+
+
+def test_run_experiment_classification(tmp_path):
+    config = {
+        "seed": 7,
+        "task": "classification",
+        "data": {
+            "type": "synthetic",
+            "n": 40,
+            "p": 6,
+            "G": 3,
+            "group_sizes": "equal",
+            "signal": {
+                "sparsity": 0.5,
+                "strong_frac": 0.5,
+                "beta_scale_strong": 1.2,
+                "beta_scale_weak": 0.3,
+            },
+            "classification": {
+                "scale": 0.9,
+                "bias": 0.0,
+                "noise_std": 0.1,
+            },
+            "test_ratio": 0.25,
+            "val_ratio": 0.1,
+        },
+        "standardization": {"X": "unit_variance", "y_center": False},
+        "model": {
+            "name": "logistic_regression",
+            "logistic": {
+                "solver": "lbfgs",
+                "max_iter": 300,
+                "penalty": "l2",
+                "C": 1.0,
+            },
+        },
+        "experiments": {
+            "metrics": {
+                "classification": ["ClassAccuracy", "ClassLogLoss", "ClassF1"],
+            },
+            "coverage_level": 0.9,
+            "classification_threshold": 0.5,
+        },
+    }
+
+    out_dir = tmp_path / "classification_run"
+    result = run_experiment(config, out_dir)
+    assert result["status"] == "OK"
+    metrics_payload = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert "ClassAccuracy" in metrics_payload
+    assert metrics_payload["ClassAccuracy"] is not None
 
 
 def test_run_sweep_parallel(tmp_path):

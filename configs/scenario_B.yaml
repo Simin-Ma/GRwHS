@@ -12,6 +12,7 @@ defaults: "configs/base.yaml"
 seed: 42
 device: cpu
 output_dir: outputs
+task: regression
 
 seeds:
   experiment: 42
@@ -36,6 +37,10 @@ data:
     beta_scale_strong: 1.9
     beta_scale_weak: 0.50
     group_sparsity: 0.65
+  classification:
+    scale: 1.0
+    bias: 0.0
+    noise_std: 0.0
   noise_sigma: 1.0
   test_ratio: 0.2
   val_ratio: 0.1
@@ -86,15 +91,26 @@ experiments:
   save_posterior: true
   diagnostics: true
   metrics:
-    - RMSE
-    - PredictiveLogLikelihood
-    - AUC-PR
-    - F1
-    - Coverage90
-    - IntervalWidth90
-    - MeanKappa
-    - EffectiveDoF
+    regression:
+      - RMSE
+      - PredictiveLogLikelihood
+      - Coverage90
+      - IntervalWidth90
+      - MeanKappa
+      - EffectiveDoF
+      - AUC-PR
+      - F1
+    classification:
+      - ClassAccuracy
+      - ClassF1
+      - ClassAUROC
+      - ClassAveragePrecision
+      - ClassLogLoss
+      - ClassBrier
+      - AUC-PR
+      - F1
   coverage_level: 0.9
+  classification_threshold: 0.5
   runtime_profile: false
 
 logging:

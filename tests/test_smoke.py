@@ -18,6 +18,7 @@ def test_run_experiment_creates_artifacts(tmp_path):
     config = {
         "seed": 123,
         "name": "smoke",
+        "task": "regression",
         "data": {
             "type": "synthetic",
             "n": 64,
@@ -38,8 +39,11 @@ def test_run_experiment_creates_artifacts(tmp_path):
         "standardization": {"X": "unit_variance", "y_center": True},
         "model": {"name": "ridge", "alpha": 0.5, "fit_intercept": False},
         "experiments": {
-            "metrics": ["RMSE", "PredictiveLogLikelihood"],
+            "metrics": {
+                "regression": ["RMSE", "PredictiveLogLikelihood"],
+            },
             "coverage_level": 0.9,
+            "classification_threshold": 0.5,
         },
     }
 

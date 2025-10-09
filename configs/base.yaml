@@ -18,6 +18,7 @@
 seed: 42
 device: "cpu"            # Execution backend: "cpu" (all solvers) | "gpu" (NumPyro SVI only)
 output_dir: "outputs"
+task: "regression"       # "regression" (default) | "classification" for logistic experiments
 
 seeds:
   experiment: 42         # Global/default seed if a stage-specific override is not supplied
@@ -59,6 +60,10 @@ data:
     beta_scale_strong: 1.8   # Std of strong effects (in sigma units)
     beta_scale_weak: 0.45    # Std of weak effects
     sign_mix: "random"   # Sign pattern for non-zeros: "random" | "positive" | "negative"
+  classification:
+    scale: 1.0           # Logistic scale for linear predictor when task == "classification"
+    bias: 0.0            # Global bias (log-odds shift) to tune class balance
+    noise_std: 0.0       # Optional Gaussian jitter on logits to soften decision boundary
 
   noise_sigma: 1.0
   test_ratio: 0.2        # Fraction of data held out for test
@@ -100,6 +105,22 @@ model:
   # Gibbs runtime controls (builder reads these keys directly)
   iters: 6000
 
+  # Logistic regression defaults (used when model.name == "logistic_regression")
+  logistic:
+    penalty: "l2"
+    C: 1.0
+    solver: "lbfgs"
+    max_iter: 200
+    tol: 1.0e-4
+    fit_intercept: true
+    class_weight: null
+    l1_ratio: null          # Requires penalty="elasticnet"
+    multi_class: "auto"
+    intercept_scaling: 1.0
+    n_jobs: null
+    warm_start: false
+    verbose: 0
+
 # -------------------------
 # Inference settings
 # -------------------------
@@ -138,15 +159,26 @@ experiments:
   save_posterior: true       # Save posterior/variational artifacts when available
   diagnostics: true          # Compute shrinkage/variance diagnostics after fit
   metrics:
-    - RMSE
-    - PredictiveLogLikelihood
-    - AUC-PR
-    - F1
-    - Coverage90
-    - IntervalWidth90
-    - MeanKappa
-    - EffectiveDoF
+    regression:
+      - RMSE
+      - PredictiveLogLikelihood
+      - Coverage90
+      - IntervalWidth90
+      - MeanKappa
+      - EffectiveDoF
+      - AUC-PR               # Variable-selection quality
+      - F1
+    classification:
+      - ClassAccuracy
+      - ClassF1
+      - ClassAUROC
+      - ClassAveragePrecision
+      - ClassLogLoss
+      - ClassBrier
+      - AUC-PR               # Retains selection diagnostics for synthetic studies
+      - F1
   coverage_level: 0.9        # Nominal interval level for calibration metrics
+  classification_threshold: 0.5  # Probability threshold for binary decisions
   runtime_profile: false     # If true, log timing/memory profiles
 
 # -------------------------

@@ -73,6 +73,34 @@ def test_generate_synthetic_respects_signal_configuration():
     assert np.all(data.beta[active] >= 0.0)
 
 
+def test_generate_synthetic_classification_outputs_binary():
+    cfg = SyntheticConfig(
+        n=32,
+        p=6,
+        G=3,
+        group_sizes="equal",
+        signal={
+            "sparsity": 0.5,
+            "strong_frac": 0.5,
+            "beta_scale_strong": 1.5,
+            "beta_scale_weak": 0.3,
+        },
+        noise_sigma=0.0,
+        seed=321,
+        task="classification",
+        response={"scale": 0.8, "bias": 0.1, "noise_std": 0.05},
+        name="classification-unit",
+    )
+
+    data = generate_synthetic(cfg)
+
+    assert data.X.shape == (32, 6)
+    assert set(np.unique(data.y)).issubset({0.0, 1.0})
+    assert data.info["task"] == "classification"
+    assert 0.0 <= data.info["mean_probability"] <= 1.0
+    assert data.noise_sigma == pytest.approx(0.0)
+
+
 def test_synthetic_config_from_dict_defaults_and_overrides():
     cfg_dict = {
         "n": 20,
@@ -90,3 +118,21 @@ def test_synthetic_config_from_dict_defaults_and_overrides():
     assert cfg.signal["sparsity"] == 0.2
     assert cfg.seed == 999
     assert cfg.name == "scenario"
+    assert cfg.task == "regression"
+    assert cfg.response.get("type") == "regression"
+
+
+def test_synthetic_config_from_dict_classification_override():
+    cfg_dict = {
+        "n": 10,
+        "p": 4,
+        "G": 2,
+        "group_sizes": "equal",
+        "signal": {"sparsity": 0.5},
+        "response": {"type": "classification", "scale": 0.75, "bias": -0.2},
+    }
+
+    cfg = synthetic_config_from_dict(cfg_dict, seed=111, name="cls")
+    assert cfg.task == "classification"
+    assert cfg.response["scale"] == 0.75
+    assert cfg.response["bias"] == -0.2

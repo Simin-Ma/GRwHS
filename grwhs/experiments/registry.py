@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover
 
 # Baselines (numpy/skglm implementations)
 from grwhs.models.baselines import (
+    LogisticRegressionClassifier,
     Ridge,
     Lasso,
     ElasticNet,
@@ -167,6 +168,63 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
 # ------------------------------
 # Baselines
 # ------------------------------
+
+
+@register("logistic_regression")
+@register("logistic")
+@register("logreg")
+def _build_logistic_regression(cfg: Dict[str, Any]) -> Any:
+    logistic_cfg = _get(cfg, "model.logistic", {})
+
+    def _resolve(key: str, default: Any) -> Any:
+        explicit = _get(cfg, f"model.{key}", None)
+        if explicit is not None:
+            return explicit
+        if isinstance(logistic_cfg, dict) and key in logistic_cfg:
+            return logistic_cfg[key]
+        return default
+
+    penalty = str(_resolve("penalty", "l2"))
+    solver = str(_resolve("solver", "lbfgs"))
+    max_iter = int(_resolve("max_iter", 200))
+    tol = float(_resolve("tol", 1e-4))
+    C = float(_resolve("C", 1.0))
+    fit_intercept = bool(_resolve("fit_intercept", True))
+    class_weight = _resolve("class_weight", None)
+    l1_ratio_raw = _resolve("l1_ratio", None)
+    l1_ratio = float(l1_ratio_raw) if l1_ratio_raw is not None else None
+    multi_class = str(_resolve("multi_class", "auto"))
+    intercept_scaling = float(_resolve("intercept_scaling", 1.0))
+    warm_start = bool(_resolve("warm_start", False))
+    verbose = int(_resolve("verbose", 0))
+    n_jobs_raw = _resolve("n_jobs", None)
+    n_jobs = int(n_jobs_raw) if n_jobs_raw is not None else None
+    if l1_ratio is not None and penalty.lower() != "elasticnet":
+        raise ValueError("model.l1_ratio is only valid when penalty='elasticnet'.")
+    random_state_raw = _resolve("seed", _get(cfg, "seed", None))
+    random_state = None
+    if random_state_raw is not None:
+        try:
+            random_state = int(random_state_raw)
+        except (TypeError, ValueError):
+            random_state = None
+
+    return LogisticRegressionClassifier(
+        penalty=penalty,
+        C=C,
+        fit_intercept=fit_intercept,
+        solver=solver,
+        max_iter=max_iter,
+        tol=tol,
+        class_weight=class_weight,
+        l1_ratio=l1_ratio,
+        multi_class=multi_class,
+        intercept_scaling=intercept_scaling,
+        n_jobs=n_jobs,
+        warm_start=warm_start,
+        verbose=verbose,
+        random_state=random_state,
+    )
 
 
 @register("ridge")

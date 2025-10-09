@@ -33,6 +33,8 @@ class SyntheticConfig:
     correlation: Mapping[str, object] = field(default_factory=dict)
     signal: Mapping[str, object] = field(default_factory=dict)
     noise_sigma: float = 1.0
+    task: str = "regression"
+    response: Mapping[str, object] = field(default_factory=dict)
     seed: Optional[int] = None
     name: Optional[str] = None
 
@@ -262,8 +264,32 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
         vals = local_rng.normal(0.0, scale_weak, size=weak_idx.size)
         beta[weak_idx] = _soft_sign(vals, sign_mode, local_rng)
 
-    noise = local_rng.normal(0.0, float(config.noise_sigma), size=config.n)
-    y = X @ beta + noise
+    linear = X @ beta
+
+    response_cfg = dict(config.response) if config.response else {}
+    response_type = str(response_cfg.get("type", config.task)).lower()
+
+    if response_type not in {"regression", "classification"}:
+        raise GeneratorError(f"Unsupported response type '{response_type}'.")
+
+    if response_type == "classification":
+        scale = float(response_cfg.get("scale", 1.0))
+        bias = float(response_cfg.get("bias", 0.0))
+        noise_std = float(response_cfg.get("noise_std", 0.0))
+
+        logits = scale * linear + bias
+        if noise_std > 0.0:
+            logits = logits + local_rng.normal(0.0, noise_std, size=config.n)
+
+        logits = np.clip(logits, -60.0, 60.0)
+        probs = 1.0 / (1.0 + np.exp(-logits))
+        y = local_rng.binomial(1, probs).astype(np.float32, copy=False)
+        effective_noise_sigma = 0.0
+    else:
+        noise = local_rng.normal(0.0, float(config.noise_sigma), size=config.n)
+        y = linear + noise
+        probs = None
+        effective_noise_sigma = float(config.noise_sigma)
 
     info: Dict[str, object] = {
         "active_idx": np.sort(np.concatenate([strong_idx, weak_idx])) if (strong_idx.size or weak_idx.size) else np.empty(0, dtype=int),
@@ -271,14 +297,17 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
         "weak_idx": weak_idx,
         "seed": config.seed,
         "name": config.name,
+        "task": response_type,
     }
+    if probs is not None:
+        info["mean_probability"] = float(np.mean(probs))
 
     return SyntheticDataset(
         X=X.astype(np.float32, copy=False),
         y=y.astype(np.float32, copy=False),
         beta=beta.astype(np.float32, copy=False),
         groups=groups,
-        noise_sigma=float(config.noise_sigma),
+        noise_sigma=effective_noise_sigma,
         info=info,
     )
 
@@ -288,6 +317,8 @@ def synthetic_config_from_dict(
     *,
     seed: Optional[int] = None,
     name: Optional[str] = None,
+    task: Optional[str] = None,
+    response_override: Optional[Mapping[str, object]] = None,
 ) -> SyntheticConfig:
     if "n" not in data_cfg or "p" not in data_cfg:
         raise KeyError("data configuration requires 'n' and 'p'.")
@@ -298,6 +329,20 @@ def synthetic_config_from_dict(
     noise_sigma = data_cfg.get("noise_sigma", 1.0)
     cfg_seed = data_cfg.get("seed", seed)
     G = data_cfg.get("G")
+    response_cfg_raw = data_cfg.get("response", {})
+    if isinstance(response_cfg_raw, Mapping):
+        response_cfg = dict(response_cfg_raw)
+    else:
+        response_cfg = {}
+    if response_override is not None:
+        response_cfg.update(dict(response_override))
+
+    task_spec = task or response_cfg.get("type") or data_cfg.get("task")
+    if task_spec is None:
+        task_label = "regression"
+    else:
+        task_label = str(task_spec).lower()
+    response_cfg.setdefault("type", task_label)
 
     return SyntheticConfig(
         n=int(data_cfg["n"]),
@@ -307,6 +352,8 @@ def synthetic_config_from_dict(
         correlation=dict(correlation),
         signal=dict(signal),
         noise_sigma=float(noise_sigma),
+        task=task_label,
+        response=response_cfg,
         seed=None if cfg_seed is None else int(cfg_seed),
         name=name or data_cfg.get("name"),
     )

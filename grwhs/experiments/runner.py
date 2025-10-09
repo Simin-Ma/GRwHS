@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Mapping
 
 import numpy as np
 
@@ -15,7 +15,7 @@ from data.splits import train_val_test_split
 from data.loaders import load_real_dataset
 from grwhs.experiments.registry import build_from_config, get_model_name_from_config
 from grwhs.metrics.evaluation import evaluate_model_metrics
-from grwhs.models.baselines import Ridge
+from grwhs.models.baselines import Ridge, LogisticRegressionClassifier
 from grwhs.diagnostics.convergence import summarize_convergence
 from grwhs.utils.logging_utils import progress
 
@@ -42,6 +42,17 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
     data_cfg = config.get("data", {})
     data_type = str(data_cfg.get("type", "synthetic")).lower()
     seed_cfg = config.get("seeds", {})
+
+    task_aliases = {
+        "binary": "classification",
+        "binary_classification": "classification",
+        "cls": "classification",
+    }
+    task_raw = config.get("task", data_cfg.get("task", "regression"))
+    task_norm = str(task_raw).lower()
+    task = task_aliases.get(task_norm, task_norm)
+    if task not in {"regression", "classification"}:
+        raise ValueError(f"Unsupported task '{task_raw}'. Expected 'regression' or 'classification'.")
 
     def _resolve_seed(*candidates: Any) -> Optional[int]:
         for candidate in candidates:
@@ -71,7 +82,24 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         data_seed = int(secrets.randbits(32))
 
     if data_type == "synthetic":
-        syn_cfg = synthetic_config_from_dict(data_cfg, seed=data_seed, name=config.get("name"))
+        response_override: Dict[str, Any] | None = None
+        if task == "classification":
+            override_dict: Dict[str, Any] = {}
+            class_cfg_data = data_cfg.get("classification")
+            if isinstance(class_cfg_data, Mapping):
+                override_dict.update(dict(class_cfg_data))
+            class_cfg_global = config.get("classification")
+            if isinstance(class_cfg_global, Mapping):
+                override_dict.update(dict(class_cfg_global))
+            if override_dict:
+                response_override = override_dict
+        syn_cfg = synthetic_config_from_dict(
+            data_cfg,
+            seed=data_seed,
+            name=config.get("name"),
+            task=task,
+            response_override=response_override,
+        )
         dataset = generate_synthetic(syn_cfg)
         X_source = dataset.X
         y_source = dataset.y
@@ -79,6 +107,7 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         groups = dataset.groups
         dataset_metadata.update(dataset.info)
         dataset_metadata.setdefault("scenario", syn_cfg.name)
+        dataset_metadata["task"] = task
         strong_idx = dataset.info.get("strong_idx")
         weak_idx = dataset.info.get("weak_idx")
         active_idx = dataset.info.get("active_idx")
@@ -96,6 +125,7 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         groups = loaded.groups
         feature_names = loaded.feature_names
         dataset_metadata.update(loaded.metadata)
+        dataset_metadata["task"] = task
         if groups is None:
             if data_cfg.get("groups") is not None:
                 groups = [[int(idx) for idx in group] for group in data_cfg["groups"]]
@@ -114,9 +144,13 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         groups = [[j] for j in range(X_source.shape[1])]
 
     std_cfg_dict = config.get("standardization", {})
+    if "y_center" in std_cfg_dict:
+        y_center_flag = bool(std_cfg_dict.get("y_center"))
+    else:
+        y_center_flag = task != "classification"
     std_cfg = StandardizationConfig(
         X=std_cfg_dict.get("X", "unit_variance"),
-        y_center=bool(std_cfg_dict.get("y_center", True)),
+        y_center=y_center_flag,
     )
     std_result = apply_standardization(X_source, y_source, std_cfg)
 
@@ -143,10 +177,23 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         model = build_from_config(config)
         model_name = get_model_name_from_config(config)
     except Exception as exc:  # pragma: no cover - fallback path
-        print(f"[WARN] Using Ridge fallback because model construction failed: {exc}")
-        fit_intercept = bool(config.get("model", {}).get("fit_intercept", False))
-        model = Ridge(alpha=1.0, fit_intercept=fit_intercept)
-        model_name = "ridge_fallback"
+        print(f"[WARN] Model construction failed ({exc}); using fallback estimator.")
+        model_cfg = config.get("model", {})
+        if task == "classification":
+            penalty = str(model_cfg.get("penalty", "l2"))
+            solver = str(model_cfg.get("solver", "lbfgs"))
+            max_iter = int(model_cfg.get("max_iter", 200))
+            model = LogisticRegressionClassifier(
+                penalty=penalty,
+                solver=solver,
+                max_iter=max_iter,
+            )
+            model_name = "logistic_regression_fallback"
+        else:
+            fit_intercept = bool(model_cfg.get("fit_intercept", False))
+            alpha = float(model_cfg.get("alpha", 1.0))
+            model = Ridge(alpha=alpha, fit_intercept=fit_intercept)
+            model_name = "ridge_fallback"
 
     if y_train is None:
         raise ValueError("Experiment requires targets after preprocessing.")
@@ -160,6 +207,8 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
     metrics_cfg = config.get("experiments", {})
 
     coverage_level = float(metrics_cfg.get("coverage_level", 0.9))
+    classification_threshold = float(metrics_cfg.get("classification_threshold", 0.5))
+    classification_threshold = min(max(classification_threshold, 0.0), 1.0)
     group_index = np.zeros(X_train.shape[1], dtype=int)
     for gid, idxs in enumerate(groups):
         group_index[np.asarray(idxs, dtype=int)] = gid
@@ -176,6 +225,8 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         group_index=group_index,
         coverage_level=coverage_level,
         slab_width=slab_width,
+        task=task,
+        classification_threshold=classification_threshold,
     )
 
     metrics_serializable = {k: _to_serializable(v) for k, v in results.items()}
@@ -275,6 +326,7 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         "p": int(X_source.shape[1]),
         "groups": groups,
         "seed": experiment_seed,
+        "task": task,
         "split": {
             "train": splits.train.tolist(),
             "val": splits.val.tolist(),

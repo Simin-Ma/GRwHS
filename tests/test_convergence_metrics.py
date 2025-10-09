@@ -41,6 +41,7 @@ def test_summarize_convergence_keys():
 def test_run_experiment_outputs_convergence(tmp_path):
     config = {
         "seed": 123,
+        "task": "regression",
         "data": {
             "type": "synthetic",
             "n": 40,
@@ -64,8 +65,9 @@ def test_run_experiment_outputs_convergence(tmp_path):
             "gibbs": {"iters": 30, "burn_in": 10, "thin": 1, "seed": 321}
         },
         "experiments": {
-            "metrics": ["RMSE"],
+            "metrics": {"regression": ["RMSE"]},
             "save_posterior": True,
+            "classification_threshold": 0.5,
         },
     }
 
