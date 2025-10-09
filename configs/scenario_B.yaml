@@ -51,21 +51,21 @@ data:
 
 model:
   name: grwhs_gibbs
-  c: 1.2
-  s_guess: 36
-  tau0: 0.0128
-  eta: 0.65
+  c: 1.7
+  s_guess: 16
+  tau0: 0.008
+  eta: 1.0
   size_adjust: true
   s0: 0.8
-  iters: 10000
+  iters: 12000
 
 inference:
   gibbs:
-    iters: 10000
-    burn_in: 5000
-    thin: 1
-    adapt_slice: true
-    jitter: 1.0e-08
+    iters: 12000
+    burn_in: 6000
+    thin: 4
+    adapt_slice: false
+    jitter: 1.0e-06
     seed: 123
     slice_w: 0.15
   svi:
@@ -76,7 +76,7 @@ inference:
     natural_grad: true
     elbo_eval_every: 100
     clip_grad_norm: 10.0
-    jitter: 1.0e-08
+    jitter: 1.0e-06
     seed: 123
     use_hutchinson: true
     hutchinson_samples: 12
@@ -126,5 +126,4 @@ viz:
   dpi: 150
   style: default
 
-io:
-  run_dir: "D:\\grwhs\\outputs\\test_runs\\smoke-20251008-024320"
+
