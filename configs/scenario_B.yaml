@@ -22,14 +22,14 @@ standardization:
   y_center: true
 
 data:
-  n: 420
-  p: 1200
-  G: 40
+  n: 48
+  p: 360
+  G: 15
   group_sizes: "variable"
   correlation:
     type: "block"
     rho: 0.45
-    block_size: 30
+    block_size: 24
   signal:
     sparsity: 0.11
     strong_frac: 0.25
@@ -47,17 +47,17 @@ data:
 model:
   name: grwhs_gibbs
   c: 1.2
-  s_guess: 132
-  tau0: 0.0048
+  s_guess: 36
+  tau0: 0.0128
   eta: 0.65
   size_adjust: true
   s0: 0.8
-  iters: 12000
+  iters: 10000
 
 inference:
   gibbs:
-    iters: 12000
-    burn_in: 6000
+    iters: 10000
+    burn_in: 5000
     thin: 1
     adapt_slice: true
     jitter: 1.0e-08
@@ -67,7 +67,7 @@ inference:
     steps: 4000
     lr: 0.01
     mc_samples: 3
-    batch_size: 256
+    batch_size: 48
     natural_grad: true
     elbo_eval_every: 100
     clip_grad_norm: 10.0
