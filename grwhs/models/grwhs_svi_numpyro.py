@@ -171,18 +171,32 @@ class GRwHS_SVI_Numpyro:
         coupling_a = numpyro.param("coupling_a", jnp.zeros((p,)), constraint=coupling_constraint)
         coupling_rho = numpyro.param("coupling_rho", jnp.array(0.0), constraint=coupling_constraint)
 
-        u_shared = numpyro.sample("u_shared", dist.Normal(0.0, 1.0))
+        u_shared = numpyro.sample(
+            "u_shared",
+            dist.Normal(0.0, 1.0),
+            infer={"is_auxiliary": True},
+        )
 
         loc_tau = mu_log_tau + coupling_rho * u_shared
-        log_tau = numpyro.sample("log_tau_aux", dist.Normal(loc_tau, std_log_tau))
+        log_tau = numpyro.sample(
+            "log_tau_aux",
+            dist.Normal(loc_tau, std_log_tau),
+            infer={"is_auxiliary": True},
+        )
         numpyro.sample("tau", dist.Delta(jnp.exp(log_tau)))
 
-        log_sigma = numpyro.sample("log_sigma_aux", dist.Normal(mu_log_sigma, std_log_sigma))
+        log_sigma = numpyro.sample(
+            "log_sigma_aux",
+            dist.Normal(mu_log_sigma, std_log_sigma),
+            infer={"is_auxiliary": True},
+        )
         numpyro.sample("sigma", dist.Delta(jnp.exp(log_sigma)))
 
         loc_lambda = mu_log_lam + coupling_a * u_shared
         log_lam = numpyro.sample(
-            "log_lambda_aux", dist.Normal(loc_lambda, std_log_lam).to_event(1)
+            "log_lambda_aux",
+            dist.Normal(loc_lambda, std_log_lam).to_event(1),
+            infer={"is_auxiliary": True},
         )
         numpyro.sample("lambda", dist.Delta(jnp.exp(log_lam)).to_event(1))
 
@@ -198,7 +212,11 @@ class GRwHS_SVI_Numpyro:
             diag = jnp.diag(softplus(jnp.diag(L)) + 1e-5)
             L = L - jnp.diag(jnp.diag(L)) + diag
 
-            z = numpyro.sample(f"z_group_{g}", dist.MultivariateNormal(loc, scale_tril=L))
+            z = numpyro.sample(
+                f"z_group_{g}",
+                dist.MultivariateNormal(loc, scale_tril=L),
+                infer={"is_auxiliary": True},
+            )
             beta_g = z[:pg]
             log_phi_g = z[pg]
 

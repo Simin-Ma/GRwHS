@@ -9,10 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from grwhs.models.horseshoe_baseline import (
-    HorseshoeRegression,
-    RegularizedHorseshoeRegression,
-)
+from grwhs.models.baselines import HorseshoeRegression, RegularizedHorseshoeRegression
 
 
 def _synthetic_regression(seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
