@@ -1,15 +1,6 @@
 # ========================================
 # Scenario B – p ≫ n, mixed strong/weak signals (refined)
 # ----------------------------------------
-# Goals
-# - High-dimensional regime (p >> n) with block correlation.
-# - Easier identifiability and stabler mixing for GRwHS by:
-#   * slightly sparser truth,
-#   * higher strong-signal share and amplitude,
-#   * stronger group sparsity.
-# - Keep a single global prior anchor (s_guess), avoid manual tau0.
-# - Use wider slice steps and small jitter to reduce autocorrelation.
-# ========================================
 
 defaults: "configs/base.yaml"
 
@@ -64,12 +55,12 @@ model:
   # -------- Prior strength (tight but not brittle) --------
   # Single global anchor via s_guess; do NOT set tau0 simultaneously.
   # With sparsity ~0.06, s_guess ≈ 22; we keep a slightly tighter 30 to bias toward sparsity.
-  s_guess: 20               # Global shrinkage anchor (expected # of nonzeros)
+  s_guess: 22               # Global shrinkage anchor (expected # of nonzeros)
 
   eta: 1.7                   # Group prior (smaller = tighter). Helps ϕ mix and avoid drifting.
   c: 1.6                    # Slab width (narrower controls mid-size coefficients, improves generalization)
   size_adjust: true          # Scale priors by group size for fair shrinkage
-  s0: 3.0                    # Noise prior scale (not too loose to avoid over-wide intervals)
+  s0: 3.1                    # Noise prior scale (not too loose to avoid over-wide intervals)
 
   # Iterations: enough for robust ESS given larger slice steps; thin kept small
   iters: 14000
@@ -84,8 +75,8 @@ inference:
     seed: 123
 
     # -------- Slice sampler tuning (bigger steps → shorter ACF) --------
-    slice_w: 17.0            # Step width for local scales; larger = farther moves
-    slice_m: 1700            # Max stepping-out steps; pair with slice_w
+    slice_w: 15.0            # Step width for local scales; larger = farther moves
+    slice_m: 1500            # Max stepping-out steps; pair with slice_w
 
   # SVI block retained for completeness; not used in this scenario run
   svi:
