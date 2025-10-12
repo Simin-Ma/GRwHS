@@ -57,12 +57,12 @@ model:
   eta: 1.0
   size_adjust: true
   s0: 0.8
-  iters: 12000
+  iters: 8000
 
 inference:
   gibbs:
-    iters: 12000
-    burn_in: 6000
+    iters: 8000
+    burn_in: 4000
     thin: 4
     adapt_slice: false
     jitter: 1.0e-06
