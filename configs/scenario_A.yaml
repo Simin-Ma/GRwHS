@@ -50,12 +50,12 @@ model:
   eta: 0.4
   size_adjust: true
   s0: 0.8
-  iters: 12000
+  iters: 8000
 
 inference:
   gibbs:
-    iters: 12000
-    burn_in: 6000
+    iters: 8000
+    burn_in: 4000
     thin: 1
     adapt_slice: false
     jitter: 1.0e-06
@@ -119,5 +119,3 @@ viz:
   dpi: 150
   style: default
 
-io:
-  run_dir: "D:\\grwhs\\outputs\\test_runs\\smoke-20251008-024320"

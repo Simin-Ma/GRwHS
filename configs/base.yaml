@@ -93,7 +93,7 @@ model:
   s_guess: 108
 
   # Global scale following tau0 ≈ (s / (p - s)) / sqrt(n) (unit-variance columns)
-  tau0: 0.0045
+  #tau0: 0.0045
 
   # Group shrinkage: phi_g ~ HalfNormal(eta / sqrt(p_g)) (GRwHS only)
   eta: 0.65
