@@ -431,8 +431,12 @@ def _build_grwhs_gibbs(cfg: Dict[str, Any]) -> Any:
     eta = float(_get(cfg, "model.eta", 0.5))
     s0 = float(_get(cfg, "model.s0", 1.0))
     iters = int(_get(cfg, "model.iters", 2000))
-    seed = _get(cfg, "runtime.seed", 42)
-    sampler = GRwHS_Gibbs(c=c, tau0=tau0, eta=eta, s0=s0, iters=iters, seed=seed)  # type: ignore
+    seed = _get(
+        cfg,
+        "inference.gibbs.seed",
+        _get(cfg, "model.seed", _get(cfg, "seed", 42)),
+    )
+    sampler = GRwHS_Gibbs(c=c, tau0=tau0, eta=eta, s0=s0, iters=iters, seed=int(seed))  # type: ignore
     return sampler
 
 

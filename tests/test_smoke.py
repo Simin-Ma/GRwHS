@@ -73,6 +73,9 @@ def test_run_experiment_creates_artifacts(tmp_path):
 def test_run_experiment_honours_repeats(tmp_path):
     base_config = {
         "seed": 321,
+        "seeds": {
+            "data_generation": 4040,
+        },
         "task": "regression",
         "data": {
             "type": "synthetic",
@@ -80,6 +83,7 @@ def test_run_experiment_honours_repeats(tmp_path):
             "p": 12,
             "G": 3,
             "group_sizes": "equal",
+            "seed": 4040,
             "signal": {
                 "sparsity": 0.25,
                 "strong_frac": 0.6,
@@ -118,6 +122,8 @@ def test_run_experiment_honours_repeats(tmp_path):
     assert gibbs_seeds == [500, 501, 502]
     svi_seeds = [entry.get("seeds", {}).get("inference", {}).get("svi") for entry in repeat_metrics]
     assert svi_seeds == [600, 601, 602]
+    data_seeds = [entry.get("seeds", {}).get("data_generation") for entry in repeat_metrics]
+    assert data_seeds == [4040, 4040, 4040]
 
     repeat_dirs = result.get("artifacts", {}).get("repeat_dirs", [])
     assert len(repeat_dirs) == 3

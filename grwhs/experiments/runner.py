@@ -45,21 +45,14 @@ def _bump_seed(value: Any, offset: int) -> Any:
 
 
 def _adjust_seeds_for_repeat(cfg: Dict[str, Any], offset: int) -> None:
+    """Offset inference seeds for later repeats while keeping data seeds fixed."""
     if offset == 0:
         return
-    seeds_cfg = cfg.get("seeds")
-    if isinstance(seeds_cfg, dict):
-        for key in ("experiment", "split"):
-            if key in seeds_cfg:
-                seeds_cfg[key] = _bump_seed(seeds_cfg[key], offset)
     inference_cfg = cfg.get("inference")
     if isinstance(inference_cfg, dict):
         for section in inference_cfg.values():
             if isinstance(section, dict) and "seed" in section:
                 section["seed"] = _bump_seed(section.get("seed"), offset)
-    model_cfg = cfg.get("model")
-    if isinstance(model_cfg, dict) and "seed" in model_cfg:
-        model_cfg["seed"] = _bump_seed(model_cfg.get("seed"), offset)
 
 
 
