@@ -12,12 +12,14 @@ task: regression
 seeds:
   experiment: 42
   split: 42
+  data_generation: 4237321008
 
 standardization:
   X: unit_variance     # Feature-wise unit variance helps scale priors sensibly
   y_center: true       # Center y to stabilize noise scale
 
 data:
+  seed: 4237321008
   n: 48
   p: 360
   G: 15
@@ -29,11 +31,12 @@ data:
 
   # -------- Signal design --------
   signal:
-    sparsity: 0.06           # ~0.06 * 360 ≈ 22 nonzeros 
-    strong_frac: 0.50        # Half of nonzeros are strong, clearer separation
+    sparsity: 0.06           # About 22 non-zeros out of 360 features
+    strong_frac: 0.50        # Half of non-zeros are strong, clearer separation
     beta_scale_strong: 2.3   # Strong effects more distinguishable
     beta_scale_weak: 0.35    # Weak effects milder to reduce false positives
-    group_sparsity: 0.80     # More zero groups → cleaner group-level signals
+    group_sparsity: 0.80     # More zero groups for cleaner group-level signals
+    sign_mix: "random"       # Random sign pattern for non-zero coefficients
 
   # Classification knobs are irrelevant for regression, kept for completeness
   classification:
@@ -58,25 +61,24 @@ model:
   s_guess: 22               # Global shrinkage anchor (expected # of nonzeros)
 
   eta: 1.7                   # Group prior (smaller = tighter). Helps ϕ mix and avoid drifting.
-  c: 1.6                    # Slab width (narrower controls mid-size coefficients, improves generalization)
+  c: 1.6                     # Slab width (narrower controls mid-size coefficients, improves generalization)
   size_adjust: true          # Scale priors by group size for fair shrinkage
   s0: 3.1                    # Noise prior scale (not too loose to avoid over-wide intervals)
+  iters: 18000               # Ensure builder uses the longer chain length
 
-  # Iterations: enough for robust ESS given larger slice steps; thin kept small
-  iters: 14000
 
 inference:
   gibbs:
-    iters: 14000
-    burn_in: 7000            # Half burn-in works well with larger slice steps
-    thin: 2                  # Light thinning to trade storage for lower autocorrelation
+    iters: 18000
+    burn_in: 9000            # Half burn-in works well with larger slice steps
+    thin: 1                  # Light thinning to trade storage for lower autocorrelation
     adapt_slice: false       # Fix step size; we tune it explicitly below
-    jitter: 6.0e-06          # Small numerical jitter to stabilize Gaussian blocks
+    jitter: 7.0e-06          # Small numerical jitter to stabilize Gaussian blocks
     seed: 123
 
     # -------- Slice sampler tuning (bigger steps → shorter ACF) --------
-    slice_w: 15.0            # Step width for local scales; larger = farther moves
-    slice_m: 1500            # Max stepping-out steps; pair with slice_w
+    slice_w: 1.0            # Step width for local scales; larger = farther moves
+    slice_m: 100            # Max stepping-out steps; pair with slice_w
 
   # SVI block retained for completeness; not used in this scenario run
   svi:
@@ -98,7 +100,7 @@ inference:
     cov_damping: 0.0
 
 experiments:
-  repeats: 3                 # Run multiple independent repeats for stability
+  repeats: 5                 # Run multiple independent repeats for stability
   save_posterior: true       # Keep posterior draws for diagnostics/plots
   diagnostics: true          # Compute R-hat, ESS, etc.
 

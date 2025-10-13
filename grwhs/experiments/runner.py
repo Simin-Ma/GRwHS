@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import secrets
+from copy import deepcopy
+from numbers import Number
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Mapping
 
@@ -33,9 +35,42 @@ def _to_serializable(value: Any) -> Any:
         return str(value)
     return value
 
+def _bump_seed(value: Any, offset: int) -> Any:
+    if offset == 0 or value is None:
+        return value
+    try:
+        return int(value) + offset
+    except (TypeError, ValueError):
+        return value
 
-def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
-    """Execute an experiment (synthetic or loader-backed) based on configuration."""
+
+def _adjust_seeds_for_repeat(cfg: Dict[str, Any], offset: int) -> None:
+    if offset == 0:
+        return
+    seeds_cfg = cfg.get("seeds")
+    if isinstance(seeds_cfg, dict):
+        for key in ("experiment", "split"):
+            if key in seeds_cfg:
+                seeds_cfg[key] = _bump_seed(seeds_cfg[key], offset)
+    inference_cfg = cfg.get("inference")
+    if isinstance(inference_cfg, dict):
+        for section in inference_cfg.values():
+            if isinstance(section, dict) and "seed" in section:
+                section["seed"] = _bump_seed(section.get("seed"), offset)
+    model_cfg = cfg.get("model")
+    if isinstance(model_cfg, dict) and "seed" in model_cfg:
+        model_cfg["seed"] = _bump_seed(model_cfg.get("seed"), offset)
+
+
+
+def _run_single_experiment(
+    config: Dict[str, Any],
+    output_dir: Path,
+    *,
+    repeat_index: int = 1,
+    total_repeats: int = 1,
+) -> Dict[str, Any]:
+    """Execute a single experiment (synthetic or loader-backed) based on configuration."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -338,6 +373,10 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         },
         "model": model_name,
         "dataset_path": dataset_path.name,
+        "repeat": {
+            "index": int(repeat_index),
+            "total": int(total_repeats),
+        },
         "posterior": {
             "saved": bool(posterior_arrays),
             "path": posterior_path.name if posterior_path else None,
@@ -357,9 +396,120 @@ def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
         metadata["feature_names"] = feature_names
     (output_dir / "dataset_meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    return {
+    result: Dict[str, Any] = {
         "status": "OK",
         "model": model_name,
         "metrics": metrics_serializable,
         "artifacts": {"dataset": dataset_path.name},
+        "repeat": {"index": int(repeat_index), "total": int(total_repeats)},
     }
+    if seed_log:
+        result["seeds"] = seed_log
+    result.setdefault("artifacts", {}).setdefault("repeat_dirs", []).append(str(output_dir))
+    return result
+
+
+def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
+    """
+    Execute one or multiple experiment repeats based on configuration.
+
+    When ``experiments.repeats`` is greater than 1, this function launches
+    independent runs under ``output_dir/repeat_XXX`` directories and returns
+    an aggregated metrics summary alongside per-repeat metrics.
+    """
+
+    experiments_cfg = config.get("experiments", {})
+    repeats_raw = experiments_cfg.get("repeats", 1)
+    try:
+        repeats = int(repeats_raw)
+    except (TypeError, ValueError):
+        repeats = 1
+    repeats = max(repeats, 1)
+
+    output_dir = Path(output_dir)
+
+    if repeats == 1:
+        single_result = _run_single_experiment(
+            deepcopy(config),
+            output_dir,
+            repeat_index=1,
+            total_repeats=1,
+        )
+        single_result.setdefault(
+            "repeat_metrics",
+            [
+                {
+                    "repeat": 1,
+                    "output_dir": str(output_dir),
+                    "metrics": single_result.get("metrics", {}),
+                    "status": single_result.get("status", "OK"),
+                }
+            ],
+        )
+        single_result.setdefault("repeats", 1)
+        return single_result
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    repeat_entries: List[Dict[str, Any]] = []
+    numeric_metrics: Dict[str, List[float]] = {}
+    statuses: List[str] = []
+    model_name: Optional[str] = None
+
+    for idx in range(repeats):
+        repeat_dir = output_dir / f"repeat_{idx + 1:03d}"
+        repeat_config = deepcopy(config)
+        base_name = repeat_config.get("name")
+        if isinstance(base_name, str) and base_name:
+            repeat_config["name"] = f"{base_name}_repeat{idx + 1}"
+
+        _adjust_seeds_for_repeat(repeat_config, idx)
+
+        single_result = _run_single_experiment(
+            repeat_config,
+            repeat_dir,
+            repeat_index=idx + 1,
+            total_repeats=repeats,
+        )
+
+        if model_name is None:
+            model_name = single_result.get("model")
+
+        statuses.append(single_result.get("status", "OK"))
+
+        entry: Dict[str, Any] = {
+            "repeat": idx + 1,
+            "output_dir": str(repeat_dir),
+            "metrics": single_result.get("metrics", {}),
+            "status": single_result.get("status", "OK"),
+        }
+        if "seeds" in single_result:
+            entry["seeds"] = single_result["seeds"]
+        repeat_entries.append(entry)
+
+        for key, value in single_result.get("metrics", {}).items():
+            if isinstance(value, Number):
+                numeric_metrics.setdefault(key, []).append(float(value))
+
+    summary_metrics = {
+        key: (sum(values) / len(values))
+        for key, values in numeric_metrics.items()
+        if values
+    }
+
+    status = "OK"
+    for st in statuses:
+        if st != "OK":
+            status = st
+            break
+
+    result: Dict[str, Any] = {
+        "status": status,
+        "metrics": summary_metrics,
+        "repeat_metrics": repeat_entries,
+        "artifacts": {"repeat_dirs": [entry["output_dir"] for entry in repeat_entries]},
+        "repeats": repeats,
+    }
+    if model_name is not None:
+        result["model"] = model_name
+    return result
