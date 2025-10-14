@@ -23,6 +23,7 @@ from grwhs.cli.run_experiment import (
     _save_resolved_config,
 )
 from grwhs.experiments.sweeps import build_override_tree, deep_update
+from grwhs.experiments.registry import get_model_name_from_config
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -191,6 +192,13 @@ def main() -> None:
         idx = payload["index"]
         resolved_cfg = payload["config"]
         dry_run = payload["dry_run"]
+
+        try:
+            model_name = get_model_name_from_config(resolved_cfg).lower()
+        except Exception:
+            model_name = None
+        if model_name is not None and model_name != "grwhs_gibbs":
+            resolved_cfg.setdefault("experiments", {})["repeats"] = 1
 
         record: Dict[str, Any] = {
             "name": name,
