@@ -21,6 +21,7 @@ from grwhs.cli.run_experiment import (
     _maybe_call_runner,
     _parse_overrides,
     _save_resolved_config,
+    _auto_inject_tau0,
 )
 from grwhs.experiments.sweeps import build_override_tree, deep_update
 from grwhs.experiments.registry import get_model_name_from_config
@@ -212,6 +213,7 @@ def main() -> None:
             return record
 
         try:
+            resolved_cfg = _auto_inject_tau0(resolved_cfg)
             _save_resolved_config(resolved_cfg, run_dir)
             metrics = _maybe_call_runner(resolved_cfg, run_dir)
             with (run_dir / "metrics.json").open("w", encoding="utf-8") as fh:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import logging
 import os
 import sys
 import traceback
@@ -15,6 +16,7 @@ try:
 except Exception as e:  # pragma: no cover
     raise RuntimeError("PyYAML is required: pip install pyyaml") from e
 
+logger = logging.getLogger(__name__)
 
 def _setup_basic_logging(verbosity: int) -> None:
     import logging
@@ -181,6 +183,12 @@ def _auto_inject_tau0(resolved_cfg: Dict[str, Any], *, n: int | None = None, p: 
     if p and n:
         tau0 = float(tau0_heuristic(n, p, s_guess, X_scaling))
         resolved_cfg.setdefault("model", {})["tau0"] = tau0
+        logger.info(
+            "[tau0] injected tau0=%.6g (s_guess=%s, scaling=%s)",
+            tau0,
+            s_guess,
+            X_scaling,
+        )
     return resolved_cfg
 
 def _maybe_call_runner(resolved_cfg: Dict[str, Any], run_dir: Path) -> Dict[str, Any]:

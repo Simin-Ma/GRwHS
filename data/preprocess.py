@@ -12,7 +12,16 @@ __all__ = [
     "standardize_X",
     "center_y",
     "apply_standardization",
+    "tau0_heuristic",
 ]
+
+
+def tau0_heuristic(n: int, p: int, s_guess: int, X_scaling: str | None) -> float:
+    """Heuristic global scale for GRwHS; mirrors run_experiment expectations."""
+    s = max(1, min(int(s_guess), max(1, p - 1)))
+    if str(X_scaling or "unit_variance").lower() == "unit_l2":
+        return float(s / (p - s))
+    return float((s / (p - s)) / np.sqrt(max(1, n)))
 
 _EPS = 1e-8
 
