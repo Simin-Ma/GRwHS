@@ -66,6 +66,18 @@ model:
   s0: 3.1                    # Noise prior scale (not too loose to avoid over-wide intervals)
   iters: 25000               # Ensure builder uses the longer chain length
 
+  # -------- Logistic baseline defaults --------
+  # Switch to `task: classification` and override `model.name: logistic_regression`
+  # to reuse this scenario for standard logistic regression benchmarking.
+  logistic:
+    penalty: l2
+    C: 1.0
+    solver: lbfgs
+    max_iter: 1000
+    tol: 1.0e-6
+    fit_intercept: true
+    seed: 42
+
 
 inference:
   gibbs:
