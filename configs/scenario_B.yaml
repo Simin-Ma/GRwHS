@@ -64,21 +64,21 @@ model:
   c: 1.6                     # Slab width (narrower controls mid-size coefficients, improves generalization)
   size_adjust: true          # Scale priors by group size for fair shrinkage
   s0: 3.1                    # Noise prior scale (not too loose to avoid over-wide intervals)
-  iters: 30000               # Ensure builder uses the longer chain length
+  iters: 25000               # Ensure builder uses the longer chain length
 
 
 inference:
   gibbs:
-    iters: 30000
-    burn_in: 15000            # Half burn-in works well with larger slice steps
+    iters: 25000
+    burn_in: 12500            # Half burn-in works well with larger slice steps
     thin: 1                  # Light thinning to trade storage for lower autocorrelation
     adapt_slice: false       # Fix step size; we tune it explicitly below
     jitter: 1.0e-05          # Small numerical jitter to stabilize Gaussian blocks
     seed: 123
 
     # -------- Slice sampler tuning (bigger steps → shorter ACF) --------
-    slice_w: 5.0            # Step width for local scales; larger = farther moves
-    slice_m: 500            # Max stepping-out steps; pair with slice_w
+    slice_w: 8.0            # Step width for local scales; larger = farther moves
+    slice_m: 800            # Max stepping-out steps; pair with slice_w
 
   # SVI block retained for completeness; not used in this scenario run
   svi:
@@ -100,7 +100,7 @@ inference:
     cov_damping: 0.0
 
 experiments:
-  repeats: 1                 # Run multiple independent repeats for stability
+  repeats: 3                 # Run multiple independent repeats for stability
   save_posterior: true       # Keep posterior draws for diagnostics/plots
   diagnostics: true          # Compute R-hat, ESS, etc.
 
