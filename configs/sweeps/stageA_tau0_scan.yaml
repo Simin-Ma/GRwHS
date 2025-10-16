@@ -1,0 +1,146 @@
+name: scenario_B_refined_stageA_tau0_scan
+output_dir: outputs/sweeps/stageA_tau0_scan
+
+common_config_files:
+  - ../scenario_B_refined.yaml
+
+common_overrides:
+  model:
+    iters: 8000
+  inference:
+    gibbs:
+      iters: 8000
+      burn_in: 4000
+
+variations:
+  # (c, eta) = (1.6, 1.2)
+  - name: c1.6_eta1.2_tau0x0.50
+    overrides:
+      model:
+        c: 1.6
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0046973765
+  - name: c1.6_eta1.2_tau0x0.80
+    overrides:
+      model:
+        c: 1.6
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0075158023
+  - name: c1.6_eta1.2_tau0x1.00
+    overrides:
+      model:
+        c: 1.6
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0093947529
+  - name: c1.6_eta1.2_tau0x1.25
+    overrides:
+      model:
+        c: 1.6
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0117434411
+  - name: c1.6_eta1.2_tau0x1.60
+    overrides:
+      model:
+        c: 1.6
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0150316046
+  - name: c1.6_eta1.2_tau0x2.00
+    overrides:
+      model:
+        c: 1.6
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0187895058
+
+  # (c, eta) = (1.2, 1.2)
+  - name: c1.2_eta1.2_tau0x0.50
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0046973765
+  - name: c1.2_eta1.2_tau0x0.80
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0075158023
+  - name: c1.2_eta1.2_tau0x1.00
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0093947529
+  - name: c1.2_eta1.2_tau0x1.25
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0117434411
+  - name: c1.2_eta1.2_tau0x1.60
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0150316046
+  - name: c1.2_eta1.2_tau0x2.00
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.2
+        s_guess: 22
+        tau0: 0.0187895058
+
+  # (c, eta) = (1.2, 1.5)
+  - name: c1.2_eta1.5_tau0x0.50
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.5
+        s_guess: 22
+        tau0: 0.0046973765
+  - name: c1.2_eta1.5_tau0x0.80
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.5
+        s_guess: 22
+        tau0: 0.0075158023
+  - name: c1.2_eta1.5_tau0x1.00
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.5
+        s_guess: 22
+        tau0: 0.0093947529
+  - name: c1.2_eta1.5_tau0x1.25
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.5
+        s_guess: 22
+        tau0: 0.0117434411
+  - name: c1.2_eta1.5_tau0x1.60
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.5
+        s_guess: 22
+        tau0: 0.0150316046
+  - name: c1.2_eta1.5_tau0x2.00
+    overrides:
+      model:
+        c: 1.2
+        eta: 1.5
+        s_guess: 22
+        tau0: 0.0187895058

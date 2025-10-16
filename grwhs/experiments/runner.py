@@ -20,6 +20,7 @@ from grwhs.metrics.evaluation import evaluate_model_metrics
 from grwhs.models.baselines import Ridge, LogisticRegressionClassifier
 from grwhs.diagnostics.convergence import summarize_convergence
 from grwhs.utils.logging_utils import progress
+from grwhs.postprocess.debias import apply_debias_refit
 
 
 def _to_serializable(value: Any) -> Any:
@@ -273,9 +274,16 @@ def _run_single_experiment(
         x_scale=np.array([]) if std_result.x_scale is None else std_result.x_scale,
         y_mean=np.array([]) if std_result.y_mean is None else np.array([std_result.y_mean], dtype=np.float32),
     )
+    dataset_arrays = {
+        "X_train": X_train,
+        "y_train": y_train,
+        "X_val": X_val,
+        "y_val": y_val,
+        "X_test": X_test,
+        "y_test": y_test,
+    }
 
     metrics_path = output_dir / "metrics.json"
-    metrics_path.write_text(json.dumps(metrics_serializable, indent=2), encoding="utf-8")
 
     posterior_arrays: Dict[str, np.ndarray] = {}
     convergence_summary: Dict[str, Dict[str, float]] = {}
@@ -303,6 +311,33 @@ def _run_single_experiment(
             convergence_summary = summarize_convergence(posterior_arrays)
             conv_path = output_dir / "convergence.json"
             conv_path.write_text(json.dumps({k: _to_serializable(v) for k, v in convergence_summary.items()}, indent=2), encoding="utf-8")
+
+    postprocess_cfg = config.get("postprocess", {})
+    debias_summary: Dict[str, Any] | None = None
+    if isinstance(postprocess_cfg, dict):
+        debias_cfg = postprocess_cfg.get("debias")
+        if isinstance(debias_cfg, dict) and debias_cfg.get("enabled", False):
+            if not posterior_arrays:
+                debias_summary = {"error": "posterior_samples not available (set experiments.save_posterior=true)"}
+            else:
+                try:
+                    debias_summary = apply_debias_refit(
+                        run_dir=output_dir,
+                        config=debias_cfg,
+                        dataset=dataset_arrays,
+                        posterior_arrays=posterior_arrays,
+                    )
+                except Exception as exc:  # pragma: no cover - safety net
+                    debias_summary = {"error": str(exc)}
+            if debias_summary:
+                if "rmse_test_debiased" in debias_summary:
+                    metrics_serializable["RMSE_DebiasTest"] = _to_serializable(debias_summary["rmse_test_debiased"])
+                if "rmse_val_debiased" in debias_summary:
+                    metrics_serializable["RMSE_DebiasVal"] = _to_serializable(debias_summary["rmse_val_debiased"])
+                if "rmse_test_gain_pct" in debias_summary:
+                    metrics_serializable["RMSE_DebiasGainPct"] = _to_serializable(debias_summary["rmse_test_gain_pct"])
+
+    metrics_path.write_text(json.dumps(metrics_serializable, indent=2), encoding="utf-8")
 
     inference_seeds: Dict[str, int] = {}
     inference_cfg = config.get("inference", {})
@@ -387,6 +422,8 @@ def _run_single_experiment(
         metadata["active_idx"] = _to_serializable(active_idx)
     if feature_names is not None:
         metadata["feature_names"] = feature_names
+    if debias_summary is not None:
+        metadata.setdefault("postprocess", {})["debias"] = _to_serializable(debias_summary)
     (output_dir / "dataset_meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     result: Dict[str, Any] = {
@@ -396,6 +433,8 @@ def _run_single_experiment(
         "artifacts": {"dataset": dataset_path.name},
         "repeat": {"index": int(repeat_index), "total": int(total_repeats)},
     }
+    if debias_summary is not None:
+        result.setdefault("postprocess", {})["debias"] = _to_serializable(debias_summary)
     if seed_log:
         result["seeds"] = seed_log
     result.setdefault("artifacts", {}).setdefault("repeat_dirs", []).append(str(output_dir))
