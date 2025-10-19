@@ -21,6 +21,11 @@ try:
 except Exception:  # pragma: no cover
     GRwHS_Gibbs = None  # type: ignore
 
+try:
+    from grwhs.models.grwhs_gibbs_logistic import GRwHS_Gibbs_Logistic  # type: ignore
+except Exception:  # pragma: no cover
+    GRwHS_Gibbs_Logistic = None  # type: ignore
+
 # Baselines (numpy/skglm implementations)
 from grwhs.models.baselines import (
     LogisticRegressionClassifier,
@@ -422,6 +427,27 @@ def _build_grwhs_svi(cfg: Dict[str, Any]) -> Any:
     return svi
 
 
+def _gibbs_runtime_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract optional runtime overrides shared by Gibbs samplers."""
+    overrides: Dict[str, Any] = {}
+    burnin = _get(cfg, "inference.gibbs.burn_in", None)
+    if burnin is not None:
+        overrides["burnin"] = int(burnin)
+    thin = _get(cfg, "inference.gibbs.thin", None)
+    if thin is not None:
+        overrides["thin"] = max(1, int(thin))
+    slice_w = _get(cfg, "inference.gibbs.slice_w", None)
+    if slice_w is not None:
+        overrides["slice_w"] = float(slice_w)
+    slice_m = _get(cfg, "inference.gibbs.slice_m", None)
+    if slice_m is not None:
+        overrides["slice_m"] = max(1, int(slice_m))
+    jitter = _get(cfg, "inference.gibbs.jitter", None)
+    if jitter is not None:
+        overrides["jitter"] = float(jitter)
+    return overrides
+
+
 @register("grwhs_gibbs")
 def _build_grwhs_gibbs(cfg: Dict[str, Any]) -> Any:
     if GRwHS_Gibbs is None:
@@ -436,7 +462,37 @@ def _build_grwhs_gibbs(cfg: Dict[str, Any]) -> Any:
         "inference.gibbs.seed",
         _get(cfg, "model.seed", _get(cfg, "seed", 42)),
     )
-    sampler = GRwHS_Gibbs(c=c, tau0=tau0, eta=eta, s0=s0, iters=iters, seed=int(seed))  # type: ignore
+    runtime_overrides = _gibbs_runtime_overrides(cfg)
+    sampler = GRwHS_Gibbs(c=c, tau0=tau0, eta=eta, s0=s0, iters=iters, seed=int(seed), **runtime_overrides)  # type: ignore
+    return sampler
+
+
+@register("grwhs_gibbs_logistic")
+@register("grwhs_logistic")
+@register("grwhs_gibbs_cls")
+def _build_grwhs_gibbs_logistic(cfg: Dict[str, Any]) -> Any:
+    if GRwHS_Gibbs_Logistic is None:
+        raise ImportError("GRwHS_Gibbs_Logistic is not available. Ensure grwhs.models.grwhs_gibbs_logistic exists.")
+    c = float(_get(cfg, "model.c", 1.0))
+    tau0 = float(_get(cfg, "model.tau0", 0.1))
+    eta = float(_get(cfg, "model.eta", 0.5))
+    s0 = float(_get(cfg, "model.s0", 1.0))
+    iters = int(_get(cfg, "model.iters", 2000))
+    seed = _get(
+        cfg,
+        "inference.gibbs.seed",
+        _get(cfg, "model.seed", _get(cfg, "seed", 42)),
+    )
+    runtime_overrides = _gibbs_runtime_overrides(cfg)
+    sampler = GRwHS_Gibbs_Logistic(
+        c=c,
+        tau0=tau0,
+        eta=eta,
+        s0=s0,
+        iters=iters,
+        seed=int(seed),
+        **runtime_overrides,
+    )  # type: ignore
     return sampler
 
 

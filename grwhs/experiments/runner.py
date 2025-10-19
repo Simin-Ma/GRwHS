@@ -45,6 +45,22 @@ def _bump_seed(value: Any, offset: int) -> Any:
         return value
 
 
+def _merge_mappings(base: Optional[Mapping[str, Any]], override: Mapping[str, Any]) -> Dict[str, Any]:
+    """Deep merge two mapping objects without mutating the originals."""
+    if override is None:
+        return dict(base) if isinstance(base, Mapping) else {}
+    if isinstance(base, Mapping):
+        merged = {k: deepcopy(v) for k, v in base.items()}
+    else:
+        merged = {}
+    for key, value in override.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            merged[key] = _merge_mappings(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
 def _adjust_seeds_for_repeat(cfg: Dict[str, Any], offset: int) -> None:
     """Offset inference seeds for later repeats while keeping data seeds fixed."""
     if offset == 0:
@@ -68,8 +84,8 @@ def _run_single_experiment(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    data_cfg = config.get("data", {})
-    data_type = str(data_cfg.get("type", "synthetic")).lower()
+    config = deepcopy(config)
+    data_cfg_task = config.get("data", {})
     seed_cfg = config.get("seeds", {})
 
     task_aliases = {
@@ -77,11 +93,27 @@ def _run_single_experiment(
         "binary_classification": "classification",
         "cls": "classification",
     }
-    task_raw = config.get("task", data_cfg.get("task", "regression"))
+    task_raw = config.get("task", data_cfg_task.get("task", "regression"))
     task_norm = str(task_raw).lower()
     task = task_aliases.get(task_norm, task_norm)
     if task not in {"regression", "classification"}:
         raise ValueError(f"Unsupported task '{task_raw}'. Expected 'regression' or 'classification'.")
+
+    model_variants = config.get("model_variants")
+    if isinstance(model_variants, Mapping):
+        variant_cfg = model_variants.get(task)
+        if isinstance(variant_cfg, Mapping):
+            config["model"] = _merge_mappings(config.get("model"), variant_cfg)
+
+    inference_variants = config.get("inference_variants")
+    if isinstance(inference_variants, Mapping):
+        variant_inf = inference_variants.get(task)
+        if isinstance(variant_inf, Mapping):
+            config["inference"] = _merge_mappings(config.get("inference"), variant_inf)
+
+    data_cfg = config.get("data", {})
+    data_type = str(data_cfg.get("type", "synthetic")).lower()
+    seed_cfg = config.get("seeds", seed_cfg)
 
     def _resolve_seed(*candidates: Any) -> Optional[int]:
         for candidate in candidates:

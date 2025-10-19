@@ -86,39 +86,40 @@ python -m grwhs.cli.run_experiment \
 Supports dotted paths (`section.subsection.key=value`).
 
 ### 3.4 Binary Classification Mode
-Binary outcomes are now first-class citizens. To switch any scenario to a logistic setup:
+Logistic likelihoods are now fully supported via a dedicated Gibbs sampler that augments the Horseshoe hierarchy with Pólya–Gamma variables. Every configuration (`base.yaml`, scenarios A–D) exposes a `model_variants.classification` block that switches `model.name` to `grwhs_gibbs_logistic` and mirrors the regression hyper-parameters. Optional overrides can live under `inference_variants.classification.gibbs` (e.g., different burn-in or slice tuning).
 
-1. Set `task: classification` (either in YAML or via `--override task=classification`).
-2. Provide logistic controls under `data.classification` (scales logits) and keep the signal block for sparsity.
-3. Select a classifier such as `model.name=logistic_regression` (defaults live under `model.logistic`).
-4. Disable target centering (`standardization.y_center=false`) when using classification.
+To run a scenario in classification mode:
 
-Example override snippet:
+1. Set `task: classification` (in YAML or `--override task=classification`).
+2. Keep `data.classification` tuned for your desired logit scale/bias and leave the sparsity block unchanged.
+3. Disable response centering (`standardization.y_center=false`) so that binary labels remain in `{0, 1}`.
+4. (Optional) Adjust logistic-specific inference controls under `inference_variants.classification`.
+
+Example excerpt:
 ```yaml
 task: classification
 standardization:
   X: unit_variance
   y_center: false
-model:
-  name: logistic_regression
-  logistic:
-    solver: lbfgs
-    max_iter: 400
+model_variants:
+  classification:
+    name: grwhs_gibbs_logistic
+    iters: 12000
+inference_variants:
+  classification:
+    gibbs:
+      burn_in: 6000
+      slice_w: 0.15
+      slice_m: 15
 data:
   classification:
     scale: 0.9
-    bias: 0.0
-    noise_std: 0.1
+    bias: 0.1
 experiments:
-  classification_threshold: 0.5
-  metrics:
-    classification:
-      - ClassAccuracy
-      - ClassF1
-      - ClassAUROC
-      - ClassLogLoss
+  classification_threshold: 0.45
 ```
-The evaluation pipeline automatically records both regression and classification metrics (e.g., `ClassAccuracy`, `ClassLogLoss`, `ClassBrier`) while retaining sparsity diagnostics such as `AUC-PR`/`F1` for synthetic ground truth comparisons.
+
+Behind the scenes the sampler draws `ω ~ PG(1, xᵢᵀβ)` using the [`polyagamma`](https://pypi.org/project/polyagamma/) package (now listed as a dependency). Posterior predictive probabilities are exposed through `predict_proba`, while `predict` returns hard labels for convenience. Classification metrics (`ClassAccuracy`, `ClassLogLoss`, `ClassBrier`, `ClassAUROC`, etc.) remain available alongside sparsity diagnostics (`AUC-PR`, `F1`) for synthetic truth comparisons.
 
 ### 3.5 Real Data Support
 Set `data.type=loader` and implement adapter in `data/loaders.py` (mapping to `(X, y, groups)` tuple). Provide file paths under `data.loader.*`. You can mix real data config with overrides or scenario templates.
@@ -141,6 +142,36 @@ python -m grwhs.cli.run_sweep \
 ```
 
 The sweep uses `configs/scenario_A.yaml` for shared settings and the variations defined in `configs/sweeps/all_models_base.yaml` (GRwHS-Gibbs plus ridge/lasso/elastic-net/group-lasso/sparse-group-lasso/horseshoe baselines). Repeat with `configs/scenario_B.yaml`, etc., by changing `--base-config` (and optionally `--outdir`).
+
+**Scenario B quick commands**
+
+```powershell
+# 1. Full multi-model sweep (re-uses Scenario B core settings)
+python -m grwhs.cli.run_sweep `
+  --base-config configs/scenario_B.yaml `
+  --sweep-config configs/sweeps/all_models_base.yaml `
+  --outdir outputs/sweeps/scenario_B/models_full
+
+# 2. Gibbs-only noise-scale scan (short 8k chains)
+python -m grwhs.cli.run_sweep `
+  --base-config configs/base.yaml `
+  --sweep-config configs/sweeps/scenario_B_gibbs_s0_coarse.yaml
+
+# 3. Gibbs-only long-chain refinement (20k effective samples per run)
+python -m grwhs.cli.run_sweep `
+  --base-config configs/base.yaml `
+  --sweep-config configs/sweeps/scenario_B_gibbs_s0_long.yaml
+
+# 4. Standard logistic regression baseline on Scenario B
+python -m grwhs.cli.run_experiment `
+  --config configs/scenario_B.yaml `
+  --name scenarioB_logreg `
+  --override task=classification `
+             standardization.y_center=false `
+             model.name=logistic_regression
+```
+
+Each command writes metrics under `outputs/sweeps/scenario_B/...` (for sweeps) or `outputs/runs/...` (for single baselines). Re-run the applicable `make_report` command afterwards to refresh the markdown/JSON summaries.
 
 **Step 2 – Optional SVI runs for large-scale cases**
 

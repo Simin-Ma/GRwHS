@@ -121,6 +121,10 @@ model:
     warm_start: false
     verbose: 0
 
+model_variants:
+  classification:
+    name: "grwhs_gibbs_logistic"
+
 # -------------------------
 # Inference settings
 # -------------------------

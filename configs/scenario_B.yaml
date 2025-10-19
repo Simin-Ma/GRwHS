@@ -78,6 +78,20 @@ model:
     fit_intercept: true
     seed: 42
 
+model_variants:
+  classification:
+    name: grwhs_gibbs_logistic
+    iters: 25000
+
+inference_variants:
+  classification:
+    gibbs:
+      burn_in: 12500
+      thin: 1
+      slice_w: 8.0
+      slice_m: 800
+      jitter: 1.0e-05
+
 
 inference:
   gibbs:
@@ -112,7 +126,7 @@ inference:
     cov_damping: 0.0
 
 experiments:
-  repeats: 3                 # Run multiple independent repeats for stability
+  repeats: 1                 # Run multiple independent repeats for stability
   save_posterior: true       # Keep posterior draws for diagnostics/plots
   diagnostics: true          # Compute R-hat, ESS, etc.
 

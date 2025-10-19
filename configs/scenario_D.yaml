@@ -58,6 +58,20 @@ model:
   s0: 0.8
   iters: 12000
 
+model_variants:
+  classification:
+    name: grwhs_gibbs_logistic
+    iters: 12000
+
+inference_variants:
+  classification:
+    gibbs:
+      burn_in: 6000
+      thin: 1
+      slice_w: 0.15
+      slice_m: 15
+      jitter: 1.0e-08
+
 inference:
   gibbs:
     iters: 12000

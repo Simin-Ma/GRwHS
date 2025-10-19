@@ -24,7 +24,8 @@ dependencies = [
   "PyYAML>=6.0",
   "skglm>=0.5",
   "scikit-learn>=1.3",
-  "tqdm>=4.65"
+  "tqdm>=4.65",
+  "polyagamma>=1.3"
 ]
 keywords = ["bayesian", "horseshoe", "variational", "mcmc"]
 
