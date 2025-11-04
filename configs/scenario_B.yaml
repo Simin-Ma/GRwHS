@@ -126,7 +126,7 @@ inference:
     cov_damping: 0.0
 
 experiments:
-  repeats: 1                 # Run multiple independent repeats for stability
+  repeats: 3                 # Run multiple independent repeats for stability
   save_posterior: true       # Keep posterior draws for diagnostics/plots
   diagnostics: true          # Compute R-hat, ESS, etc.
 
@@ -134,9 +134,11 @@ experiments:
     regression:
       - RMSE
       - PredictiveLogLikelihood
+      - MLPD
       - Coverage90
       - IntervalWidth90
       - MeanKappa
+      - MeanEffectiveNonzeros
       - EffectiveDoF
       - AUC-PR
       - F1
@@ -146,7 +148,9 @@ experiments:
       - ClassAUROC
       - ClassAveragePrecision
       - ClassLogLoss
+      - MLPD
       - ClassBrier
+      - MeanEffectiveNonzeros
       - AUC-PR
       - F1
   coverage_level: 0.9

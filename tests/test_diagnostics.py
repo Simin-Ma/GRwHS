@@ -126,6 +126,7 @@ def test_compute_diagnostics_matches_manual_components():
     omega_lambda_draws = np.stack(omega_lambda_draws, axis=0)
     ratio_draws = np.stack(ratio_draws, axis=0)
     edf_draws = np.stack(edf_draws, axis=0)
+    effective_nonzero_draws = np.sum(1.0 - kappa_draws, axis=1)
 
     kappa_expected = np.median(kappa_draws, axis=0)
     omega_group_expected = np.median(omega_group_draws, axis=0)
@@ -134,6 +135,11 @@ def test_compute_diagnostics_matches_manual_components():
     ratio_expected = np.median(ratio_draws, axis=0)
     pr_ratio_gt_one = (ratio_draws > 1.0).mean(axis=0)
     edf_expected = np.median(edf_draws, axis=0)
+    eff_mean_expected = float(np.mean(effective_nonzero_draws))
+    eff_lo_expected, eff_md_expected, eff_hi_expected = np.quantile(
+        effective_nonzero_draws,
+        (0.05, 0.5, 0.95),
+    )
 
     npt.assert_allclose(result.per_coeff["kappa"], kappa_expected, rtol=1e-10)
     npt.assert_allclose(result.per_coeff["omega_group"], omega_group_expected, rtol=1e-10)
@@ -142,6 +148,10 @@ def test_compute_diagnostics_matches_manual_components():
     npt.assert_allclose(result.per_coeff["r"], ratio_expected, rtol=1e-10)
     npt.assert_allclose(result.per_coeff["Pr_r_gt_1"], pr_ratio_gt_one, rtol=1e-10)
     npt.assert_allclose(result.per_group["edf"], edf_expected, rtol=1e-10)
+    assert np.isclose(result.meta["effective_nonzeros_mean"], eff_mean_expected)
+    assert np.isclose(result.meta["effective_nonzeros_median"], eff_md_expected)
+    assert np.isclose(result.meta["effective_nonzeros_lo"], eff_lo_expected)
+    assert np.isclose(result.meta["effective_nonzeros_hi"], eff_hi_expected)
 
 
 def test_variance_budget_normalizes_with_negative_logs():

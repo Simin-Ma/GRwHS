@@ -252,6 +252,10 @@ def compute_diagnostics_from_samples(
     # Group EDF
     edf_lo, edf_md, edf_hi = _quantiles(EDF)
 
+    effective_nonzeros_draws = np.sum(1.0 - K, axis=1)
+    eff_lo, eff_md, eff_hi = np.quantile(effective_nonzeros_draws, (0.05, 0.5, 0.95))
+    eff_mean = float(np.mean(effective_nonzeros_draws))
+
     per_coeff = {
         "kappa": k_md,
         "kappa_lo": k_lo,
@@ -293,6 +297,10 @@ def compute_diagnostics_from_samples(
         "cg_tol": float(cg_tol) if use_hutchinson else None,
         "cg_maxiter": None if cg_maxiter is None else int(cg_maxiter),
         "probe_space": probe_space.lower(),
+        "effective_nonzeros_mean": eff_mean,
+        "effective_nonzeros_median": float(eff_md),
+        "effective_nonzeros_lo": float(eff_lo),
+        "effective_nonzeros_hi": float(eff_hi),
     }
 
     if hat_diag_draws:

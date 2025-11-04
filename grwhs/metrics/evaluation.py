@@ -32,6 +32,7 @@ except Exception:  # pragma: no cover
     plt = None  # type: ignore
     sns = None  # type: ignore
 
+from scipy.special import expit, logsumexp
 from scipy.stats import norm, probplot  # noqa: F401
 
 from grwhs.diagnostics.postprocess import compute_diagnostics_from_samples
@@ -46,6 +47,27 @@ def _as_numpy(x: Optional[ArrayLike]) -> Optional[np.ndarray]:
     return arr
 
 
+def _mlpd_from_loglik_samples(loglik_samples: np.ndarray) -> Optional[float]:
+    """
+    Compute mean log predictive density via log-sum-exp across posterior draws.
+
+    Args:
+        loglik_samples: array with shape (S, n) or (n,), containing per-draw log-likelihoods.
+
+    Returns:
+        Scalar MLPD estimate or None if insufficient data.
+    """
+    arr = np.asarray(loglik_samples, dtype=float)
+    if arr.size == 0:
+        return None
+    if arr.ndim == 1:
+        return float(np.mean(arr))
+    if arr.ndim == 2 and arr.shape[0] > 0:
+        lpd_i = logsumexp(arr, axis=0) - np.log(arr.shape[0])
+        return float(np.mean(lpd_i))
+    return None
+
+
 def predictive_metrics(
     y_true: Optional[ArrayLike],
     y_pred: Optional[ArrayLike],
@@ -53,7 +75,11 @@ def predictive_metrics(
 ) -> Dict[str, Optional[float]]:
     """Compute predictive metrics (RMSE, predictive log-likelihood)."""
 
-    metrics: Dict[str, Optional[float]] = {"RMSE": None, "PredictiveLogLikelihood": None}
+    metrics: Dict[str, Optional[float]] = {
+        "RMSE": None,
+        "PredictiveLogLikelihood": None,
+        "MLPD": None,
+    }
 
     y = _as_numpy(y_true)
     pred = _as_numpy(y_pred)
@@ -68,6 +94,8 @@ def predictive_metrics(
             metrics["PredictiveLogLikelihood"] = float(np.mean(ll))
         elif ll.ndim == 2:
             metrics["PredictiveLogLikelihood"] = float(ll.mean())
+        mlpd_val = _mlpd_from_loglik_samples(ll)
+        metrics["MLPD"] = None if mlpd_val is None else float(mlpd_val)
     return metrics
 
 
@@ -75,6 +103,7 @@ def classification_metrics(
     y_true: Optional[ArrayLike],
     prob_positive: Optional[ArrayLike],
     pred_labels: Optional[ArrayLike],
+    loglik_samples: Optional[np.ndarray] = None,
     *,
     threshold: float = 0.5,
 ) -> Dict[str, Optional[float]]:
@@ -87,6 +116,7 @@ def classification_metrics(
         "ClassBrier": None,
         "ClassAUROC": None,
         "ClassAveragePrecision": None,
+        "MLPD": None,
     }
 
     y = _as_numpy(y_true)
@@ -150,8 +180,38 @@ def classification_metrics(
                 metrics["ClassF1"] = float(f1_score(y, preds_binary))
             except ValueError:
                 metrics["ClassF1"] = None
+
+    if loglik_samples is not None:
+        ll = np.asarray(loglik_samples, dtype=float)
+        mlpd_val = _mlpd_from_loglik_samples(ll)
+        metrics["MLPD"] = None if mlpd_val is None else float(mlpd_val)
+        if metrics["MLPD"] is not None:
+            metrics["ClassLogLoss"] = float(-metrics["MLPD"])
     return metrics
 
+
+def _bernoulli_log_likelihood_samples(
+    y_true: Optional[ArrayLike],
+    logits_draws: Optional[np.ndarray],
+) -> Optional[np.ndarray]:
+    """Return per-draw Bernoulli log-likelihoods for classification tasks."""
+
+    y = _as_numpy(y_true)
+    if y is None or y.size == 0:
+        return None
+
+    if logits_draws is None:
+        return None
+
+    draws = np.asarray(logits_draws, dtype=float)
+    if draws.ndim != 2 or draws.shape[1] != y.shape[0]:
+        return None
+
+    y = y.reshape(1, -1)
+    safe_logits = np.clip(draws, -60.0, 60.0)
+    log_p1 = -np.logaddexp(0.0, -safe_logits)
+    log_p0 = -np.logaddexp(0.0, safe_logits)
+    return y * log_p1 + (1.0 - y) * log_p0
 
 def selection_metrics(
     y_true_binary: Optional[ArrayLike],
@@ -216,13 +276,19 @@ def interval_metrics(
 def shrinkage_metrics(
     kappa: Optional[ArrayLike],
     effective_dof: Optional[float],
+    mean_effective_nonzeros: Optional[float],
 ) -> Dict[str, Optional[float]]:
-    """Mean shrinkage factor and total effective degrees of freedom."""
+    """Mean shrinkage factor, effective degrees of freedom, and active complexity."""
 
     kap = _as_numpy(kappa)
     mean_kappa = float(np.mean(kap)) if kap is not None else None
     edf_val = None if effective_dof is None else float(effective_dof)
-    return {"MeanKappa": mean_kappa, "EffectiveDoF": edf_val}
+    eff_nz_val = None if mean_effective_nonzeros is None else float(mean_effective_nonzeros)
+    return {
+        "MeanKappa": mean_kappa,
+        "EffectiveDoF": edf_val,
+        "MeanEffectiveNonzeros": eff_nz_val,
+    }
 
 
 @dataclass
@@ -362,6 +428,8 @@ def evaluate_model_metrics(
         intercept_val = np.asarray(intercept)
 
     prob_positive = None
+    prob_draw_mean: Optional[np.ndarray] = None
+    class_loglik_samples: Optional[np.ndarray] = None
     if task_label == "classification" and Xte is not None:
         proba_method = getattr(model, "predict_proba", None)
         if callable(proba_method):
@@ -382,6 +450,26 @@ def evaluate_model_metrics(
                 except Exception:
                     prob_positive = None
 
+    if task_label == "classification" and Xte is not None and posterior.coef is not None:
+        try:
+            logits_draws = _predictive_draws(
+                Xte,
+                posterior.coef,
+                intercept_val,
+                sigma_samples=None,
+            )
+            if logits_draws is not None and logits_draws.size > 0:
+                prob_draws = expit(np.clip(logits_draws, -60.0, 60.0))
+                prob_draw_mean = prob_draws.mean(axis=0)
+                if yte is not None:
+                    class_loglik_samples = _bernoulli_log_likelihood_samples(yte, logits_draws)
+        except Exception:
+            prob_draw_mean = None
+            class_loglik_samples = None
+
+    if prob_draw_mean is not None:
+        prob_positive = prob_draw_mean
+
     pred_draws = None
     loglik_samples = None
     if task_label == "regression":
@@ -396,7 +484,15 @@ def evaluate_model_metrics(
             loglik_samples = _log_likelihood_samples(yte, pred_draws, posterior.sigma)
         metrics.update(predictive_metrics(yte, pred_mean, loglik_samples))
     else:
-        metrics.update(classification_metrics(yte, prob_positive, pred_mean, threshold=classification_threshold))
+        metrics.update(
+            classification_metrics(
+                yte,
+                prob_positive,
+                pred_mean,
+                loglik_samples=class_loglik_samples,
+                threshold=classification_threshold,
+            )
+        )
 
     # Variable selection metrics
     beta_truth_bin = None
@@ -432,10 +528,21 @@ def evaluate_model_metrics(
     # Shrinkage diagnostics (mean kappa)
     mean_kappa = None
     edf_total = None
+    mean_effective_nonzeros = None
     phi_samples = posterior.phi
     lambda_samples = posterior.lambda_
     tau_samples = posterior.tau
     sigma_samples = posterior.sigma
+    if sigma_samples is None and task_label == "classification":
+        sample_count = None
+        if lambda_samples is not None:
+            sample_count = lambda_samples.shape[0]
+        elif posterior.coef is not None:
+            sample_count = posterior.coef.shape[0]
+        elif tau_samples is not None:
+            sample_count = tau_samples.shape[0]
+        if sample_count is not None and sample_count > 0:
+            sigma_samples = np.full(int(sample_count), 2.0, dtype=float)
     if (
         X_train is not None
         and lambda_samples is not None
@@ -472,10 +579,13 @@ def evaluate_model_metrics(
             mean_kappa = float(np.mean(diag_res.per_coeff["kappa"]))
             if "edf" in diag_res.per_group:
                 edf_total = float(np.sum(diag_res.per_group["edf"]))
+            if "effective_nonzeros_mean" in diag_res.meta:
+                mean_effective_nonzeros = float(diag_res.meta["effective_nonzeros_mean"])
         except Exception:  # pragma: no cover - diagnostics may fail for deterministics
             mean_kappa = None
             edf_total = None
+            mean_effective_nonzeros = None
 
-    metrics.update(shrinkage_metrics(mean_kappa, edf_total))
+    metrics.update(shrinkage_metrics(mean_kappa, edf_total, mean_effective_nonzeros))
 
     return metrics

@@ -1,0 +1,21 @@
+# Scenario B classification sweep across key models
+name: scenarioB_cls_models
+output_dir: outputs/sweeps/scenarioB_cls_models
+
+common_overrides:
+  task: classification
+  standardization:
+    y_center: false
+  experiments:
+    repeats: 3
+
+variations:
+  - name: grwhs_gibbs_logistic
+    overrides:
+      model:
+        name: grwhs_gibbs
+
+  - name: logistic_regression
+    overrides:
+      model:
+        name: logistic_regression

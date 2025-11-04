@@ -1,0 +1,47 @@
+name: scenarioB_cls_baselines
+output_dir: outputs/sweeps/scenarioB_cls_baselines
+common_overrides:
+  inference:
+    nuts:
+      num_warmup: 500
+      num_samples: 500
+      num_chains: 1
+      thinning: 1
+  task: classification
+  standardization:
+    y_center: false
+  experiments:
+    repeats: 3
+variations:
+- name: grwhs_gibbs
+  overrides:
+    model:
+      name: grwhs_gibbs
+- name: ridge
+  overrides:
+    model:
+      name: ridge
+- name: lasso
+  overrides:
+    model:
+      name: lasso
+- name: elastic_net
+  overrides:
+    model:
+      name: elastic_net
+- name: group_lasso
+  overrides:
+    model:
+      name: group_lasso
+- name: sparse_group_lasso
+  overrides:
+    model:
+      name: sparse_group_lasso
+- name: horseshoe
+  overrides:
+    model:
+      name: horseshoe
+- name: regularized_horseshoe
+  overrides:
+    model:
+      name: regularized_horseshoe

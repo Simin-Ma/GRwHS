@@ -107,9 +107,11 @@ experiments:
     regression:
       - RMSE
       - PredictiveLogLikelihood
+      - MLPD
       - Coverage90
       - IntervalWidth90
       - MeanKappa
+      - MeanEffectiveNonzeros
       - EffectiveDoF
       - AUC-PR
       - F1
@@ -119,7 +121,9 @@ experiments:
       - ClassAUROC
       - ClassAveragePrecision
       - ClassLogLoss
+      - MLPD
       - ClassBrier
+      - MeanEffectiveNonzeros
       - AUC-PR
       - F1
   coverage_level: 0.9
