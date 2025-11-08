@@ -28,36 +28,62 @@ pip install -e .[dev]
 
 ---
 
-## 2. Repository Layout
+## 2. Repository Layout & Flow
+
+### 2.1 Top-level map
+
+| Path | Purpose / Notes |
+|------|-----------------|
+| `configs/` | Layered YAML stack. `base.yaml` holds global defaults; `experiments/` define datasets, `methods/` capture hyper-parameters/priors, and `sweeps/` enumerate grid searches or method comparisons. |
+| `data/` | Source-of-truth for synthetic data generators (`generators.py`), preprocessing (`preprocess.py`), loaders for real datasets (`loaders.py`), and reproducible split helpers (`splits.py`). |
+| `grwhs/` | Installable package that implements the CLI, runner, models, diagnostics, metrics, visualization, and utilities described in Section 2.2. |
+| `scripts/` | Task-oriented automation: diagnostics/plotting (`plot_check.py`, `plot_diagnostics.py`), sweep utilities (`random_sweep_selector.py`), calibration helpers (`calibrate_logistic.py`), etc. |
+| `notebooks/` | Scratch space for exploratory analysis or report-ready figures that build on saved outputs. |
+| `outputs/` | Auto-generated artifacts. Single runs live under `outputs/runs/<name>-<timestamp>/`, sweeps under `outputs/sweeps/<sweep_id>/<variant>-<timestamp>/`, and aggregated exports under `outputs/reports/`. |
+| `tests/` | Pytest suite covering generators, inference kernels, diagnostics, and smoke tests for the CLI pipeline. |
+| `random_sweep_selector.py` | Optional entry-point that samples subsets of a sweep spec and executes them (useful for stochastic benchmarking sessions). |
+| `pyproject.toml` / `.pre-commit-config.yaml` | Toolchain configuration (packaging metadata, lint/test hooks). |
+
+### 2.2 Core package modules (`grwhs/`)
+
+- `grwhs/cli/`
+  - `run_experiment.py` merges any number of config files/overrides, stamps the resolved YAML, and kicks off the runner.
+  - `run_sweep.py` iterates over `configs/sweeps/*` definitions, managing per-variant overrides and destination folders.
+  - `make_report.py` aggregates finished run directories into JSON/CSV summaries in `outputs/reports/`.
+- `grwhs/experiments/`
+  - `runner.py` is the orchestration hub: it calls dataset generators, instantiates models, evaluates metrics, and writes artifacts.
+  - `registry.py` exposes the `@register` decorator used by every model/baseline so the runner can request them by name.
+  - `sweeps.py` loads sweep templates and materializes per-run configurations; `aggregator.py` consolidates fold-level results.
+- `grwhs/models/`
+  - Contains the Gibbs (`grwhs_gibbs.py`), SVI (`grwhs_svi_numpyro.py`), and convex baselines (lasso/ridge/GL/SGL) implementations.
+  - Models rely on inference helpers (sampling routines, Woodbury solvers) and populate posterior buffers used downstream.
+- `grwhs/inference/`
+  - Linear algebra kernels, proximal updates, and Generalized Inverse Gaussian samplers shared by multiple models.
+  - Encapsulates numerical safeguards (jitter, reparameterisations) so models stay focused on statistical logic.
+- `grwhs/metrics/`
+  - Regression, classification, selection, and calibration metrics consumed by the runner and by `make_report`.
+- `grwhs/diagnostics/`
+  - `convergence.py`, `shrinkage.py`, and `postprocess.py` compute R-hat/ESS, group shrinkage summaries, and EDF-style diagnostics.
+- `grwhs/postprocess/`
+  - Currently `debias.py`, which adjusts posterior draws/point-estimates before reporting when requested by configs.
+- `grwhs/utils/`
+  - Shared infrastructure: config parsing/validation, structured logging, filesystem helpers, and dataclass-like containers.
+- `grwhs/viz/`
+  - Plotting/table building blocks consumed both by CLI scripts and notebooks (scatter plots, coverage curves, LaTeX-ready tables).
+
+### 2.3 Execution flow (config -> artifacts)
+
+1. Compose a config stack (`configs/base.yaml` + dataset + method + optional overrides) and hand it to `grwhs.cli.run_experiment` or `grwhs.cli.run_sweep`.
+2. The CLI resolves/validates the merged YAML, persists `resolved_config.yaml`, and hands control to `grwhs.experiments.runner.Runner`.
+3. The runner calls `data/generators.py` & `data/preprocess.py` to build standardised folds, then acquires the requested estimator from `grwhs.experiments.registry`.
+4. Models under `grwhs/models/` call into `grwhs/inference/` primitives, emit predictions/posterior draws, and register any auxiliary diagnostics.
+5. Metrics from `grwhs/metrics/` and convergence summaries from `grwhs/diagnostics/` are computed before `runner` writes datasets, metrics, posterior arrays, and plots into `outputs/runs/...` (or the sweep-specific subfolder).
+6. Reporting/visualisation layers (`grwhs.cli.make_report`, `scripts/plot_check.py`, `scripts/plot_diagnostics.py`, notebooks) consume those artifacts, while `tests/` assert the whole pathway stays stable.
 
 ```
-configs/          YAML experiment templates
-  base.yaml       shared defaults (nested CV, metrics, seeds)
-  experiments/    dataset descriptors (toy regression/classification, real-data templates)
-  methods/        method presets (GRwHS variants, GL, SGL, ablations)
-  sweeps/         sweep specifications (grids + method comparisons)
-data/             synthetic generators, preprocessing, splits, loaders
-grwhs/            main package namespace
-  cli/            command-line entry points
-  diagnostics/    posterior & convergence diagnostics
-  experiments/    experiment orchestration (runner, sweeps, aggregator)
-  inference/      linear algebra helpers, samplers, GIG sampling
-  metrics/        regression/selection/uncertainty metrics
-  models/         GRwHS implementations (SVI, Gibbs) & baselines
-  utils/          config parsing, logging, IO
-  viz/            plotting/table utilities
-outputs/          run artifacts (created automatically)
-scripts/          convenience scripts (plot & posterior checks)
-tests/            pytest suite
+configs -> grwhs.cli (run_experiment/run_sweep) -> grwhs.experiments.runner ->
+registry/models/inference -> metrics + diagnostics -> outputs/(runs|sweeps|reports) -> scripts/notebooks/tests
 ```
-
-Important modules:
-- `grwhs/cli/run_experiment.py`: merges configs, runs a single experiment
-- `grwhs/cli/make_report.py`: builds JSON summaries across runs
-- `grwhs/experiments/runner.py`: generates data, fits models, saves metrics & posterior samples
-- `grwhs/models/grwhs_svi_numpyro.py`, `grwhs/models/grwhs_gibbs.py`: GRwHS model implementations
-- `grwhs/diagnostics/convergence.py`: split R-hat & ESS computations
-- `scripts/plot_check.py`: generates standard and posterior plots for a run
 
 ---
 
