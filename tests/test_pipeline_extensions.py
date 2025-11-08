@@ -275,3 +275,10 @@ def test_run_sweep_parallel(tmp_path):
     assert len(run_dirs) >= 2
     summary_files = list(outdir.glob("sweep_summary_*.json"))
     assert summary_files
+    comparison_csv = list(outdir.glob("sweep_comparison_*.csv"))
+    assert comparison_csv
+    comparison_json = list(outdir.glob("sweep_comparison_*.json"))
+    assert comparison_json
+    comparison_payload = json.loads(comparison_json[0].read_text(encoding="utf-8"))
+    assert len(comparison_payload.get("rows", [])) >= 2
+    assert comparison_payload.get("metric_extrema")

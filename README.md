@@ -274,6 +274,12 @@ Integrate into scripts/notebooks to compare models across the new toy grids, ove
 - Format metrics for publication via `grwhs.viz.tables` (extend as needed).
 - Combine with `grwhs.viz.plots` or custom plotting to build comparative figures.
 
+### 7.3 Sweep comparison summaries
+- Every `run_sweep` invocation now emits `sweep_comparison_<timestamp>.json/.csv/.md` alongside `sweep_summary_<timestamp>.json` in the sweep output directory.
+- The CSV/Markdown tables list each variation (model) with its aggregated metrics so you can paste them straight into spreadsheets or docs.
+- The JSON payload also includes `metric_extrema`, recording which variation achieved the min/max value for every metric; use it to programmatically pick winners or trigger alerts.
+- Re-run `run_sweep` with `--dry-run` to preview planned jobs without executing; comparison files are written only for completed sweeps.
+
 ---
 
 ## 8. Posterior Diagnostics & Convergence

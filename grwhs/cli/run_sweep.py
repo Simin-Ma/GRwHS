@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,7 +11,7 @@ import random
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 import yaml
 
@@ -73,6 +74,155 @@ def _detect_data_seed(cfg: Dict[str, Any]) -> int | None:
         if seed is not None:
             return seed
     return None
+
+
+def _safe_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_numeric_metrics(payload: Any) -> Dict[str, float]:
+    if not isinstance(payload, dict):
+        return {}
+    candidate = payload.get("metrics")
+    source = candidate if isinstance(candidate, dict) else payload
+    metrics: Dict[str, float] = {}
+    for key, value in source.items():
+        number = _safe_float(value)
+        if number is not None:
+            metrics[key] = number
+    return metrics
+
+
+def _determine_model_label(record: Dict[str, Any], payload: Any) -> str | None:
+    model = record.get("model")
+    if isinstance(model, str):
+        return model
+    if isinstance(payload, dict):
+        payload_model = payload.get("model")
+        if isinstance(payload_model, str):
+            return payload_model
+    return None
+
+
+def _format_metric(value: float | None) -> str:
+    if value is None:
+        return ""
+    abs_val = abs(value)
+    if abs_val and (abs_val >= 1e4 or abs_val < 1e-3):
+        return f"{value:.3e}"
+    return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
+def _compute_metric_extrema(rows: List[Dict[str, Any]], metric_keys: List[str]) -> Dict[str, Dict[str, Any]]:
+    extrema: Dict[str, Dict[str, Any]] = {}
+    for metric in metric_keys:
+        candidates = [
+            (row["metrics"][metric], row["variation"])
+            for row in rows
+            if metric in row["metrics"]
+        ]
+        if not candidates:
+            continue
+        min_value, min_var = min(candidates, key=lambda item: item[0])
+        max_value, max_var = max(candidates, key=lambda item: item[0])
+        extrema[metric] = {
+            "min": {"variation": min_var, "value": min_value},
+            "max": {"variation": max_var, "value": max_value},
+        }
+    return extrema
+
+
+def _build_comparison_rows(summary: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
+    rows: List[Dict[str, Any]] = []
+    metric_keys: set[str] = set()
+    for record in summary:
+        payload = record.get("metrics")
+        metrics = _extract_numeric_metrics(payload)
+        metric_keys.update(metrics.keys())
+        rows.append({
+            "variation": record.get("name"),
+            "model": _determine_model_label(record, payload),
+            "status": record.get("status") or "UNKNOWN",
+            "run_dir": record.get("run_dir"),
+            "metrics": metrics,
+        })
+    return rows, sorted(metric_keys)
+
+
+def _write_comparison_artifacts(outdir_path: Path, sweep_name: str, timestamp: str, summary: List[Dict[str, Any]]) -> None:
+    rows, metric_keys = _build_comparison_rows(summary)
+    if not rows:
+        return
+
+    base_name = f"sweep_comparison_{timestamp}"
+    csv_path = outdir_path / f"{base_name}.csv"
+    header = ["variation", "model", "status", "run_dir", *metric_keys]
+    with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(header)
+        for row in rows:
+            formatted_metrics = [_format_metric(row["metrics"].get(metric)) for metric in metric_keys]
+            writer.writerow([
+                row["variation"],
+                row["model"] or "",
+                row["status"],
+                row["run_dir"],
+                *formatted_metrics,
+            ])
+
+    extrema = _compute_metric_extrema(rows, metric_keys)
+    json_payload = {
+        "sweep_name": sweep_name,
+        "generated_at": timestamp,
+        "metrics": metric_keys,
+        "rows": rows,
+        "metric_extrema": extrema,
+    }
+    json_path = outdir_path / f"{base_name}.json"
+    json_path.write_text(json.dumps(json_payload, indent=2), encoding="utf-8")
+
+    md_path = outdir_path / f"{base_name}.md"
+    lines: List[str] = []
+    lines.append(f"# {sweep_name} sweep comparison ({timestamp})")
+    lines.append("")
+    if metric_keys:
+        header_cells = ["Variation", "Model", "Status", *metric_keys]
+    else:
+        header_cells = ["Variation", "Model", "Status"]
+    lines.append("| " + " | ".join(header_cells) + " |")
+    lines.append("| " + " | ".join(["---"] * len(header_cells)) + " |")
+    for row in rows:
+        cells = [
+            str(row["variation"]),
+            row["model"] or "",
+            str(row["status"]),
+        ]
+        for metric in metric_keys:
+            cells.append(_format_metric(row["metrics"].get(metric)))
+        lines.append("| " + " | ".join(cells) + " |")
+
+    if extrema:
+        lines.append("")
+        lines.append("## Metric extrema")
+        for metric in metric_keys:
+            if metric not in extrema:
+                continue
+            info = extrema[metric]
+            min_info = info["min"]
+            max_info = info["max"]
+            lines.append(
+                f"- `{metric}` min: {min_info['value']:.6g} ({min_info['variation']}) | "
+                f"max: {max_info['value']:.6g} ({max_info['variation']})"
+            )
+
+    md_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -195,16 +345,19 @@ def main() -> None:
         dry_run = payload["dry_run"]
 
         try:
-            model_name = get_model_name_from_config(resolved_cfg).lower()
+            resolved_model_name = get_model_name_from_config(resolved_cfg)
+            model_name_key = resolved_model_name.lower()
         except Exception:
-            model_name = None
-        if model_name is not None and model_name != "grwhs_gibbs":
+            resolved_model_name = None
+            model_name_key = None
+        if model_name_key is not None and model_name_key != "grwhs_gibbs":
             resolved_cfg.setdefault("experiments", {})["repeats"] = 1
 
         record: Dict[str, Any] = {
             "name": name,
             "run_dir": str(run_dir),
             "index": idx,
+            "model": resolved_model_name,
         }
 
         if dry_run:
@@ -258,6 +411,7 @@ def main() -> None:
         }
         summary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"[SWEEP] Summary written to {summary_path}")
+        _write_comparison_artifacts(outdir_path, sweep_name, timestamp, summary)
 
 
 
