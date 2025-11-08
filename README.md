@@ -121,8 +121,8 @@ Method presets collect model-specific hyperparameters and tuning instructions:
 - `grwhs_fixed_tau.yaml` - GRwHS with tau fixed to a supplied value (for the calibration ablation).
 - `grwhs_no_group.yaml` - feature-wise Regularised Horseshoe baseline (no group layer).
 - `grwhs_full_logistic.yaml` / `grwhs_fixed_tau_logistic.yaml` - logistic GRwHS variants.
-- `group_lasso.yaml` - skglm Group Lasso plus an alpha grid for inner-CV model selection.
-- `sparse_group_lasso.yaml` - Sparse Group Lasso with joint (alpha, l1 ratio) search.
+- `group_lasso.yaml` - skglm Group Lasso plus an alpha grid for inner-CV model selection (now with `group_weight_mode: "size"` so weights match |g|).
+- `sparse_group_lasso.yaml` - Sparse Group Lasso with joint (alpha, l1 ratio) search and the same |g| weighting for the group component.
 
 These files can be stacked (dataset + method + ablation override) by passing multiple `--config` arguments or via sweep `config_files`.
 
@@ -278,7 +278,9 @@ Integrate into scripts/notebooks to compare models across the new toy grids, ove
 - Every `run_sweep` invocation now emits `sweep_comparison_<timestamp>.json/.csv/.md` alongside `sweep_summary_<timestamp>.json` in the sweep output directory.
 - The CSV/Markdown tables list each variation (model) with its aggregated metrics so you can paste them straight into spreadsheets or docs.
 - The JSON payload also includes `metric_extrema`, recording which variation achieved the min/max value for every metric; use it to programmatically pick winners or trigger alerts.
+- Metrics that a model cannot provide (e.g., MLPD for deterministic baselines) are rendered as `N/A`, so “missing” can’t be confused with “zero”.
 - Re-run `run_sweep` with `--dry-run` to preview planned jobs without executing; comparison files are written only for completed sweeps.
+- Convex baselines now populate the `MLPD` column via a Gaussian-residual proxy (residual variance measured on the inner training folds, then applied to the outer test residuals). Each fold’s `metrics.json` flags this with `MLPD_source: "gaussian_residual_proxy"` so you can disclose the approximation in the paper.
 
 ---
 

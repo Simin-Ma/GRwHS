@@ -6,7 +6,7 @@ Optional models (SVI/Gibbs) are imported in try blocks so that baseline-only
 environments can still import this module without errors.
 """
 
-from typing import Callable, Dict, Any, Optional
+from typing import Callable, Dict, Any, Optional, Sequence
 
 from data.generators import make_groups
 
@@ -65,6 +65,37 @@ def _get(cfg: Dict[str, Any], path: str, default: Any = None) -> Any:
             return default
         cur = cur[seg]
     return cur
+
+
+# ------------------------------
+# Helpers
+# ------------------------------
+
+
+def _resolve_group_weight_mode(cfg: Dict[str, Any], groups: Sequence[Sequence[int]]) -> Any:
+    """
+    Resolve group weights either from explicit values or a declarative mode.
+
+    If `model.group_weights` exists, it takes precedence. Otherwise, interpret
+    `model.group_weight_mode` (sqrt|size|uniform) to build a weight vector.
+    """
+
+    direct = _get(cfg, "model.group_weights", None)
+    if direct is not None:
+        return direct
+
+    mode_raw = _get(cfg, "model.group_weight_mode", None)
+    if mode_raw is None:
+        return None
+
+    mode = str(mode_raw).lower()
+    if mode in {"sqrt", "default", "none"}:
+        return None
+    if mode in {"size", "count"}:
+        return [float(len(group)) for group in groups]
+    if mode in {"uniform", "ones"}:
+        return [1.0 for _ in groups]
+    raise ValueError(f"Unsupported group_weight_mode '{mode_raw}'. Use sqrt|size|uniform or explicit weights.")
 
 
 # ------------------------------
@@ -293,7 +324,7 @@ def _build_group_lasso(cfg: Dict[str, Any]) -> Any:
     positive = bool(_get(cfg, "model.positive", False))
 
     # group_weights (optional), defaults to sqrt(|G_g|)
-    gw = _get(cfg, "model.group_weights", None)
+    gw = _resolve_group_weight_mode(cfg, groups)
     return GroupLasso(
         groups=groups,
         alpha=alpha,
@@ -327,7 +358,7 @@ def _build_sparse_group_lasso(cfg: Dict[str, Any]) -> Any:
     warm_start = bool(_get(cfg, "model.warm_start", True))
     ws_strategy = str(_get(cfg, "model.ws_strategy", "fixpoint"))
     verbose = int(_get(cfg, "model.verbose", 0))
-    group_weights = _get(cfg, "model.group_weights", None)
+    group_weights = _resolve_group_weight_mode(cfg, groups)
     feature_weights = _get(cfg, "model.feature_weights", None)
     return SparseGroupLasso(
         groups=groups,

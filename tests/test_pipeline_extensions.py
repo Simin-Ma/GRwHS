@@ -10,6 +10,7 @@ import numpy as np
 import yaml
 
 from data.loaders import load_real_dataset
+from grwhs.experiments import registry as registry_module
 from grwhs.experiments.aggregator import aggregate_runs
 from grwhs.experiments.runner import run_experiment
 from grwhs.inference.samplers import slice_sample_1d
@@ -76,6 +77,36 @@ def _make_basic_config(tmp_path: Path) -> dict:
             "classification_threshold": 0.5,
         },
     }
+
+
+def test_group_weight_mode_size():
+    cfg = {
+        "model": {
+            "name": "group_lasso",
+            "group_weight_mode": "size",
+        },
+        "data": {
+            "groups": [[0, 1], [2, 3, 4]],
+        },
+    }
+    model = registry_module._build_group_lasso(cfg)
+    assert np.allclose(model._group_weights, np.array([2.0, 3.0]))
+
+
+def test_ridge_reports_pseudo_mlpd(tmp_path):
+    config = _make_basic_config(tmp_path)
+    config["name"] = "ridge_pseudo"
+    config["model"] = {
+        "name": "ridge",
+        "alpha": 1.0,
+        "fit_intercept": False,
+    }
+    run_dir = tmp_path / "ridge_pseudo_run"
+    run_experiment(config, run_dir)
+    fold_metrics_path = run_dir / "repeat_001" / "fold_01" / "metrics.json"
+    metrics_payload = json.loads(fold_metrics_path.read_text(encoding="utf-8"))
+    assert metrics_payload["MLPD"] is not None
+    assert metrics_payload.get("MLPD_source") == "gaussian_residual_proxy"
 
 
 def test_load_real_dataset_and_runner(tmp_path):

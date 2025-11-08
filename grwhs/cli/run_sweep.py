@@ -113,7 +113,7 @@ def _determine_model_label(record: Dict[str, Any], payload: Any) -> str | None:
 
 def _format_metric(value: float | None) -> str:
     if value is None:
-        return ""
+        return "N/A"
     abs_val = abs(value)
     if abs_val and (abs_val >= 1e4 or abs_val < 1e-3):
         return f"{value:.3e}"

@@ -72,6 +72,8 @@ def predictive_metrics(
     y_true: Optional[ArrayLike],
     y_pred: Optional[ArrayLike],
     loglik_samples: Optional[np.ndarray] = None,
+    *,
+    pseudo_sigma2: Optional[float] = None,
 ) -> Dict[str, Optional[float]]:
     """Compute predictive metrics (RMSE, predictive log-likelihood)."""
 
@@ -96,6 +98,22 @@ def predictive_metrics(
             metrics["PredictiveLogLikelihood"] = float(ll.mean())
         mlpd_val = _mlpd_from_loglik_samples(ll)
         metrics["MLPD"] = None if mlpd_val is None else float(mlpd_val)
+        if metrics["MLPD"] is not None:
+            metrics["MLPD_source"] = "posterior_draws"
+    elif (
+        pseudo_sigma2 is not None
+        and pseudo_sigma2 > 0
+        and y is not None
+        and pred is not None
+        and y.shape[0] == pred.shape[0]
+    ):
+        sigma2 = float(max(pseudo_sigma2, 1e-8))
+        residual = y - pred
+        log_terms = -0.5 * (np.log(2 * np.pi * sigma2) + (residual**2) / sigma2)
+        pseudo_loglik = float(np.mean(log_terms))
+        metrics["PredictiveLogLikelihood"] = pseudo_loglik
+        metrics["MLPD"] = pseudo_loglik
+        metrics["MLPD_source"] = "gaussian_residual_proxy"
     return metrics
 
 
@@ -470,6 +488,26 @@ def evaluate_model_metrics(
     if prob_draw_mean is not None:
         prob_positive = prob_draw_mean
 
+    pseudo_sigma2: Optional[float] = None
+    if task_label == "regression":
+        Xtr = _as_numpy(X_train)
+        ytr = _as_numpy(y_train)
+        if Xtr is not None and ytr is not None and ytr.size > 1:
+            try:
+                train_preds = np.asarray(model.predict(Xtr))
+                train_preds = train_preds.reshape(-1)
+                ytr_vec = ytr.reshape(-1)
+                if train_preds.shape[0] == ytr_vec.shape[0]:
+                    residuals = ytr_vec - train_preds
+                    if residuals.size > 1:
+                        sigma2 = float(np.var(residuals, ddof=1))
+                    else:
+                        sigma2 = float(np.var(residuals))
+                    if sigma2 > 0:
+                        pseudo_sigma2 = sigma2
+            except Exception:
+                pseudo_sigma2 = None
+
     pred_draws = None
     loglik_samples = None
     if task_label == "regression":
@@ -482,7 +520,14 @@ def evaluate_model_metrics(
             )
         if yte is not None and pred_draws is not None and posterior.sigma is not None:
             loglik_samples = _log_likelihood_samples(yte, pred_draws, posterior.sigma)
-        metrics.update(predictive_metrics(yte, pred_mean, loglik_samples))
+        metrics.update(
+            predictive_metrics(
+                yte,
+                pred_mean,
+                loglik_samples,
+                pseudo_sigma2=pseudo_sigma2,
+            )
+        )
     else:
         metrics.update(
             classification_metrics(
