@@ -1,0 +1,17 @@
+defaults: "../base.yaml"
+
+name: "grwhs_no_group"
+
+model:
+  name: "regularized_horseshoe"
+  slab_scale: 2.0
+  num_warmup: 1000
+  num_samples: 1000
+  num_chains: 1
+  thinning: 1
+  tau:
+    mode: "calibrated"
+    target: "features"
+    df: 2.0
+    p0:
+      grid: [5, 10, 20, 40]

@@ -1,0 +1,21 @@
+defaults: "../base.yaml"
+
+name: "group_lasso"
+
+model:
+  name: "group_lasso"
+  fit_intercept: false
+  tol: 1.0e-6
+  max_iter: 2000
+  max_epochs: 50000
+  warm_start: true
+  ws_strategy: "fixpoint"
+  search:
+    alpha: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]
+
+splits:
+  inner:
+    n_splits: 5
+    shuffle: true
+    stratify: "auto"
+    seed: 777

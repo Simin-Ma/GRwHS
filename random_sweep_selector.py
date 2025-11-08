@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Random sweep driver for Scenario B GRwHS tuning.
+Random sweep driver for Toy Regression GRwHS tuning.
 
 Features
 --------
@@ -15,10 +15,10 @@ Features
 Usage
 -----
 python random_sweep_selector.py \
-  --base_config configs/scenario_B.yaml \
+  --base_config configs/experiments/toy_regression.yaml \
   --budget 40 \
   --chains 2 \
-  --work_root outputs/random_search_B \
+  --work_root outputs/random_search_toy_regression \
   [--fast] \
   [--stop_after_accepted 8]
 
@@ -440,7 +440,7 @@ def main() -> None:
         "--base_config",
         type=str,
         required=True,
-        help="Path to the base scenario YAML file.",
+        help="Path to the base dataset YAML file (e.g. configs/experiments/toy_regression.yaml).",
     )
     parser.add_argument(
         "--budget",

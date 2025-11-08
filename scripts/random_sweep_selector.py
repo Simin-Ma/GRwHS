@@ -1,4 +1,4 @@
-"""Randomly sample mixed-signal sweep configurations and select the best RMSE."""
+﻿"""Randomly sample mixed-signal sweep configurations and select the best RMSE."""
 from __future__ import annotations
 
 import argparse
@@ -133,7 +133,7 @@ def run_random_samples(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Randomly sample mixed-signal sweeps and pick best RMSE.")
-    parser.add_argument("--base-config", type=Path, default=Path("configs/scenario_A.yaml"), help="Base experiment config.")
+    parser.add_argument("--base-config", type=Path, default=Path("configs/experiments/toy_regression.yaml"), help="Base experiment config.")
     parser.add_argument("--sweep-config", type=Path, default=Path("configs/sweeps/mixed_signal_grid.yaml"), help="Sweep specification to sample from.")
     parser.add_argument("--outdir", type=Path, default=Path("outputs/sweeps/random_mixed"), help="Output root for sampled sweeps.")
     parser.add_argument("--samples", type=int, default=3, help="Number of random subsets to run.")
@@ -166,4 +166,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

@@ -1,0 +1,24 @@
+defaults: "../base.yaml"
+
+name: "grwhs_full"
+model:
+  name: "grwhs_gibbs"
+  c: 2.0
+  eta: 0.6
+  s0: 3.0
+  iters: 8000
+  tau:
+    mode: "calibrated"
+    df: 2.0
+    target: "groups"
+    p0:
+      grid: [1, 2, 5, 10, 20]
+    sigma_classification: 2.0
+
+inference:
+  gibbs:
+    iters: 8000
+    burn_in: 4000
+    thin: 1
+    jitter: 1.0e-08
+    seed: 321

@@ -1,0 +1,9 @@
+defaults: "../methods/grwhs_full.yaml"
+
+name: "grwhs_full_logistic"
+task: "classification"
+
+model:
+  name: "grwhs_gibbs_logistic"
+  tau:
+    sigma_classification: 2.0

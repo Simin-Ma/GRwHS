@@ -60,6 +60,10 @@ def test_run_experiment_outputs_convergence(tmp_path):
             "test_ratio": 0.2,
         },
         "standardization": {"X": "unit_variance", "y_center": True},
+        "splits": {
+            "outer": {"n_splits": 2, "shuffle": True, "stratify": "auto", "seed": 555},
+            "inner": {"n_splits": 2, "shuffle": True, "stratify": "auto", "seed": 666},
+        },
         "model": {"name": "grwhs_gibbs", "c": 1.5, "eta": 0.5, "tau0": 0.1},
         "inference": {
             "gibbs": {"iters": 30, "burn_in": 10, "thin": 1, "seed": 321}

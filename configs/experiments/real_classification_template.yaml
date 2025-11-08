@@ -1,0 +1,24 @@
+defaults: "../base.yaml"
+
+# Template for real-world binary classification datasets.
+# Fill in loader paths prior to execution.
+
+name: "real_classification_TEMPLATE"
+task: "classification"
+
+standardization:
+  X: "unit_variance"
+  y_center: false
+
+data:
+  type: "loader"
+  loader:
+    path_X: "PATH/TO/FEATURES.npy"
+    path_y: "PATH/TO/BINARY_LABELS.npy"
+    path_group_map: null
+
+splits:
+  outer:
+    stratify: true
+  inner:
+    stratify: true

@@ -1,209 +1,114 @@
 # ========================================
-# Base Configuration for GRwHS and Baselines
+# Nested-CV Base Configuration (Regression/Classif.)
 # ----------------------------------------
-# How to use this file
-# - Include in a scenario via:  defaults: "configs/base.yaml"
-# - Override only the fields you need inside that scenario YAML
-# - All keys/values below are safe defaults; comments explain how to tune
-#
-# Conventions and tips
-# - Prefer standardizing X to zero mean and unit variance for probabilistic
-#   models (Gibbs, SVI). For convex baselines (lasso/group-lasso), unit_l2 can
-#   be convenient; internal code adjusts the tau0 heuristic accordingly.
-# - If you do not provide groups, the code will fall back to singleton groups.
-# - Small-scale problems (modest n, p): prefer Gibbs (exact MCMC).
-#   Large-scale problems (large p, many runs): prefer SVI (faster, scalable).
+# This file captures the common experimental scaffolding:
+#   * Outer K-fold (with optional repeats) for evaluation.
+#   * Train-only standardisation shared across all methods.
+#   * Optional tau calibration settings for GRwHS.
+#   * Default metric suites for regression / classification.
+# Individual experiments should inherit from this base via:
+#   defaults: "configs/base.yaml"
+# and override only the dataset- or method-specific sections.
 # ========================================
 
 seed: 42
-device: "cpu"            # Execution backend: "cpu" (all solvers) | "gpu" (NumPyro SVI only)
+device: "cpu"
 output_dir: "outputs"
-task: "regression"       # "regression" (default) | "classification" for logistic experiments
+
+task: "regression"
 
 seeds:
-  experiment: 42         # Global/default seed if a stage-specific override is not supplied
-  split: 42              # Seed controlling train/val/test partitioning (validation uses split+1 internally)
-  # data_generation: null  # Optional: set to reproduce a specific synthetic dataset; leave unset to sample anew each run
+  experiment: 42
+  split: 183729
+  data_generation: null
 
 standardization:
-  X: "unit_variance"     # Feature scaling:
-                         # - "unit_variance" (recommended for GRwHS/Gibbs/SVI)
-                         # - "unit_l2" (useful for convex baselines)
-  y_center: true         # Center response to zero mean
+  X: "unit_variance"
+  y_center: true
 
-# -------------------------
-# Data settings
-# -------------------------
+splits:
+  outer:
+    n_splits: 5
+    n_repeats: 1
+    shuffle: true
+    stratify: "auto"   # "auto": stratify when task == classification
+    seed: 20240501
+  inner:
+    n_splits: 3
+    shuffle: true
+    stratify: "auto"
+    seed: 20240502
+
 data:
-  type: "synthetic"      # Data source:
-                          # - "synthetic": generate data using built-in generators
-                          # - "loader": read from disk via the loader.* paths below
-  n: 600
-  p: 900
-  G: 36
-  group_sizes: "variable"   # Group structure:
-                            # - "equal": split features evenly into G groups
-                            # - "variable": draw heterogeneous sizes (min 6..8, max ~20)
-                            # - explicit list: e.g. [8, 12, 10, ...]
-
-  # Correlation structure for synthetic design matrices
+  type: "synthetic"
+  n: 200
+  p: 500
+  G: 50
+  group_sizes: "variable"
   correlation:
-    type: "block"        # "block" | "ar1" | "cs" (compound symmetry)
-    rho: 0.4
-    block_size: 25       # Roughly p / G; adjust per-scenario if G changes
-
-  # Signal mechanism (controls ground-truth beta)
+    type: "group_block"
+    rho_in: 0.3
+    rho_out: 0.0
+  overlap:
+    fraction: 0.0
+    max_memberships: 2
   signal:
-    sparsity: 0.12       # Overall fraction of non-zero coefficients (0..1)
-    strong_frac: 0.22    # Among non-zeros, fraction that are strong signals
-    group_sparsity: 0.6  # Fraction of groups containing any non-zeros
-    beta_scale_strong: 1.8   # Std of strong effects (in sigma units)
-    beta_scale_weak: 0.45    # Std of weak effects
-    sign_mix: "random"   # Sign pattern for non-zeros: "random" | "positive" | "negative"
+    group_sparsity: 0.2
+    sparsity: 0.05
+    strong_frac: 0.4
+    beta_scale_strong: 4.0
+    beta_scale_weak: 0.4
+    sign_mix: "random"
   classification:
-    scale: 1.0           # Logistic scale for linear predictor when task == "classification"
-    bias: 0.0            # Global bias (log-odds shift) to tune class balance
-    noise_std: 0.0       # Optional Gaussian jitter on logits to soften decision boundary
-
+    scale: 1.0
+    bias: 0.0
+    noise_std: 0.0
   noise_sigma: 1.0
-  test_ratio: 0.2        # Fraction of data held out for test
-  val_ratio: 0.1         # Fraction of remaining data used for validation
 
-  # Real-data loader settings (active when data.type == "loader")
-  loader:
-    path_X: ""           # Path to features (e.g., .npy, .csv)
-    path_y: ""           # Path to response
-    group_map: ""        # Optional CSV/JSON feature->group mapping; if empty, uses singleton groups
-
-# -------------------------
-# Model settings (shared interface)
-# -------------------------
 model:
-  name: "grwhs_gibbs"    # Default sampler:
-                          # - grwhs_gibbs: exact Gibbs sampler (preferred baseline)
-                          # - grwhs_svi: NumPyro SVI for large-scale runs (override when needed)
-                          # - ridge | lasso | elastic_net: convex baselines
-                          # - group_lasso | sparse_group_lasso: group-aware convex baselines
-                          # - horseshoe | regularized_horseshoe: non-group HS baselines
-
-  # Regularized Horseshoe slab width (GRwHS + regularized horseshoe)
-  c: 1.5
-
-  # Prior guess for number of relevant coefficients (ties into tau0 rule)
-  s_guess: 108
-
-  # Global scale following tau0 ≈ (s / (p - s)) / sqrt(n) (unit-variance columns)
-  #tau0: 0.0045
-
-  # Group shrinkage: phi_g ~ HalfNormal(eta / sqrt(p_g)) (GRwHS only)
-  eta: 0.65
-  size_adjust: true      # If true, divide by sqrt(p_g) to avoid favoring small groups
-
-  # Noise prior: Half-Cauchy(scale=s0) on sigma (SVI/Gibbs). Convex baselines ignore this.
+  name: "grwhs_gibbs"
+  c: 2.0
+  eta: 0.6
   s0: 3.0
-
-  # Gibbs runtime controls (builder reads these keys directly)
   iters: 6000
+  tau:
+    mode: "calibrated"
+    df: 2.0
+    target: "groups"
+    p0:
+      grid: [1, 2, 5, 10, 20]
+    sigma_classification: 2.0
 
-  # Logistic regression defaults (used when model.name == "logistic_regression")
-  logistic:
-    penalty: "l2"
-    C: 1.0
-    solver: "lbfgs"
-    max_iter: 200
-    tol: 1.0e-4
-    fit_intercept: true
-    class_weight: null
-    l1_ratio: null          # Requires penalty="elasticnet"
-    multi_class: "auto"
-    intercept_scaling: 1.0
-    n_jobs: null
-    warm_start: false
-    verbose: 0
-
-model_variants:
-  classification:
-    name: "grwhs_gibbs_logistic"
-
-# -------------------------
-# Inference settings
-# -------------------------
 inference:
   gibbs:
-    iters: 8000           # Total iterations per chain
-    burn_in: 4000         # Burn-in iterations discarded
-    thin: 1               # Keep every k-th draw post burn-in
-    adapt_slice: true     # Enable adaptive stepping in slice/MH moves
-    jitter: 1.0e-8        # Numerical jitter for linear algebra
+    iters: 6000
+    burn_in: 3000
+    thin: 1
+    jitter: 1.0e-08
     seed: 123
 
-  svi:
-    steps: 4000            # (Optional override) Number of optimization steps
-    lr: 1.0e-2             # Adam learning rate
-    mc_samples: 3          # MC samples for non-analytic ELBO terms
-    batch_size: 256        # Minibatch size; omit/null for full-batch
-    natural_grad: true     # Enable natural-gradient preconditioning
-    elbo_eval_every: 100   # Log/validate ELBO every N steps
-    clip_grad_norm: 10.0   # Gradient norm clipping
-    jitter: 1.0e-8         # Numerical jitter for Cholesky/stability
-    seed: 123
-    use_hutchinson: true   # Enable Hutchinson trace estimator with CG solves
-    hutchinson_samples: 12 # Number of Hutchinson probes per gradient step
-    cg_tol: 1.0e-3         # CG tolerance for matrix-free solves
-    cg_maxiter: 200        # CG maximum iterations (None = scipy default)
-    natgrad_damping: 1.0e-3  # Fisher damping to stabilise natural gradients
-    coupling_clip: 3.0     # Clip shared-factor couplings (set null to disable)
-    cov_damping: 0.0       # Blend factor between gradient and natural gradient
-
-# -------------------------
-# Experiment orchestration
-# -------------------------
 experiments:
-  repeats: 3                 # Number of independent repeats (different seeds)
-  save_posterior: true       # Save posterior/variational artifacts when available
-  diagnostics: true          # Compute shrinkage/variance diagnostics after fit
+  repeats: 1
+  coverage_level: 0.9
+  classification_threshold: 0.5
   metrics:
     regression:
-      - RMSE
-      - PredictiveLogLikelihood
       - MLPD
+      - PredictiveLogLikelihood
+      - RMSE
+      - MAE
       - Coverage90
       - IntervalWidth90
-      - MeanKappa
       - MeanEffectiveNonzeros
       - EffectiveDoF
-      - AUC-PR               # Variable-selection quality
-      - F1
     classification:
+      - MLPD
+      - ClassLogLoss
+      - ClassBrier
       - ClassAccuracy
       - ClassF1
       - ClassAUROC
       - ClassAveragePrecision
-      - ClassLogLoss
-      - MLPD
-      - ClassBrier
+      - Coverage90
       - MeanEffectiveNonzeros
-      - AUC-PR               # Retains selection diagnostics for synthetic studies
-      - F1
-  coverage_level: 0.9        # Nominal interval level for calibration metrics
-  classification_threshold: 0.5  # Probability threshold for binary decisions
-  runtime_profile: false     # If true, log timing/memory profiles
-
-# -------------------------
-# Logging & IO
-# -------------------------
-logging:
-  level: "INFO"             # "DEBUG" | "INFO" | "WARNING"
-  progress: true            # Show progress bars during training
-
-checkpointing:
-  enable: true              # Enable checkpointing for iterative solvers
-  keep_last: 3              # Keep last N checkpoints
-  save_every_steps: 200     # Save frequency (in steps)
-
-# -------------------------
-# Visualization defaults
-# -------------------------
-viz:
-  dpi: 150                 # Default DPI for plots
-  style: "default"         # Matplotlib style or custom theme key
+  runtime_profile: false

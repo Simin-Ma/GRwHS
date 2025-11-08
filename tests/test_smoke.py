@@ -14,6 +14,23 @@ if str(ROOT) not in sys.path:
 from grwhs.experiments.runner import run_experiment
 
 
+def _tiny_nested_splits(stratify: str | bool = "auto") -> dict:
+    return {
+        "outer": {
+            "n_splits": 2,
+            "shuffle": True,
+            "stratify": stratify,
+            "seed": 111,
+        },
+        "inner": {
+            "n_splits": 2,
+            "shuffle": True,
+            "stratify": stratify,
+            "seed": 222,
+        },
+    }
+
+
 def test_run_experiment_creates_artifacts(tmp_path):
     config = {
         "seed": 123,
@@ -37,6 +54,7 @@ def test_run_experiment_creates_artifacts(tmp_path):
             "test_ratio": 0.2,
         },
         "standardization": {"X": "unit_variance", "y_center": True},
+        "splits": _tiny_nested_splits(),
         "model": {"name": "ridge", "alpha": 0.5, "fit_intercept": False},
         "experiments": {
             "metrics": {
@@ -51,24 +69,34 @@ def test_run_experiment_creates_artifacts(tmp_path):
     result = run_experiment(config, out_dir)
 
     assert result["status"] == "OK"
-    assert (out_dir / "dataset.npz").exists()
-    assert (out_dir / "dataset_meta.json").exists()
+    assert (out_dir / "metrics.json").exists()
+    assert (out_dir / "summary.json").exists()
+    assert (out_dir / "metrics.jsonl").exists()
 
     assert result.get("repeats", 1) == 1
-    repeat_metrics = result.get("repeat_metrics", [])
-    assert len(repeat_metrics) == 1
+    repeat_summaries = result.get("repeat_summaries", [])
+    assert len(repeat_summaries) == 1
 
     metrics = result.get("metrics", {})
-    assert "RMSE" in metrics and "PredictiveLogLikelihood" in metrics
+    assert "RMSE" in metrics
     assert metrics["RMSE"] is not None
 
-    data = np.load(out_dir / "dataset.npz")
-    assert data["X_train"].shape[0] > 0
-    assert data["beta_true"].shape[0] == config["data"]["p"]
+    repeat_dir = out_dir / "repeat_001"
+    assert repeat_dir.exists()
+    dataset_meta = json.loads((repeat_dir / "dataset_meta.json").read_text(encoding="utf-8"))
+    assert dataset_meta["n"] == config["data"]["n"]
+    assert dataset_meta["p"] == config["data"]["p"]
 
-    meta = json.loads((out_dir / "dataset_meta.json").read_text(encoding="utf-8"))
-    assert meta["model"] == "ridge"
-    assert meta["standardization"]["X"] == "unit_variance"
+    fold_dirs = sorted(repeat_dir.glob("fold_*"))
+    assert fold_dirs, "expected at least one outer fold directory"
+    first_fold = fold_dirs[0]
+    fold_metrics = json.loads((first_fold / "metrics.json").read_text(encoding="utf-8"))
+    assert "RMSE" in fold_metrics
+    fold_arrays = np.load(first_fold / "fold_arrays.npz")
+    assert fold_arrays["train_idx"].size > 0
+
+    repeat_summary = json.loads((repeat_dir / "repeat_summary.json").read_text(encoding="utf-8"))
+    assert repeat_summary["repeat_index"] == 1
 
 def test_run_experiment_honours_repeats(tmp_path):
     base_config = {
@@ -96,6 +124,7 @@ def test_run_experiment_honours_repeats(tmp_path):
             "test_ratio": 0.2,
         },
         "standardization": {"X": "unit_variance", "y_center": True},
+        "splits": _tiny_nested_splits(),
         "model": {"name": "ridge", "alpha": 1.0, "fit_intercept": False},
         "inference": {
             "gibbs": {"seed": 500},
@@ -115,14 +144,14 @@ def test_run_experiment_honours_repeats(tmp_path):
     result = run_experiment(base_config, out_dir)
 
     assert result.get("repeats") == 3
-    repeat_metrics = result.get("repeat_metrics", [])
-    assert len(repeat_metrics) == 3
+    repeat_summaries = result.get("repeat_summaries", [])
+    assert len(repeat_summaries) == 3
 
-    gibbs_seeds = [entry.get("seeds", {}).get("inference", {}).get("gibbs") for entry in repeat_metrics]
+    gibbs_seeds = [entry.get("seeds", {}).get("inference", {}).get("gibbs") for entry in repeat_summaries]
     assert gibbs_seeds == [500, 501, 502]
-    svi_seeds = [entry.get("seeds", {}).get("inference", {}).get("svi") for entry in repeat_metrics]
+    svi_seeds = [entry.get("seeds", {}).get("inference", {}).get("svi") for entry in repeat_summaries]
     assert svi_seeds == [600, 601, 602]
-    data_seeds = [entry.get("seeds", {}).get("data_generation") for entry in repeat_metrics]
+    data_seeds = [entry.get("seeds", {}).get("data_generation") for entry in repeat_summaries]
     assert data_seeds == [4040, 4040, 4040]
 
     repeat_dirs = result.get("artifacts", {}).get("repeat_dirs", [])
@@ -130,10 +159,12 @@ def test_run_experiment_honours_repeats(tmp_path):
     for idx, repeat_path in enumerate(repeat_dirs, start=1):
         repeat_dir = Path(repeat_path)
         assert repeat_dir.exists(), repeat_dir
-        assert (repeat_dir / "dataset.npz").exists()
         assert (repeat_dir / "dataset_meta.json").exists()
-        if repeat_metrics:
-            assert repeat_metrics[idx - 1]["repeat"] == idx
+        assert (repeat_dir / "repeat_summary.json").exists()
+        fold_dirs = sorted(repeat_dir.glob("fold_*"))
+        assert fold_dirs, "fold directories missing"
+        if repeat_summaries:
+            assert repeat_summaries[idx - 1]["repeat_index"] == idx
 
     # Ensure root directory only stores summary (no dataset files at top-level)
     assert not (out_dir / "dataset.npz").exists()

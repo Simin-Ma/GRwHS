@@ -1,0 +1,27 @@
+defaults: "../base.yaml"
+
+name: "toy_regression_base"
+task: "regression"
+
+data:
+  n: 200
+  p: 500
+  G: 50
+  correlation:
+    type: "group_block"
+    rho_in: 0.3
+    rho_out: 0.0
+  signal:
+    group_sparsity: 0.2
+    sparsity: 0.05
+    strong_frac: 0.4
+    beta_scale_strong: 4.0   # overridden in sweeps (signal strength A)
+    beta_scale_weak: 0.4
+  noise_sigma: 1.0
+
+splits:
+  outer:
+    n_splits: 5
+    n_repeats: 1
+    shuffle: true
+    stratify: false

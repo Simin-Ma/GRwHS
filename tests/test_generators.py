@@ -72,6 +72,11 @@ def test_generate_synthetic_respects_signal_configuration():
     # Positive sign convention enforced by the configuration
     assert np.all(data.beta[active] >= 0.0)
 
+    primary_group = data.info["primary_group"]
+    assert isinstance(primary_group, np.ndarray)
+    assert primary_group.shape == (cfg.p,)
+    assert np.all(primary_group >= 0)
+
 
 def test_generate_synthetic_classification_outputs_binary():
     cfg = SyntheticConfig(
@@ -108,6 +113,7 @@ def test_synthetic_config_from_dict_defaults_and_overrides():
         "G": 5,
         "group_sizes": None,
         "signal": {"sparsity": 0.2},
+        "overlap": {"fraction": 0.2, "max_memberships": 2},
     }
 
     cfg = synthetic_config_from_dict(cfg_dict, seed=999, name="scenario")
@@ -120,6 +126,7 @@ def test_synthetic_config_from_dict_defaults_and_overrides():
     assert cfg.name == "scenario"
     assert cfg.task == "regression"
     assert cfg.response.get("type") == "regression"
+    assert cfg.overlap["fraction"] == 0.2
 
 
 def test_synthetic_config_from_dict_classification_override():
@@ -136,3 +143,26 @@ def test_synthetic_config_from_dict_classification_override():
     assert cfg.task == "classification"
     assert cfg.response["scale"] == 0.75
     assert cfg.response["bias"] == -0.2
+
+
+def test_generate_synthetic_with_overlap_metadata():
+    cfg = SyntheticConfig(
+        n=60,
+        p=12,
+        G=4,
+        group_sizes="equal",
+        signal={"sparsity": 0.3},
+        overlap={"fraction": 0.5, "max_memberships": 3},
+        seed=314,
+    )
+    data = generate_synthetic(cfg)
+    info = data.info.get("overlap")
+    assert info
+    feature_ids = info["feature_ids"]
+    membership_counts = info["membership_counts"]
+    assert feature_ids.size > 0
+    assert membership_counts.shape == feature_ids.shape
+    for fid, expected in zip(feature_ids, membership_counts):
+        hits = sum(1 for grp in data.groups if int(fid) in grp)
+        assert hits == expected
+        assert hits >= 2

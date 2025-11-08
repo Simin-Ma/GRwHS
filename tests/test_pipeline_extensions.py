@@ -26,6 +26,23 @@ def _invoke_cli(main_fn, arguments):
         sys.argv = original
 
 
+def _tiny_nested_splits(stratify: str | bool = "auto") -> dict:
+    return {
+        "outer": {
+            "n_splits": 2,
+            "shuffle": True,
+            "stratify": stratify,
+            "seed": 333,
+        },
+        "inner": {
+            "n_splits": 2,
+            "shuffle": True,
+            "stratify": stratify,
+            "seed": 444,
+        },
+    }
+
+
 def _make_basic_config(tmp_path: Path) -> dict:
     return {
         "seed": 123,
@@ -48,6 +65,7 @@ def _make_basic_config(tmp_path: Path) -> dict:
             "test_ratio": 0.2,
         },
         "standardization": {"X": "unit_variance", "y_center": True},
+        "splits": _tiny_nested_splits(),
         "model": {"name": "ridge", "alpha": 0.5, "fit_intercept": False},
         "experiments": {
             "metrics": {
@@ -100,6 +118,7 @@ def test_load_real_dataset_and_runner(tmp_path):
             "test_ratio": 0.2,
         },
         "standardization": {"X": "unit_variance", "y_center": True},
+        "splits": _tiny_nested_splits(),
         "model": {"name": "ridge", "alpha": 1.0, "fit_intercept": False},
         "experiments": {
             "metrics": {"regression": ["RMSE", "PredictiveLogLikelihood"]},
@@ -193,6 +212,7 @@ def test_run_experiment_classification(tmp_path):
             "val_ratio": 0.1,
         },
         "standardization": {"X": "unit_variance", "y_center": False},
+        "splits": _tiny_nested_splits(stratify=True),
         "model": {
             "name": "logistic_regression",
             "logistic": {

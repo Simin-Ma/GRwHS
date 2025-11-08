@@ -1,0 +1,59 @@
+name: toy_classification_grid
+output_dir: outputs/sweeps/toy_classification_grid
+common_config_files:
+- ../experiments/toy_classification.yaml
+variations:
+- name: rho0.0_scale1.5
+  config_files:
+  - ../methods/grwhs_full_logistic.yaml
+  overrides:
+    data.correlation.rho_in: 0.0
+    data.classification.scale: 1.5
+- name: rho0.0_scale2.5
+  config_files:
+  - ../methods/grwhs_full_logistic.yaml
+  overrides:
+    data.correlation.rho_in: 0.0
+    data.classification.scale: 2.5
+- name: rho0.0_scale4.0
+  config_files:
+  - ../methods/grwhs_full_logistic.yaml
+  overrides:
+    data.correlation.rho_in: 0.0
+    data.classification.scale: 4.0
+- name: rho0.3_scale1.5
+  config_files:
+  - ../methods/grwhs_full_logistic.yaml
+  overrides:
+    data.correlation.rho_in: 0.3
+    data.classification.scale: 1.5
+- name: rho0.3_scale2.5
+  config_files:
+  - ../methods/grwhs_full_logistic.yaml
+  overrides:
+    data.correlation.rho_in: 0.3
+    data.classification.scale: 2.5
+- name: rho0.3_scale4.0
+  config_files:
+  - ../methods/grwhs_full_logistic.yaml
+  overrides:
+    data.correlation.rho_in: 0.3
+    data.classification.scale: 4.0
+- name: rho0.6_scale1.5
+  config_files:
+  - ../methods/grwhs_full_logistic.yaml
+  overrides:
+    data.correlation.rho_in: 0.6
+    data.classification.scale: 1.5
+- name: rho0.6_scale2.5
+  config_files:
+  - ../methods/grwhs_full_logistic.yaml
+  overrides:
+    data.correlation.rho_in: 0.6
+    data.classification.scale: 2.5
+- name: rho0.6_scale4.0
+  config_files:
+  - ../methods/grwhs_full_logistic.yaml
+  overrides:
+    data.correlation.rho_in: 0.6
+    data.classification.scale: 4.0

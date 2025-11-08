@@ -1,34 +1,66 @@
+"""
+Experiment orchestration entry points for GRwHS experiments.
 
-"""Experiment orchestration entry points."""
+This module implements the nested cross-validation workflow described in the
+project brief:
+
+* Synthetic or loader-backed dataset preparation with train-only standardisation.
+* Outer K-fold (optionally repeated) evaluation with shared splits across methods.
+* Inner CV hyper-parameter selection for frequentist baselines (GL/SGL).
+* Optional τ calibration for GRwHS variants using the expected effective complexity.
+* Exhaustive metric logging plus posterior export for Bayesian models.
+
+The function :func:`run_experiment` is the public entry point invoked by the CLI
+(`python -m grwhs.cli.run_experiment`).  It expects a fully merged configuration
+dictionary and an output directory path where all artefacts will be written.
+"""
+
 from __future__ import annotations
 
 import json
-import secrets
+import math
+import shutil
+from collections import defaultdict
 from copy import deepcopy
-from numbers import Number
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Mapping
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 import numpy as np
 
+try:  # Optional dependency used for parquet export
+    import pandas as pd  # type: ignore
+
+    _HAS_PANDAS = True
+except Exception:  # pragma: no cover - pandas is listed as dependency but keep fallback
+    pd = None  # type: ignore
+    _HAS_PANDAS = False
+
 from data.generators import generate_synthetic, synthetic_config_from_dict, make_groups
-from data.preprocess import StandardizationConfig, apply_standardization
-from data.splits import train_val_test_split
-from data.loaders import load_real_dataset
+from data.loaders import load_real_dataset, LoadedDataset
+from data.preprocess import (
+    StandardizationConfig,
+    apply_standardization,
+    apply_standardizer,
+    apply_y_mean,
+)
+from data.splits import OuterFold, outer_kfold_splits
+from grwhs.diagnostics.convergence import summarize_convergence
 from grwhs.experiments.registry import build_from_config, get_model_name_from_config
 from grwhs.metrics.evaluation import evaluate_model_metrics
-from grwhs.models.baselines import Ridge, LogisticRegressionClassifier
-from grwhs.diagnostics.convergence import summarize_convergence
 from grwhs.utils.logging_utils import progress
-from grwhs.postprocess.debias import apply_debias_refit
+
+
+class ExperimentError(RuntimeError):
+    """Raised when a configuration-driven experiment cannot be executed."""
 
 
 def _to_serializable(value: Any) -> Any:
-    if isinstance(value, np.generic):
+    """Convert NumPy / Path rich objects into JSON serialisable forms."""
+    if isinstance(value, (np.generic,)):
         return value.item()
     if isinstance(value, np.ndarray):
         return value.tolist()
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {k: _to_serializable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_to_serializable(v) for v in value]
@@ -36,544 +68,854 @@ def _to_serializable(value: Any) -> Any:
         return str(value)
     return value
 
-def _bump_seed(value: Any, offset: int) -> Any:
-    if offset == 0 or value is None:
-        return value
-    try:
-        return int(value) + offset
-    except (TypeError, ValueError):
-        return value
+
+def _resolve_task(config: Mapping[str, Any]) -> str:
+    """Resolve task label from config, normalising common aliases."""
+    task = str(
+        config.get("task")
+        or config.get("data", {}).get("task")
+        or config.get("experiments", {}).get("task", "regression")
+    ).lower()
+    aliases = {"binary": "classification", "binary_classification": "classification", "cls": "classification"}
+    return aliases.get(task, task)
 
 
-def _merge_mappings(base: Optional[Mapping[str, Any]], override: Mapping[str, Any]) -> Dict[str, Any]:
-    """Deep merge two mapping objects without mutating the originals."""
-    if override is None:
-        return dict(base) if isinstance(base, Mapping) else {}
-    if isinstance(base, Mapping):
-        merged = {k: deepcopy(v) for k, v in base.items()}
+def _standardization_from_config(cfg: Mapping[str, Any], task: str) -> StandardizationConfig:
+    std_cfg = cfg.get("standardization", {}) or {}
+    X_method = std_cfg.get("X", "unit_variance")
+    if "y_center" in std_cfg:
+        y_center = bool(std_cfg.get("y_center"))
     else:
-        merged = {}
-    for key, value in override.items():
-        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
-            merged[key] = _merge_mappings(merged[key], value)
-        else:
-            merged[key] = deepcopy(value)
-    return merged
+        y_center = task != "classification"
+    return StandardizationConfig(X=X_method, y_center=y_center)
 
 
-def _adjust_seeds_for_repeat(cfg: Dict[str, Any], offset: int) -> None:
-    """Offset inference seeds for later repeats while keeping data seeds fixed."""
+def _require_nested_cv(config: Mapping[str, Any]) -> None:
+    """Validate that both outer and inner nested CV splits are configured."""
+
+    splits = config.get("splits")
+    if not isinstance(splits, Mapping):
+        raise ExperimentError(
+            "Nested CV is required. Provide both splits.outer and splits.inner with n_splits >= 2."
+        )
+
+    def _coerce_splits(section: Optional[Mapping[str, Any]], label: str) -> int:
+        if not isinstance(section, Mapping):
+            raise ExperimentError(
+                f"Nested CV requires splits.{label}.n_splits >= 2, but it was missing."
+            )
+        value = section.get("n_splits", section.get("folds"))
+        try:
+            n_splits = int(value)
+        except (TypeError, ValueError):
+            raise ExperimentError(
+                f"splits.{label}.n_splits must be an integer >= 2 for nested CV."
+            )
+        if n_splits < 2:
+            raise ExperimentError(
+                f"splits.{label}.n_splits must be >= 2 for nested CV."
+            )
+        return n_splits
+
+    _coerce_splits(splits.get("outer"), "outer")
+    _coerce_splits(splits.get("inner"), "inner")
+
+
+def _adjust_seeds_for_repeat(cfg: MutableMapping[str, Any], offset: int) -> None:
     if offset == 0:
         return
     inference_cfg = cfg.get("inference")
-    if isinstance(inference_cfg, dict):
+    if isinstance(inference_cfg, Mapping):
         for section in inference_cfg.values():
-            if isinstance(section, dict) and "seed" in section:
-                section["seed"] = _bump_seed(section.get("seed"), offset)
+            if isinstance(section, MutableMapping) and "seed" in section:
+                try:
+                    section["seed"] = int(section["seed"]) + offset
+                except (TypeError, ValueError):
+                    continue
+    model_cfg = cfg.get("model")
+    if isinstance(model_cfg, MutableMapping) and "seed" in model_cfg:
+        try:
+            model_cfg["seed"] = int(model_cfg["seed"]) + offset
+        except (TypeError, ValueError):
+            pass
+    runtime_cfg = cfg.get("runtime")
+    if isinstance(runtime_cfg, MutableMapping) and "seed" in runtime_cfg:
+        try:
+            runtime_cfg["seed"] = int(runtime_cfg["seed"]) + offset
+        except (TypeError, ValueError):
+            pass
 
 
+def _normalise_binary_labels(y: np.ndarray) -> np.ndarray:
+    """Ensure binary labels are encoded as {0, 1}."""
+    values = np.unique(y)
+    if values.size != 2:
+        return y.astype(np.float32, copy=False)
+    low, high = float(values[0]), float(values[-1])
+    if math.isclose(low, 0.0) and math.isclose(high, 1.0):
+        return y.astype(np.float32, copy=False)
+    mapped = np.where(np.isclose(y, high), 1.0, 0.0)
+    return mapped.astype(np.float32, copy=False)
 
-def _run_single_experiment(
-    config: Dict[str, Any],
-    output_dir: Path,
+
+def _resolve_seed(*candidates: Any) -> Optional[int]:
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            return int(candidate)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _resolve_groups(config: Mapping[str, Any], groups: Optional[Sequence[Sequence[int]]], p: int) -> List[List[int]]:
+    """Return explicit group structure for models that require it."""
+    if groups:
+        return [list(map(int, g)) for g in groups]
+    data_cfg = config.get("data", {}) or {}
+    if data_cfg.get("groups"):
+        return [list(map(int, g)) for g in data_cfg["groups"]]
+    G = data_cfg.get("G")
+    group_sizes = data_cfg.get("group_sizes")
+    return make_groups(int(p), G, group_sizes)
+
+
+def _prepare_dataset_bundle(
+    config: Mapping[str, Any],
     *,
-    repeat_index: int = 1,
-    total_repeats: int = 1,
+    task: str,
+    repeat_index: int,
 ) -> Dict[str, Any]:
-    """Execute a single experiment (synthetic or loader-backed) based on configuration."""
+    """Generate or load dataset according to configuration."""
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    config = deepcopy(config)
-    data_cfg_task = config.get("data", {})
-    seed_cfg = config.get("seeds", {})
-
-    task_aliases = {
-        "binary": "classification",
-        "binary_classification": "classification",
-        "cls": "classification",
-    }
-    task_raw = config.get("task", data_cfg_task.get("task", "regression"))
-    task_norm = str(task_raw).lower()
-    task = task_aliases.get(task_norm, task_norm)
-    if task not in {"regression", "classification"}:
-        raise ValueError(f"Unsupported task '{task_raw}'. Expected 'regression' or 'classification'.")
-
-    model_variants = config.get("model_variants")
-    if isinstance(model_variants, Mapping):
-        variant_cfg = model_variants.get(task)
-        if isinstance(variant_cfg, Mapping):
-            config["model"] = _merge_mappings(config.get("model"), variant_cfg)
-
-    inference_variants = config.get("inference_variants")
-    if isinstance(inference_variants, Mapping):
-        variant_inf = inference_variants.get(task)
-        if isinstance(variant_inf, Mapping):
-            config["inference"] = _merge_mappings(config.get("inference"), variant_inf)
-
-    data_cfg = config.get("data", {})
+    data_cfg = deepcopy(config.get("data", {}))
     data_type = str(data_cfg.get("type", "synthetic")).lower()
-    seed_cfg = config.get("seeds", seed_cfg)
+    seeds_cfg = config.get("seeds", {}) or {}
 
-    def _resolve_seed(*candidates: Any) -> Optional[int]:
-        for candidate in candidates:
-            if candidate is None:
+    def _candidate_seed(values: Iterable[Any]) -> Optional[int]:
+        for val in values:
+            if val is None:
                 continue
             try:
-                return int(candidate)
+                return int(val)
             except (TypeError, ValueError):
                 continue
         return None
 
-    base_seed = _resolve_seed(seed_cfg.get("experiment"), config.get("seed"))
-    split_seed = _resolve_seed(seed_cfg.get("split"), base_seed)
-
-    dataset_metadata: Dict[str, Any] = {}
-    feature_names: Optional[List[str]] = None
-
-    strong_idx = weak_idx = active_idx = None
-
-    X_source: np.ndarray
-    y_source: Optional[np.ndarray]
-    beta_truth: Optional[np.ndarray]
-    groups: List[List[int]] | None
-    experiment_seed: Optional[int] = base_seed
-    data_seed: Optional[int] = _resolve_seed(data_cfg.get("seed"), seed_cfg.get("data_generation"))
-    if data_seed is None:
-        data_seed = int(secrets.randbits(32))
+    base_seed = _candidate_seed(
+        (
+            data_cfg.get("seed"),
+            seeds_cfg.get("data_generation"),
+            config.get("seed"),
+            seeds_cfg.get("experiment"),
+        )
+    )
+    if base_seed is not None:
+        dataset_seed = base_seed
+    else:
+        dataset_seed = repeat_index if repeat_index > 0 else None
 
     if data_type == "synthetic":
-        response_override: Dict[str, Any] | None = None
+        response_override: Optional[Mapping[str, Any]] = None
         if task == "classification":
-            override_dict: Dict[str, Any] = {}
-            class_cfg_data = data_cfg.get("classification")
-            if isinstance(class_cfg_data, Mapping):
-                override_dict.update(dict(class_cfg_data))
-            class_cfg_global = config.get("classification")
-            if isinstance(class_cfg_global, Mapping):
-                override_dict.update(dict(class_cfg_global))
-            if override_dict:
-                response_override = override_dict
-        syn_cfg = synthetic_config_from_dict(
+            override: Dict[str, Any] = {}
+            classification_cfg = data_cfg.get("classification")
+            if isinstance(classification_cfg, Mapping):
+                override.update(classification_cfg)
+            classification_global = config.get("classification")
+            if isinstance(classification_global, Mapping):
+                override.update(classification_global)
+            if override:
+                response_override = override
+        synth_cfg = synthetic_config_from_dict(
             data_cfg,
-            seed=data_seed,
+            seed=dataset_seed,
             name=config.get("name"),
             task=task,
             response_override=response_override,
         )
-        dataset = generate_synthetic(syn_cfg)
-        X_source = dataset.X
-        y_source = dataset.y
-        beta_truth = dataset.beta
-        groups = dataset.groups
-        dataset_metadata.update(dataset.info)
-        dataset_metadata.setdefault("scenario", syn_cfg.name)
-        dataset_metadata["task"] = task
-        strong_idx = dataset.info.get("strong_idx")
-        weak_idx = dataset.info.get("weak_idx")
-        active_idx = dataset.info.get("active_idx")
-        experiment_seed = syn_cfg.seed
-    elif data_type == "loader":
-        loader_cfg = data_cfg.get("loader", {})
-        loader_base = loader_cfg.get("base_dir") or data_cfg.get("base_dir") or config.get("data_root")
-        base_dir_path = Path(loader_base).expanduser() if loader_base else None
-        loaded = load_real_dataset(loader_cfg, base_dir=base_dir_path)
-        X_source = loaded.X
-        y_source = loaded.y
-        if y_source is None:
-            raise ValueError("Real dataset loader requires targets (provide loader.path_y).")
-        beta_truth = loaded.beta
-        groups = loaded.groups
-        feature_names = loaded.feature_names
-        dataset_metadata.update(loaded.metadata)
-        dataset_metadata["task"] = task
-        if groups is None:
-            if data_cfg.get("groups") is not None:
-                groups = [[int(idx) for idx in group] for group in data_cfg["groups"]]
-            else:
-                p = X_source.shape[1]
-                group_sizes = data_cfg.get("group_sizes")
-                G = data_cfg.get("G")
-                if group_sizes is not None or G is not None:
-                    groups = make_groups(p, G, group_sizes)
-                else:
-                    groups = [[j] for j in range(p)]
-    else:
-        raise ValueError(f"Unsupported data.type '{data_type}'.")
-
-    if groups is None:
-        groups = [[j] for j in range(X_source.shape[1])]
-
-    std_cfg_dict = config.get("standardization", {})
-    if "y_center" in std_cfg_dict:
-        y_center_flag = bool(std_cfg_dict.get("y_center"))
-    else:
-        y_center_flag = task != "classification"
-    std_cfg = StandardizationConfig(
-        X=std_cfg_dict.get("X", "unit_variance"),
-        y_center=y_center_flag,
-    )
-    std_result = apply_standardization(X_source, y_source, std_cfg)
-
-    splits = train_val_test_split(
-        n=std_result.X.shape[0],
-        val_ratio=float(data_cfg.get("val_ratio", 0.1)),
-        test_ratio=float(data_cfg.get("test_ratio", 0.2)),
-        seed=split_seed,
-    )
-
-    def _slice(arr: np.ndarray, idx: np.ndarray) -> np.ndarray:
-        if arr.ndim == 1:
-            return arr[idx]
-        return arr[idx, :]
-
-    X_train = _slice(std_result.X, splits.train)
-    y_train = None if std_result.y is None else _slice(std_result.y, splits.train)
-    X_val = _slice(std_result.X, splits.val) if splits.val.size else np.empty((0, std_result.X.shape[1]), dtype=std_result.X.dtype)
-    y_val = None if std_result.y is None else (_slice(std_result.y, splits.val) if splits.val.size else np.empty((0,), dtype=std_result.y.dtype))
-    X_test = _slice(std_result.X, splits.test) if splits.test.size else np.empty((0, std_result.X.shape[1]), dtype=std_result.X.dtype)
-    y_test = None if std_result.y is None else (_slice(std_result.y, splits.test) if splits.test.size else np.empty((0,), dtype=std_result.y.dtype))
-
-    try:
-        model = build_from_config(config)
-        model_name = get_model_name_from_config(config)
-    except Exception as exc:  # pragma: no cover - fallback path
-        print(f"[WARN] Model construction failed ({exc}); using fallback estimator.")
-        model_cfg = config.get("model", {})
+        generated = generate_synthetic(synth_cfg)
+        X = np.asarray(generated.X, dtype=np.float32, copy=False)
+        y = np.asarray(generated.y, dtype=np.float32, copy=False).reshape(-1)
         if task == "classification":
-            penalty = str(model_cfg.get("penalty", "l2"))
-            solver = str(model_cfg.get("solver", "lbfgs"))
-            max_iter = int(model_cfg.get("max_iter", 200))
-            model = LogisticRegressionClassifier(
-                penalty=penalty,
-                solver=solver,
-                max_iter=max_iter,
-            )
-            model_name = "logistic_regression_fallback"
+            y = _normalise_binary_labels(y)
+        groups = [list(map(int, g)) for g in generated.groups]
+        bundle = {
+            "X": X,
+            "y": y,
+            "beta": None if generated.beta is None else np.asarray(generated.beta, dtype=np.float32),
+            "groups": groups,
+            "feature_names": None,
+            "metadata": {
+                "type": "synthetic",
+                "seed": synth_cfg.seed,
+                "name": synth_cfg.name,
+                "noise_sigma": generated.noise_sigma,
+                "info": generated.info,
+            },
+        }
+        return bundle
+
+    if data_type == "loader":
+        loader_cfg = data_cfg.get("loader")
+        if not isinstance(loader_cfg, Mapping):
+            raise ExperimentError("data.type=loader requires a 'loader' mapping in config.")
+        io_cfg = config.get("io", {}) or {}
+        base_dir_value = data_cfg.get("base_dir") or io_cfg.get("base_dir")
+        base_dir = Path(base_dir_value).expanduser().resolve() if base_dir_value else None
+        loaded: LoadedDataset = load_real_dataset(loader_cfg, base_dir=base_dir)
+        if loaded.y is None:
+            raise ExperimentError("Loader dataset must provide targets (loader.path_y) for supervised tasks.")
+        X = np.asarray(loaded.X, dtype=np.float32, copy=False)
+        y = np.asarray(loaded.y, dtype=np.float32, copy=False).reshape(-1)
+        if task == "classification":
+            y = _normalise_binary_labels(y)
+        groups = _resolve_groups(config, loaded.groups, X.shape[1])
+        bundle = {
+            "X": X,
+            "y": y,
+            "beta": None if loaded.beta is None else np.asarray(loaded.beta, dtype=np.float32),
+            "groups": groups,
+            "feature_names": loaded.feature_names,
+            "metadata": {
+                "type": "loader",
+                "seed": dataset_seed,
+                "paths": {k: loader_cfg[k] for k in sorted(loader_cfg.keys()) if isinstance(k, str)},
+                "feature_names_path": loader_cfg.get("path_feature_names"),
+                "group_map_path": loader_cfg.get("path_group_map"),
+            },
+        }
+        return bundle
+
+    raise ExperimentError(f"Unsupported data.type '{data_type}'.")
+
+
+def _prepare_outer_folds(
+    config: Mapping[str, Any],
+    dataset: Mapping[str, Any],
+    *,
+    task: str,
+    repeat_index: int,
+) -> List[OuterFold]:
+    """Create outer cross-validation folds according to configuration."""
+
+    outer_cfg = config.get("splits", {}).get("outer", {}) or {}
+    n_splits_raw = outer_cfg.get("n_splits", outer_cfg.get("folds"))
+    try:
+        n_splits = int(n_splits_raw)
+    except (TypeError, ValueError):
+        raise ExperimentError("splits.outer.n_splits must be provided for nested CV.")
+    if n_splits < 2:
+        raise ExperimentError("splits.outer.n_splits must be >= 2 for nested CV.")
+
+    n_repeats = int(outer_cfg.get("n_repeats", outer_cfg.get("repeats", 1)) or 1)
+    shuffle = bool(outer_cfg.get("shuffle", True))
+
+    stratify_spec = outer_cfg.get("stratify", "auto")
+    stratify: Optional[bool]
+    if isinstance(stratify_spec, str):
+        label = stratify_spec.lower()
+        if label == "auto":
+            stratify = None
+        elif label in {"true", "1", "yes"}:
+            stratify = True
+        elif label in {"false", "0", "no"}:
+            stratify = False
         else:
-            fit_intercept = bool(model_cfg.get("fit_intercept", False))
-            alpha = float(model_cfg.get("alpha", 1.0))
-            model = Ridge(alpha=alpha, fit_intercept=fit_intercept)
-            model_name = "ridge_fallback"
+            stratify = None
+    else:
+        stratify = bool(stratify_spec) if stratify_spec is not None else None
 
-    if y_train is None:
-        raise ValueError("Experiment requires targets after preprocessing.")
+    seed = outer_cfg.get("seed")
+    if seed is not None:
+        seed = int(seed) + repeat_index
 
-    for _ in progress(range(1), total=1, desc=f"Training {model_name}"):
+    y_for_strat = None
+    if task == "classification" and stratify is not False:
+        y_for_strat = np.asarray(dataset["y"], dtype=int)
+
+    folds = outer_kfold_splits(
+        n=int(dataset["X"].shape[0]),
+        y=y_for_strat,
+        task=task,
+        n_splits=n_splits,
+        n_repeats=n_repeats,
+        shuffle=shuffle,
+        seed=seed,
+        stratify=stratify,
+    )
+    return folds
+
+
+def _instantiate_model(config: Mapping[str, Any], groups: Sequence[Sequence[int]], p: int) -> Any:
+    cfg = deepcopy(config)
+    cfg.setdefault("data", {})
+    cfg["data"]["groups"] = [list(map(int, g)) for g in groups]
+    cfg["data"]["p"] = int(p)
+    return build_from_config(cfg)
+
+
+def _maybe_calibrate_tau(
+    model_cfg: MutableMapping[str, Any],
+    std_cfg: StandardizationConfig,
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    task: str,
+) -> None:
+    """Calibrate τ_0 using expected effective sparsity if requested."""
+
+    tau_cfg = model_cfg.get("tau")
+    if not isinstance(tau_cfg, Mapping):
+        return
+
+    mode = str(tau_cfg.get("mode", "")).lower()
+    if mode == "fixed":
+        value = tau_cfg.get("value", model_cfg.get("tau0"))
+        if value is not None:
+            model_cfg["tau0"] = float(value)
+        return
+    if mode != "calibrated":
+        return
+
+    if isinstance(tau_cfg.get("p0"), Mapping):
+        p0_value = tau_cfg["p0"].get("value")
+        p0_grid = tau_cfg["p0"].get("grid")
+    else:
+        p0_value = tau_cfg.get("p0")
+        p0_grid = tau_cfg.get("p0_grid") or tau_cfg.get("grid")
+
+    if p0_value is not None:
+        candidates = [float(p0_value)]
+    elif p0_grid:
+        candidates = [float(v) for v in p0_grid]
+    else:
+        candidates = [float(min(max(len(groups), 1), 5))]
+
+    target = str(tau_cfg.get("target", "groups")).lower()
+    D = len(groups) if target == "groups" else X.shape[1]
+    if D <= 0:
+        raise ExperimentError("Cannot calibrate τ: feature/group dimension is zero.")
+
+    if task == "classification":
+        sigma_ref = float(tau_cfg.get("sigma_classification", 2.0))
+    else:
+        if std_cfg.y_center:
+            y_scale = float(np.std(y, ddof=1)) if y.size else 1.0
+        else:
+            y_scale = float(np.std(y, ddof=1)) if y.size else 1.0
+        sigma_ref = float(tau_cfg.get("sigma_reference", y_scale))
+
+    n = X.shape[0]
+    p0 = max(1.0, candidates[0])
+    tau0 = (p0 / max(D - p0, 1e-8)) * (sigma_ref / math.sqrt(max(n, 1)))
+    model_cfg["tau0"] = float(max(tau0, 1e-8))
+
+
+def _compute_inner_metric(task: str, y_true: np.ndarray, model: Any, X_val: np.ndarray) -> float:
+    """Return scalar metric used for inner CV model selection."""
+    if task == "classification":
+        if hasattr(model, "predict_proba"):
+            prob = model.predict_proba(X_val)
+            if isinstance(prob, np.ndarray):
+                prob = prob[:, -1] if prob.ndim == 2 else prob
+        else:
+            preds = model.predict(X_val)
+            prob = 1.0 / (1.0 + np.exp(-preds))
+        prob = np.clip(np.asarray(prob, dtype=float), 1e-7, 1 - 1e-7)
+        from sklearn.metrics import log_loss
+
+        return float(log_loss(y_true, prob))
+
+    from sklearn.metrics import mean_squared_error
+
+    preds = model.predict(X_val)
+    return float(mean_squared_error(y_true, preds))
+
+
+def _perform_inner_cv(
+    base_config: Mapping[str, Any],
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    *,
+    task: str,
+    std_cfg: StandardizationConfig,
+) -> Tuple[Dict[str, float], Optional[List[Dict[str, Any]]]]:
+    """Grid-search hyper-parameters for frequentist baselines."""
+
+    search_cfg = deepcopy(base_config.get("model", {}).get("search"))
+    if not isinstance(search_cfg, Mapping) or not search_cfg:
+        return {}, None
+
+    keys = sorted(search_cfg.keys())
+    grid_values: List[List[float]] = []
+    for key in keys:
+        values = search_cfg[key]
+        if not isinstance(values, (list, tuple)):
+            raise ExperimentError(f"search grid for '{key}' must be a list.")
+        grid_values.append([float(v) for v in values])
+
+    inner_cfg = deepcopy(base_config.get("splits", {}).get("inner", {}) or {})
+    inner_splits = max(2, int(inner_cfg.get("n_splits", 5) or 5))
+    inner_seed = inner_cfg.get("seed")
+    inner_folds = outer_kfold_splits(
+        n=X.shape[0],
+        y=y if (task == "classification") else None,
+        task=task,
+        n_splits=inner_splits,
+        n_repeats=1,
+        shuffle=bool(inner_cfg.get("shuffle", True)),
+        seed=inner_seed,
+        stratify=(task == "classification" if str(inner_cfg.get("stratify", "auto")).lower() != "false" else False),
+    )
+
+    history: List[Dict[str, Any]] = []
+    best_candidate: Optional[Dict[str, float]] = None
+    best_score = math.inf
+
+    for candidate_values in np.array(np.meshgrid(*grid_values, indexing="ij")).T.reshape(-1, len(keys)):
+        candidate = {key: float(val) for key, val in zip(keys, candidate_values)}
+        fold_scores: List[float] = []
+
+        for inner_fold in inner_folds:
+            train_idx = inner_fold.train
+            val_idx = inner_fold.test
+
+            std_train = apply_standardization(X[train_idx], y[train_idx], std_cfg)
+            X_train = std_train.X
+            y_train = std_train.y
+            X_val = apply_standardizer(X[val_idx], x_mean=std_train.x_mean, x_scale=std_train.x_scale)
+            if std_cfg.y_center:
+                y_val = apply_y_mean(y[val_idx], mean=std_train.y_mean)
+            else:
+                y_val = np.asarray(y[val_idx], dtype=np.float32)
+
+            candidate_cfg = deepcopy(base_config)
+            candidate_cfg.setdefault("model", {})
+            candidate_cfg = deepcopy(candidate_cfg)
+            candidate_cfg["model"] = {**candidate_cfg["model"], **candidate}
+            candidate_cfg["model"].pop("search", None)
+
+            model = _instantiate_model(candidate_cfg, groups, X.shape[1])
+            try:
+                model.fit(X_train, y_train, groups=groups)
+            except TypeError:
+                model.fit(X_train, y_train)
+
+            score = _compute_inner_metric(task, y_val, model, X_val)
+            fold_scores.append(score)
+
+        avg_score = float(np.mean(fold_scores))
+        history.append({"params": candidate, "score": avg_score})
+        if avg_score < best_score:
+            best_score = avg_score
+            best_candidate = candidate
+
+    if best_candidate is None:
+        return {}, history
+    return best_candidate, history
+
+
+def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
+    """Collect posterior sample arrays exposed by fitted models if available."""
+    arrays: Dict[str, np.ndarray] = {}
+    attr_map = {
+        "coef_samples_": "beta",
+        "sigma_samples_": "sigma",
+        "sigma2_samples_": "sigma2",
+        "tau_samples_": "tau",
+        "phi_samples_": "phi",
+        "lambda_samples_": "lambda",
+        "loglik_samples_": "loglik",
+    }
+    for attr, key in attr_map.items():
+        value = getattr(model, attr, None)
+        if value is None:
+            continue
+        arr = np.asarray(value)
+        if arr.size == 0:
+            continue
+        arrays[key] = arr
+    return arrays
+
+
+def _summarise_posterior(arrays: Mapping[str, np.ndarray]) -> Optional["pd.DataFrame"]:
+    """Build summary statistics for posterior samples."""
+    if not arrays or not _HAS_PANDAS:
+        return None
+
+    records: List[Dict[str, Any]] = []
+    for name, arr in arrays.items():
+        data = np.asarray(arr)
+        if data.ndim == 1:
+            data = data[:, None]
+        elif data.ndim > 2:
+            data = data.reshape(data.shape[0], -1)
+        for idx in range(data.shape[1]):
+            col = data[:, idx]
+            if col.size == 0:
+                continue
+            record = {
+                "parameter": name,
+                "index": int(idx),
+                "mean": float(col.mean()),
+                "sd": float(col.std(ddof=1)) if col.size > 1 else 0.0,
+                "q05": float(np.quantile(col, 0.05)),
+                "q50": float(np.quantile(col, 0.50)),
+                "q95": float(np.quantile(col, 0.95)),
+                "min": float(col.min()),
+                "max": float(col.max()),
+            }
+            records.append(record)
+    if not records:
+        return None
+    return pd.DataFrame.from_records(records)
+
+
+def _save_posterior_bundle(output_dir: Path, arrays: Mapping[str, np.ndarray]) -> Dict[str, Optional[str]]:
+    """Persist posterior arrays and diagnostics if available."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if not arrays:
+        return {"posterior": None, "convergence": None, "summary": None}
+
+    posterior_path = output_dir / "posterior_samples.npz"
+    np.savez_compressed(posterior_path, **{k: np.asarray(v) for k, v in arrays.items()})
+
+    convergence = summarize_convergence(arrays)
+    convergence_path = output_dir / "convergence.json"
+    convergence_path.write_text(json.dumps(_to_serializable(convergence), indent=2), encoding="utf-8")
+
+    summary_path: Optional[Path] = None
+    summary_df = _summarise_posterior(arrays)
+    if summary_df is not None:
+        summary_path = output_dir / "posterior_summary.parquet"
         try:
-            model.fit(X_train, y_train, groups=groups)
-        except TypeError:
-            model.fit(X_train, y_train)
+            summary_df.to_parquet(summary_path)
+        except Exception:  # pragma: no cover - parquet backend missing
+            csv_path = summary_path.with_suffix(".csv")
+            summary_df.to_csv(csv_path, index=False)
+            summary_path = csv_path
 
-    metrics_cfg = config.get("experiments", {})
+    return {
+        "posterior": str(posterior_path),
+        "convergence": str(convergence_path),
+        "summary": None if summary_path is None else str(summary_path),
+    }
 
-    coverage_level = float(metrics_cfg.get("coverage_level", 0.9))
-    classification_threshold = float(metrics_cfg.get("classification_threshold", 0.5))
-    classification_threshold = min(max(classification_threshold, 0.0), 1.0)
-    group_index = np.zeros(X_train.shape[1], dtype=int)
-    for gid, idxs in enumerate(groups):
-        group_index[np.asarray(idxs, dtype=int)] = gid
 
-    slab_width = config.get("model", {}).get("c", None)
+def _group_index(groups: Sequence[Sequence[int]], p: int) -> Optional[np.ndarray]:
+    if not groups:
+        return None
+    index = np.zeros(p, dtype=int)
+    for gid, block in enumerate(groups):
+        index[np.asarray(block, dtype=int)] = gid
+    return index
 
-    results = evaluate_model_metrics(
+
+def _append_metrics_record(path: Path, record: Mapping[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(_to_serializable(record)) + "\n")
+
+
+def _run_fold_nested(
+    base_config: Mapping[str, Any],
+    dataset: Mapping[str, Any],
+    fold: OuterFold,
+    *,
+    fold_dir: Path,
+    task: str,
+    std_cfg: StandardizationConfig,
+) -> Dict[str, Any]:
+    """Run a single outer fold and capture metrics / posterior artefacts."""
+
+    fold_dir.mkdir(parents=True, exist_ok=True)
+    X = dataset["X"]
+    y = dataset["y"]
+    groups = dataset["groups"]
+    beta = dataset.get("beta")
+
+    train_idx = np.asarray(fold.train, dtype=int)
+    test_idx = np.asarray(fold.test, dtype=int)
+
+    std_train = apply_standardization(X[train_idx], y[train_idx], std_cfg)
+    X_train = std_train.X
+    y_train = std_train.y
+    X_test = apply_standardizer(X[test_idx], x_mean=std_train.x_mean, x_scale=std_train.x_scale)
+    if std_cfg.y_center:
+        y_test = apply_y_mean(y[test_idx], mean=std_train.y_mean)
+    else:
+        y_test = np.asarray(y[test_idx], dtype=np.float32)
+
+    if task == "classification":
+        y_train = np.round(np.clip(y_train, 0.0, 1.0)).astype(np.float32)
+        y_test = np.round(np.clip(y_test, 0.0, 1.0)).astype(np.float32)
+
+    inner_params, tuning_history = _perform_inner_cv(
+        base_config,
+        X_train,
+        y_train,
+        groups,
+        task=task,
+        std_cfg=std_cfg,
+    )
+
+    model_config = deepcopy(base_config)
+    model_config.setdefault("model", {})
+    model_config["model"].pop("search", None)
+    for key, value in inner_params.items():
+        model_config["model"][key] = value
+
+    _maybe_calibrate_tau(model_config["model"], std_cfg, X_train, y_train, groups, task)
+
+    model = _instantiate_model(model_config, groups, X_train.shape[1])
+    try:
+        model.fit(X_train, y_train, groups=groups)
+    except TypeError:
+        model.fit(X_train, y_train)
+
+    experiments_cfg = base_config.get("experiments", {}) or {}
+    coverage_level = float(experiments_cfg.get("coverage_level", 0.9))
+    classification_threshold = float(experiments_cfg.get("classification_threshold", 0.5))
+
+    metrics = evaluate_model_metrics(
         model=model,
         X_train=X_train,
-        X_test=X_test if X_test.size else None,
+        X_test=X_test,
         y_train=y_train,
         y_test=y_test,
-        beta_truth=beta_truth,
-        group_index=group_index,
+        beta_truth=beta,
+        group_index=_group_index(groups, X.shape[1]),
         coverage_level=coverage_level,
-        slab_width=slab_width,
+        slab_width=model_config["model"].get("c"),
         task=task,
         classification_threshold=classification_threshold,
     )
 
-    metrics_serializable = {k: _to_serializable(v) for k, v in results.items()}
+    metrics_path = fold_dir / "metrics.json"
+    metrics_path.write_text(json.dumps(_to_serializable(metrics), indent=2), encoding="utf-8")
 
-    dataset_path = output_dir / "dataset.npz"
     np.savez_compressed(
-        dataset_path,
-        X_train=X_train,
-        y_train=y_train,
-        X_val=X_val,
-        y_val=y_val,
-        X_test=X_test,
-        y_test=y_test,
-        beta_true=np.array([], dtype=np.float32) if beta_truth is None else beta_truth,
-        x_mean=np.array([]) if std_result.x_mean is None else std_result.x_mean,
-        x_scale=np.array([]) if std_result.x_scale is None else std_result.x_scale,
-        y_mean=np.array([]) if std_result.y_mean is None else np.array([std_result.y_mean], dtype=np.float32),
+        fold_dir / "fold_arrays.npz",
+        train_idx=train_idx,
+        test_idx=test_idx,
+        x_mean=np.asarray([]) if std_train.x_mean is None else std_train.x_mean,
+        x_scale=np.asarray([]) if std_train.x_scale is None else std_train.x_scale,
+        y_mean=np.asarray([]) if std_train.y_mean is None else np.array([std_train.y_mean], dtype=np.float32),
     )
-    dataset_arrays = {
-        "X_train": X_train,
-        "y_train": y_train,
-        "X_val": X_val,
-        "y_val": y_val,
-        "X_test": X_test,
-        "y_test": y_test,
+
+    save_posterior = bool(experiments_cfg.get("save_posterior", True))
+    posterior_arrays = _collect_posterior_arrays(model) if save_posterior else {}
+    posterior_paths = None
+    if posterior_arrays:
+        posterior_paths = _save_posterior_bundle(fold_dir, posterior_arrays)
+
+    fold_summary = {
+        "status": "OK",
+        "repeat": int(fold.repeat),
+        "fold": int(fold.fold),
+        "hash": fold.hash,
+        "metrics": metrics,
+        "best_params": inner_params,
+        "tuning_history": tuning_history,
+        "posterior_files": posterior_paths,
     }
+    (fold_dir / "fold_summary.json").write_text(json.dumps(_to_serializable(fold_summary), indent=2), encoding="utf-8")
 
-    metrics_path = output_dir / "metrics.json"
+    fold_summary["posterior_arrays"] = posterior_arrays if save_posterior else {}
+    return fold_summary
 
-    posterior_arrays: Dict[str, np.ndarray] = {}
-    convergence_summary: Dict[str, Dict[str, float]] = {}
-    posterior_path: Path | None = None
-    if metrics_cfg.get("save_posterior", False):
-        sample_attrs = [
-            ("coef_samples_", "beta"),
-            ("sigma_samples_", "sigma"),
-            ("sigma2_samples_", "sigma2"),
-            ("tau_samples_", "tau"),
-            ("phi_samples_", "phi"),
-            ("lambda_samples_", "lambda"),
-        ]
-        for attr, key in sample_attrs:
-            value = getattr(model, attr, None)
-            if value is None:
+
+def _aggregate_metrics(records: Sequence[Mapping[str, Any]]) -> Tuple[Dict[str, float], Dict[str, Dict[str, float]]]:
+    """Aggregate scalar metrics across folds."""
+
+    collector: Dict[str, List[float]] = defaultdict(list)
+    for entry in records:
+        metrics = entry.get("metrics", {})
+        for key, value in metrics.items():
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
                 continue
-            arr = np.asarray(value)
-            if arr.size == 0:
+            collector[key].append(numeric_value)
+
+    mean_metrics = {key: float(np.mean(values)) for key, values in collector.items() if values}
+    summary: Dict[str, Dict[str, float]] = {}
+    for key, values in collector.items():
+        arr = np.asarray(values, dtype=float)
+        summary[key] = {
+            "mean": float(arr.mean()),
+            "std": float(arr.std(ddof=1)) if arr.size > 1 else 0.0,
+            "stderr": float(arr.std(ddof=1) / math.sqrt(arr.size)) if arr.size > 1 else 0.0,
+            "min": float(arr.min()),
+            "max": float(arr.max()),
+            "count": float(arr.size),
+        }
+    return mean_metrics, summary
+
+
+def _extract_inference_seeds(cfg: Mapping[str, Any]) -> Dict[str, int]:
+    seeds: Dict[str, int] = {}
+    inference_cfg = cfg.get("inference")
+    if not isinstance(inference_cfg, Mapping):
+        return seeds
+    for key, section in inference_cfg.items():
+        if isinstance(section, Mapping) and "seed" in section:
+            try:
+                seeds[key] = int(section["seed"])
+            except (TypeError, ValueError):
                 continue
-            posterior_arrays[key] = arr
-        if posterior_arrays:
-            posterior_path = output_dir / "posterior_samples.npz"
-            np.savez_compressed(posterior_path, **{k: np.asarray(v) for k, v in posterior_arrays.items()})
-            convergence_summary = summarize_convergence(posterior_arrays)
-            conv_path = output_dir / "convergence.json"
-            conv_path.write_text(json.dumps({k: _to_serializable(v) for k, v in convergence_summary.items()}, indent=2), encoding="utf-8")
+    return seeds
 
-    postprocess_cfg = config.get("postprocess", {})
-    debias_summary: Dict[str, Any] | None = None
-    if isinstance(postprocess_cfg, dict):
-        debias_cfg = postprocess_cfg.get("debias")
-        if isinstance(debias_cfg, dict) and debias_cfg.get("enabled", False):
-            if not posterior_arrays:
-                debias_summary = {"error": "posterior_samples not available (set experiments.save_posterior=true)"}
-            else:
-                try:
-                    debias_summary = apply_debias_refit(
-                        run_dir=output_dir,
-                        config=debias_cfg,
-                        dataset=dataset_arrays,
-                        posterior_arrays=posterior_arrays,
-                    )
-                except Exception as exc:  # pragma: no cover - safety net
-                    debias_summary = {"error": str(exc)}
-            if debias_summary:
-                if "rmse_test_debiased" in debias_summary:
-                    metrics_serializable["RMSE_DebiasTest"] = _to_serializable(debias_summary["rmse_test_debiased"])
-                if "rmse_val_debiased" in debias_summary:
-                    metrics_serializable["RMSE_DebiasVal"] = _to_serializable(debias_summary["rmse_val_debiased"])
-                if "rmse_test_gain_pct" in debias_summary:
-                    metrics_serializable["RMSE_DebiasGainPct"] = _to_serializable(debias_summary["rmse_test_gain_pct"])
 
-    metrics_path.write_text(json.dumps(metrics_serializable, indent=2), encoding="utf-8")
+def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[str, Any]:
+    """
+    Execute nested CV experiment described by ``config``.
 
-    inference_seeds: Dict[str, int] = {}
-    inference_cfg = config.get("inference", {})
-    if isinstance(inference_cfg, dict):
-        for key, section in inference_cfg.items():
-            if not isinstance(section, dict):
-                continue
-            stage_seed = _resolve_seed(section.get("seed"))
-            if stage_seed is not None:
-                inference_seeds[key] = stage_seed
+    Args:
+        config: Fully merged experiment configuration.
+        output_dir: Directory where artefacts should be written.
 
-    runtime_cfg = config.get("runtime", {})
-    runtime_seed = _resolve_seed(runtime_cfg.get("seed"))
-    if runtime_seed is not None and "runtime" not in inference_seeds:
-        inference_seeds["runtime"] = runtime_seed
+    Returns:
+        Dictionary with aggregated metrics and bookkeeping information.
+    """
 
-    model_seed = _resolve_seed(config.get("model", {}).get("seed"))
-    if model_seed is not None:
-        inference_seeds.setdefault("model", model_seed)
+    _require_nested_cv(config)
 
-    split_seed_log: Dict[str, int] = {}
-    if split_seed is not None:
-        split_seed_log["train_test"] = split_seed
-        split_seed_log["train_val"] = split_seed + 1
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
-    data_seed_logged = _resolve_seed(dataset_metadata.get("seed"), data_seed, base_seed)
+    effective_config = deepcopy(config)
+    task = _resolve_task(effective_config)
+    std_cfg = _standardization_from_config(effective_config, task)
+    experiments_cfg = effective_config.get("experiments", {}) or {}
+    repeats = max(1, int(experiments_cfg.get("repeats", 1) or 1))
 
-    config_seed_defaults: Dict[str, int] = {}
-    if isinstance(seed_cfg, dict):
-        for key, value in seed_cfg.items():
-            resolved = _resolve_seed(value)
-            if resolved is not None:
-                config_seed_defaults[key] = resolved
+    metrics_jsonl = output_path / "metrics.jsonl"
+    if metrics_jsonl.exists():
+        metrics_jsonl.unlink()
 
-    seed_log: Dict[str, Any] = {}
-    if experiment_seed is not None:
-        seed_log["experiment"] = int(experiment_seed)
-    if data_seed_logged is not None:
-        seed_log["data_generation"] = int(data_seed_logged)
-    if split_seed_log:
-        seed_log["split"] = split_seed_log
-    if inference_seeds:
-        seed_log["inference"] = inference_seeds
-    if config_seed_defaults:
-        seed_log["config"] = config_seed_defaults
+    all_fold_records: List[Dict[str, Any]] = []
+    posterior_accumulator: Dict[str, List[np.ndarray]] = defaultdict(list)
+    repeat_summaries: List[Dict[str, Any]] = []
+    repeat_dir_paths: List[str] = []
 
-    metadata = {
-        "n": int(X_source.shape[0]),
-        "p": int(X_source.shape[1]),
-        "groups": groups,
-        "seed": experiment_seed,
-        "task": task,
-        "split": {
-            "train": splits.train.tolist(),
-            "val": splits.val.tolist(),
-            "test": splits.test.tolist(),
-        },
-        "standardization": {
-            "X": std_cfg.X,
-            "y_center": std_cfg.y_center,
-        },
-        "model": model_name,
-        "dataset_path": dataset_path.name,
-        "repeat": {
-            "index": int(repeat_index),
-            "total": int(total_repeats),
-        },
-        "posterior": {
-            "saved": bool(posterior_arrays),
-            "path": posterior_path.name if posterior_path else None,
-            "convergence": convergence_summary,
-        },
-        "data": _to_serializable(dataset_metadata),
-    }
-    if seed_log:
-        metadata["seeds"] = seed_log
-    if strong_idx is not None:
-        metadata["strong_idx"] = _to_serializable(strong_idx)
-    if weak_idx is not None:
-        metadata["weak_idx"] = _to_serializable(weak_idx)
-    if active_idx is not None:
-        metadata["active_idx"] = _to_serializable(active_idx)
-    if feature_names is not None:
-        metadata["feature_names"] = feature_names
-    if debias_summary is not None:
-        metadata.setdefault("postprocess", {})["debias"] = _to_serializable(debias_summary)
-    (output_dir / "dataset_meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    model_name = get_model_name_from_config(effective_config)
 
-    result: Dict[str, Any] = {
+    for repeat_idx in range(repeats):
+        repeat_config = deepcopy(effective_config)
+        _adjust_seeds_for_repeat(repeat_config, repeat_idx)
+        dataset = _prepare_dataset_bundle(repeat_config, task=task, repeat_index=repeat_idx)
+        repeat_dir = output_path / f"repeat_{repeat_idx + 1:03d}"
+        repeat_dir.mkdir(parents=True, exist_ok=True)
+        repeat_dir_paths.append(str(repeat_dir))
+
+        dataset_meta = {
+            "repeat_index": repeat_idx + 1,
+            "task": task,
+            "n": int(dataset["X"].shape[0]),
+            "p": int(dataset["X"].shape[1]),
+            "groups": dataset["groups"],
+            "feature_names": dataset.get("feature_names"),
+            "metadata": dataset.get("metadata"),
+        }
+        (repeat_dir / "dataset_meta.json").write_text(json.dumps(_to_serializable(dataset_meta), indent=2), encoding="utf-8")
+
+        outer_folds = _prepare_outer_folds(repeat_config, dataset, task=task, repeat_index=repeat_idx)
+        repeat_records: List[Dict[str, Any]] = []
+
+        for fold in progress(outer_folds, total=len(outer_folds), desc=f"repeat {repeat_idx + 1}/{repeats}: outer CV"):
+            fold_dir = repeat_dir / f"fold_{fold.fold:02d}"
+            fold_result = _run_fold_nested(
+                repeat_config,
+                dataset,
+                fold,
+                fold_dir=fold_dir,
+                task=task,
+                std_cfg=std_cfg,
+            )
+
+            record = {
+                "status": fold_result.get("status", "OK"),
+                "repeat": repeat_idx + 1,
+                "outer_repeat": fold_result.get("repeat"),
+                "fold": fold_result.get("fold"),
+                "hash": fold_result.get("hash"),
+                "metrics": fold_result.get("metrics", {}),
+                "best_params": fold_result.get("best_params"),
+            }
+            _append_metrics_record(metrics_jsonl, record)
+
+            posterior_arrays = fold_result.pop("posterior_arrays", {})
+            if posterior_arrays:
+                for key, arr in posterior_arrays.items():
+                    posterior_accumulator[key].append(np.asarray(arr))
+
+            repeat_records.append(fold_result)
+            all_fold_records.append({**record, "tuning_history": fold_result.get("tuning_history")})
+
+        repeat_mean, repeat_summary = _aggregate_metrics(repeat_records)
+        repeat_seeds = {}
+        inference_seeds = _extract_inference_seeds(repeat_config)
+        if inference_seeds:
+            repeat_seeds["inference"] = inference_seeds
+        data_seed = dataset.get("metadata", {}).get("seed")
+        if data_seed is not None:
+            try:
+                repeat_seeds["data_generation"] = int(data_seed)
+            except (TypeError, ValueError):
+                pass
+        repeat_payload = {
+            "repeat_index": repeat_idx + 1,
+            "metrics": repeat_mean,
+            "metrics_summary": repeat_summary,
+            "folds": [
+                {
+                    "repeat": entry.get("repeat"),
+                    "fold": entry.get("fold"),
+                    "hash": entry.get("hash"),
+                    "metrics": entry.get("metrics"),
+                    "best_params": entry.get("best_params"),
+                    "posterior_files": entry.get("posterior_files"),
+                }
+                for entry in repeat_records
+            ],
+        }
+        if repeat_seeds:
+            repeat_payload["seeds"] = repeat_seeds
+        (repeat_dir / "repeat_summary.json").write_text(json.dumps(_to_serializable(repeat_payload), indent=2), encoding="utf-8")
+        repeat_summaries.append(repeat_payload)
+
+    aggregated_metrics, aggregated_summary = _aggregate_metrics(all_fold_records)
+
+    if posterior_accumulator:
+        combined = {
+            key: np.concatenate(arrs, axis=0)
+            for key, arrs in posterior_accumulator.items()
+            if arrs and arrs[0].size > 0
+        }
+        if combined:
+            _save_posterior_bundle(output_path, combined)
+
+    summary_payload = {
         "status": "OK",
         "model": model_name,
-        "metrics": metrics_serializable,
-        "artifacts": {"dataset": dataset_path.name},
-        "repeat": {"index": int(repeat_index), "total": int(total_repeats)},
-    }
-    if debias_summary is not None:
-        result.setdefault("postprocess", {})["debias"] = _to_serializable(debias_summary)
-    if seed_log:
-        result["seeds"] = seed_log
-    result.setdefault("artifacts", {}).setdefault("repeat_dirs", []).append(str(output_dir))
-    return result
-
-
-def run_experiment(config: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
-    """
-    Execute one or multiple experiment repeats based on configuration.
-
-    When ``experiments.repeats`` is greater than 1, this function launches
-    independent runs under ``output_dir/repeat_XXX`` directories and returns
-    an aggregated metrics summary alongside per-repeat metrics.
-    """
-
-    experiments_cfg = config.get("experiments", {})
-    repeats_raw = experiments_cfg.get("repeats", 1)
-    try:
-        repeats = int(repeats_raw)
-    except (TypeError, ValueError):
-        repeats = 1
-    repeats = max(repeats, 1)
-
-    output_dir = Path(output_dir)
-
-    if repeats == 1:
-        single_result = _run_single_experiment(
-            deepcopy(config),
-            output_dir,
-            repeat_index=1,
-            total_repeats=1,
-        )
-        single_result.setdefault(
-            "repeat_metrics",
-            [
-                {
-                    "repeat": 1,
-                    "output_dir": str(output_dir),
-                    "metrics": single_result.get("metrics", {}),
-                    "status": single_result.get("status", "OK"),
-                }
-            ],
-        )
-        single_result.setdefault("repeats", 1)
-        return single_result
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    repeat_entries: List[Dict[str, Any]] = []
-    numeric_metrics: Dict[str, List[float]] = {}
-    statuses: List[str] = []
-    model_name: Optional[str] = None
-
-    for idx in range(repeats):
-        repeat_dir = output_dir / f"repeat_{idx + 1:03d}"
-        repeat_config = deepcopy(config)
-        base_name = repeat_config.get("name")
-        if isinstance(base_name, str) and base_name:
-            repeat_config["name"] = f"{base_name}_repeat{idx + 1}"
-
-        _adjust_seeds_for_repeat(repeat_config, idx)
-
-        single_result = _run_single_experiment(
-            repeat_config,
-            repeat_dir,
-            repeat_index=idx + 1,
-            total_repeats=repeats,
-        )
-
-        if model_name is None:
-            model_name = single_result.get("model")
-
-        statuses.append(single_result.get("status", "OK"))
-
-        entry: Dict[str, Any] = {
-            "repeat": idx + 1,
-            "output_dir": str(repeat_dir),
-            "metrics": single_result.get("metrics", {}),
-            "status": single_result.get("status", "OK"),
-        }
-        if "seeds" in single_result:
-            entry["seeds"] = single_result["seeds"]
-        repeat_entries.append(entry)
-
-        for key, value in single_result.get("metrics", {}).items():
-            if isinstance(value, Number):
-                numeric_metrics.setdefault(key, []).append(float(value))
-
-    summary_metrics = {
-        key: (sum(values) / len(values))
-        for key, values in numeric_metrics.items()
-        if values
-    }
-
-    status = "OK"
-    for st in statuses:
-        if st != "OK":
-            status = st
-            break
-
-    result: Dict[str, Any] = {
-        "status": status,
-        "metrics": summary_metrics,
-        "repeat_metrics": repeat_entries,
-        "artifacts": {"repeat_dirs": [entry["output_dir"] for entry in repeat_entries]},
+        "task": task,
         "repeats": repeats,
+        "outer_folds_per_repeat": len(repeat_summaries[0]["folds"]) if repeat_summaries else 0,
+        "metrics": aggregated_metrics,
+        "metrics_summary": aggregated_summary,
+        "repeat_summaries": repeat_summaries,
+        "artifacts": {
+            "repeat_dirs": repeat_dir_paths,
+        },
     }
-    if model_name is not None:
-        result["model"] = model_name
-    return result
+
+    (output_path / "summary.json").write_text(json.dumps(_to_serializable(summary_payload), indent=2), encoding="utf-8")
+    (output_path / "metrics.json").write_text(json.dumps(_to_serializable(aggregated_metrics), indent=2), encoding="utf-8")
+
+    return summary_payload
+
+
+__all__ = ["run_experiment"]

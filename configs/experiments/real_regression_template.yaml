@@ -1,0 +1,19 @@
+defaults: "../base.yaml"
+
+# Template for real-world regression datasets (p >> n).
+# Replace the paths below with concrete dataset locations before running.
+
+name: "real_regression_TEMPLATE"
+task: "regression"
+
+data:
+  type: "loader"
+  loader:
+    path_X: "PATH/TO/FEATURES.npy"
+    path_y: "PATH/TO/TARGET.npy"
+    path_group_map: null         # optional: feature->group mapping file
+  noise_sigma: 1.0
+
+splits:
+  outer:
+    stratify: false

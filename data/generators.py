@@ -36,6 +36,7 @@ class SyntheticConfig:
     task: str = "regression"
     response: Mapping[str, object] = field(default_factory=dict)
     seed: Optional[int] = None
+    overlap: Mapping[str, object] = field(default_factory=dict)
     name: Optional[str] = None
 
 
@@ -136,7 +137,88 @@ def make_groups(p: int, G: Optional[int], group_sizes: Union[str, Sequence[int],
     return groups
 
 
-def _draw_design(rng: np.random.Generator, n: int, p: int, corr_cfg: Mapping[str, object]) -> np.ndarray:
+def _primary_group_index(groups: Sequence[Sequence[int]], p: int) -> np.ndarray:
+    primary = np.full(p, -1, dtype=int)
+    for gid, members in enumerate(groups):
+        for feat in members:
+            idx = int(feat)
+            if idx < 0 or idx >= p:
+                raise GeneratorError(f"Group index {idx} outside valid feature range [0, {p}).")
+            if primary[idx] == -1:
+                primary[idx] = gid
+    if np.any(primary < 0):
+        missing = np.nonzero(primary < 0)[0]
+        raise GeneratorError(f"Some features lack a primary group assignment: {missing.tolist()}.")
+    return primary
+
+
+def _inject_group_overlap(
+    groups: List[List[int]],
+    p: int,
+    overlap_cfg: Mapping[str, object],
+    rng: np.random.Generator,
+) -> Dict[str, object]:
+    fraction = float(overlap_cfg.get("fraction", overlap_cfg.get("share", 0.0)))
+    fraction = min(max(fraction, 0.0), 1.0)
+    if fraction <= 0.0 or not groups:
+        return {}
+
+    max_memberships = overlap_cfg.get("max_memberships", overlap_cfg.get("copies", 2))
+    try:
+        max_memberships_int = int(max_memberships)
+    except (TypeError, ValueError) as exc:
+        raise GeneratorError("overlap.max_memberships must be an integer.") from exc
+    max_memberships_int = max(2, max_memberships_int)
+
+    eligible = np.arange(p, dtype=int)
+    count_overlap = int(round(fraction * p))
+    count_overlap = min(max(count_overlap, 0), p)
+    if count_overlap == 0:
+        return {}
+
+    chosen = rng.choice(eligible, size=count_overlap, replace=False)
+    membership_counts = np.zeros(p, dtype=int)
+    for gid, members in enumerate(groups):
+        for feat in members:
+            membership_counts[int(feat)] += 1
+
+    group_ids = list(range(len(groups)))
+    for feat in chosen:
+        current_count = int(membership_counts[feat])
+        if current_count >= max_memberships_int:
+            continue
+        available = [g for g in group_ids if feat not in groups[g]]
+        if not available:
+            continue
+        additional = max_memberships_int - current_count
+        additional = min(additional, len(available))
+        if additional <= 0:
+            continue
+        targets = rng.choice(available, size=additional, replace=False)
+        for gid in targets:
+            groups[gid].append(int(feat))
+            membership_counts[feat] += 1
+
+    overlap_features = np.nonzero(membership_counts > 1)[0]
+    if overlap_features.size == 0:
+        return {}
+    memberships = membership_counts[overlap_features]
+    return {
+        "fraction": float(overlap_features.size / p),
+        "feature_ids": overlap_features.astype(int),
+        "membership_counts": memberships.astype(int),
+    }
+
+
+def _draw_design(
+    rng: np.random.Generator,
+    n: int,
+    p: int,
+    corr_cfg: Mapping[str, object],
+    *,
+    primary_group: Optional[np.ndarray] = None,
+    group_count: Optional[int] = None,
+) -> np.ndarray:
     corr_type = str(corr_cfg.get("type", "independent")).lower()
     rho = float(corr_cfg.get("rho", 0.0))
 
@@ -180,6 +262,41 @@ def _draw_design(rng: np.random.Generator, n: int, p: int, corr_cfg: Mapping[str
         shared = rng.standard_normal((n, 1))
         noise = rng.standard_normal((n, p))
         return math.sqrt(rho) * shared + math.sqrt(1.0 - rho) * noise
+
+    if corr_type in {"group", "group_block", "grouped"}:
+        if primary_group is None or group_count is None:
+            raise GeneratorError("Group-block correlation requires provided group assignments.")
+        rho_in = float(corr_cfg.get("rho_in", rho))
+        rho_out = float(corr_cfg.get("rho_out", 0.0))
+        if not (0.0 <= rho_out < 1.0):
+            raise GeneratorError("group_block correlation requires rho_out in [0, 1).")
+        if not (0.0 <= rho_in < 1.0):
+            raise GeneratorError("group_block correlation requires rho_in in [0, 1).")
+        if rho_in < rho_out:
+            raise GeneratorError("group_block correlation requires rho_in >= rho_out.")
+        global_component = rng.standard_normal((n, 1)) if rho_out > 0 else None
+        effective_in = max(rho_in - rho_out, 0.0)
+        if effective_in > 0 and group_count <= 0:
+            raise GeneratorError("group_block correlation needs positive group_count when rho_in > rho_out.")
+        group_components = (
+            rng.standard_normal((n, group_count))
+            if (effective_in > 0 and group_count and group_count > 0)
+            else None
+        )
+        noise = rng.standard_normal((n, p))
+        design = np.empty((n, p), dtype=float)
+        for j in range(p):
+            base = 0.0
+            if global_component is not None:
+                base += math.sqrt(rho_out) * global_component[:, 0]
+            if group_components is not None:
+                gidx = int(primary_group[j])
+                if gidx < 0 or gidx >= group_count:
+                    raise GeneratorError(f"Primary group index {gidx} out of bounds for feature {j}.")
+                base += math.sqrt(effective_in) * group_components[:, gidx]
+            scale_noise = math.sqrt(max(1.0 - rho_in, 1e-8))
+            design[:, j] = base + scale_noise * noise[:, j]
+        return design
 
     raise GeneratorError(f"Unsupported correlation type '{corr_type}'.")
 
@@ -232,8 +349,21 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
 
     local_rng = rng or np.random.default_rng(config.seed)
     groups = make_groups(config.p, config.G, config.group_sizes)
+    overlap_info: Dict[str, object] = {}
+    if config.overlap:
+        groups = [list(block) for block in groups]
+        overlap_info = _inject_group_overlap(groups, config.p, config.overlap, local_rng)
 
-    X = _draw_design(local_rng, config.n, config.p, config.correlation)
+    primary_group = _primary_group_index(groups, config.p)
+
+    X = _draw_design(
+        local_rng,
+        config.n,
+        config.p,
+        config.correlation,
+        primary_group=primary_group,
+        group_count=len(groups),
+    )
     X -= X.mean(axis=0, keepdims=True)
 
     signal_cfg = config.signal
@@ -298,9 +428,12 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
         "seed": config.seed,
         "name": config.name,
         "task": response_type,
+        "primary_group": primary_group,
     }
     if probs is not None:
         info["mean_probability"] = float(np.mean(probs))
+    if overlap_info:
+        info["overlap"] = overlap_info
 
     return SyntheticDataset(
         X=X.astype(np.float32, copy=False),
@@ -355,5 +488,6 @@ def synthetic_config_from_dict(
         task=task_label,
         response=response_cfg,
         seed=None if cfg_seed is None else int(cfg_seed),
+        overlap=dict(data_cfg.get("overlap", {})),
         name=name or data_cfg.get("name"),
     )

@@ -1,0 +1,41 @@
+name: "toy_classification_variants"
+output_dir: "outputs/sweeps/toy_classification_variants"
+
+common_config_files:
+  - "../experiments/toy_classification.yaml"
+
+variations:
+  - name: "balanced_grwhs_full"
+    config_files:
+      - "../methods/grwhs_full_logistic.yaml"
+  - name: "balanced_group_lasso"
+    config_files:
+      - "../methods/group_lasso.yaml"
+  - name: "balanced_sparse_group_lasso"
+    config_files:
+      - "../methods/sparse_group_lasso.yaml"
+  - name: "imbalance_grwhs_full"
+    config_files:
+      - "../experiments/toy_classification_imbalance.yaml"
+      - "../methods/grwhs_full_logistic.yaml"
+  - name: "imbalance_group_lasso"
+    config_files:
+      - "../experiments/toy_classification_imbalance.yaml"
+      - "../methods/group_lasso.yaml"
+  - name: "imbalance_sparse_group_lasso"
+    config_files:
+      - "../experiments/toy_classification_imbalance.yaml"
+      - "../methods/sparse_group_lasso.yaml"
+  - name: "separable_grwhs_full"
+    config_files:
+      - "../experiments/toy_classification_separable.yaml"
+      - "../methods/grwhs_full_logistic.yaml"
+  - name: "separable_fixed_tau"
+    config_files:
+      - "../experiments/toy_classification_separable.yaml"
+      - "../methods/grwhs_full_logistic.yaml"
+      - "../methods/grwhs_fixed_tau_logistic.yaml"
+  - name: "separable_group_lasso"
+    config_files:
+      - "../experiments/toy_classification_separable.yaml"
+      - "../methods/group_lasso.yaml"

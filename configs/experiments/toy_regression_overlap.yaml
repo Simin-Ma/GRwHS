@@ -1,0 +1,9 @@
+defaults:
+  - "../experiments/toy_regression.yaml"
+
+name: "toy_regression_overlap"
+
+data:
+  overlap:
+    fraction: 0.2
+    max_memberships: 2

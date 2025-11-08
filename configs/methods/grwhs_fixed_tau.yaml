@@ -1,0 +1,9 @@
+defaults: "../methods/grwhs_full.yaml"
+
+name: "grwhs_fixed_tau"
+
+model:
+  tau:
+    mode: "fixed"
+    value: 0.01
+    df: 2.0

@@ -12,6 +12,8 @@ __all__ = [
     "standardize_X",
     "center_y",
     "apply_standardization",
+    "apply_standardizer",
+    "apply_y_mean",
     "tau0_heuristic",
 ]
 
@@ -112,3 +114,31 @@ def apply_standardization(
         config=cfg,
     )
     return result
+
+
+def apply_standardizer(
+    X: np.ndarray,
+    *,
+    x_mean: Optional[np.ndarray],
+    x_scale: Optional[np.ndarray],
+    eps: float = _EPS,
+) -> np.ndarray:
+    """Apply stored standardization statistics to a new design matrix."""
+
+    arr = np.asarray(X, dtype=float)
+    if x_mean is not None:
+        arr = arr - np.asarray(x_mean, dtype=float)
+    if x_scale is not None:
+        scale = np.asarray(x_scale, dtype=float)
+        scale = np.maximum(scale, eps)
+        arr = arr / scale
+    return arr.astype(np.float32, copy=False)
+
+
+def apply_y_mean(y: np.ndarray, *, mean: Optional[float]) -> np.ndarray:
+    """Adjust target vector with stored mean (inverse of centering)."""
+
+    arr = np.asarray(y, dtype=float).reshape(-1)
+    if mean is None:
+        return arr.astype(np.float32, copy=False)
+    return (arr - float(mean)).astype(np.float32, copy=False)

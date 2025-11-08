@@ -1,0 +1,9 @@
+defaults:
+  - "../experiments/toy_classification.yaml"
+
+name: "toy_classification_separable"
+
+data:
+  classification:
+    scale: 5.0
+    noise_std: 0.0
