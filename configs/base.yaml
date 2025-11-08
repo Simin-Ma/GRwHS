@@ -70,7 +70,7 @@ model:
   c: 2.0
   eta: 0.6
   s0: 3.0
-  iters: 6000
+  iters: 20000
   tau:
     mode: "calibrated"
     df: 2.0
@@ -81,8 +81,8 @@ model:
 
 inference:
   gibbs:
-    iters: 6000
-    burn_in: 3000
+    iters: 20000
+    burn_in: 10000
     thin: 1
     jitter: 1.0e-08
     seed: 123
