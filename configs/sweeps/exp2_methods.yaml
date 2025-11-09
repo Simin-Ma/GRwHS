@@ -1,0 +1,28 @@
+name: "exp2_logistic_methods"
+output_dir: "outputs/sweeps/exp2_logistic"
+
+common_config_files:
+  - "../experiments/exp2_logistic_near_separable.yaml"
+
+variations:
+  - name: "grwhs_logistic"
+    config_files:
+      - "../methods/grwhs_logistic.yaml"
+  - name: "group_horseshoe_logistic"
+    config_files:
+      - "../methods/group_horseshoe_logistic.yaml"
+  - name: "horseshoe_logistic"
+    config_files:
+      - "../methods/horseshoe_logistic.yaml"
+  - name: "regularized_horseshoe_logistic"
+    config_files:
+      - "../methods/regularized_horseshoe_logistic.yaml"
+  - name: "group_lasso_sq"
+    config_files:
+      - "../methods/group_lasso.yaml"
+  - name: "logistic_lasso"
+    config_files:
+      - "../methods/logistic_lasso.yaml"
+  - name: "logistic_ridge"
+    config_files:
+      - "../methods/logistic_ridge.yaml"

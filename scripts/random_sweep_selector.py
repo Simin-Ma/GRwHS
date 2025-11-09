@@ -133,9 +133,9 @@ def run_random_samples(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Randomly sample mixed-signal sweeps and pick best RMSE.")
-    parser.add_argument("--base-config", type=Path, default=Path("configs/experiments/toy_regression.yaml"), help="Base experiment config.")
-    parser.add_argument("--sweep-config", type=Path, default=Path("configs/sweeps/mixed_signal_grid.yaml"), help="Sweep specification to sample from.")
-    parser.add_argument("--outdir", type=Path, default=Path("outputs/sweeps/random_mixed"), help="Output root for sampled sweeps.")
+    parser.add_argument("--base-config", type=Path, default=Path("configs/experiments/exp1_group_regression.yaml"), help="Base experiment config.")
+    parser.add_argument("--sweep-config", type=Path, default=Path("configs/sweeps/exp1_methods.yaml"), help="Sweep specification to sample from.")
+    parser.add_argument("--outdir", type=Path, default=Path("outputs/sweeps/random_exp1"), help="Output root for sampled sweeps.")
     parser.add_argument("--samples", type=int, default=3, help="Number of random subsets to run.")
     parser.add_argument("--subset-size", type=int, default=4, help="Number of variations per random sweep.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")

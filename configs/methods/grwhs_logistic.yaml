@@ -1,0 +1,26 @@
+defaults: "../base.yaml"
+
+name: "grwhs_logistic"
+task: "classification"
+
+model:
+  name: "grwhs_gibbs_logistic"
+  c: 2.0
+  eta: 0.5
+  s0: 2.5
+  iters: 15000
+  tau:
+    mode: "calibrated"
+    df: 2.0
+    target: "groups"
+    p0:
+      grid: [5, 10, 20]
+    sigma_classification: 2.0
+
+inference:
+  gibbs:
+    iters: 15000
+    burn_in: 8000
+    thin: 1
+    jitter: 1.0e-08
+    seed: 123

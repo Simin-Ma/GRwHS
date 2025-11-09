@@ -166,3 +166,46 @@ def test_generate_synthetic_with_overlap_metadata():
         hits = sum(1 for grp in data.groups if int(fid) in grp)
         assert hits == expected
         assert hits >= 2
+
+
+def test_signal_blueprint_assigns_requested_structure():
+    cfg = SyntheticConfig(
+        n=40,
+        p=12,
+        G=3,
+        group_sizes=[4, 4, 4],
+        signal={
+            "blueprint": [
+                {
+                    "label": "strong",
+                    "groups": [0],
+                    "components": [
+                        {"distribution": "constant", "count": 2, "value": 2.0, "sign": "positive", "tag": "strong"},
+                        {"distribution": "uniform", "count": 1, "low": 0.4, "high": 0.5, "sign": "positive", "tag": "medium"},
+                    ],
+                },
+                {
+                    "label": "weak",
+                    "groups": [1],
+                    "components": [
+                        {"distribution": "uniform", "fraction": 0.5, "low": 0.1, "high": 0.2, "tag": "weak"},
+                    ],
+                },
+            ]
+        },
+        seed=2024,
+    )
+
+    data = generate_synthetic(cfg)
+
+    strong_idx = data.info["strong_idx"]
+    weak_idx = data.info["weak_idx"]
+    blueprint_meta = data.info.get("signal_blueprint")
+
+    assert strong_idx.size == 2
+    assert np.allclose(data.beta[strong_idx], 2.0)
+    assert weak_idx.size == 2  # 50% of a 4-feature group
+    assert np.all(np.abs(data.beta[weak_idx]) >= 0.1 - 1e-8)
+    assert np.all(np.abs(data.beta[weak_idx]) <= 0.2 + 1e-8)
+    assert blueprint_meta is not None
+    assert len(blueprint_meta["assignments"]) >= 2

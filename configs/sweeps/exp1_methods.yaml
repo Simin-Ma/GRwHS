@@ -1,0 +1,28 @@
+name: "exp1_group_regression_methods"
+output_dir: "outputs/sweeps/exp1_group_regression"
+
+common_config_files:
+  - "../experiments/exp1_group_regression.yaml"
+
+variations:
+  - name: "grwhs"
+    config_files:
+      - "../methods/grwhs_regression.yaml"
+  - name: "group_horseshoe"
+    config_files:
+      - "../methods/group_horseshoe.yaml"
+  - name: "horseshoe"
+    config_files:
+      - "../methods/horseshoe.yaml"
+  - name: "regularized_horseshoe"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+  - name: "group_lasso"
+    config_files:
+      - "../methods/group_lasso.yaml"
+  - name: "lasso"
+    config_files:
+      - "../methods/lasso.yaml"
+  - name: "ridge"
+    config_files:
+      - "../methods/ridge.yaml"

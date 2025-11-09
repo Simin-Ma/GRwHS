@@ -1,0 +1,13 @@
+name: "exp4_group_misspec"
+output_dir: "outputs/sweeps/exp4_group_misspec"
+
+common_config_files:
+  - "../experiments/exp4_group_misspec.yaml"
+
+variations:
+  - name: "grwhs"
+    config_files:
+      - "../methods/grwhs_regression.yaml"
+  - name: "group_horseshoe"
+    config_files:
+      - "../methods/group_horseshoe.yaml"

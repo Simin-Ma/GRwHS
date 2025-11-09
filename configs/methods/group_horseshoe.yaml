@@ -1,0 +1,17 @@
+defaults: "../base.yaml"
+
+name: "group_horseshoe_regression"
+
+model:
+  name: "group_horseshoe"
+  group_scale: 1.0
+  scale_intercept: 10.0
+  scale_global: 1.0
+  sigma_scale: 1.0
+  num_warmup: 750
+  num_samples: 750
+  num_chains: 1
+  thinning: 1
+  target_accept_prob: 0.9
+  progress_bar: false
+  seed: 2025

@@ -1,0 +1,12 @@
+defaults: "./exp1_group_regression.yaml"
+
+name: "exp4_group_misspec"
+
+data:
+  model_groups_override:
+    mode: "shuffle"
+    fraction: 0.35
+    seed: 20251108
+
+experiments:
+  notes: "Perturb model-facing groups to quantify robustness to mis-specified structure."

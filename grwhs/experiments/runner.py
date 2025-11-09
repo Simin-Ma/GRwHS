@@ -181,6 +181,79 @@ def _resolve_groups(config: Mapping[str, Any], groups: Optional[Sequence[Sequenc
     return make_groups(int(p), G, group_sizes)
 
 
+def _override_model_groups(
+    true_groups: Sequence[Sequence[int]],
+    n_features: int,
+    override_cfg: Mapping[str, Any] | None,
+    *,
+    seed: Optional[int],
+) -> Optional[List[List[int]]]:
+    """Optionally perturb model-facing group assignments to simulate misspecification."""
+
+    if not override_cfg:
+        return None
+
+    mode = str(override_cfg.get("mode", "none")).lower()
+    if mode in {"none", "false", "", "off"}:
+        return None
+
+    rng_seed = override_cfg.get("seed", seed)
+    rng = np.random.default_rng(None if rng_seed is None else int(rng_seed))
+
+    assignments = np.full(int(n_features), -1, dtype=int)
+    for gid, members in enumerate(true_groups):
+        assignments[np.asarray(members, dtype=int)] = gid
+
+    missing = np.where(assignments < 0)[0]
+    if missing.size > 0 and len(true_groups) > 0:
+        filler = rng.integers(0, len(true_groups), size=missing.size)
+        assignments[missing] = filler
+
+    fraction = float(override_cfg.get("fraction", 1.0))
+    fraction = min(max(fraction, 0.0), 1.0)
+    total = assignments.size
+    if fraction <= 0.0 or len(true_groups) <= 1:
+        indices_to_shuffle = np.array([], dtype=int)
+    elif fraction >= 1.0:
+        indices_to_shuffle = np.arange(total)
+    else:
+        count = max(1, int(round(fraction * total)))
+        indices_to_shuffle = rng.choice(total, size=count, replace=False)
+
+    group_count = len(true_groups)
+    for idx in indices_to_shuffle:
+        original = assignments[idx]
+        if original < 0:
+            continue
+        new_gid = original
+        attempts = 0
+        while new_gid == original and attempts < 10:
+            new_gid = int(rng.integers(0, group_count))
+            attempts += 1
+        if new_gid == original:
+            new_gid = (original + 1) % group_count
+        assignments[idx] = new_gid
+
+    counts = np.bincount(assignments, minlength=group_count)
+    for gid in range(group_count):
+        if counts[gid] > 0:
+            continue
+        donors = np.where(counts > 1)[0]
+        if donors.size == 0:
+            continue
+        donor = int(rng.choice(donors))
+        donor_indices = np.where(assignments == donor)[0]
+        donor_choice = int(rng.choice(donor_indices))
+        assignments[donor_choice] = gid
+        counts[donor] -= 1
+        counts[gid] += 1
+
+    overridden = [[] for _ in range(group_count)]
+    for feat_idx, gid in enumerate(assignments):
+        overridden[int(gid)].append(int(feat_idx))
+    return overridden
+
+
 def _prepare_dataset_bundle(
     config: Mapping[str, Any],
     *,
@@ -241,11 +314,16 @@ def _prepare_dataset_bundle(
         if task == "classification":
             y = _normalise_binary_labels(y)
         groups = [list(map(int, g)) for g in generated.groups]
+        override_cfg = data_cfg.get("model_groups_override") or data_cfg.get("group_override")
+        model_groups = _override_model_groups(groups, X.shape[1], override_cfg, seed=dataset_seed)
+        if model_groups is None:
+            model_groups = groups
         bundle = {
             "X": X,
             "y": y,
             "beta": None if generated.beta is None else np.asarray(generated.beta, dtype=np.float32),
             "groups": groups,
+            "model_groups": model_groups,
             "feature_names": None,
             "metadata": {
                 "type": "synthetic",
@@ -272,11 +350,16 @@ def _prepare_dataset_bundle(
         if task == "classification":
             y = _normalise_binary_labels(y)
         groups = _resolve_groups(config, loaded.groups, X.shape[1])
+        override_cfg = data_cfg.get("model_groups_override") or data_cfg.get("group_override")
+        model_groups = _override_model_groups(groups, X.shape[1], override_cfg, seed=dataset_seed)
+        if model_groups is None:
+            model_groups = groups
         bundle = {
             "X": X,
             "y": y,
             "beta": None if loaded.beta is None else np.asarray(loaded.beta, dtype=np.float32),
             "groups": groups,
+            "model_groups": model_groups,
             "feature_names": loaded.feature_names,
             "metadata": {
                 "type": "loader",
@@ -633,7 +716,8 @@ def _run_fold_nested(
     fold_dir.mkdir(parents=True, exist_ok=True)
     X = dataset["X"]
     y = dataset["y"]
-    groups = dataset["groups"]
+    groups_true = dataset["groups"]
+    model_groups = dataset.get("model_groups", groups_true)
     beta = dataset.get("beta")
 
     train_idx = np.asarray(fold.train, dtype=int)
@@ -656,7 +740,7 @@ def _run_fold_nested(
         base_config,
         X_train,
         y_train,
-        groups,
+        model_groups,
         task=task,
         std_cfg=std_cfg,
     )
@@ -667,11 +751,11 @@ def _run_fold_nested(
     for key, value in inner_params.items():
         model_config["model"][key] = value
 
-    _maybe_calibrate_tau(model_config["model"], std_cfg, X_train, y_train, groups, task)
+    _maybe_calibrate_tau(model_config["model"], std_cfg, X_train, y_train, model_groups, task)
 
-    model = _instantiate_model(model_config, groups, X_train.shape[1])
+    model = _instantiate_model(model_config, model_groups, X_train.shape[1])
     try:
-        model.fit(X_train, y_train, groups=groups)
+        model.fit(X_train, y_train, groups=model_groups)
     except TypeError:
         model.fit(X_train, y_train)
 
@@ -686,7 +770,7 @@ def _run_fold_nested(
         y_train=y_train,
         y_test=y_test,
         beta_truth=beta,
-        group_index=_group_index(groups, X.shape[1]),
+        group_index=_group_index(groups_true, X.shape[1]),
         coverage_level=coverage_level,
         slab_width=model_config["model"].get("c"),
         task=task,
@@ -817,6 +901,7 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             "n": int(dataset["X"].shape[0]),
             "p": int(dataset["X"].shape[1]),
             "groups": dataset["groups"],
+            "model_groups": dataset.get("model_groups"),
             "feature_names": dataset.get("feature_names"),
             "metadata": dataset.get("metadata"),
         }

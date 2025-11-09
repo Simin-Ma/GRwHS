@@ -1,6 +1,7 @@
 """Synthetic data generators for GRwHS experiments."""
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Union
 
@@ -310,6 +311,140 @@ def _soft_sign(values: np.ndarray, mode: str, rng: np.random.Generator) -> np.nd
     return np.abs(values) * signs
 
 
+def _blueprint_count(
+    component: Mapping[str, object],
+    available: int,
+    rng: np.random.Generator,
+) -> int:
+    """Determine how many coefficients to draw for a blueprint component."""
+
+    if available <= 0:
+        return 0
+
+    if "count_range" in component:
+        low, high = component["count_range"]
+        low = max(0, int(math.floor(float(low))))
+        high = max(low, int(math.floor(float(high))))
+        return int(min(available, rng.integers(low, high + 1)))
+
+    if "count" in component:
+        return int(min(available, max(0, int(component["count"]))))
+
+    if "fraction_range" in component:
+        low, high = component["fraction_range"]
+        frac = rng.uniform(float(low), float(high))
+        count = int(round(frac * available))
+        return int(min(available, max(0, count)))
+
+    if "fraction" in component:
+        frac = float(component["fraction"])
+        count = int(round(frac * available))
+        return int(min(available, max(0, count)))
+
+    raise GeneratorError("Signal blueprint component must define count/count_range/fraction.")
+
+
+def _blueprint_draw_values(
+    component: Mapping[str, object],
+    count: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Draw magnitude values for blueprint-assigned coefficients."""
+
+    if count <= 0:
+        return np.zeros(0, dtype=float)
+
+    distribution = str(component.get("distribution", "") or ("constant" if "value" in component else "uniform")).lower()
+
+    if distribution in {"constant", "fixed"}:
+        value = float(component.get("value", component.get("magnitude", 1.0)))
+        base = np.full(count, abs(value), dtype=float)
+    elif distribution in {"uniform", "range"}:
+        low = float(component.get("low", component.get("min", 0.0)))
+        high = float(component.get("high", component.get("max", low)))
+        if high < low:
+            low, high = high, low
+        base = rng.uniform(low, high, size=count)
+    elif distribution in {"normal", "gaussian"}:
+        mean = float(component.get("mean", 0.0))
+        scale = float(component.get("scale", component.get("std", 1.0)))
+        scale = max(scale, 1e-12)
+        base = np.abs(rng.normal(mean, scale, size=count))
+    else:
+        raise GeneratorError(f"Unsupported blueprint distribution '{distribution}'.")
+
+    sign_mode = str(component.get("sign", "mixed")).lower()
+    return _soft_sign(base, sign_mode, rng)
+
+
+def _apply_signal_blueprint(
+    beta: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    blueprint_cfg: object,
+    rng: np.random.Generator,
+) -> Dict[str, object]:
+    """Deterministically assign coefficients according to a blueprint specification."""
+
+    if isinstance(blueprint_cfg, Mapping):
+        entries = [dict(blueprint_cfg)]
+    elif isinstance(blueprint_cfg, Sequence):
+        entries = [dict(entry) for entry in blueprint_cfg]  # type: ignore[arg-type]
+    else:  # pragma: no cover - guarded via config validation
+        raise GeneratorError("signal.blueprint must be a mapping or a list of mappings.")
+
+    tag_records: Dict[str, List[int]] = defaultdict(list)
+    assignment_records: List[Dict[str, object]] = []
+
+    total_groups = len(groups)
+
+    for entry_idx, entry in enumerate(entries):
+        group_ids_raw = entry.get("groups")
+        if not group_ids_raw:
+            raise GeneratorError("Each signal.blueprint entry requires a non-empty 'groups' specification.")
+        group_ids = [int(gid) for gid in group_ids_raw]
+        for gid in group_ids:
+            if gid < 0 or gid >= total_groups:
+                raise GeneratorError(f"Blueprint references invalid group id {gid} (total groups: {total_groups}).")
+
+        components = entry.get("components")
+        if not components:
+            continue
+
+        for gid in group_ids:
+            available = list(int(idx) for idx in groups[gid])
+            for comp_idx, comp in enumerate(components):
+                comp = dict(comp)
+                count = _blueprint_count(comp, len(available), rng)
+                if count <= 0:
+                    continue
+                candidates = np.array(available, dtype=int)
+                chosen = rng.choice(candidates, size=count, replace=False)
+                available = [idx for idx in available if idx not in chosen]
+                values = _blueprint_draw_values(comp, count, rng)
+                beta[chosen] = values
+
+                tag = comp.get("tag")
+                if tag:
+                    tag_records[str(tag)].extend(int(idx) for idx in chosen)
+
+                assignment_records.append(
+                    {
+                        "entry": str(entry.get("label", f"entry_{entry_idx}")),
+                        "group": int(gid),
+                        "component": str(comp.get("name", f"component_{comp_idx}")),
+                        "indices": [int(i) for i in np.sort(chosen)],
+                    }
+                )
+
+    active_idx = np.sort(np.flatnonzero(beta)).astype(int)
+    summary_tags = {label: sorted({int(idx) for idx in indices}) for label, indices in tag_records.items()}
+    return {
+        "assignments": assignment_records,
+        "active_idx": active_idx,
+        "tags": summary_tags,
+    }
+
+
 def _choose_active_indices(
     rng: np.random.Generator,
     eligible: np.ndarray,
@@ -367,32 +502,44 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
     X -= X.mean(axis=0, keepdims=True)
 
     signal_cfg = config.signal
-    group_sparsity = signal_cfg.get("group_sparsity")
-    if group_sparsity is not None:
-        frac = min(max(float(group_sparsity), 0.0), 1.0)
-        if groups:
-            g_total = len(groups)
-            g_keep = max(1, min(g_total, int(round(frac * g_total))))
-            idx_groups = local_rng.choice(g_total, size=g_keep, replace=False)
-            eligible = np.unique(np.concatenate([groups[g] for g in idx_groups]))
+    blueprint_cfg = signal_cfg.get("blueprint")
+    beta = np.zeros(config.p, dtype=float)
+    blueprint_info: Optional[Dict[str, object]] = None
+
+    if blueprint_cfg:
+        blueprint_info = _apply_signal_blueprint(beta, groups, blueprint_cfg, local_rng)
+        tags = blueprint_info.get("tags", {}) if blueprint_info else {}
+        strong_idx = np.array(sorted({int(idx) for idx in tags.get("strong", [])}), dtype=int) if isinstance(tags, Mapping) and "strong" in tags else np.zeros(0, dtype=int)
+        weak_idx = np.array(sorted({int(idx) for idx in tags.get("weak", [])}), dtype=int) if isinstance(tags, Mapping) and "weak" in tags else np.zeros(0, dtype=int)
+        active_idx = np.asarray(blueprint_info.get("active_idx", np.zeros(0, dtype=int)), dtype=int) if blueprint_info else np.zeros(0, dtype=int)
+    else:
+        group_sparsity = signal_cfg.get("group_sparsity")
+        if group_sparsity is not None:
+            frac = min(max(float(group_sparsity), 0.0), 1.0)
+            if groups:
+                g_total = len(groups)
+                g_keep = max(1, min(g_total, int(round(frac * g_total))))
+                idx_groups = local_rng.choice(g_total, size=g_keep, replace=False)
+                eligible = np.unique(np.concatenate([groups[g] for g in idx_groups]))
+            else:
+                eligible = np.arange(config.p)
         else:
             eligible = np.arange(config.p)
-    else:
-        eligible = np.arange(config.p)
 
-    strong_idx, weak_idx = _choose_active_indices(local_rng, eligible, config.p, signal_cfg)
+        strong_idx, weak_idx = _choose_active_indices(local_rng, eligible, config.p, signal_cfg)
 
-    beta = np.zeros(config.p, dtype=float)
-    sign_mode = str(signal_cfg.get("sign_mix", "random")).lower()
-    scale_strong = float(signal_cfg.get("beta_scale_strong", 1.0))
-    scale_weak = float(signal_cfg.get("beta_scale_weak", 0.5))
+        sign_mode = str(signal_cfg.get("sign_mix", "random")).lower()
+        scale_strong = float(signal_cfg.get("beta_scale_strong", 1.0))
+        scale_weak = float(signal_cfg.get("beta_scale_weak", 0.5))
 
-    if strong_idx.size:
-        vals = local_rng.normal(0.0, scale_strong, size=strong_idx.size)
-        beta[strong_idx] = _soft_sign(vals, sign_mode, local_rng)
-    if weak_idx.size:
-        vals = local_rng.normal(0.0, scale_weak, size=weak_idx.size)
-        beta[weak_idx] = _soft_sign(vals, sign_mode, local_rng)
+        if strong_idx.size:
+            vals = local_rng.normal(0.0, scale_strong, size=strong_idx.size)
+            beta[strong_idx] = _soft_sign(vals, sign_mode, local_rng)
+        if weak_idx.size:
+            vals = local_rng.normal(0.0, scale_weak, size=weak_idx.size)
+            beta[weak_idx] = _soft_sign(vals, sign_mode, local_rng)
+
+        active_idx = np.sort(np.concatenate([strong_idx, weak_idx])) if (strong_idx.size or weak_idx.size) else np.zeros(0, dtype=int)
 
     linear = X @ beta
 
@@ -422,7 +569,7 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
         effective_noise_sigma = float(config.noise_sigma)
 
     info: Dict[str, object] = {
-        "active_idx": np.sort(np.concatenate([strong_idx, weak_idx])) if (strong_idx.size or weak_idx.size) else np.empty(0, dtype=int),
+        "active_idx": active_idx,
         "strong_idx": strong_idx,
         "weak_idx": weak_idx,
         "seed": config.seed,
@@ -434,6 +581,8 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
         info["mean_probability"] = float(np.mean(probs))
     if overlap_info:
         info["overlap"] = overlap_info
+    if blueprint_info:
+        info["signal_blueprint"] = blueprint_info
 
     return SyntheticDataset(
         X=X.astype(np.float32, copy=False),

@@ -39,6 +39,7 @@ __all__ = [
     "SparseGroupLasso",
     "HorseshoeRegression",
     "RegularizedHorseshoeRegression",
+    "GroupHorseshoeRegression",
 ]
 
 GroupsLike = Sequence[Sequence[int]]
@@ -508,6 +509,7 @@ class _BaseHorseshoeRegression:
     nu_local: float = 1.0
     sigma_scale: float = 1.0
     slab_scale: Optional[float] = None
+    likelihood: str = "gaussian"
     num_warmup: int = 1000
     num_samples: int = 1000
     num_chains: int = 1
@@ -536,6 +538,13 @@ class _BaseHorseshoeRegression:
             raise ValueError("sigma_scale must be positive.")
         if self.slab_scale is not None and self.slab_scale <= 0:
             raise ValueError("slab_scale must be positive when provided.")
+        lik = str(self.likelihood).lower()
+        if lik in {"classification", "logistic"}:
+            self.likelihood = "logistic"
+        elif lik in {"gaussian", "regression"}:
+            self.likelihood = "gaussian"
+        else:
+            raise ValueError("likelihood must be either 'gaussian' or 'logistic'.")
         if self.num_warmup <= 0 or self.num_samples <= 0:
             raise ValueError("num_warmup and num_samples must be positive integers.")
         if self.num_chains <= 0:
@@ -546,10 +555,16 @@ class _BaseHorseshoeRegression:
             raise ValueError("target_accept_prob must lie in (0, 1).")
 
     def _numpyro_model(self, X: jnp.ndarray, y: jnp.ndarray) -> None:
-        sigma = numpyro.sample("sigma", dist.HalfCauchy(self.sigma_scale))
+        sigma = None
+        if self.likelihood == "gaussian":
+            sigma = numpyro.sample("sigma", dist.HalfCauchy(self.sigma_scale))
+            global_scale = self.scale_global * sigma
+        else:
+            global_scale = self.scale_global
+
         beta0 = numpyro.sample("beta0", dist.Normal(0.0, self.scale_intercept))
 
-        r1_global = numpyro.sample("r1_global", dist.HalfNormal(self.scale_global * sigma))
+        r1_global = numpyro.sample("r1_global", dist.HalfNormal(global_scale))
         r2_global = numpyro.sample(
             "r2_global",
             dist.InverseGamma(0.5 * self.nu_global, 0.5 * self.nu_global),
@@ -575,7 +590,10 @@ class _BaseHorseshoeRegression:
         z = numpyro.sample("z", dist.Normal(jnp.zeros((p,)), 1.0).to_event(1))
         beta = numpyro.deterministic("beta", z * lambda_effective * tau)
         mean = beta0 + X @ beta
-        numpyro.sample("y", dist.Normal(mean, sigma), obs=y)
+        if self.likelihood == "gaussian":
+            numpyro.sample("y", dist.Normal(mean, sigma), obs=y)
+        else:
+            numpyro.sample("y", dist.Bernoulli(logits=mean), obs=y)
 
     def _regularize_lambda(self, lambda_raw: jnp.ndarray, tau: jnp.ndarray) -> jnp.ndarray:
         if self.slab_scale is None:
@@ -642,6 +660,14 @@ class _BaseHorseshoeRegression:
         X_arr = _ensure_2d(X, "X")
         return X_arr.astype(np.float64) @ coef + intercept
 
+    def predict_proba(self, X: ArrayLike) -> np.ndarray:
+        if self.likelihood != "logistic":
+            raise RuntimeError("predict_proba is only defined for logistic likelihood.")
+        logits = self.predict(X)
+        logits = np.clip(logits, -60.0, 60.0)
+        probs = 1.0 / (1.0 + np.exp(-logits))
+        return np.column_stack([1.0 - probs, probs])
+
     def get_posterior_summaries(self) -> Dict[str, Any]:
         if self.coef_samples_ is None:
             raise RuntimeError("Model must be fitted before requesting summaries.")
@@ -672,3 +698,135 @@ class RegularizedHorseshoeRegression(_BaseHorseshoeRegression):
 
     slab_scale: float = 1.0
 
+
+@dataclass
+class GroupHorseshoeRegression(_BaseHorseshoeRegression):
+    """Group Horseshoe regression baseline (Xu et al., 2016)."""
+
+    groups: Optional[GroupsLike] = None
+    group_scale: float = 1.0
+
+    groups_: Optional[list[list[int]]] = field(default=None, init=False)
+    group_ids_: Optional[np.ndarray] = field(default=None, init=False)
+    group_sizes_: Optional[np.ndarray] = field(default=None, init=False)
+    lambda_group_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    _group_index: Optional[jnp.ndarray] = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.group_scale <= 0:
+            raise ValueError("group_scale must be positive.")
+
+    def fit(
+        self,
+        X: ArrayLike,
+        y: ArrayLike,
+        groups: Optional[GroupsLike] = None,
+    ) -> "GroupHorseshoeRegression":
+        X_arr = _ensure_2d(X, "X")
+        y_arr = _ensure_1d(y, "y")
+        if X_arr.shape[0] != y_arr.shape[0]:
+            raise ValueError("X and y must have matching number of rows.")
+
+        group_spec = groups if groups is not None else self.groups
+        if group_spec is None:
+            raise ValueError(
+                "GroupHorseshoeRegression requires 'groups' either at init or fit()."
+            )
+
+        normalized, group_ids = self._prepare_groups(X_arr.shape[1], group_spec)
+        self.groups_ = normalized
+        self.group_ids_ = group_ids
+        self.group_sizes_ = np.array([len(block) for block in normalized], dtype=int)
+        self._group_index = jnp.asarray(group_ids, dtype=jnp.int32)
+        return super().fit(X_arr, y_arr)
+
+    @staticmethod
+    def _prepare_groups(
+        n_features: int, groups: GroupsLike
+    ) -> tuple[list[list[int]], np.ndarray]:
+        normalized = _normalize_groups(groups)
+        _ensure_groups_cover_features(normalized, n_features)
+
+        group_ids = np.full(n_features, -1, dtype=int)
+        for gid, block in enumerate(normalized):
+            idx = np.asarray(block, dtype=int)
+            if np.any(idx < 0) or np.any(idx >= n_features):
+                raise ValueError(
+                    f"Group {gid} has indices outside the valid range [0, {n_features})."
+                )
+            duplicates = idx[group_ids[idx] != -1]
+            if duplicates.size > 0:
+                dup_list = duplicates.tolist()
+                raise ValueError(
+                    f"Features {dup_list} appear in multiple groups; "
+                    "Group Horseshoe requires a partition of features."
+                )
+            group_ids[idx] = gid
+
+        missing = np.nonzero(group_ids < 0)[0]
+        if missing.size > 0:
+            raise ValueError(
+                f"Some features are not assigned to any group: {missing.tolist()}."
+            )
+        return normalized, group_ids
+
+    def _numpyro_model(self, X: jnp.ndarray, y: jnp.ndarray) -> None:
+        if self._group_index is None or self.group_sizes_ is None:
+            raise RuntimeError("Group metadata must be set before calling fit().")
+
+        sigma = None
+        if self.likelihood == "gaussian":
+            sigma = numpyro.sample("sigma", dist.HalfCauchy(self.sigma_scale))
+            global_scale = self.scale_global * sigma
+        else:
+            global_scale = self.scale_global
+        beta0 = numpyro.sample("beta0", dist.Normal(0.0, self.scale_intercept))
+
+        r1_global = numpyro.sample("r1_global", dist.HalfNormal(global_scale))
+        r2_global = numpyro.sample(
+            "r2_global",
+            dist.InverseGamma(0.5 * self.nu_global, 0.5 * self.nu_global),
+        )
+        tau = numpyro.deterministic("tau", r1_global * jnp.sqrt(r2_global))
+
+        G = int(self.group_sizes_.shape[0])
+        group_scale = self.group_scale * jnp.ones((G,))
+        r1_group = numpyro.sample("r1_group", dist.HalfNormal(group_scale).to_event(1))
+        inv_gamma_local = dist.InverseGamma(0.5 * self.nu_local, 0.5 * self.nu_local)
+        r2_group = numpyro.sample(
+            "r2_group",
+            inv_gamma_local.expand((G,)).to_event(1),
+        )
+        lambda_group = numpyro.deterministic(
+            "lambda_group",
+            r1_group * jnp.sqrt(r2_group),
+        )
+        lambda_full = lambda_group[self._group_index]
+        lambda_effective = numpyro.deterministic(
+            "lambda",
+            self._regularize_lambda(lambda_full, tau),
+        )
+
+        p = X.shape[1]
+        z = numpyro.sample("z", dist.Normal(jnp.zeros((p,)), 1.0).to_event(1))
+        beta = numpyro.deterministic("beta", z * lambda_effective * tau)
+        mean = beta0 + X @ beta
+        if self.likelihood == "gaussian":
+            numpyro.sample("y", dist.Normal(mean, sigma), obs=y)
+        else:
+            numpyro.sample("y", dist.Bernoulli(logits=mean), obs=y)
+
+    def _store_samples(self, samples: Dict[str, jnp.ndarray]) -> None:
+        super()._store_samples(samples)
+        if "lambda_group" in samples:
+            arr = np.asarray(samples["lambda_group"], dtype=np.float64)
+            self.lambda_group_samples_ = _thin(arr, self.thinning)
+        else:
+            self.lambda_group_samples_ = None
+
+    def get_posterior_summaries(self) -> Dict[str, Any]:
+        summaries = super().get_posterior_summaries()
+        if self.lambda_group_samples_ is not None:
+            summaries["lambda_group_mean"] = self.lambda_group_samples_.mean(axis=0)
+        return summaries

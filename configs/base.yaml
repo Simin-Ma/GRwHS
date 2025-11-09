@@ -1,20 +1,10 @@
 # ========================================
-# Nested-CV Base Configuration (Regression/Classif.)
-# ----------------------------------------
-# This file captures the common experimental scaffolding:
-#   * Outer K-fold (with optional repeats) for evaluation.
-#   * Train-only standardisation shared across all methods.
-#   * Optional tau calibration settings for GRwHS.
-#   * Default metric suites for regression / classification.
-# Individual experiments should inherit from this base via:
-#   defaults: "configs/base.yaml"
-# and override only the dataset- or method-specific sections.
+# Shared Nested-CV Base Configuration
 # ========================================
 
 seed: 42
 device: "cpu"
 output_dir: "outputs"
-
 task: "regression"
 
 seeds:
@@ -31,61 +21,13 @@ splits:
     n_splits: 5
     n_repeats: 1
     shuffle: true
-    stratify: "auto"   # "auto": stratify when task == classification
+    stratify: "auto"
     seed: 20240501
   inner:
-    n_splits: 3
+    n_splits: 5
     shuffle: true
     stratify: "auto"
     seed: 20240502
-
-data:
-  type: "synthetic"
-  n: 200
-  p: 500
-  G: 50
-  group_sizes: "variable"
-  correlation:
-    type: "group_block"
-    rho_in: 0.3
-    rho_out: 0.0
-  overlap:
-    fraction: 0.0
-    max_memberships: 2
-  signal:
-    group_sparsity: 0.2
-    sparsity: 0.05
-    strong_frac: 0.4
-    beta_scale_strong: 4.0
-    beta_scale_weak: 0.4
-    sign_mix: "random"
-  classification:
-    scale: 1.0
-    bias: 0.0
-    noise_std: 0.0
-  noise_sigma: 1.0
-
-model:
-  name: "grwhs_gibbs"
-  c: 2.0
-  eta: 0.6
-  s0: 3.0
-  iters: 20000
-  tau:
-    mode: "calibrated"
-    df: 2.0
-    target: "groups"
-    p0:
-      grid: [1, 2, 5, 10, 20]
-    sigma_classification: 2.0
-
-inference:
-  gibbs:
-    iters: 20000
-    burn_in: 10000
-    thin: 1
-    jitter: 1.0e-08
-    seed: 123
 
 experiments:
   repeats: 1

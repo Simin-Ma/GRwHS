@@ -1,8 +1,0 @@
-defaults:
-  - "../experiments/toy_classification.yaml"
-
-name: "toy_classification_imbalance"
-
-data:
-  classification:
-    bias: -0.6   # pushes class balance towards ~70/30 after scaling

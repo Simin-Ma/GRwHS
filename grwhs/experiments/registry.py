@@ -36,6 +36,7 @@ from grwhs.models.baselines import (
     SparseGroupLasso,
     HorseshoeRegression,
     RegularizedHorseshoeRegression,
+    GroupHorseshoeRegression,
 )
 
 # ------------------------------
@@ -198,6 +199,12 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
     }
     if seed_val is not None:
         kwargs["seed"] = int(seed_val)
+    task_label = str(_get(cfg, "task", _get(cfg, "data.task", "regression"))).lower()
+    likelihood = str(_get(cfg, "model.likelihood", task_label)).lower()
+    if likelihood in {"classification", "logistic"}:
+        kwargs["likelihood"] = "logistic"
+    else:
+        kwargs["likelihood"] = "gaussian"
     return kwargs
 
 
@@ -395,6 +402,22 @@ def _build_regularized_horseshoe(cfg: Dict[str, Any]) -> Any:
     kwargs = _horseshoe_common_kwargs(cfg)
     kwargs["slab_scale"] = float(_get(cfg, "model.slab_scale", 1.0))
     return RegularizedHorseshoeRegression(**kwargs)
+
+
+@register("group_horseshoe")
+@register("ghs")
+@register("group_hs")
+def _build_group_horseshoe(cfg: Dict[str, Any]) -> Any:
+    groups = _infer_groups(cfg)
+    if groups is None:
+        raise ValueError("GroupHorseshoe requires 'data.groups' in config (list of index lists).")
+    kwargs = _horseshoe_common_kwargs(cfg)
+    slab_scale = _get(cfg, "model.slab_scale", None)
+    if slab_scale is not None:
+        kwargs["slab_scale"] = float(slab_scale)
+    kwargs["groups"] = groups
+    kwargs["group_scale"] = float(_get(cfg, "model.group_scale", 1.0))
+    return GroupHorseshoeRegression(**kwargs)
 
 
 # ------------------------------

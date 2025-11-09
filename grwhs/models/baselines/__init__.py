@@ -4,6 +4,7 @@ from __future__ import annotations
 from .models import (
     ElasticNet,
     GroupLasso,
+    GroupHorseshoeRegression,
     HorseshoeRegression,
     Lasso,
     LogisticRegressionClassifier,
@@ -21,4 +22,5 @@ __all__ = [
     "SparseGroupLasso",
     "HorseshoeRegression",
     "RegularizedHorseshoeRegression",
+    "GroupHorseshoeRegression",
 ]

@@ -1,6 +1,6 @@
 # GRwHS Experimentation Toolkit
 
-Comprehensive infrastructure for benchmarking generalized regularized horseshoe (GRwHS) models across structured toy studies (regression/classification grids, overlap ablations) and real datasets. The toolkit helps you generate data, train multiple model families, evaluate metrics, track posterior convergence, and produce reproducible reports and plots.
+Comprehensive infrastructure for benchmarking generalized regularized horseshoe (GRwHS) models across four canonical suites: (1) synthetic group regression, (2) near-separable logistic classification, (3) real pathway-aware datasets, and (4) targeted robustness/ablation studies. The toolkit helps you generate data, train multiple model families, evaluate metrics, track posterior convergence, and produce reproducible reports and plots.
 
 ---
 
@@ -107,22 +107,24 @@ Every other configuration inherits from this foundation.
 
 Dataset files adjust only the `data` (and occasionally `standardization` or `splits`) section:
 
-- `toy_regression.yaml` - heterogeneous groups with controllable intra-group correlation and signal strength.
-- `toy_regression_overlap.yaml` - injects 20% overlapping memberships to stress overlapping-group priors.
-- `toy_classification.yaml` - logistic generator with tunable separation (`classification.scale`) and optional noise.
-- `toy_classification_imbalance.yaml` / `toy_classification_separable.yaml` - variants for class imbalance and near separability.
+- `exp1_group_regression.yaml` - synthetic linear regression with 25 contiguous groups (3 strong, 5 weak, remaining noise) and half-block correlation.
+- `exp2_logistic_near_separable.yaml` - synthetic logistic design with two almost-separable groups plus weak support groups, stressing stability under near separability.
+- `exp3_real_pathways.yaml` - template loader config for pathway/gene-set datasets; point the `loader` paths to your NumPy arrays and group map.
+- `exp4_ablation.yaml` - reuses Exp1 data to compare GRwHS vs RHS (removing the ridge-within-group component).
+- `exp4_group_misspec.yaml` - reuses Exp1 data but shuffles 35% of features across model-facing groups to probe robustness under mis-specified structure.
 - `real_*_template.yaml` - placeholders for plugging in actual loaders (`path_X`, `path_y`, `path_group_map`).
 
 ### 3.3 Method presets (`configs/methods/*.yaml`)
 
 Method presets collect model-specific hyperparameters and tuning instructions:
 
-- `grwhs_full.yaml` - Gibbs sampler with calibrated tau (p0 grid, df=2).
-- `grwhs_fixed_tau.yaml` - GRwHS with tau fixed to a supplied value (for the calibration ablation).
-- `grwhs_no_group.yaml` - feature-wise Regularised Horseshoe baseline (no group layer).
-- `grwhs_full_logistic.yaml` / `grwhs_fixed_tau_logistic.yaml` - logistic GRwHS variants.
-- `group_lasso.yaml` - skglm Group Lasso plus an alpha grid for inner-CV model selection (now with `group_weight_mode: "size"` so weights match |g|).
-- `sparse_group_lasso.yaml` - Sparse Group Lasso with joint (alpha, l1 ratio) search and the same |g| weighting for the group component.
+- `grwhs_regression.yaml` / `grwhs_logistic.yaml` - Gibbs samplers with calibrated τ grids for regression and logistic tasks respectively.
+- `group_horseshoe.yaml` / `group_horseshoe_logistic.yaml` - NumPyro MCMC for the Xu et al. group horseshoe prior (regression/logistic).
+- `horseshoe.yaml` / `horseshoe_logistic.yaml` - standard horseshoe priors without the group layer.
+- `regularized_horseshoe.yaml` / `regularized_horseshoe_logistic.yaml` - Piironen & Vehtari slab-regularised variants.
+- `group_lasso.yaml` - skglm Group Lasso (quadratic loss) with |g|-scaled weights and an `alpha` grid for inner CV.
+- `lasso.yaml` / `ridge.yaml` - quadratic L1/L2 baselines with tuned penalties.
+- `logistic_lasso.yaml` / `logistic_ridge.yaml` - `sklearn.linear_model.LogisticRegression` wrappers with L1/L2 penalties and tuned `C`.
 
 These files can be stacked (dataset + method + ablation override) by passing multiple `--config` arguments or via sweep `config_files`.
 
@@ -130,40 +132,59 @@ These files can be stacked (dataset + method + ablation override) by passing mul
 
 Sweeps combine datasets and methods into experiment suites:
 
-- `toy_regression_methods.yaml` - GRwHS vs GL/SGL vs ablations on the base toy regression setup.
-- `toy_regression_overlap_methods.yaml` - the same comparison under overlapping groups.
-- `toy_regression_grid.yaml` - GRwHS full model across `{n in {100, 200}} x {p in {500, 1000}} x {rho_in in {0, 0.3, 0.6}} x {A in {2, 4, 6, 8, 10}}`.
-- `toy_classification_methods.yaml` / `toy_classification_variants.yaml` - method comparisons for balanced, imbalanced, and near-separable logistic tasks.
-- `toy_classification_grid.yaml` - logistic GRwHS across correlation/separation grids.
+- `exp1_methods.yaml` - Exp1 regression sweep covering GRwHS, (Group) Horseshoe baselines, and convex penalties (group lasso, lasso, ridge).
+- `exp2_methods.yaml` - Exp2 logistic sweep with logistic variants of GRwHS/GH/HS/RHS plus logistic (group) lasso/ridge.
+- `exp3_real_methods.yaml` - Exp3 real-data sweep; same model roster as Exp2 but with your loader-backed dataset.
+- `exp4_ablation.yaml` - short sweep contrasting GRwHS vs regularized horseshoe (slab-only) on Exp1 data.
+- `exp4_group_misspec.yaml` - GRwHS vs Group Horseshoe when model-facing groups are randomly shuffled.
 
 Each variation may specify extra overrides (e.g. seeds, priors) or add method files via `config_files`.
 
 ### 3.5 Running a single experiment
 
 ```bash
-# GRwHS (calibrated tau) on toy regression
+# GRwHS (calibrated τ) on Exp1 synthetic regression
 python -m grwhs.cli.run_experiment \
   --config configs/base.yaml \
-          configs/experiments/toy_regression.yaml \
-          configs/methods/grwhs_full.yaml \
-  --name toy_regression_grwhs
+          configs/experiments/exp1_group_regression.yaml \
+          configs/methods/grwhs_regression.yaml \
+  --name exp1_grwhs
 
-# Sparse Group Lasso on the same dataset
+# Group Lasso baseline on the same dataset
 python -m grwhs.cli.run_experiment \
   --config configs/base.yaml \
-          configs/experiments/toy_regression.yaml \
-          configs/methods/sparse_group_lasso.yaml \
-  --name toy_regression_sgl
+          configs/experiments/exp1_group_regression.yaml \
+          configs/methods/group_lasso.yaml \
+  --name exp1_group_lasso
+
+# GRwHS logistic on the near-separable classification task
+python -m grwhs.cli.run_experiment \
+  --config configs/base.yaml \
+          configs/experiments/exp2_logistic_near_separable.yaml \
+          configs/methods/grwhs_logistic.yaml \
+  --name exp2_grwhs_logistic
 ```
 
 ### 3.6 Launching a sweep
 
 ```bash
-# Compare GRwHS / GL / SGL on overlapping groups
+# Exp1: compare Bayesian vs convex baselines
 python -m grwhs.cli.run_sweep \
   --base-config configs/base.yaml \
-  --sweep-config configs/sweeps/toy_regression_overlap_methods.yaml \
+  --sweep-config configs/sweeps/exp1_methods.yaml \
   --jobs 4
+
+# Exp2: logistic stability comparison
+python -m grwhs.cli.run_sweep \
+  --base-config configs/base.yaml \
+  --sweep-config configs/sweeps/exp2_methods.yaml \
+  --jobs 4
+
+# Exp4b: robustness to misspecified groups
+python -m grwhs.cli.run_sweep \
+  --base-config configs/base.yaml \
+  --sweep-config configs/sweeps/exp4_group_misspec.yaml \
+  --jobs 2
 ```
 
 `run_sweep` merges `base.yaml`, all `common_config_files`, then each variation's `config_files` and `overrides`. Fully resolved configs are written to `<outdir>/.../resolved_config.yaml`.
@@ -171,56 +192,31 @@ python -m grwhs.cli.run_sweep \
 ### 3.7 Classification-specific notes
 
 - Set `task: classification` in the dataset descriptor and disable response centring (`standardization.y_center: false`).
-- Use the logistic GRwHS presets (`configs/methods/grwhs_full_logistic.yaml`, etc.).
-- Convex baselines reuse the same wrappers; the runner maps their linear predictors through sigma(x) to obtain probabilities for log-loss/Brier/ECE.
+- Use the logistic method presets (`grwhs_logistic.yaml`, `group_horseshoe_logistic.yaml`, etc.).
+- Convex baselines (Group Lasso, logistic lasso/ridge) provide either squared-loss fits or native probabilities; the runner maps linear predictions through σ(x) whenever `predict_proba` is unavailable.
 - Outer/inner splits automatically stratify unless explicitly disabled.
 
 ---
 
 ## 4. Benchmark Workflow
 
-Follow this checklist to reproduce the experiment suite summarised in the proposal:
+Follow this checklist to reproduce the four-study suite:
 
-1. **Fix dataset seeds** - the sweep runner now stamps a single `data.seed` / `seeds.data_generation` across all variations to guarantee identical outer folds for every method.
-2. **Toy regression (structure focus)**
-   - Hyper-grid for GRwHS only:
-     ```bash
-     python -m grwhs.cli.run_sweep \
-       --base-config configs/base.yaml \
-       --sweep-config configs/sweeps/toy_regression_grid.yaml \
-       --jobs 4
-     ```
-   - Method comparison at the default setting:
-     ```bash
-     python -m grwhs.cli.run_sweep \
-       --base-config configs/base.yaml \
-       --sweep-config configs/sweeps/toy_regression_methods.yaml \
-       --jobs 4
-     ```
-   - Overlapping groups ablation:
-     ```bash
-     python -m grwhs.cli.run_sweep \
-       --base-config configs/base.yaml \
-       --sweep-config configs/sweeps/toy_regression_overlap_methods.yaml \
-       --jobs 4
-     ```
-3. **Toy classification (uncertainty focus)**
-   - Correlation/separation grid for GRwHS logistic:
-     ```bash
-     python -m grwhs.cli.run_sweep \
-       --base-config configs/base.yaml \
-       --sweep-config configs/sweeps/toy_classification_grid.yaml \
-       --jobs 4
-     ```
-   - Method comparison across balanced/imbalanced/separable regimes:
-     ```bash
-     python -m grwhs.cli.run_sweep \
-       --base-config configs/base.yaml \
-       --sweep-config configs/sweeps/toy_classification_variants.yaml \
-       --jobs 4
-     ```
-4. **Real data** - copy one of the `real_*_template.yaml` files, fill in `data.loader.*` paths (and group maps, if available), then run single experiments or create a sweep analogous to the toy setups.
-5. **Summaries** - aggregate results with `python -m grwhs.cli.make_report --runs <path/glob>` to produce combined CSV/JSON tables (outer-fold means and standard-errors are already stored inside each run directory).
+1. **Exp1 – Structured regression (groups + mixed signals)**  
+   Run `configs/sweeps/exp1_methods.yaml` to collect GRwHS vs GH/HS/RHS vs convex baselines on the prescribed synthetic scenario.
+
+2. **Exp2 – Near-separable logistic classification**  
+   Launch `configs/sweeps/exp2_methods.yaml` to stress numerical stability (β-norms, divergences, AUC/log-loss) under extreme separation.
+
+3. **Exp3 – Real pathway/gene-set data**  
+   Fill `configs/experiments/exp3_real_pathways.yaml` with actual `path_X`, `path_y`, and `path_group_map` files, then run the `exp3_real_methods.yaml` sweep (or single runs) to benchmark on real structure-aware tasks.
+
+4. **Exp4 – Robustness & ablation**  
+   - `configs/sweeps/exp4_ablation.yaml`: demonstrate the effect of removing the group-level ridge (GRwHS vs RHS).  
+   - `configs/sweeps/exp4_group_misspec.yaml`: compare GRwHS vs GH when 35% of features are randomly re-assigned between groups at training time.
+
+5. **Summaries**  
+   Use `python -m grwhs.cli.make_report --runs <glob>` to gather aggregated metrics; every run already stores fold-level JSON/NPZ artefacts plus posterior diagnostics.
 
 Each run directory records fold-level metrics (`fold_*` subdirectories), resolved configuration, and full metadata so reports can cross-reference calibration statistics (`tau_summary.json`) or tuning diagnostics (`tuning_summary.json`).
 
@@ -263,12 +259,12 @@ Import `grwhs.viz.plots` directly for advanced plotting (e.g., multiple coeffici
 Summarize one or more runs into JSON:
 ```bash
 python -m grwhs.cli.make_report \
-  --run outputs/runs/toy_regression_grwhs-<timestamp> \
-  --run outputs/runs/toy_classification_grwhs-<timestamp>
+  --run outputs/runs/exp1_grwhs-<timestamp> \
+  --run outputs/runs/exp2_grwhs_logistic-<timestamp>
 ```
 Creates per-run summaries and a consolidated `summary_index.json` in `outputs/reports/`. Each summary contains metrics, dataset stats, posterior metadata, and convergence results.
 
-Integrate into scripts/notebooks to compare models across the new toy grids, overlapping-group variants, and any real datasets you plug in.
+Integrate into scripts/notebooks to compare models across the four benchmark suites, the ablations, and any real datasets you plug in.
 
 ### 7.2 Tables & Plots
 - Format metrics for publication via `grwhs.viz.tables` (extend as needed).
@@ -304,12 +300,12 @@ Use `scripts/plot_diagnostics.py` to produce the five reviewer-facing panels (tr
 
 ```bash
 python scripts/plot_diagnostics.py \
-  --run-dir outputs/sweeps/toy_regression_methods/grwhs_full-<timestamp> \
+  --run-dir outputs/sweeps/exp1_group_regression_methods/grwhs-<timestamp> \
   --burn-in 1000 --max-lag 120 \
   --strong-count 4 --weak-count 4 \
   --groups-to-plot 10 \
   --coverage-levels 0.5 0.7 0.8 0.9 0.95 \
-  --dest figures/toy_regression_grwhs --dpi 150
+  --dest figures/exp1_grwhs --dpi 150
 ```
 
 - `--run-dir` points to the target run (expects `posterior_samples.npz`, `dataset.npz`, and metadata).
@@ -332,7 +328,7 @@ Use `scripts/random_sweep_selector.py` to randomly subsample `configs/sweeps/mix
 
 ```bash
 python scripts/random_sweep_selector.py \
-  --base-config configs/experiments/toy_regression.yaml \
+  --base-config configs/experiments/exp1_group_regression.yaml \
   --sweep-config configs/sweeps/mixed_signal_grid.yaml \
   --outdir outputs/sweeps/random_mixed \
   --samples 5 \
@@ -355,7 +351,7 @@ python -m pytest
 Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, convergence utilities, visualization scaffolding, and overall smoke tests.
 
 ### 9.2 Manual Validation Checklist
-1. Execute sweeps for the toy grids (regression/classification) and any real datasets you enable.
+1. Execute the Exp1–Exp4 sweeps (and any additional real datasets you configure).
 2. Inspect metrics via `metrics.json` and aggregated reports.
 3. Check `convergence.json` for acceptable R-hat/ESS.
 4. Generate plots with `scripts/plot_check.py` and review posterior traces/histograms.
@@ -372,7 +368,7 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 
 ### 10.2 Additional Datasets
 - Add YAML configs (synthetic) or loader adapters (real data).
-- Modify CLI or scripts to include the new toy/real dataset combinations in benchmark loops.
+- Modify CLI or scripts to include new benchmark scenarios or real datasets in loops/sweeps.
 
 ### 10.3 Diagnostics/Visualization Extensions
 - Add new diagnostics to `grwhs/diagnostics/` (e.g., running means, autocorrelation plots).
@@ -398,9 +394,9 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 | Task | Command |
 |------|---------|
 | Install deps | `pip install -e .[dev]` |
-| Run toy regression (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/toy_regression.yaml configs/methods/grwhs_full.yaml --name grwhs_gr_toy` |
-| Run toy classification (logistic GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/toy_classification.yaml configs/methods/grwhs_full_logistic.yaml --name grwhs_cls_toy` |
-| Run real dataset suite | `for model in ridge lasso elastic_net grwhs_gibbs grwhs_svi; do python -m grwhs.cli.run_experiment --config configs/real_dataset.yaml --name ${model}_real --override model.name=${model}; done` |
+| Run Exp1 regression (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp1_group_regression.yaml configs/methods/grwhs_regression.yaml --name exp1_grwhs` |
+| Run Exp2 logistic (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp2_logistic_near_separable.yaml configs/methods/grwhs_logistic.yaml --name exp2_grwhs_logistic` |
+| Run Exp3 real dataset | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp3_real_pathways.yaml configs/methods/grwhs_logistic.yaml --name exp3_grwhs_real` |
 | Generate plots | `python scripts/plot_check.py <run_dir>` |
 | Summarize runs | `python -m grwhs.cli.make_report --run <run_dir> [--run <run_dir>]` |
 | Run tests | `python -m pytest` |
@@ -415,7 +411,7 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 - Add targeted tests for new models/diagnostics.
 - Use issues/PRs to coordinate new features or bug fixes.
 
-By following the steps above you can benchmark all supported models across the toy regression/classification grids, overlap ablations, and any real datasets you plug in, inspecting metrics, posterior behavior, and convergence diagnostics end-to-end.
+By following the steps above you can benchmark all supported models across the four benchmark suites, targeted ablations, and any real datasets you plug in, inspecting metrics, posterior behavior, and convergence diagnostics end-to-end.
 
 
 

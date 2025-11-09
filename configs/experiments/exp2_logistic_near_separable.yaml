@@ -1,0 +1,71 @@
+defaults: "../base.yaml"
+
+name: "exp2_logistic_near_separable"
+task: "classification"
+
+data:
+  type: "synthetic"
+  seed: 20251108
+  n: 100
+  p: 200
+  G: 20
+  group_sizes:
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+    - 10
+  correlation:
+    type: "group_block"
+    rho_in: 0.5
+    rho_out: 0.0
+  signal:
+    blueprint:
+      - label: "dominant"
+        groups: [0, 1]
+        components:
+          - name: "separable_core"
+            distribution: "constant"
+            count: 4
+            value: 3.2
+            sign: "positive"
+            tag: "strong"
+      - label: "weak_support"
+        groups: [2, 3, 4, 5]
+        components:
+          - name: "shallow"
+            distribution: "uniform"
+            fraction_range: [0.2, 0.4]
+            low: 0.35
+            high: 0.55
+            sign: "mixed"
+            tag: "weak"
+  response:
+    type: "classification"
+    scale: 1.0
+    bias: 0.0
+
+splits:
+  outer:
+    n_splits: 5
+    shuffle: true
+    stratify: true
+  inner:
+    n_splits: 5
+    shuffle: true
+    stratify: true

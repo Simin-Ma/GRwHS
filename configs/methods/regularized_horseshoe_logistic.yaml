@@ -1,0 +1,19 @@
+defaults: "../base.yaml"
+
+name: "regularized_horseshoe_logistic"
+task: "classification"
+
+model:
+  name: "regularized_horseshoe"
+  likelihood: "logistic"
+  scale_intercept: 5.0
+  scale_global: 1.0
+  sigma_scale: 1.0
+  slab_scale: 1.0
+  num_warmup: 750
+  num_samples: 750
+  num_chains: 1
+  thinning: 1
+  target_accept_prob: 0.9
+  progress_bar: false
+  seed: 171

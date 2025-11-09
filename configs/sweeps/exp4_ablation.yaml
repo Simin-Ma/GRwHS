@@ -1,0 +1,13 @@
+name: "exp4_regression_ablation"
+output_dir: "outputs/sweeps/exp4_ablation"
+
+common_config_files:
+  - "../experiments/exp4_ablation.yaml"
+
+variations:
+  - name: "grwhs"
+    config_files:
+      - "../methods/grwhs_regression.yaml"
+  - name: "regularized_horseshoe"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"

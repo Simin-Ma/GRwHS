@@ -1,0 +1,26 @@
+defaults: "../base.yaml"
+
+name: "exp3_real_pathways"
+task: "classification"
+
+data:
+  type: "loader"
+  base_dir: "."
+  loader:
+    path_X: "data/real/pathways/features.npy"
+    path_y: "data/real/pathways/labels.npy"
+    path_group_map: "data/real/pathways/group_map.csv"
+
+standardization:
+  X: "unit_variance"
+  y_center: false
+
+splits:
+  outer:
+    n_splits: 5
+    shuffle: true
+    stratify: true
+  inner:
+    n_splits: 5
+    shuffle: true
+    stratify: true
