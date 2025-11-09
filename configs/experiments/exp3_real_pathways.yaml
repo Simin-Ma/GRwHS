@@ -10,10 +10,27 @@ data:
     path_X: "data/real/pathways/features.npy"
     path_y: "data/real/pathways/labels.npy"
     path_group_map: "data/real/pathways/group_map.csv"
+    pathway_collection: "MSigDB-Hallmark"
+    cohort: "gene_expression"
+    notes: "Real gene-set grouping (immune/metabolic/etc.)"
 
 standardization:
   X: "unit_variance"
   y_center: false
+
+experiments:
+  focus_metrics:
+    classification: ["ClassLogLoss", "ClassAccuracy", "ClassAUROC", "ClassAveragePrecision"]
+    shrinkage: ["MeanEffectiveNonzeros", "EffectiveDoF"]
+  diagnostics:
+    interpretability_targets:
+      - "immune_response"
+      - "cell_cycle"
+      - "metabolic_pathways"
+    visualization:
+      - "group_phi_slab"
+      - "posterior_beta_by_group"
+  notes: "Real pathway/module level interpretability showcase."
 
 splits:
   outer:

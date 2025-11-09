@@ -4,9 +4,15 @@ name: "exp4_group_misspec"
 
 data:
   model_groups_override:
-    mode: "shuffle"
-    fraction: 0.35
+    mode: "shuffle_full"
+    fraction: 1.0
     seed: 20251108
 
 experiments:
-  notes: "Perturb model-facing groups to quantify robustness to mis-specified structure."
+  notes: "Perturb model-facing groups to quantify robustness to mis-specified structure (should behave like RHS when groups are random)."
+  focus_metrics:
+    regression: ["RMSE", "PredictiveLogLikelihood"]
+    shrinkage: ["MeanKappa", "EffectiveDoF"]
+  diagnostics:
+    compare_against: "regularized_horseshoe"
+    expectations: "GRwHS collapses to RHS-like behavior when grouping is random."
