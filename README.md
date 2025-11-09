@@ -55,7 +55,7 @@ pip install -e .[dev]
   - `registry.py` exposes the `@register` decorator used by every model/baseline so the runner can request them by name.
   - `sweeps.py` loads sweep templates and materializes per-run configurations; `aggregator.py` consolidates fold-level results.
 - `grwhs/models/`
-  - Contains the Gibbs (`grwhs_gibbs.py`), SVI (`grwhs_svi_numpyro.py`), and convex baselines (lasso/ridge/GL/SGL) implementations.
+  - Contains the Gibbs (`grwhs_gibbs.py`), SVI (`grwhs_svi_numpyro.py`), and convex baselines (ridge/Group Lasso/SGL) implementations.
   - Models rely on inference helpers (sampling routines, Woodbury solvers) and populate posterior buffers used downstream.
 - `grwhs/inference/`
   - Linear algebra kernels, proximal updates, and Generalized Inverse Gaussian samplers shared by multiple models.
@@ -122,8 +122,8 @@ Method presets collect model-specific hyperparameters and tuning instructions:
 - `group_horseshoe.yaml` / `group_horseshoe_logistic.yaml` - NumPyro MCMC for the Xu et al. group horseshoe prior (regression/logistic).
 - `regularized_horseshoe.yaml` / `regularized_horseshoe_logistic.yaml` - Piironen & Vehtari slab-regularised variants.
 - `group_lasso.yaml` - skglm Group Lasso (quadratic loss) with |g|-scaled weights and an `alpha` grid for inner CV.
-- `lasso.yaml` / `ridge.yaml` - quadratic L1/L2 baselines with tuned penalties.
-- `logistic_lasso.yaml` / `logistic_ridge.yaml` - `sklearn.linear_model.LogisticRegression` wrappers with L1/L2 penalties and tuned `C`.
+- `ridge.yaml` - quadratic L2 baseline with tuned penalties.
+- `logistic_ridge.yaml` - `sklearn.linear_model.LogisticRegression` (L2 penalty) wrapper with tuned `C`.
 
 These files can be stacked (dataset + method + ablation override) by passing multiple `--config` arguments or via sweep `config_files`.
 
@@ -131,8 +131,8 @@ These files can be stacked (dataset + method + ablation override) by passing mul
 
 Sweeps combine datasets and methods into experiment suites:
 
-- `exp1_methods.yaml` - Exp1 regression sweep covering GRwHS, Group Horseshoe, regularized horseshoe, and convex penalties (group lasso, lasso, ridge).
-- `exp2_methods.yaml` - Exp2 logistic sweep with GRwHS/GH/RHS variants plus logistic (group) lasso/ridge.
+- `exp1_methods.yaml` - Exp1 regression sweep covering GRwHS, Group Horseshoe, regularized horseshoe, and convex penalties (Group Lasso, ridge).
+- `exp2_methods.yaml` - Exp2 logistic sweep with GRwHS/GH/RHS variants plus logistic Group Lasso (squared loss) and logistic ridge.
 - `exp3_real_methods.yaml` - Exp3 real-data sweep; same (GRwHS/GH/RHS + convex) roster as Exp2 but with your loader-backed dataset.
 - `exp4_ablation.yaml` - short sweep contrasting GRwHS vs regularized horseshoe (slab-only) on Exp1 data.
 - `exp4_group_misspec.yaml` - GRwHS vs Group Horseshoe when model-facing groups are randomly shuffled.
@@ -192,7 +192,7 @@ python -m grwhs.cli.run_sweep \
 
 - Set `task: classification` in the dataset descriptor and disable response centring (`standardization.y_center: false`).
 - Use the logistic method presets (`grwhs_logistic.yaml`, `group_horseshoe_logistic.yaml`, `regularized_horseshoe_logistic.yaml`).
-- Convex baselines (Group Lasso, logistic lasso/ridge) provide either squared-loss fits or native probabilities; the runner maps linear predictions through σ(x) whenever `predict_proba` is unavailable.
+- Convex baselines (Group Lasso, logistic ridge) provide either squared-loss fits or native probabilities; the runner maps linear predictions through σ(x) whenever `predict_proba` is unavailable.
 - Outer/inner splits automatically stratify unless explicitly disabled.
 
 ---

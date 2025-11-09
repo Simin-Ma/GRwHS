@@ -17,9 +17,6 @@ variations:
   - name: "group_lasso"
     config_files:
       - "../methods/group_lasso.yaml"
-  - name: "lasso"
-    config_files:
-      - "../methods/lasso.yaml"
   - name: "ridge"
     config_files:
       - "../methods/ridge.yaml"
