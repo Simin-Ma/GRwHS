@@ -9,7 +9,7 @@ ensure well-tested implementations of common metrics.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -307,6 +307,64 @@ def shrinkage_metrics(
         "EffectiveDoF": edf_val,
         "MeanEffectiveNonzeros": eff_nz_val,
     }
+
+
+def _proxy_effective_counts(
+    coef_draws: Optional[np.ndarray],
+    coef_point: Optional[np.ndarray],
+    group_index: Optional[np.ndarray],
+    *,
+    rel_threshold: float = 1e-2,
+    abs_threshold: float = 1e-6,
+) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Backstop heuristic for models without posterior shrinkage diagnostics.
+
+    Args:
+        coef_draws: optional posterior draws (S, p) or (p,)
+        coef_point: optional single vector (p,)
+        group_index: optional array mapping features -> group id
+        rel_threshold: relative threshold w.r.t. max |beta|
+        abs_threshold: absolute lower bound on threshold
+
+    Returns:
+        Tuple (effective_nonzeros, effective_dof) using magnitude thresholds.
+    """
+
+    source: Optional[np.ndarray] = None
+    if coef_draws is not None:
+        arr = np.asarray(coef_draws, dtype=float)
+        if arr.ndim == 1:
+            source = arr.reshape(-1)
+        elif arr.ndim >= 2:
+            source = np.mean(arr.reshape(arr.shape[0], -1), axis=0)
+    if source is None and coef_point is not None:
+        source = np.asarray(coef_point, dtype=float).reshape(-1)
+    if source is None:
+        return None, None
+
+    magnitudes = np.abs(source)
+    if magnitudes.size == 0:
+        return None, None
+    max_mag = float(np.max(magnitudes))
+    if max_mag <= 0.0:
+        return 0.0, 0.0
+
+    threshold = max(abs_threshold, rel_threshold * max_mag)
+    active_mask = magnitudes >= threshold
+    effective_nonzeros = float(np.sum(active_mask))
+
+    effective_dof = effective_nonzeros
+    if group_index is not None and group_index.shape[0] == active_mask.shape[0]:
+        unique_groups = np.unique(group_index)
+        group_activity = 0.0
+        for gid in unique_groups:
+            members = group_index == gid
+            if np.any(active_mask[members]):
+                group_activity += 1.0
+        effective_dof = group_activity
+
+    return effective_nonzeros, effective_dof
 
 
 @dataclass
@@ -630,6 +688,17 @@ def evaluate_model_metrics(
             mean_kappa = None
             edf_total = None
             mean_effective_nonzeros = None
+
+    if mean_effective_nonzeros is None or edf_total is None:
+        proxy_eff, proxy_edf = _proxy_effective_counts(
+            posterior.coef,
+            coef_hat,
+            group_index,
+        )
+        if mean_effective_nonzeros is None and proxy_eff is not None:
+            mean_effective_nonzeros = proxy_eff
+        if edf_total is None and proxy_edf is not None:
+            edf_total = proxy_edf
 
     metrics.update(shrinkage_metrics(mean_kappa, edf_total, mean_effective_nonzeros))
 
