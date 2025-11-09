@@ -104,11 +104,34 @@ def _summarize_outputs(run_dir: Path) -> List[dict]:
     return outputs
 
 
+def _collect_fold_convergence(run_dir: Path) -> List[dict]:
+    """Return per-fold convergence diagnostics with relative paths."""
+    records: List[dict] = []
+    repeat_dirs = sorted(p for p in run_dir.glob("repeat_*") if p.is_dir())
+    for repeat_dir in repeat_dirs:
+        fold_dirs = sorted(p for p in repeat_dir.glob("fold_*") if p.is_dir())
+        for fold_dir in fold_dirs:
+            diag_path = fold_dir / "convergence.json"
+            if not diag_path.exists():
+                continue
+            rel_path = diag_path.relative_to(run_dir)
+            records.append(
+                {
+                    "repeat": repeat_dir.name,
+                    "fold": fold_dir.name,
+                    "path": str(rel_path),
+                    "diagnostics": _load_json(diag_path),
+                }
+            )
+    return records
+
+
 def _summarize_run(run_dir: Path) -> dict:
     metrics = _load_json(run_dir / "metrics.json")
     meta = _load_json(run_dir / "dataset_meta.json")
     cfg_path = run_dir / "resolved_config.yaml"
     convergence = _load_json(run_dir / "convergence.json")
+    fold_convergence = _collect_fold_convergence(run_dir)
     resolved_config = _load_yaml(cfg_path)
 
     summary = {
@@ -126,6 +149,7 @@ def _summarize_run(run_dir: Path) -> dict:
         "dataset_meta": _to_json(meta) if meta else None,
         "resolved_config": _to_json(resolved_config) if resolved_config else None,
         "convergence": convergence or None,
+        "fold_convergence": fold_convergence or None,
         "outputs": _summarize_outputs(run_dir),
         "has_resolved_config": cfg_path.exists(),
     }

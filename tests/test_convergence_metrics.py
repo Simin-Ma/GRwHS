@@ -78,10 +78,14 @@ def test_run_experiment_outputs_convergence(tmp_path):
     run_experiment(config, tmp_path)
 
     posterior_path = tmp_path / "posterior_samples.npz"
-    convergence_path = tmp_path / "convergence.json"
     assert posterior_path.exists()
-    assert convergence_path.exists()
 
-    convergence = json.loads(convergence_path.read_text())
+    aggregate_convergence = tmp_path / "convergence.json"
+    assert not aggregate_convergence.exists()
+
+    fold_convergence_files = sorted(tmp_path.glob("repeat_*/fold_*/convergence.json"))
+    assert fold_convergence_files, "expected per-fold convergence diagnostics"
+
+    convergence = json.loads(fold_convergence_files[0].read_text())
     assert "beta" in convergence
     assert "rhat_max" in convergence["beta"]

@@ -657,7 +657,9 @@ def _summarise_posterior(arrays: Mapping[str, np.ndarray]) -> Optional["pd.DataF
     return pd.DataFrame.from_records(records)
 
 
-def _save_posterior_bundle(output_dir: Path, arrays: Mapping[str, np.ndarray]) -> Dict[str, Optional[str]]:
+def _save_posterior_bundle(
+    output_dir: Path, arrays: Mapping[str, np.ndarray], *, include_convergence: bool = True
+) -> Dict[str, Optional[str]]:
     """Persist posterior arrays and diagnostics if available."""
     output_dir.mkdir(parents=True, exist_ok=True)
     if not arrays:
@@ -666,9 +668,11 @@ def _save_posterior_bundle(output_dir: Path, arrays: Mapping[str, np.ndarray]) -
     posterior_path = output_dir / "posterior_samples.npz"
     np.savez_compressed(posterior_path, **{k: np.asarray(v) for k, v in arrays.items()})
 
-    convergence = summarize_convergence(arrays)
-    convergence_path = output_dir / "convergence.json"
-    convergence_path.write_text(json.dumps(_to_serializable(convergence), indent=2), encoding="utf-8")
+    convergence_path: Optional[Path] = None
+    if include_convergence:
+        convergence = summarize_convergence(arrays)
+        convergence_path = output_dir / "convergence.json"
+        convergence_path.write_text(json.dumps(_to_serializable(convergence), indent=2), encoding="utf-8")
 
     summary_path: Optional[Path] = None
     summary_df = _summarise_posterior(arrays)
@@ -683,7 +687,7 @@ def _save_posterior_bundle(output_dir: Path, arrays: Mapping[str, np.ndarray]) -
 
     return {
         "posterior": str(posterior_path),
-        "convergence": str(convergence_path),
+        "convergence": None if convergence_path is None else str(convergence_path),
         "summary": None if summary_path is None else str(summary_path),
     }
 
@@ -981,7 +985,7 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             if arrs and arrs[0].size > 0
         }
         if combined:
-            _save_posterior_bundle(output_path, combined)
+            _save_posterior_bundle(output_path, combined, include_convergence=False)
 
     summary_payload = {
         "status": "OK",

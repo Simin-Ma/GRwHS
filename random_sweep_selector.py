@@ -338,16 +338,38 @@ def _infer_repo_root(base_cfg_path: Path) -> Path:
     return base_cfg_path.parent
 
 
+def _collect_fold_diagnostics(run_dir: Path) -> List[Tuple[str, Dict[str, Any]]]:
+    """
+    Gather convergence diagnostics from every repeat/fold directory.
+
+    Returns a list of (label, diagnostics) pairs ordered by repeat/fold.
+    """
+    diagnostics: List[Tuple[str, Dict[str, Any]]] = []
+    repeat_dirs = sorted(p for p in run_dir.glob("repeat_*") if p.is_dir())
+    for repeat_dir in repeat_dirs:
+        fold_dirs = sorted(p for p in repeat_dir.glob("fold_*") if p.is_dir())
+        for fold_dir in fold_dirs:
+            diag_file = fold_dir / DIAG_FILENAME
+            if not diag_file.exists():
+                continue
+            with diag_file.open("r", encoding="utf-8") as handle:
+                diag = json.load(handle)
+            label = f"{repeat_dir.name}/{fold_dir.name}"
+            diagnostics.append((label, diag))
+    return diagnostics
+
+
 def run_once(
     overrides: Dict[str, Any],
     base_cfg_path: Path,
     work_root: Path,
     tag: str,
-) -> Tuple[Path, Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[Path, List[Tuple[str, Dict[str, Any]]], Dict[str, Any]]:
     """
     Execute one experiment with merged configuration.
 
-    Returns the run directory together with parsed diagnostics and metrics.
+    Returns the run directory together with parsed diagnostics (one entry per
+    fold or aggregate) and metrics.
     """
     configs_root = work_root / "configs"
     configs_root.mkdir(parents=True, exist_ok=True)
@@ -414,14 +436,23 @@ def run_once(
 
     diag_path = artifact_path / DIAG_FILENAME
     met_path = artifact_path / METRICS_FILENAME
-    if not diag_path.exists() or not met_path.exists():
+    if not met_path.exists():
         raise RuntimeError(
-            f"Expected outputs missing in {artifact_path}: {DIAG_FILENAME}, {METRICS_FILENAME}\n"
+            f"Expected outputs missing in {artifact_path}: {METRICS_FILENAME}\n"
             f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
         )
 
-    with diag_path.open("r", encoding="utf-8") as handle:
-        diagnostics = json.load(handle)
+    diagnostics = _collect_fold_diagnostics(artifact_path)
+    if not diagnostics and diag_path.exists():
+        with diag_path.open("r", encoding="utf-8") as handle:
+            diagnostics = [("aggregate", json.load(handle))]
+
+    if not diagnostics:
+        raise RuntimeError(
+            f"No convergence diagnostics found under {artifact_path} "
+            f"(looked for fold-level {DIAG_FILENAME})."
+        )
+
     with met_path.open("r", encoding="utf-8") as handle:
         metrics = json.load(handle)
 
@@ -533,7 +564,7 @@ def main() -> None:
             for cand_cfg, label in candidate_queue:
                 tag = f"trial{trial:03d}_chain{chain_idx+1}_{label}"
                 try:
-                    run_dir, diagnostics, metrics = run_once(
+                    run_dir, diag_records, metrics = run_once(
                         cand_cfg, base_cfg_path, work_root, tag
                     )
                 except Exception as exc:
@@ -541,17 +572,24 @@ def main() -> None:
                     print(f"  [Chain {chain_idx+1}] {last_reason}")
                     continue
 
-                ok, reason = check_convergence(diagnostics)
-                if ok:
+                diag_failure = ""
+                for diag_label, diag_payload in diag_records:
+                    ok, reason = check_convergence(diag_payload)
+                    if not ok:
+                        prefix = f"{diag_label} " if diag_label else ""
+                        diag_failure = f"{prefix}{reason}"
+                        break
+
+                if not diag_failure:
                     chain_ok = True
                     chain_dirs.append(str(run_dir))
                     chain_metrics.append(metrics)
                     print(f"  [Chain {chain_idx+1}] converged with {label} @ {run_dir}")
                     break
 
-                last_reason = reason
+                last_reason = diag_failure
                 print(
-                    f"  [Chain {chain_idx+1}] failed convergence ({reason}); trying escalation."
+                    f"  [Chain {chain_idx+1}] failed convergence ({diag_failure}); trying escalation."
                 )
 
             if not chain_ok:

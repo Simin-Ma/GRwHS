@@ -227,7 +227,7 @@ Each run directory (`outputs/runs/<name-timestamp>/`) contains:
 - `dataset_meta.json`: metadata (n, p, group mapping, splits, model, posterior info).
 - `metrics.json`: metrics (`mse`, `r2`, `tpr`, `fpr`, `auc`, etc.) serialized to JSON-friendly types.
 - `posterior_samples.npz`: posterior arrays (coefficients, tau, phi, lambda, sigma) if available.
-- `convergence.json`: split R-hat & ESS summary computed from posterior arrays.
+- `repeat_*/fold_*/convergence.json`: fold-level R-hat & ESS summaries computed from posterior arrays (no aggregate file).
 - `plots_check/`: generated plots (prediction scatter/histograms & posterior traces).
 - `resolved_config.yaml`: final merged configuration for reproducibility.
 
@@ -285,7 +285,7 @@ Integrate into scripts/notebooks to compare models across the four benchmark sui
 - `grwhs/diagnostics/postprocess.py`: shrinkage diagnostics (,  budgets, EDF) from posterior draws.
 - `grwhs/diagnostics/convergence.py`: `split_rhat`, `effective_sample_size`, `summarize_convergence` utilities.
 
-`convergence.json` example:
+Fold-level `convergence.json` example:
 ```json
 {
   "beta": {"rhat_max": 1.03, "rhat_median": 1.01, "ess_min": 150.4, "ess_median": 210.7},
@@ -353,7 +353,7 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 ### 9.2 Manual Validation Checklist
 1. Execute the Exp1–Exp4 sweeps (and any additional real datasets you configure).
 2. Inspect metrics via `metrics.json` and aggregated reports.
-3. Check `convergence.json` for acceptable R-hat/ESS.
+3. Check each `repeat_*/fold_*/convergence.json` for acceptable R-hat/ESS.
 4. Generate plots with `scripts/plot_check.py` and review posterior traces/histograms.
 5. Ensure `posterior_samples.npz` exists when `save_posterior=true`.
 

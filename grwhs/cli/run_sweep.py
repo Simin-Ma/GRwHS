@@ -7,6 +7,8 @@ import csv
 import json
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
+from threading import Lock
 import random
 from copy import deepcopy
 from datetime import datetime
@@ -26,6 +28,23 @@ from grwhs.cli.run_experiment import (
 )
 from grwhs.experiments.sweeps import build_override_tree, deep_update
 from grwhs.experiments.registry import get_model_name_from_config
+
+_NUMPYRO_MODEL_KEYS = {
+    "grwhs_gibbs",
+    "grwhs_gibbs_logistic",
+    "grwhs_svi",
+    "grwhs_svi_numpyro",
+    "horseshoe",
+    "horseshoe_regression",
+    "hs",
+    "regularized_horseshoe",
+    "regularised_horseshoe",
+    "rhs",
+    "group_horseshoe",
+    "group_hs",
+    "ghs",
+}
+_NUMPYRO_LOCK = Lock()
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -368,7 +387,12 @@ def main() -> None:
         try:
             resolved_cfg = _auto_inject_tau0(resolved_cfg)
             _save_resolved_config(resolved_cfg, run_dir)
-            metrics = _maybe_call_runner(resolved_cfg, run_dir)
+            needs_numpyro_lock = (
+                jobs > 1 and model_name_key is not None and model_name_key in _NUMPYRO_MODEL_KEYS
+            )
+            lock_ctx = _NUMPYRO_LOCK if needs_numpyro_lock else nullcontext()
+            with lock_ctx:
+                metrics = _maybe_call_runner(resolved_cfg, run_dir)
             with (run_dir / "metrics.json").open("w", encoding="utf-8") as fh:
                 json.dump(metrics, fh, indent=2, ensure_ascii=False)
             status = metrics.get("status", "OK") if isinstance(metrics, dict) else "OK"
