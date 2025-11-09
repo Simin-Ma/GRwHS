@@ -8,8 +8,15 @@ model:
   scale_intercept: 10.0
   scale_global: 1.0
   sigma_scale: 1.0
-  num_warmup: 750
-  num_samples: 750
+  tau:
+    mode: "calibrated"
+    target: "coefficients"
+    p0:
+      value: 30
+    sigma_reference: 1.0
+    sigma_classification: 2.0
+  num_warmup: 2000
+  num_samples: 2000
   num_chains: 1
   thinning: 1
   target_accept_prob: 0.9

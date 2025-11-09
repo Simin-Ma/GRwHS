@@ -4,16 +4,16 @@ name: "grwhs_regression"
 
 model:
   name: "grwhs_gibbs"
-  c: 2.0
-  eta: 0.6
+  c: 1.5
+  eta: 0.5
   s0: 3.0
   iters: 20000
   tau:
     mode: "calibrated"
-    df: 2.0
-    target: "groups"
+    target: "coefficients"
     p0:
-      grid: [5, 10, 20, 40]
+      value: 30
+    sigma_reference: 1.0
 
 inference:
   gibbs:

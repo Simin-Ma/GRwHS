@@ -155,7 +155,10 @@ def _infer_groups(cfg: Dict[str, Any]) -> Optional[list[list[int]]]:
 def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Extract shared kwargs for Horseshoe baselines."""
     scale_intercept = float(_get(cfg, "model.scale_intercept", 10.0))
+    tau0 = _get(cfg, "model.tau0", None)
     scale_global = float(_get(cfg, "model.scale_global", 1.0))
+    if tau0 is not None:
+        scale_global = float(tau0)
     nu_global = float(_get(cfg, "model.nu_global", 1.0))
     nu_local = float(_get(cfg, "model.nu_local", 1.0))
     sigma_scale = float(_get(cfg, "model.sigma_scale", 1.0))

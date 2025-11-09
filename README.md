@@ -215,9 +215,11 @@ Follow this checklist to reproduce the four-study suite:
    - `configs/sweeps/exp4_group_misspec.yaml`: compare GRwHS vs GH when 35% of features are randomly re-assigned between groups at training time.
 
 5. **Summaries**  
-   Use `python -m grwhs.cli.make_report --runs <glob>` to gather aggregated metrics; every run already stores fold-level JSON/NPZ artefacts plus posterior diagnostics.
+    Use `python -m grwhs.cli.make_report --runs <glob>` to gather aggregated metrics; every run already stores fold-level JSON/NPZ artefacts plus posterior diagnostics.
 
 Each run directory records fold-level metrics (`fold_*` subdirectories), resolved configuration, and full metadata so reports can cross-reference calibration statistics (`tau_summary.json`) or tuning diagnostics (`tuning_summary.json`).
+
+> Need a quick reference for the fairness contract (identical preprocessing, nested CV grids, τ heuristics, R-hat checks)? See `docs/fair_benchmark_protocol.md`.
 
 ## 5. Outputs & Artifacts
 
