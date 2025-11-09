@@ -11,9 +11,6 @@ variations:
   - name: "group_horseshoe"
     config_files:
       - "../methods/group_horseshoe.yaml"
-  - name: "horseshoe"
-    config_files:
-      - "../methods/horseshoe.yaml"
   - name: "regularized_horseshoe"
     config_files:
       - "../methods/regularized_horseshoe.yaml"

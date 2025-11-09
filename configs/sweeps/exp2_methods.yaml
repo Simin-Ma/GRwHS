@@ -11,9 +11,6 @@ variations:
   - name: "group_horseshoe_logistic"
     config_files:
       - "../methods/group_horseshoe_logistic.yaml"
-  - name: "horseshoe_logistic"
-    config_files:
-      - "../methods/horseshoe_logistic.yaml"
   - name: "regularized_horseshoe_logistic"
     config_files:
       - "../methods/regularized_horseshoe_logistic.yaml"

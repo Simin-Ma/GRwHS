@@ -120,7 +120,6 @@ Method presets collect model-specific hyperparameters and tuning instructions:
 
 - `grwhs_regression.yaml` / `grwhs_logistic.yaml` - Gibbs samplers with calibrated τ grids for regression and logistic tasks respectively.
 - `group_horseshoe.yaml` / `group_horseshoe_logistic.yaml` - NumPyro MCMC for the Xu et al. group horseshoe prior (regression/logistic).
-- `horseshoe.yaml` / `horseshoe_logistic.yaml` - standard horseshoe priors without the group layer.
 - `regularized_horseshoe.yaml` / `regularized_horseshoe_logistic.yaml` - Piironen & Vehtari slab-regularised variants.
 - `group_lasso.yaml` - skglm Group Lasso (quadratic loss) with |g|-scaled weights and an `alpha` grid for inner CV.
 - `lasso.yaml` / `ridge.yaml` - quadratic L1/L2 baselines with tuned penalties.
@@ -132,9 +131,9 @@ These files can be stacked (dataset + method + ablation override) by passing mul
 
 Sweeps combine datasets and methods into experiment suites:
 
-- `exp1_methods.yaml` - Exp1 regression sweep covering GRwHS, (Group) Horseshoe baselines, and convex penalties (group lasso, lasso, ridge).
-- `exp2_methods.yaml` - Exp2 logistic sweep with logistic variants of GRwHS/GH/HS/RHS plus logistic (group) lasso/ridge.
-- `exp3_real_methods.yaml` - Exp3 real-data sweep; same model roster as Exp2 but with your loader-backed dataset.
+- `exp1_methods.yaml` - Exp1 regression sweep covering GRwHS, Group Horseshoe, regularized horseshoe, and convex penalties (group lasso, lasso, ridge).
+- `exp2_methods.yaml` - Exp2 logistic sweep with GRwHS/GH/RHS variants plus logistic (group) lasso/ridge.
+- `exp3_real_methods.yaml` - Exp3 real-data sweep; same (GRwHS/GH/RHS + convex) roster as Exp2 but with your loader-backed dataset.
 - `exp4_ablation.yaml` - short sweep contrasting GRwHS vs regularized horseshoe (slab-only) on Exp1 data.
 - `exp4_group_misspec.yaml` - GRwHS vs Group Horseshoe when model-facing groups are randomly shuffled.
 
@@ -192,7 +191,7 @@ python -m grwhs.cli.run_sweep \
 ### 3.7 Classification-specific notes
 
 - Set `task: classification` in the dataset descriptor and disable response centring (`standardization.y_center: false`).
-- Use the logistic method presets (`grwhs_logistic.yaml`, `group_horseshoe_logistic.yaml`, etc.).
+- Use the logistic method presets (`grwhs_logistic.yaml`, `group_horseshoe_logistic.yaml`, `regularized_horseshoe_logistic.yaml`).
 - Convex baselines (Group Lasso, logistic lasso/ridge) provide either squared-loss fits or native probabilities; the runner maps linear predictions through σ(x) whenever `predict_proba` is unavailable.
 - Outer/inner splits automatically stratify unless explicitly disabled.
 
@@ -203,7 +202,7 @@ python -m grwhs.cli.run_sweep \
 Follow this checklist to reproduce the four-study suite:
 
 1. **Exp1 – Structured regression (groups + mixed signals)**  
-   Run `configs/sweeps/exp1_methods.yaml` to collect GRwHS vs GH/HS/RHS vs convex baselines on the prescribed synthetic scenario.
+   Run `configs/sweeps/exp1_methods.yaml` to collect GRwHS vs GH/RHS vs convex baselines on the prescribed synthetic scenario.
 
 2. **Exp2 – Near-separable logistic classification**  
    Launch `configs/sweeps/exp2_methods.yaml` to stress numerical stability (β-norms, divergences, AUC/log-loss) under extreme separation.
