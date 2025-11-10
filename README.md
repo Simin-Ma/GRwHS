@@ -1,6 +1,6 @@
 # GRwHS Experimentation Toolkit
 
-Comprehensive infrastructure for benchmarking generalized regularized horseshoe (GRwHS) models across four canonical suites: (1) synthetic group regression, (2) near-separable logistic classification, (3) real pathway-aware datasets, and (4) targeted robustness/ablation studies. The toolkit helps you generate data, train multiple model families, evaluate metrics, track posterior convergence, and produce reproducible reports and plots.
+Comprehensive infrastructure for benchmarking generalized regularized horseshoe (GRwHS) models across four canonical suites: (1) synthetic group regression, (2) matched high-dimensional logistic classification sharing the same group-sparse β, (3) real pathway-aware datasets, and (4) targeted robustness/ablation studies. The toolkit helps you generate data, train multiple model families, evaluate metrics, track posterior convergence, and produce reproducible reports and plots.
 
 ---
 
@@ -108,7 +108,7 @@ Every other configuration inherits from this foundation.
 Dataset files adjust only the `data` (and occasionally `standardization` or `splits`) section:
 
 - `exp1_group_regression.yaml` - synthetic linear regression with 25 contiguous groups (3 strong, 5 weak, remaining noise) and half-block correlation.
-- `exp2_logistic_near_separable.yaml` - synthetic logistic design with two almost-separable groups plus weak support groups, stressing stability under near separability.
+- `exp2_logistic_group_classification.yaml` - logistic classification using the *same* groups/β as Exp1, but observed through a calibrated sigmoid (balanced classes, overlapping logits).
 - `exp3_real_pathways.yaml` - template loader config for pathway/gene-set datasets; point the `loader` paths to your NumPy arrays and group map.
 - `exp4_ablation.yaml` - reuses Exp1 data to compare GRwHS vs RHS (removing the ridge-within-group component).
 - `exp4_group_misspec.yaml` - reuses Exp1 data but shuffles 35% of features across model-facing groups to probe robustness under mis-specified structure.
@@ -156,10 +156,10 @@ python -m grwhs.cli.run_experiment \
           configs/methods/group_lasso.yaml \
   --name exp1_group_lasso
 
-# GRwHS logistic on the near-separable classification task
+# GRwHS logistic on the shared-β classification task
 python -m grwhs.cli.run_experiment \
   --config configs/base.yaml \
-          configs/experiments/exp2_logistic_near_separable.yaml \
+          configs/experiments/exp2_logistic_group_classification.yaml \
           configs/methods/grwhs_logistic.yaml \
   --name exp2_grwhs_logistic
 ```
@@ -202,10 +202,10 @@ python -m grwhs.cli.run_sweep \
 Follow this checklist to reproduce the four-study suite:
 
 1. **Exp1 – Structured regression (groups + mixed signals)**  
-   Run `configs/sweeps/exp1_methods.yaml` to collect GRwHS vs GH/RHS vs convex baselines on the prescribed synthetic scenario.
+   Run configs/sweeps/exp1_methods.yaml to collect GRwHS vs GH/RHS vs convex baselines on the prescribed synthetic scenario.
 
-2. **Exp2 – Near-separable logistic classification**  
-   Launch `configs/sweeps/exp2_methods.yaml` to stress numerical stability (β-norms, divergences, AUC/log-loss) under extreme separation.
+2. **Exp2 – Shared-β logistic classification**  
+   Launch configs/sweeps/exp2_methods.yaml to evaluate the same group-sparse truth under a calibrated sigmoid (balanced yet overlapping classes) and compare methods on AUC/log-loss/calibration.
 
 3. **Exp3 – Real pathway/gene-set data**  
    Fill `configs/experiments/exp3_real_pathways.yaml` with actual `path_X`, `path_y`, and `path_group_map` files, then run the `exp3_real_methods.yaml` sweep (or single runs) to benchmark on real structure-aware tasks.
@@ -396,7 +396,7 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 |------|---------|
 | Install deps | `pip install -e .[dev]` |
 | Run Exp1 regression (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp1_group_regression.yaml configs/methods/grwhs_regression.yaml --name exp1_grwhs` |
-| Run Exp2 logistic (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp2_logistic_near_separable.yaml configs/methods/grwhs_logistic.yaml --name exp2_grwhs_logistic` |
+| Run Exp2 logistic (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp2_logistic_group_classification.yaml configs/methods/grwhs_logistic.yaml --name exp2_grwhs_logistic` |
 | Run Exp3 real dataset | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp3_real_pathways.yaml configs/methods/grwhs_logistic.yaml --name exp3_grwhs_real` |
 | Generate plots | `python scripts/plot_check.py <run_dir>` |
 | Summarize runs | `python -m grwhs.cli.make_report --run <run_dir> [--run <run_dir>]` |

@@ -2,7 +2,7 @@ name: "exp2_logistic_methods"
 output_dir: "outputs/sweeps/exp2_logistic"
 
 common_config_files:
-  - "../experiments/exp2_logistic_near_separable.yaml"
+  - "../experiments/exp2_logistic_group_classification.yaml"
 
 variations:
   - name: "grwhs_logistic"
