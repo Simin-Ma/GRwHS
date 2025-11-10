@@ -1,5 +1,3 @@
-defaults: "../base.yaml"
-
 name: "grwhs_logistic"
 task: "classification"
 

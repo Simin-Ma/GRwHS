@@ -1,5 +1,3 @@
-defaults: "../base.yaml"
-
 name: "group_horseshoe_regression"
 
 model:

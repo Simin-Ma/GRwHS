@@ -1,5 +1,3 @@
-defaults: "../base.yaml"
-
 name: "grwhs_regression"
 
 model:

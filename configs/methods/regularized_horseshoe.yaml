@@ -1,5 +1,3 @@
-defaults: "../base.yaml"
-
 name: "regularized_horseshoe_regression"
 
 model:

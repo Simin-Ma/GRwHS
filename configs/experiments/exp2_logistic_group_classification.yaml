@@ -3,6 +3,9 @@ defaults: "../base.yaml"
 name: "exp2_logistic_group_classification"
 task: "classification"
 
+standardization:
+  y_center: false
+
 data:
   type: "synthetic"
   seed: 20251108

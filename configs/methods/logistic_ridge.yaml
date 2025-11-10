@@ -1,5 +1,3 @@
-defaults: "../base.yaml"
-
 name: "logistic_ridge"
 task: "classification"
 
