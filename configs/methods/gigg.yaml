@@ -2,7 +2,7 @@ name: "gigg"
 
 model:
   name: "gigg"
-  iters: 8000
+  iters: 10000
   b_init: 1.0
   b_floor: 0.25
   tau_scale: 1.0
@@ -11,7 +11,7 @@ model:
 
 inference:
   gibbs:
-    burn_in: 4000
+    burn_in: 5000
     thin: 1
     jitter: 1.0e-08
     seed: 2025

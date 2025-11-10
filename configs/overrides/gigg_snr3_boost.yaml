@@ -1,10 +1,10 @@
 model:
-  iters: 60000
-  tau_scale: 0.6
-  b_floor: 0.8
-  b_max: 1.2
+  iters: 10000
+  tau_scale: 0.8
+  b_floor: 0.3
+  b_max: 1.5
   share_group_hyper: false
 inference:
   gibbs:
-    burn_in: 30000
-    thin: 3
+    burn_in: 5000
+    thin: 1
