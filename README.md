@@ -123,7 +123,7 @@ Method presets collect model-specific hyperparameters and tuning instructions:
 - `sparse_group_lasso.yaml` – skglm SGL with log-spaced α grid × {0.2,0.5,0.8} ℓ₁ ratios.
 - `lasso.yaml` – classic L1 path using auto-computed λ_max → 10⁻³ λ_max.
 - `ridge.yaml` – eight-point L2 grid spanning 1e-4…1e3.
-- `group_lasso.yaml` / `group_horseshoe.yaml` – still available for auxiliary ablations.
+- `group_lasso.yaml` / `group_horseshoe.yaml` – still available for auxiliary ablations; the horseshoe presets now reuse the same Gibbs kernel as GRwHS (with `use_groups=true/false`) so numerical behavior is aligned.
 
 *(Retired)* Logistic presets (`*_logistic.yaml`) remain in git history if binary tasks return later.
 

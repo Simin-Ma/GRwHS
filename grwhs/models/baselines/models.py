@@ -11,6 +11,7 @@ import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 from sklearn.linear_model import LogisticRegression as _SklearnLogisticRegression
+from grwhs.models.grwhs_gibbs import GRwHS_Gibbs
 
 try:
     from skglm import GroupLasso as _SkglmGroupLasso
@@ -605,11 +606,21 @@ class _BaseHorseshoeRegression:
         lambda_tilde_sq = (c2 * lam2) / denom
         return jnp.sqrt(lambda_tilde_sq)
 
-    def fit(self, X: ArrayLike, y: ArrayLike) -> "_BaseHorseshoeRegression":
+    def fit(
+        self,
+        X: ArrayLike,
+        y: ArrayLike,
+        *,
+        groups: Optional[list[list[int]]] = None,
+    ) -> "_BaseHorseshoeRegression":
         X_arr = _ensure_2d(X, "X")
         y_arr = _ensure_1d(y, "y")
         if X_arr.shape[0] != y_arr.shape[0]:
             raise ValueError("X and y must have matching number of rows.")
+
+        if self.likelihood == "gaussian":
+            self._fit_with_gibbs(X_arr, y_arr, groups=groups)
+            return self
 
         rng_seed = 0 if self.seed is None else int(self.seed)
         self._rng_key = random.PRNGKey(rng_seed)
@@ -630,6 +641,55 @@ class _BaseHorseshoeRegression:
         samples = mcmc.get_samples(group_by_chain=False)
         self._store_samples(samples)
         return self
+
+    def _fit_with_gibbs(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        groups: Optional[list[list[int]]] = None,
+    ) -> None:
+        use_groups = isinstance(self, GroupHorseshoeRegression)
+        if use_groups:
+            group_scale = float(getattr(self, "group_scale", 1.0))
+            if groups is None:
+                raise ValueError("GroupHorseshoeRegression requires 'groups'.")
+            gibbs_groups = groups
+        else:
+            group_scale = 1.0
+            gibbs_groups = None
+
+        total_iters = int(self.num_warmup + self.num_samples)
+        sampler = GRwHS_Gibbs(
+            c=float(self.slab_scale if self.slab_scale is not None else 1.0),
+            tau0=float(self.scale_global),
+            eta=group_scale,
+            s0=float(self.sigma_scale),
+            iters=total_iters,
+            burnin=int(self.num_warmup),
+            thin=int(self.thinning),
+            seed=0 if self.seed is None else int(self.seed),
+            use_groups=use_groups,
+        )
+        fitted = sampler.fit(X, y, groups=gibbs_groups)
+
+        self.coef_samples_ = None if fitted.coef_samples_ is None else fitted.coef_samples_.copy()
+        if self.coef_samples_ is None:
+            raise RuntimeError("Gibbs sampler did not return coefficient draws.")
+        self.coef_ = fitted.coef_mean_.copy() if fitted.coef_mean_ is not None else self.coef_samples_.mean(axis=0)
+        self.intercept_ = float(fitted.intercept_)
+
+        if fitted.sigma2_samples_ is not None:
+            self.sigma_samples_ = np.sqrt(np.maximum(fitted.sigma2_samples_, 0.0))
+        else:
+            self.sigma_samples_ = None
+        self.tau_samples_ = None if fitted.tau_samples_ is None else fitted.tau_samples_.copy()
+        self.lambda_samples_ = None if fitted.lambda_samples_ is None else fitted.lambda_samples_.copy()
+        if use_groups and fitted.phi_samples_ is not None:
+            self.lambda_group_samples_ = fitted.phi_samples_.copy()
+        else:
+            self.lambda_group_samples_ = None
+        self.intercept_samples_ = None
 
     def _store_samples(self, samples: Dict[str, jnp.ndarray]) -> None:
         def _convert(name: str) -> Optional[np.ndarray]:
@@ -739,7 +799,7 @@ class GroupHorseshoeRegression(_BaseHorseshoeRegression):
         self.group_ids_ = group_ids
         self.group_sizes_ = np.array([len(block) for block in normalized], dtype=int)
         self._group_index = jnp.asarray(group_ids, dtype=jnp.int32)
-        return super().fit(X_arr, y_arr)
+        return super().fit(X_arr, y_arr, groups=normalized)
 
     @staticmethod
     def _prepare_groups(
