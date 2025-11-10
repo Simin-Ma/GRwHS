@@ -44,6 +44,44 @@ def _normalise_groups(groups: Sequence[Sequence[int]], p: int) -> List[List[int]
     return normalised
 
 
+def _slice_sample_1d(
+    logpdf,
+    x0: float,
+    rng: Generator,
+    *,
+    w: float = 0.5,
+    m: int = 100,
+    max_steps: int = 500,
+) -> float:
+    """Univariate slice sampler (Neal, 2003) used for log-scale updates."""
+
+    logy = logpdf(x0) - rng.exponential(1.0)
+    u = rng.uniform(0.0, 1.0)
+    L = x0 - u * w
+    R = L + w
+    j = int(rng.integers(0, m))
+    k = m - 1 - j
+
+    while j > 0 and logpdf(L) > logy:
+        L -= w
+        j -= 1
+    while k > 0 and logpdf(R) > logy:
+        R += w
+        k -= 1
+
+    step = 0
+    while step < max_steps:
+        x1 = rng.uniform(L, R)
+        if logpdf(x1) >= logy:
+            return x1
+        if x1 < x0:
+            L = x1
+        else:
+            R = x1
+        step += 1
+    return x0
+
+
 @dataclass
 class GIGGRegression:
     """GIGG Gibbs sampler following Boss et al. (2021)."""
@@ -144,11 +182,17 @@ class GIGGRegression:
                 )[0]
                 gamma_sq[gid] = max(theta, self.jitter)
 
-            # ---- τ^2 | β, λ, γ
+            # ---- τ^2 | β, λ, γ  (log-space slice sampling for stability)
             beta_quad = np.sum(beta ** 2 / np.maximum(gamma_sq[group_id] * lambda_sq, self.jitter))
-            shape_tau = 0.5 * (p + 1)
-            scale_tau = 0.5 * beta_quad + 1.0 / max(xi_tau, self.jitter)
-            tau_sq = invgamma.rvs(a=shape_tau, scale=scale_tau, random_state=rng)
+            alpha_tau = 0.5 * (p + 1)
+            beta_tau = 0.5 * beta_quad + 1.0 / max(xi_tau, self.jitter)
+
+            def _logp_tau(v: float) -> float:
+                return -alpha_tau * v - beta_tau * math.exp(-v)
+
+            log_tau = math.log(max(tau_sq, self.jitter))
+            log_tau_new = _slice_sample_1d(_logp_tau, log_tau, rng, w=0.5, m=100, max_steps=500)
+            tau_sq = math.exp(log_tau_new)
             xi_tau = invgamma.rvs(a=1.0, scale=1.0 + 1.0 / max(tau_sq, self.jitter), random_state=rng)
 
             # ---- σ^2 | β
@@ -170,7 +214,7 @@ class GIGGRegression:
                     b_update = _digamma_inv(target)
                 except Exception:
                     b_update = b_vec[gid]
-                b_vec[gid] = max(float(b_update), self.b_floor)
+                b_vec[gid] = min(max(float(b_update), self.b_floor), 2.0)
 
             if it >= self.burnin and ((it - self.burnin) % max(self.thin, 1) == 0):
                 coef_draws[keep_idx] = beta
@@ -195,4 +239,3 @@ class GIGGRegression:
             raise RuntimeError("Model must be fitted before calling predict().")
         X_arr = np.asarray(X, dtype=float)
         return X_arr @ self.coef_mean_ + self.intercept_
-

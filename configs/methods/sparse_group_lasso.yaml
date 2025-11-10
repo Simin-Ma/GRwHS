@@ -7,7 +7,7 @@ model:
   max_epochs: 100000
   tol: 1.0e-06
   warm_start: true
-  ws_strategy: "subdiff"
+  ws_strategy: "fixpoint"
   search:
     alpha:
       mode: "logspace"
