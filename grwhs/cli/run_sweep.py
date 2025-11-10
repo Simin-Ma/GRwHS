@@ -6,9 +6,7 @@ import argparse
 import csv
 import json
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import nullcontext
-from threading import Lock
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import random
 from copy import deepcopy
 from datetime import datetime
@@ -28,24 +26,6 @@ from grwhs.cli.run_experiment import (
 )
 from grwhs.experiments.sweeps import build_override_tree, deep_update
 from grwhs.experiments.registry import get_model_name_from_config
-
-_NUMPYRO_MODEL_KEYS = {
-    "grwhs_gibbs",
-    "grwhs_gibbs_logistic",
-    "grwhs_svi",
-    "grwhs_svi_numpyro",
-    "horseshoe",
-    "horseshoe_regression",
-    "hs",
-    "regularized_horseshoe",
-    "regularised_horseshoe",
-    "rhs",
-    "group_horseshoe",
-    "group_hs",
-    "ghs",
-}
-_NUMPYRO_LOCK = Lock()
-
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -72,6 +52,59 @@ def _merge_config_files(base: Dict[str, Any], files: Iterable[Path]) -> Dict[str
         part = _load_and_merge_configs([cfg_path])
         deep_update(cfg, part)
     return cfg
+
+
+def _execute_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    name = payload["name"]
+    run_dir = Path(payload["run_dir"])
+    idx = payload["index"]
+    resolved_cfg = payload["config"]
+    dry_run = bool(payload.get("dry_run", False))
+
+    try:
+        resolved_model_name = get_model_name_from_config(resolved_cfg)
+        model_name_key = resolved_model_name.lower()
+    except Exception:
+        resolved_model_name = None
+        model_name_key = None
+
+    if model_name_key is not None and model_name_key != "grwhs_gibbs":
+        resolved_cfg.setdefault("experiments", {})["repeats"] = 1
+
+    record: Dict[str, Any] = {
+        "name": name,
+        "run_dir": str(run_dir),
+        "index": idx,
+        "model": resolved_model_name,
+    }
+
+    if dry_run:
+        print(f"[DRY-RUN] Would run variation '{name}' -> {run_dir}")
+        record["status"] = "DRY_RUN"
+        return record
+
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        resolved_cfg = _auto_inject_tau0(resolved_cfg)
+        _save_resolved_config(resolved_cfg, run_dir)
+        metrics = _maybe_call_runner(resolved_cfg, run_dir)
+        with (run_dir / "metrics.json").open("w", encoding="utf-8") as fh:
+            json.dump(metrics, fh, indent=2, ensure_ascii=False)
+        status = metrics.get("status", "OK") if isinstance(metrics, dict) else "OK"
+        record.update({
+            "status": status,
+            "metrics": metrics,
+            "config_path": str(run_dir / "resolved_config.yaml"),
+        })
+        print(f"[SWEEP] Completed '{name}' -> {run_dir}")
+    except Exception as exc:  # pragma: no cover - safety net
+        record.update({
+            "status": "ERROR",
+            "error": str(exc),
+        })
+        print(f"[SWEEP] ERROR while running '{name}': {exc}")
+        traceback.print_exc()
+    return record
 
 
 def _coerce_seed(value: Any) -> int | None:
@@ -351,72 +384,17 @@ def main() -> None:
         tasks.append({
             "index": idx,
             "name": name,
-            "run_dir": run_dir,
+            "run_dir": str(run_dir),
             "config": resolved_cfg,
             "dry_run": bool(args.dry_run),
         })
 
-    def _execute(payload: Dict[str, Any]) -> Dict[str, Any]:
-        name = payload["name"]
-        run_dir: Path = payload["run_dir"]
-        idx = payload["index"]
-        resolved_cfg = payload["config"]
-        dry_run = payload["dry_run"]
-
-        try:
-            resolved_model_name = get_model_name_from_config(resolved_cfg)
-            model_name_key = resolved_model_name.lower()
-        except Exception:
-            resolved_model_name = None
-            model_name_key = None
-        if model_name_key is not None and model_name_key != "grwhs_gibbs":
-            resolved_cfg.setdefault("experiments", {})["repeats"] = 1
-
-        record: Dict[str, Any] = {
-            "name": name,
-            "run_dir": str(run_dir),
-            "index": idx,
-            "model": resolved_model_name,
-        }
-
-        if dry_run:
-            print(f"[DRY-RUN] Would run variation '{name}' -> {run_dir}")
-            record["status"] = "DRY_RUN"
-            return record
-
-        try:
-            resolved_cfg = _auto_inject_tau0(resolved_cfg)
-            _save_resolved_config(resolved_cfg, run_dir)
-            needs_numpyro_lock = (
-                jobs > 1 and model_name_key is not None and model_name_key in _NUMPYRO_MODEL_KEYS
-            )
-            lock_ctx = _NUMPYRO_LOCK if needs_numpyro_lock else nullcontext()
-            with lock_ctx:
-                metrics = _maybe_call_runner(resolved_cfg, run_dir)
-            with (run_dir / "metrics.json").open("w", encoding="utf-8") as fh:
-                json.dump(metrics, fh, indent=2, ensure_ascii=False)
-            status = metrics.get("status", "OK") if isinstance(metrics, dict) else "OK"
-            record.update({
-                "status": status,
-                "metrics": metrics,
-                "config_path": str(run_dir / "resolved_config.yaml"),
-            })
-            print(f"[SWEEP] Completed '{name}' -> {run_dir}")
-        except Exception as exc:  # pragma: no cover - safety net
-            record.update({
-                "status": "ERROR",
-                "error": str(exc),
-            })
-            print(f"[SWEEP] ERROR while running '{name}': {exc}")
-            traceback.print_exc()
-        return record
-
     if jobs == 1 or not tasks:
         for payload in tasks:
-            summary.append(_execute(payload))
+            summary.append(_execute_task(payload))
     else:
-        with ThreadPoolExecutor(max_workers=jobs) as executor:
-            futures = {executor.submit(_execute, payload): payload for payload in tasks}
+        with ProcessPoolExecutor(max_workers=jobs) as executor:
+            futures = {executor.submit(_execute_task, payload): payload for payload in tasks}
             for future in as_completed(futures):
                 summary.append(future.result())
 
