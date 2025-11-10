@@ -1,6 +1,6 @@
 # GRwHS Experimentation Toolkit
 
-Comprehensive infrastructure for benchmarking generalized regularized horseshoe (GRwHS) models across four canonical suites: (1) synthetic group regression, (2) matched high-dimensional logistic classification sharing the same group-sparse β, (3) real pathway-aware datasets, and (4) targeted robustness/ablation studies. The toolkit helps you generate data, train multiple model families, evaluate metrics, track posterior convergence, and produce reproducible reports and plots.
+Comprehensive infrastructure for benchmarking generalized regularized horseshoe (GRwHS) models across synthetic group regression benchmarks, real pathway-aware regression-style datasets, and targeted robustness/ablation studies. The toolkit helps you generate data, train multiple model families, evaluate metrics, track posterior convergence, and produce reproducible reports and plots.
 
 ---
 
@@ -108,22 +108,21 @@ Every other configuration inherits from this foundation.
 Dataset files adjust only the `data` (and occasionally `standardization` or `splits`) section:
 
 - `exp1_group_regression.yaml` - synthetic linear regression with 25 contiguous groups (3 strong, 5 weak, remaining noise) and half-block correlation.
-- `exp2_logistic_group_classification.yaml` - logistic classification using the *same* groups/β as Exp1, but observed through a calibrated sigmoid (balanced classes, overlapping logits).
-- `exp3_real_pathways.yaml` - template loader config for pathway/gene-set datasets; point the `loader` paths to your NumPy arrays and group map.
 - `exp4_ablation.yaml` - reuses Exp1 data to compare GRwHS vs RHS (removing the ridge-within-group component).
 - `exp4_group_misspec.yaml` - reuses Exp1 data but shuffles 35% of features across model-facing groups to probe robustness under mis-specified structure.
 - `real_*_template.yaml` - placeholders for plugging in actual loaders (`path_X`, `path_y`, `path_group_map`).
+- *(Retired)* The former Exp2/Exp3 logistic configs have been removed so the public repo ships regression-only experiments; recover them from history if you ever need classification again.
 
 ### 3.3 Method presets (`configs/methods/*.yaml`)
 
 Method presets collect model-specific hyperparameters and tuning instructions:
 
-- `grwhs_regression.yaml` / `grwhs_logistic.yaml` - Gibbs samplers with calibrated τ grids for regression and logistic tasks respectively.
-- `group_horseshoe.yaml` / `group_horseshoe_logistic.yaml` - NumPyro MCMC for the Xu et al. group horseshoe prior (regression/logistic).
-- `regularized_horseshoe.yaml` / `regularized_horseshoe_logistic.yaml` - Piironen & Vehtari slab-regularised variants.
+- `grwhs_regression.yaml` - Gibbs sampler with calibrated τ grids for regression.
+- `group_horseshoe.yaml` - NumPyro MCMC for the Xu et al. group horseshoe prior (regression).
+- `regularized_horseshoe.yaml` - Piironen & Vehtari slab-regularised variant.
 - `group_lasso.yaml` - skglm Group Lasso (quadratic loss) with |g|-scaled weights and an `alpha` grid for inner CV.
 - `ridge.yaml` - quadratic L2 baseline with tuned penalties.
-- `logistic_ridge.yaml` - `sklearn.linear_model.LogisticRegression` (L2 penalty) wrapper with tuned `C`.
+- *(Retired)* Logistic presets (`grwhs_logistic.yaml`, `group_horseshoe_logistic.yaml`, `regularized_horseshoe_logistic.yaml`, `logistic_ridge.yaml`) were removed alongside the classification configs.
 
 These files can be stacked (dataset + method + ablation override) by passing multiple `--config` arguments or via sweep `config_files`.
 
@@ -132,10 +131,9 @@ These files can be stacked (dataset + method + ablation override) by passing mul
 Sweeps combine datasets and methods into experiment suites:
 
 - `exp1_methods.yaml` - Exp1 regression sweep covering GRwHS, Group Horseshoe, regularized horseshoe, and convex penalties (Group Lasso, ridge).
-- `exp2_methods.yaml` - Exp2 logistic sweep with GRwHS/GH/RHS variants plus logistic Group Lasso (squared loss) and logistic ridge.
-- `exp3_real_methods.yaml` - Exp3 real-data sweep; same (GRwHS/GH/RHS + convex) roster as Exp2 but with your loader-backed dataset.
 - `exp4_ablation.yaml` - short sweep contrasting GRwHS vs regularized horseshoe (slab-only) on Exp1 data.
 - `exp4_group_misspec.yaml` - GRwHS vs Group Horseshoe when model-facing groups are randomly shuffled.
+- *(Retired)* Logistic sweeps (`exp2_methods.yaml`, `exp3_real_methods.yaml`) have been deleted now that only regression runs are supported.
 
 Each variation may specify extra overrides (e.g. seeds, priors) or add method files via `config_files`.
 
@@ -156,12 +154,6 @@ python -m grwhs.cli.run_experiment \
           configs/methods/group_lasso.yaml \
   --name exp1_group_lasso
 
-# GRwHS logistic on the shared-β classification task
-python -m grwhs.cli.run_experiment \
-  --config configs/base.yaml \
-          configs/experiments/exp2_logistic_group_classification.yaml \
-          configs/methods/grwhs_logistic.yaml \
-  --name exp2_grwhs_logistic
 ```
 
 ### 3.6 Launching a sweep
@@ -173,12 +165,6 @@ python -m grwhs.cli.run_sweep \
   --sweep-config configs/sweeps/exp1_methods.yaml \
   --jobs 4
 
-# Exp2: logistic stability comparison
-python -m grwhs.cli.run_sweep \
-  --base-config configs/base.yaml \
-  --sweep-config configs/sweeps/exp2_methods.yaml \
-  --jobs 4
-
 # Exp4b: robustness to misspecified groups
 python -m grwhs.cli.run_sweep \
   --base-config configs/base.yaml \
@@ -188,34 +174,21 @@ python -m grwhs.cli.run_sweep \
 
 `run_sweep` merges `base.yaml`, all `common_config_files`, then each variation's `config_files` and `overrides`. Fully resolved configs are written to `<outdir>/.../resolved_config.yaml`.
 
-### 3.7 Classification-specific notes
-
-- Set `task: classification` in the dataset descriptor and disable response centring (`standardization.y_center: false`).
-- Use the logistic method presets (`grwhs_logistic.yaml`, `group_horseshoe_logistic.yaml`, `regularized_horseshoe_logistic.yaml`).
-- Convex baselines (Group Lasso, logistic ridge) provide either squared-loss fits or native probabilities; the runner maps linear predictions through σ(x) whenever `predict_proba` is unavailable.
-- Outer/inner splits automatically stratify unless explicitly disabled.
-
 ---
 
 ## 4. Benchmark Workflow
 
-Follow this checklist to reproduce the four-study suite:
+Follow this checklist to reproduce the regression-only suite:
 
-1. **Exp1 – Structured regression (groups + mixed signals)**  
-   Run configs/sweeps/exp1_methods.yaml to collect GRwHS vs GH/RHS vs convex baselines on the prescribed synthetic scenario.
+1. **Exp1 - Structured regression (groups + mixed signals)**  
+   Run `configs/sweeps/exp1_methods.yaml` to collect GRwHS vs GH/RHS vs convex baselines on the prescribed synthetic scenario.
 
-2. **Exp2 – Shared-β logistic classification**  
-   Launch configs/sweeps/exp2_methods.yaml to evaluate the same group-sparse truth under a calibrated sigmoid (balanced yet overlapping classes) and compare methods on AUC/log-loss/calibration.
-
-3. **Exp3 – Real pathway/gene-set data**  
-   Fill `configs/experiments/exp3_real_pathways.yaml` with actual `path_X`, `path_y`, and `path_group_map` files, then run the `exp3_real_methods.yaml` sweep (or single runs) to benchmark on real structure-aware tasks.
-
-4. **Exp4 – Robustness & ablation**  
+2. **Exp4 - Robustness & ablation**  
    - `configs/sweeps/exp4_ablation.yaml`: demonstrate the effect of removing the group-level ridge (GRwHS vs RHS).  
    - `configs/sweeps/exp4_group_misspec.yaml`: compare GRwHS vs GH when 35% of features are randomly re-assigned between groups at training time.
 
-5. **Summaries**  
-    Use `python -m grwhs.cli.make_report --runs <glob>` to gather aggregated metrics; every run already stores fold-level JSON/NPZ artefacts plus posterior diagnostics.
+3. **Summaries**  
+   Use `python -m grwhs.cli.make_report --runs <glob>` to gather aggregated metrics; every run already stores fold-level JSON/NPZ artefacts plus posterior diagnostics.
 
 Each run directory records fold-level metrics (`fold_*` subdirectories), resolved configuration, and full metadata so reports can cross-reference calibration statistics (`tau_summary.json`) or tuning diagnostics (`tuning_summary.json`).
 
@@ -261,7 +234,7 @@ Summarize one or more runs into JSON:
 ```bash
 python -m grwhs.cli.make_report \
   --run outputs/runs/exp1_grwhs-<timestamp> \
-  --run outputs/runs/exp2_grwhs_logistic-<timestamp>
+  --run outputs/runs/exp4_ablation-<timestamp>
 ```
 Creates per-run summaries and a consolidated `summary_index.json` in `outputs/reports/`. Each summary contains metrics, dataset stats, posterior metadata, and convergence results.
 
@@ -396,8 +369,8 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 |------|---------|
 | Install deps | `pip install -e .[dev]` |
 | Run Exp1 regression (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp1_group_regression.yaml configs/methods/grwhs_regression.yaml --name exp1_grwhs` |
-| Run Exp2 logistic (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp2_logistic_group_classification.yaml configs/methods/grwhs_logistic.yaml --name exp2_grwhs_logistic` |
-| Run Exp3 real dataset | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp3_real_pathways.yaml configs/methods/grwhs_logistic.yaml --name exp3_grwhs_real` |
+| Run Exp4 ablation sweep | `python -m grwhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/exp4_ablation.yaml --jobs 2` |
+| Run Exp4 misspec sweep | `python -m grwhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/exp4_group_misspec.yaml --jobs 2` |
 | Generate plots | `python scripts/plot_check.py <run_dir>` |
 | Summarize runs | `python -m grwhs.cli.make_report --run <run_dir> [--run <run_dir>]` |
 | Run tests | `python -m pytest` |
@@ -412,7 +385,7 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 - Add targeted tests for new models/diagnostics.
 - Use issues/PRs to coordinate new features or bug fixes.
 
-By following the steps above you can benchmark all supported models across the four benchmark suites, targeted ablations, and any real datasets you plug in, inspecting metrics, posterior behavior, and convergence diagnostics end-to-end.
+By following the steps above you can benchmark all supported models across the regression suites, targeted ablations, and any real datasets you plug in, inspecting metrics, posterior behavior, and convergence diagnostics end-to-end.
 
 
 
