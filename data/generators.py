@@ -34,6 +34,7 @@ class SyntheticConfig:
     correlation: Mapping[str, object] = field(default_factory=dict)
     signal: Mapping[str, object] = field(default_factory=dict)
     noise_sigma: float = 1.0
+    snr: Optional[float] = None
     task: str = "regression"
     response: Mapping[str, object] = field(default_factory=dict)
     seed: Optional[int] = None
@@ -370,6 +371,22 @@ def _blueprint_draw_values(
         scale = float(component.get("scale", component.get("std", 1.0)))
         scale = max(scale, 1e-12)
         base = np.abs(rng.normal(mean, scale, size=count))
+    elif distribution in {"choices", "choice", "set", "discrete"}:
+        values = component.get("values", component.get("choices"))
+        if not values:
+            raise GeneratorError("distribution 'choices' requires a non-empty 'values' sequence.")
+        clean = [abs(float(v)) for v in values]
+        probs = component.get("probabilities") or component.get("weights")
+        if probs is not None:
+            weights = np.asarray(probs, dtype=float)
+            if weights.shape[0] != len(clean):
+                raise GeneratorError("probabilities/weights must align with 'values'.")
+            weights = np.maximum(weights, 0.0)
+            if not np.any(weights):
+                weights = None
+        else:
+            weights = None
+        base = rng.choice(clean, size=count, replace=True, p=None if weights is None else (weights / np.sum(weights)))
     else:
         raise GeneratorError(f"Unsupported blueprint distribution '{distribution}'.")
 
@@ -543,6 +560,15 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
 
     linear = X @ beta
 
+    effective_noise_sigma = float(config.noise_sigma)
+    target_snr = config.snr
+    if target_snr is not None and target_snr > 0.0:
+        signal_var = float(np.var(linear, ddof=0))
+        if signal_var <= 0.0:
+            signal_var = max(float(np.mean(beta ** 2)), 1e-8)
+        sigma_sq = signal_var / max(float(target_snr), 1e-8)
+        effective_noise_sigma = math.sqrt(max(sigma_sq, 1e-12))
+
     response_cfg = dict(config.response) if config.response else {}
     response_type = str(response_cfg.get("type", config.task)).lower()
 
@@ -563,10 +589,10 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
         y = local_rng.binomial(1, probs).astype(np.float32, copy=False)
         effective_noise_sigma = 0.0
     else:
-        noise = local_rng.normal(0.0, float(config.noise_sigma), size=config.n)
+        noise = local_rng.normal(0.0, effective_noise_sigma, size=config.n)
         y = linear + noise
         probs = None
-        effective_noise_sigma = float(config.noise_sigma)
+        effective_noise_sigma = float(effective_noise_sigma)
 
     info: Dict[str, object] = {
         "active_idx": active_idx,
@@ -583,6 +609,8 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
         info["overlap"] = overlap_info
     if blueprint_info:
         info["signal_blueprint"] = blueprint_info
+    if target_snr is not None:
+        info["snr"] = float(target_snr)
 
     return SyntheticDataset(
         X=X.astype(np.float32, copy=False),
@@ -634,6 +662,7 @@ def synthetic_config_from_dict(
         correlation=dict(correlation),
         signal=dict(signal),
         noise_sigma=float(noise_sigma),
+        snr=None if data_cfg.get("snr") is None else float(data_cfg["snr"]),
         task=task_label,
         response=response_cfg,
         seed=None if cfg_seed is None else int(cfg_seed),

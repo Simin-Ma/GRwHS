@@ -105,24 +105,27 @@ Every other configuration inherits from this foundation.
 
 ### 3.2 Dataset descriptors (`configs/experiments/*.yaml`)
 
-Dataset files adjust only the `data` (and occasionally `standardization` or `splits`) section:
+Dataset files adjust only the `data` (and occasionally `standardization` or `splits`) section. The regression campaign now centres on the following descriptors:
 
-- `exp1_group_regression.yaml` - synthetic linear regression with 25 contiguous groups (3 strong, 5 weak, remaining noise) and half-block correlation.
-- `exp4_ablation.yaml` - reuses Exp1 data to compare GRwHS vs RHS (removing the ridge-within-group component).
-- `exp4_group_misspec.yaml` - reuses Exp1 data but shuffles 35% of features across model-facing groups to probe robustness under mis-specified structure.
-- `real_*_template.yaml` - placeholders for plugging in actual loaders (`path_X`, `path_y`, `path_group_map`).
-- *(Retired)* The former Exp2/Exp3 logistic configs have been removed so the public repo ships regression-only experiments; recover them from history if you ever need classification again.
+- `sim_s1.yaml` *(Group-sparse strong signal)* – n=1300 pool with 300/1000 hold-out splits, 8 uneven groups showing strongly activated blocks in G1/G3, SNR swept via overrides.
+- `sim_s2.yaml` *(Dense but weak)* – same structural prior, but 30–50% of features within every group carry 0.2–0.5 effects so global shrinkage must stay gentle.
+- `sim_s3.yaml` *(Mixed strong/weak/noise)* – combines an 80% active strong group, a medium group, and sparse weak groups to stress simultaneous group + feature shrinkage.
+- `exp4_ablation.yaml` / `exp4_group_misspec.yaml` – legacy configs kept for ablation plots (RHS vs GRwHS, or shuffled groups).
+- `real_<dataset>.yaml` – add one YAML per real dataset, pointing to loader entries (see Section 4.2) or direct CSV/NPZ paths plus group maps.
 
 ### 3.3 Method presets (`configs/methods/*.yaml`)
 
 Method presets collect model-specific hyperparameters and tuning instructions:
 
-- `grwhs_regression.yaml` - Gibbs sampler with calibrated τ grids for regression.
-- `group_horseshoe.yaml` - NumPyro MCMC for the Xu et al. group horseshoe prior (regression).
-- `regularized_horseshoe.yaml` - Piironen & Vehtari slab-regularised variant.
-- `group_lasso.yaml` - skglm Group Lasso (quadratic loss) with |g|-scaled weights and an `alpha` grid for inner CV.
-- `ridge.yaml` - quadratic L2 baseline with tuned penalties.
-- *(Retired)* Logistic presets (`grwhs_logistic.yaml`, `group_horseshoe_logistic.yaml`, `regularized_horseshoe_logistic.yaml`, `logistic_ridge.yaml`) were removed alongside the classification configs.
+- `grwhs_regression.yaml` – GRwHS Gibbs sampler with RHS-matched global/local priors (τ₀ from s₀=20, η=0.7, 3k iters / 1.5k burn-in).
+- `regularized_horseshoe.yaml` – RHS baseline sharing the same τ₀/slab width for fairness.
+- `gigg.yaml` – GIGG Gibbs sampler (fixed a_g=1/n, EB-updated b_g via digamma inverse) with Woodbury accelerations baked into the model class.
+- `sparse_group_lasso.yaml` – skglm SGL with log-spaced α grid × {0.2,0.5,0.8} ℓ₁ ratios.
+- `lasso.yaml` – classic L1 path using auto-computed λ_max → 10⁻³ λ_max.
+- `ridge.yaml` – eight-point L2 grid spanning 1e-4…1e3.
+- `group_lasso.yaml` / `group_horseshoe.yaml` – still available for auxiliary ablations.
+
+*(Retired)* Logistic presets (`*_logistic.yaml`) remain in git history if binary tasks return later.
 
 These files can be stacked (dataset + method + ablation override) by passing multiple `--config` arguments or via sweep `config_files`.
 
@@ -130,45 +133,47 @@ These files can be stacked (dataset + method + ablation override) by passing mul
 
 Sweeps combine datasets and methods into experiment suites:
 
-- `exp1_methods.yaml` - Exp1 regression sweep covering GRwHS, Group Horseshoe, regularized horseshoe, and convex penalties (Group Lasso, ridge).
-- `exp4_ablation.yaml` - short sweep contrasting GRwHS vs regularized horseshoe (slab-only) on Exp1 data.
-- `exp4_group_misspec.yaml` - GRwHS vs Group Horseshoe when model-facing groups are randomly shuffled.
-- *(Retired)* Logistic sweeps (`exp2_methods.yaml`, `exp3_real_methods.yaml`) have been deleted now that only regression runs are supported.
+- `sim_s1.yaml`, `sim_s2.yaml`, `sim_s3.yaml` – final benchmark sweeps; each variation pairs one of the three SNR overrides (`configs/overrides/snr_{0p5,1p0,3p0}.yaml`) with the six locked baselines (GRwHS, RHS, GIGG, SGL, Lasso, Ridge). Every sweep repeats data generation 30× and standardises the 300/1000 hold-out split.
+- `exp4_ablation.yaml` / `exp4_group_misspec.yaml` – optional add-ons for interpretability sections (structure removal or shuffled groups).
+- `real_<dataset>_methods.yaml` – create one per real dataset once you configure loaders; follow the synthetic sweeps as a template (same six methods, identical preprocessing, repeated 70/30 shuffles).
+
+Logistic sweeps (`exp2_methods.yaml`, `exp3_real_methods.yaml`) were deleted when the repo was narrowed to regression-only studies.
 
 Each variation may specify extra overrides (e.g. seeds, priors) or add method files via `config_files`.
 
 ### 3.5 Running a single experiment
 
 ```bash
-# GRwHS (calibrated τ) on Exp1 synthetic regression
-python -m grwhs.cli.run_experiment \
-  --config configs/base.yaml \
-          configs/experiments/exp1_group_regression.yaml \
-          configs/methods/grwhs_regression.yaml \
-  --name exp1_grwhs
+# GRwHS on Scenario S1 @ SNR=1
+python -m grwhs.cli.run_experiment ^
+  --config configs/base.yaml ^
+          configs/experiments/sim_s1.yaml ^
+          configs/overrides/snr_1p0.yaml ^
+          configs/methods/grwhs_regression.yaml ^
+  --name sim_s1_snr1_grwhs
 
-# Group Lasso baseline on the same dataset
-python -m grwhs.cli.run_experiment \
-  --config configs/base.yaml \
-          configs/experiments/exp1_group_regression.yaml \
-          configs/methods/group_lasso.yaml \
-  --name exp1_group_lasso
-
+# GIGG baseline on the same draw @ SNR=0.5
+python -m grwhs.cli.run_experiment ^
+  --config configs/base.yaml ^
+          configs/experiments/sim_s1.yaml ^
+          configs/overrides/snr_0p5.yaml ^
+          configs/methods/gigg.yaml ^
+  --name sim_s1_snr0p5_gigg
 ```
 
 ### 3.6 Launching a sweep
 
 ```bash
-# Exp1: compare Bayesian vs convex baselines
-python -m grwhs.cli.run_sweep \
-  --base-config configs/base.yaml \
-  --sweep-config configs/sweeps/exp1_methods.yaml \
-  --jobs 4
+# Scenario S2 sweep (all 3 SNR levels × 6 methods)
+python -m grwhs.cli.run_sweep ^
+  --base-config configs/base.yaml ^
+  --sweep-config configs/sweeps/sim_s2.yaml ^
+  --jobs 6
 
-# Exp4b: robustness to misspecified groups
-python -m grwhs.cli.run_sweep \
-  --base-config configs/base.yaml \
-  --sweep-config configs/sweeps/exp4_group_misspec.yaml \
+# Optional: group-misspec ablation
+python -m grwhs.cli.run_sweep ^
+  --base-config configs/base.yaml ^
+  --sweep-config configs/sweeps/exp4_group_misspec.yaml ^
   --jobs 2
 ```
 
@@ -178,17 +183,24 @@ python -m grwhs.cli.run_sweep \
 
 ## 4. Benchmark Workflow
 
-Follow this checklist to reproduce the regression-only suite:
+Follow this checklist to reproduce the final regression study (three synthetic suites + real data + ablations):
 
-1. **Exp1 - Structured regression (groups + mixed signals)**  
-   Run `configs/sweeps/exp1_methods.yaml` to collect GRwHS vs GH/RHS vs convex baselines on the prescribed synthetic scenario.
+1. **Synthetic Scenarios (S1–S3)**
+   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.5, 1, 3} via the override files, repeats the data draw 30 times, and evaluates the six locked baselines (GRwHS, RHS, GIGG, SGL, Lasso, Ridge) under identical preprocessing and nested-CV settings.
+   - Outputs live under `outputs/sweeps/sim_s*/` with per-variant resolved configs that document the chosen SNR, seeds, and tuning decisions.
 
-2. **Exp4 - Robustness & ablation**  
-   - `configs/sweeps/exp4_ablation.yaml`: demonstrate the effect of removing the group-level ridge (GRwHS vs RHS).  
-   - `configs/sweeps/exp4_group_misspec.yaml`: compare GRwHS vs GH when 35% of features are randomly re-assigned between groups at training time.
+2. **Real Data Benchmarks**
+   - Create `configs/experiments/real_<dataset>.yaml` for each dataset (specify loader module + split policy, or furnish `path_X`, `path_y`, and `path_group_map`). Keep the same preprocessing as synthetic runs (train-only standardisation, shared splits across methods).
+   - Mirror the synthetic sweeps by adding `configs/sweeps/real_<dataset>_methods.yaml`: six methods, no hyperparameter fiddling beyond what is already codified in `configs/methods/`, and repeated 70/30 (or 5× CV) splits for standard errors.
+   - Typical candidates: a crisis-omics regression task with pathway groupings + a second dataset where group structure is curated (e.g. proteomics pathways). Store raw data under `data/real/` and point YAMLs to the loader helper you wire up in `data/loaders.py`.
 
-3. **Summaries**  
-   Use `python -m grwhs.cli.make_report --runs <glob>` to gather aggregated metrics; every run already stores fold-level JSON/NPZ artefacts plus posterior diagnostics.
+3. **Ablations & Robustness**
+   - `configs/sweeps/exp4_ablation.yaml` isolates the “remove group layer” comparison (GRwHS vs RHS) on the S1 blueprint.
+   - `configs/sweeps/exp4_group_misspec.yaml` probes shuffled group assignments (35% of features reassigned before fitting).
+
+4. **Summaries**
+   - Use `python -m grwhs.cli.make_report --runs <glob>` to aggregate metrics across all sweeps and real-data repeats.
+   - Every run already stores fold-level JSON/NPZ artefacts plus posterior diagnostics, so you can filter by scenario/SNR/model when building tables.
 
 Each run directory records fold-level metrics (`fold_*` subdirectories), resolved configuration, and full metadata so reports can cross-reference calibration statistics (`tau_summary.json`) or tuning diagnostics (`tuning_summary.json`).
 
@@ -233,8 +245,8 @@ Import `grwhs.viz.plots` directly for advanced plotting (e.g., multiple coeffici
 Summarize one or more runs into JSON:
 ```bash
 python -m grwhs.cli.make_report \
-  --run outputs/runs/exp1_grwhs-<timestamp> \
-  --run outputs/runs/exp4_ablation-<timestamp>
+  --run outputs/runs/sim_s1_snr1_grwhs-<timestamp> \
+  --run outputs/runs/real_crisisdata_grwhs-<timestamp>
 ```
 Creates per-run summaries and a consolidated `summary_index.json` in `outputs/reports/`. Each summary contains metrics, dataset stats, posterior metadata, and convergence results.
 
@@ -274,12 +286,12 @@ Use `scripts/plot_diagnostics.py` to produce the five reviewer-facing panels (tr
 
 ```bash
 python scripts/plot_diagnostics.py \
-  --run-dir outputs/sweeps/exp1_group_regression_methods/grwhs-<timestamp> \
+  --run-dir outputs/sweeps/sim_s1/grwhs_snr1-<timestamp> \
   --burn-in 1000 --max-lag 120 \
   --strong-count 4 --weak-count 4 \
   --groups-to-plot 10 \
   --coverage-levels 0.5 0.7 0.8 0.9 0.95 \
-  --dest figures/exp1_grwhs --dpi 150
+  --dest figures/sim_s1_grwhs --dpi 150
 ```
 
 - `--run-dir` points to the target run (expects `posterior_samples.npz`, `dataset.npz`, and metadata).
@@ -302,8 +314,8 @@ Use `scripts/random_sweep_selector.py` to randomly subsample `configs/sweeps/mix
 
 ```bash
 python scripts/random_sweep_selector.py \
-  --base-config configs/experiments/exp1_group_regression.yaml \
-  --sweep-config configs/sweeps/mixed_signal_grid.yaml \
+  --base-config configs/experiments/sim_s3.yaml \
+  --sweep-config configs/sweeps/sim_s3.yaml \
   --outdir outputs/sweeps/random_mixed \
   --samples 5 \
   --subset-size 4 \
@@ -325,7 +337,7 @@ python -m pytest
 Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, convergence utilities, visualization scaffolding, and overall smoke tests.
 
 ### 9.2 Manual Validation Checklist
-1. Execute the Exp1–Exp4 sweeps (and any additional real datasets you configure).
+1. Execute the S1–S3 sweeps (all SNRs), the real-data sweeps you wired up, and optional Exp4 ablations.
 2. Inspect metrics via `metrics.json` and aggregated reports.
 3. Check each `repeat_*/fold_*/convergence.json` for acceptable R-hat/ESS.
 4. Generate plots with `scripts/plot_check.py` and review posterior traces/histograms.
@@ -368,8 +380,8 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 | Task | Command |
 |------|---------|
 | Install deps | `pip install -e .[dev]` |
-| Run Exp1 regression (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/exp1_group_regression.yaml configs/methods/grwhs_regression.yaml --name exp1_grwhs` |
-| Run Exp4 ablation sweep | `python -m grwhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/exp4_ablation.yaml --jobs 2` |
+| Run S1 @ SNR=1 (GRwHS) | `python -m grwhs.cli.run_experiment --config configs/base.yaml configs/experiments/sim_s1.yaml configs/overrides/snr_1p0.yaml configs/methods/grwhs_regression.yaml --name sim_s1_snr1_grwhs` |
+| Run S2 sweep | `python -m grwhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s2.yaml --jobs 6` |
 | Run Exp4 misspec sweep | `python -m grwhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/exp4_group_misspec.yaml --jobs 2` |
 | Generate plots | `python scripts/plot_check.py <run_dir>` |
 | Summarize runs | `python -m grwhs.cli.make_report --run <run_dir> [--run <run_dir>]` |

@@ -26,6 +26,11 @@ try:
 except Exception:  # pragma: no cover
     GRwHS_Gibbs_Logistic = None  # type: ignore
 
+try:
+    from grwhs.models.gigg_regression import GIGGRegression  # type: ignore
+except Exception:  # pragma: no cover
+    GIGGRegression = None  # type: ignore
+
 # Baselines (numpy/skglm implementations)
 from grwhs.models.baselines import (
     LogisticRegressionClassifier,
@@ -421,6 +426,43 @@ def _build_group_horseshoe(cfg: Dict[str, Any]) -> Any:
     kwargs["groups"] = groups
     kwargs["group_scale"] = float(_get(cfg, "model.group_scale", 1.0))
     return GroupHorseshoeRegression(**kwargs)
+
+
+@register("gigg")
+@register("gigg_regression")
+def _build_gigg(cfg: Dict[str, Any]) -> Any:
+    if GIGGRegression is None:
+        raise ImportError("GIGGRegression is not available. Ensure grwhs.models.gigg_regression exists.")
+    groups = _infer_groups(cfg)
+    if groups is None:
+        raise ValueError("GIGGRegression requires 'data.groups' in config (list of index lists).")
+    iters = int(_get(cfg, "model.iters", 3000))
+    burnin = int(_get(cfg, "inference.gibbs.burn_in", _get(cfg, "model.burnin", 1500)))
+    thin = max(1, int(_get(cfg, "inference.gibbs.thin", _get(cfg, "model.thin", 1))))
+    jitter = float(_get(cfg, "model.jitter", 1e-8))
+    seed = _get(
+        cfg,
+        "inference.gibbs.seed",
+        _get(cfg, "model.seed", _get(cfg, "seed", 0)),
+    )
+    b_init = float(_get(cfg, "model.b_init", 1.0))
+    b_floor = float(_get(cfg, "model.b_floor", 0.25))
+    tau_scale = float(_get(cfg, "model.tau_init", _get(cfg, "model.tau_scale", 1.0)))
+    sigma_scale = float(_get(cfg, "model.sigma_init", _get(cfg, "model.sigma_scale", 1.0)))
+    store_lambda = bool(_get(cfg, "model.store_lambda", False))
+
+    return GIGGRegression(
+        iters=iters,
+        burnin=burnin,
+        thin=thin,
+        jitter=jitter,
+        seed=int(seed) if seed is not None else 0,
+        b_init=b_init,
+        b_floor=b_floor,
+        tau_scale=tau_scale,
+        sigma_scale=sigma_scale,
+        store_lambda=store_lambda,
+    )
 
 
 # ------------------------------

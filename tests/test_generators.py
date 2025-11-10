@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import numpy.testing as npt
 import pytest
@@ -209,3 +211,55 @@ def test_signal_blueprint_assigns_requested_structure():
     assert np.all(np.abs(data.beta[weak_idx]) <= 0.2 + 1e-8)
     assert blueprint_meta is not None
     assert len(blueprint_meta["assignments"]) >= 2
+
+
+def test_generate_synthetic_respects_requested_snr():
+    cfg = SyntheticConfig(
+        n=256,
+        p=12,
+        G=3,
+        group_sizes=[4, 4, 4],
+        snr=0.5,
+        signal={
+            "blueprint": [
+                {
+                    "groups": [0],
+                    "components": [
+                        {"distribution": "constant", "count": 3, "value": 1.5, "sign": "mixed"},
+                    ],
+                }
+            ]
+        },
+        noise_sigma=1.0,
+        seed=7,
+    )
+    data = generate_synthetic(cfg)
+    linear = data.X @ data.beta
+    signal_var = np.var(linear)
+    expected_sigma = math.sqrt(signal_var / cfg.snr)
+    assert data.noise_sigma == pytest.approx(expected_sigma, rel=1e-5)
+    assert data.info.get("snr") == pytest.approx(0.5)
+
+
+def test_blueprint_choices_distribution_samples_from_set():
+    cfg = SyntheticConfig(
+        n=32,
+        p=6,
+        G=2,
+        group_sizes=[3, 3],
+        signal={
+            "blueprint": [
+                {
+                    "groups": [0],
+                    "components": [
+                        {"distribution": "choices", "values": [0.5, 1.25], "count": 3, "sign": "positive"},
+                    ],
+                }
+            ]
+        },
+        seed=99,
+    )
+    data = generate_synthetic(cfg)
+    nonzero = data.beta[np.flatnonzero(data.beta)]
+    assert nonzero.size == 3
+    assert np.all(np.isin(nonzero, [0.5, 1.25]))

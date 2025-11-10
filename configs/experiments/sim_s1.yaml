@@ -1,0 +1,44 @@
+defaults: "../base.yaml"
+
+name: "sim_s1_group_sparse"
+task: "regression"
+
+data:
+  type: "synthetic"
+  seed: 20251111
+  n: 1300
+  p: 200
+  G: 8
+  group_sizes: [5, 10, 15, 20, 30, 40, 40, 40]
+  correlation:
+    type: "group_block"
+    rho_in: 0.7
+    rho_out: 0.1
+  snr: 1.0
+  signal:
+    blueprint:
+      - label: "strong_groups"
+        groups: [0, 2]
+        components:
+          - name: "high_effects"
+            fraction: 0.5
+            distribution: "choices"
+            values: [2.0, 2.5, 3.0]
+            sign: "mixed"
+            tag: "strong"
+
+experiments:
+  repeats: 30
+  coverage_level: 0.9
+
+splits:
+  outer:
+    mode: "holdout"
+    train_size: 300
+    test_size: 1000
+    shuffle: true
+    seed: 12345
+  inner:
+    n_splits: 5
+    shuffle: true
+    seed: 54321

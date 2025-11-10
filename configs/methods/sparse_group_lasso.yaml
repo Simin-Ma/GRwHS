@@ -1,0 +1,17 @@
+name: "sparse_group_lasso"
+
+model:
+  name: "sparse_group_lasso"
+  fit_intercept: false
+  max_iter: 200
+  max_epochs: 100000
+  tol: 1.0e-06
+  warm_start: true
+  ws_strategy: "subdiff"
+  search:
+    alpha:
+      mode: "logspace"
+      start: 1.0
+      stop: 0.001
+      num: 50
+    l1_ratio: [0.2, 0.5, 0.8]

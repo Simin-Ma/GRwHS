@@ -1,0 +1,15 @@
+name: "lasso"
+
+model:
+  name: "lasso"
+  fit_intercept: false
+  max_iter: 200
+  max_epochs: 100000
+  tol: 1.0e-06
+  warm_start: true
+  ws_strategy: "subdiff"
+  search:
+    alpha:
+      mode: "lasso_path"
+      min_ratio: 0.001
+      num: 50

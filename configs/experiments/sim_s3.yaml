@@ -1,0 +1,65 @@
+defaults: "../base.yaml"
+
+name: "sim_s3_mixed_signal"
+task: "regression"
+
+data:
+  type: "synthetic"
+  seed: 20251113
+  n: 1300
+  p: 200
+  G: 8
+  group_sizes: [5, 10, 15, 20, 30, 40, 40, 40]
+  correlation:
+    type: "group_block"
+    rho_in: 0.7
+    rho_out: 0.1
+  snr: 1.0
+  signal:
+    blueprint:
+      - label: "strong_group"
+        groups: [0]
+        components:
+          - name: "dense_strong"
+            fraction: 0.8
+            distribution: "uniform"
+            low: 1.5
+            high: 3.0
+            sign: "mixed"
+            tag: "strong"
+      - label: "medium_group"
+        groups: [3]
+        components:
+          - name: "medium_effects"
+            fraction: 0.4
+            distribution: "uniform"
+            low: 0.7
+            high: 1.0
+            sign: "mixed"
+            tag: "medium"
+      - label: "sparse_weak"
+        groups: [5, 6, 7]
+        components:
+          - name: "sparse_singletons"
+            count_range: [1, 3]
+            distribution: "uniform"
+            low: 0.3
+            high: 0.5
+            sign: "mixed"
+            tag: "weak"
+
+experiments:
+  repeats: 30
+  coverage_level: 0.9
+
+splits:
+  outer:
+    mode: "holdout"
+    train_size: 300
+    test_size: 1000
+    shuffle: true
+    seed: 7272
+  inner:
+    n_splits: 5
+    shuffle: true
+    seed: 1919

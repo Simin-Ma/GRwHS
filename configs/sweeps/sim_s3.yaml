@@ -1,0 +1,81 @@
+name: "sim_s3_methods"
+output_dir: "outputs/sweeps/sim_s3"
+
+common_config_files:
+  - "../experiments/sim_s3.yaml"
+
+variations:
+  - name: "snr0p5_grwhs"
+    config_files:
+      - "../overrides/snr_0p5.yaml"
+      - "../methods/grwhs_regression.yaml"
+  - name: "snr0p5_rhs"
+    config_files:
+      - "../overrides/snr_0p5.yaml"
+      - "../methods/regularized_horseshoe.yaml"
+  - name: "snr0p5_gigg"
+    config_files:
+      - "../overrides/snr_0p5.yaml"
+      - "../methods/gigg.yaml"
+  - name: "snr0p5_sgl"
+    config_files:
+      - "../overrides/snr_0p5.yaml"
+      - "../methods/sparse_group_lasso.yaml"
+  - name: "snr0p5_lasso"
+    config_files:
+      - "../overrides/snr_0p5.yaml"
+      - "../methods/lasso.yaml"
+  - name: "snr0p5_ridge"
+    config_files:
+      - "../overrides/snr_0p5.yaml"
+      - "../methods/ridge.yaml"
+
+  - name: "snr1p0_grwhs"
+    config_files:
+      - "../overrides/snr_1p0.yaml"
+      - "../methods/grwhs_regression.yaml"
+  - name: "snr1p0_rhs"
+    config_files:
+      - "../overrides/snr_1p0.yaml"
+      - "../methods/regularized_horseshoe.yaml"
+  - name: "snr1p0_gigg"
+    config_files:
+      - "../overrides/snr_1p0.yaml"
+      - "../methods/gigg.yaml"
+  - name: "snr1p0_sgl"
+    config_files:
+      - "../overrides/snr_1p0.yaml"
+      - "../methods/sparse_group_lasso.yaml"
+  - name: "snr1p0_lasso"
+    config_files:
+      - "../overrides/snr_1p0.yaml"
+      - "../methods/lasso.yaml"
+  - name: "snr1p0_ridge"
+    config_files:
+      - "../overrides/snr_1p0.yaml"
+      - "../methods/ridge.yaml"
+
+  - name: "snr3p0_grwhs"
+    config_files:
+      - "../overrides/snr_3p0.yaml"
+      - "../methods/grwhs_regression.yaml"
+  - name: "snr3p0_rhs"
+    config_files:
+      - "../overrides/snr_3p0.yaml"
+      - "../methods/regularized_horseshoe.yaml"
+  - name: "snr3p0_gigg"
+    config_files:
+      - "../overrides/snr_3p0.yaml"
+      - "../methods/gigg.yaml"
+  - name: "snr3p0_sgl"
+    config_files:
+      - "../overrides/snr_3p0.yaml"
+      - "../methods/sparse_group_lasso.yaml"
+  - name: "snr3p0_lasso"
+    config_files:
+      - "../overrides/snr_3p0.yaml"
+      - "../methods/lasso.yaml"
+  - name: "snr3p0_ridge"
+    config_files:
+      - "../overrides/snr_3p0.yaml"
+      - "../methods/ridge.yaml"

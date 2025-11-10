@@ -11,6 +11,7 @@ __all__ = [
     "SplitResult",
     "train_val_test_split",
     "repeated_splits",
+    "holdout_splits",
     "OuterFold",
     "outer_kfold_splits",
 ]
@@ -124,6 +125,54 @@ def repeated_splits(
         )
         )
     return splits
+
+
+def holdout_splits(
+    n: int,
+    *,
+    train_size: int,
+    test_size: int,
+    n_repeats: int = 1,
+    seed: Optional[int] = None,
+    shuffle: bool = True,
+) -> List[OuterFold]:
+    """Generate repeated train/test hold-out splits."""
+
+    if n <= 0:
+        raise ValueError("n must be positive for holdout_splits.")
+    if train_size <= 0 or test_size <= 0:
+        raise ValueError("train_size and test_size must be positive.")
+    if train_size + test_size > n:
+        raise ValueError("train_size + test_size cannot exceed n.")
+    if n_repeats <= 0:
+        raise ValueError("n_repeats must be positive.")
+
+    rng = np.random.default_rng(seed)
+    folds: List[OuterFold] = []
+
+    for repeat_idx in range(n_repeats):
+        if shuffle:
+            order = rng.permutation(n)
+        else:
+            order = np.arange(n, dtype=int)
+
+        train_idx = np.sort(order[:train_size])
+        test_idx = np.sort(order[train_size:train_size + test_size])
+        if test_idx.size != test_size:
+            raise ValueError("holdout split produced insufficient test samples; adjust sizes.")
+
+        fold_seed = None if seed is None else int(seed + repeat_idx)
+        folds.append(
+            OuterFold(
+                repeat=repeat_idx + 1,
+                fold=1,
+                train=train_idx,
+                test=test_idx,
+                hash=_fold_hash(train_idx, test_idx),
+                seed=fold_seed,
+            )
+        )
+    return folds
 
 
 def _fold_hash(train_idx: np.ndarray, test_idx: np.ndarray) -> str:

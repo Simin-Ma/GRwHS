@@ -43,7 +43,7 @@ from data.preprocess import (
     apply_standardizer,
     apply_y_mean,
 )
-from data.splits import OuterFold, outer_kfold_splits
+from data.splits import OuterFold, holdout_splits, outer_kfold_splits
 from grwhs.diagnostics.convergence import summarize_convergence
 from grwhs.experiments.registry import build_from_config, get_model_name_from_config
 from grwhs.metrics.evaluation import evaluate_model_metrics
@@ -438,6 +438,28 @@ def _prepare_outer_folds(
     """Create outer cross-validation folds according to configuration."""
 
     outer_cfg = config.get("splits", {}).get("outer", {}) or {}
+    mode = str(outer_cfg.get("mode", "kfold")).lower()
+    n_total = int(dataset["X"].shape[0])
+
+    if mode in {"holdout", "hold-out", "train_test", "train-test"}:
+        train_size = outer_cfg.get("train_size")
+        test_size = outer_cfg.get("test_size")
+        if train_size is None or test_size is None:
+            raise ExperimentError("holdout mode requires 'train_size' and 'test_size'.")
+        n_repeats = int(outer_cfg.get("n_repeats", outer_cfg.get("repeats", 1)) or 1)
+        shuffle = bool(outer_cfg.get("shuffle", True))
+        seed = outer_cfg.get("seed")
+        if seed is not None:
+            seed = int(seed) + repeat_index
+        return holdout_splits(
+            n=n_total,
+            train_size=int(train_size),
+            test_size=int(test_size),
+            n_repeats=n_repeats,
+            seed=seed,
+            shuffle=shuffle,
+        )
+
     n_splits_raw = outer_cfg.get("n_splits", outer_cfg.get("folds"))
     try:
         n_splits = int(n_splits_raw)
@@ -461,7 +483,7 @@ def _prepare_outer_folds(
         y_for_strat = np.asarray(dataset["y"], dtype=int)
 
     folds = outer_kfold_splits(
-        n=int(dataset["X"].shape[0]),
+        n=n_total,
         y=y_for_strat,
         task=task,
         n_splits=n_splits,
@@ -569,6 +591,41 @@ def _compute_inner_metric(
     return float(mean_squared_error(y_true, preds))
 
 
+def _compute_lasso_lambda_max(X: np.ndarray, y: np.ndarray) -> float:
+    """Return λ_max for standardised Lasso path."""
+    if X.size == 0 or y.size == 0:
+        return 1.0
+    lam = float(np.max(np.abs(X.T @ y))) / max(X.shape[0], 1)
+    return max(lam, 1e-8)
+
+
+def _expand_search_values(values: Any, key: str, X_ref: np.ndarray, y_ref: np.ndarray) -> List[float]:
+    """Expand declarative search specifications into explicit numeric grids."""
+    if isinstance(values, Mapping):
+        mode = str(values.get("mode", "")).lower()
+        if mode in {"logspace", "geomspace"}:
+            start = float(values.get("start", values.get("high", 1.0)))
+            stop = float(values.get("stop", values.get("low", 1e-3)))
+            num = int(values.get("num", values.get("points", 10)))
+            if num <= 0:
+                raise ExperimentError(f"search grid for '{key}' requires a positive 'num'.")
+            if start <= 0 or stop <= 0:
+                raise ExperimentError(f"logspace search for '{key}' requires positive bounds.")
+            return list(np.geomspace(start, stop, num))
+        if mode in {"lasso_path", "lasso"}:
+            min_ratio = float(values.get("min_ratio", values.get("ratio", 1e-3)))
+            num = int(values.get("num", values.get("points", 50)))
+            if num <= 0:
+                raise ExperimentError(f"lasso_path search for '{key}' requires a positive 'num'.")
+            lam_max = _compute_lasso_lambda_max(X_ref, y_ref)
+            stop = lam_max * max(min_ratio, 1e-6)
+            return list(np.geomspace(lam_max, stop, num))
+        raise ExperimentError(f"Unsupported search mode '{mode}' for '{key}'.")
+    if isinstance(values, (list, tuple)):
+        return [float(v) for v in values]
+    raise ExperimentError(f"search grid for '{key}' must be a list or mapping.")
+
+
 def _perform_inner_cv(
     base_config: Mapping[str, Any],
     X: np.ndarray,
@@ -584,13 +641,16 @@ def _perform_inner_cv(
     if not isinstance(search_cfg, Mapping) or not search_cfg:
         return {}, None
 
+    std_all = apply_standardization(X, y, std_cfg)
+    X_ref = std_all.X
+    y_ref = std_all.y
+
     keys = sorted(search_cfg.keys())
     grid_values: List[List[float]] = []
     for key in keys:
         values = search_cfg[key]
-        if not isinstance(values, (list, tuple)):
-            raise ExperimentError(f"search grid for '{key}' must be a list.")
-        grid_values.append([float(v) for v in values])
+        expanded = _expand_search_values(values, key, X_ref, y_ref)
+        grid_values.append(expanded)
 
     inner_cfg = deepcopy(base_config.get("splits", {}).get("inner", {}) or {})
     inner_splits = max(2, int(inner_cfg.get("n_splits", 5) or 5))
