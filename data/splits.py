@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -144,7 +144,7 @@ def outer_kfold_splits(
     n_repeats: int = 1,
     shuffle: bool = True,
     seed: Optional[int] = None,
-    stratify: Optional[bool] = None,
+    stratify: Optional[Union[bool, str]] = None,
 ) -> List[OuterFold]:
     """
     Generate outer cross-validation folds with optional stratification.
@@ -158,6 +158,7 @@ def outer_kfold_splits(
         shuffle: Whether to shuffle before splitting (recommended).
         seed: Random seed controlling shuffles/repetitions.
         stratify: Force or disable stratification (defaults to classification=True).
+            Use "strict" to require StratifiedKFold (raises if conditions are unmet).
 
     Returns:
         List of OuterFold objects covering all outer folds.
@@ -173,7 +174,21 @@ def outer_kfold_splits(
         raise ValueError("n_repeats must be positive.")
 
     task_label = str(task).lower()
-    if stratify is None:
+    strict_stratify = isinstance(stratify, str) and stratify.lower() == "strict"
+    if isinstance(stratify, str):
+        label = stratify.lower()
+        if label == "strict":
+            stratify_flag = True
+            strict_stratify = True
+        elif label in {"true", "1", "yes"}:
+            stratify_flag = True
+        elif label in {"false", "0", "no"}:
+            stratify_flag = False
+        elif label in {"auto", ""}:
+            stratify_flag = task_label == "classification"
+        else:
+            stratify_flag = bool(stratify)
+    elif stratify is None:
         stratify_flag = task_label == "classification"
     else:
         stratify_flag = bool(stratify)
@@ -184,10 +199,23 @@ def outer_kfold_splits(
             raise ValueError("Stratified outer splits require target array 'y'.")
         y_array = np.asarray(y, dtype=int)
         unique, counts = np.unique(y_array, return_counts=True)
-        if unique.size < 2:
+        min_count = n_splits if strict_stratify else 2
+        insufficient_classes = unique.size < 2
+        insufficient_support = np.any(counts < min_count)
+        if insufficient_classes or insufficient_support:
+            if strict_stratify:
+                if insufficient_classes:
+                    reason = "target contains fewer than two classes"
+                else:
+                    reason = (
+                        "at least one class has fewer samples "
+                        f"than required ({min_count})"
+                    )
+                raise ValueError(
+                    f"Strict stratification requested but {reason}."
+                )
             stratify_flag = False
-        elif np.any(counts < 2):
-            stratify_flag = False
+            y_array = None
     else:
         y_array = None
 

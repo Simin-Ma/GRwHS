@@ -47,3 +47,16 @@ def test_outer_kfold_splits_classification_stratified():
 def test_outer_kfold_invalid_split_raises():
     with pytest.raises(ValueError):
         outer_kfold_splits(3, n_splits=5)
+
+
+def test_outer_kfold_strict_requires_enough_per_class():
+    n = 6
+    y = np.array([0, 0, 0, 0, 0, 1])
+    with pytest.raises(ValueError):
+        outer_kfold_splits(
+            n,
+            y=y,
+            task="classification",
+            n_splits=5,
+            stratify="strict",
+        )

@@ -74,8 +74,8 @@ splits:
     n_splits: 5
     n_repeats: 2
     shuffle: true
-    stratify: true
+    stratify: "strict"
   inner:
     n_splits: 5
     shuffle: true
-    stratify: true
+    stratify: "strict"

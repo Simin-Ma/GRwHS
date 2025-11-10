@@ -23,7 +23,7 @@ import shutil
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -50,8 +50,43 @@ from grwhs.metrics.evaluation import evaluate_model_metrics
 from grwhs.utils.logging_utils import progress
 
 
+StratifyOption = Optional[Union[bool, str]]
+
+
 class ExperimentError(RuntimeError):
     """Raised when a configuration-driven experiment cannot be executed."""
+
+
+class _ConstantClassificationModel:
+    """Fallback classifier emitting constant probabilities when training data is degenerate."""
+
+    def __init__(self, prob_positive: float, n_features: int) -> None:
+        probability = float(np.clip(prob_positive, 0.0, 1.0))
+        self.prob_positive = probability
+        self._label = float(1.0 if probability >= 0.5 else 0.0)
+        eps = 1e-6
+        logit = math.log((probability + eps) / (1.0 - probability + eps))
+        self.coef_ = np.zeros((1, n_features), dtype=float)
+        self.intercept_ = np.array([logit], dtype=float)
+        self.classes_ = np.array([0.0, 1.0], dtype=np.float32)
+
+    def fit(self, X: Any, y: Any, **_: Any) -> "_ConstantClassificationModel":
+        return self
+
+    def predict(self, X: Any) -> np.ndarray:
+        n = 0 if X is None else np.asarray(X).shape[0]
+        return np.full(n, self._label, dtype=np.float32)
+
+    def predict_proba(self, X: Any) -> np.ndarray:
+        n = 0 if X is None else np.asarray(X).shape[0]
+        proba = np.empty((n, 2), dtype=float)
+        proba[:, 1] = self.prob_positive
+        proba[:, 0] = 1.0 - self.prob_positive
+        return proba
+
+    def decision_function(self, X: Any) -> np.ndarray:
+        n = 0 if X is None else np.asarray(X).shape[0]
+        return np.full(n, float(self.intercept_[0]), dtype=float)
 
 
 def _to_serializable(value: Any) -> Any:
@@ -78,6 +113,25 @@ def _resolve_task(config: Mapping[str, Any]) -> str:
     ).lower()
     aliases = {"binary": "classification", "binary_classification": "classification", "cls": "classification"}
     return aliases.get(task, task)
+
+
+def _parse_stratify_option(value: Any, *, default: StratifyOption) -> StratifyOption:
+    """Normalise config stratify setting into {True, False, 'strict', None}."""
+
+    if value is None:
+        return default
+    if isinstance(value, str):
+        label = value.strip().lower()
+        if label in {"", "auto"}:
+            return default
+        if label in {"strict"}:
+            return "strict"
+        if label in {"true", "1", "yes"}:
+            return True
+        if label in {"false", "0", "no"}:
+            return False
+        return default
+    return bool(value)
 
 
 def _standardization_from_config(cfg: Mapping[str, Any], task: str) -> StandardizationConfig:
@@ -395,20 +449,8 @@ def _prepare_outer_folds(
     n_repeats = int(outer_cfg.get("n_repeats", outer_cfg.get("repeats", 1)) or 1)
     shuffle = bool(outer_cfg.get("shuffle", True))
 
-    stratify_spec = outer_cfg.get("stratify", "auto")
-    stratify: Optional[bool]
-    if isinstance(stratify_spec, str):
-        label = stratify_spec.lower()
-        if label == "auto":
-            stratify = None
-        elif label in {"true", "1", "yes"}:
-            stratify = True
-        elif label in {"false", "0", "no"}:
-            stratify = False
-        else:
-            stratify = None
-    else:
-        stratify = bool(stratify_spec) if stratify_spec is not None else None
+    default_outer_strat = True if task == "classification" else False
+    stratify = _parse_stratify_option(outer_cfg.get("stratify"), default=default_outer_strat)
 
     seed = outer_cfg.get("seed")
     if seed is not None:
@@ -496,7 +538,14 @@ def _maybe_calibrate_tau(
     model_cfg["tau0"] = float(max(tau0, 1e-8))
 
 
-def _compute_inner_metric(task: str, y_true: np.ndarray, model: Any, X_val: np.ndarray) -> float:
+def _compute_inner_metric(
+    task: str,
+    y_true: np.ndarray,
+    model: Any,
+    X_val: np.ndarray,
+    *,
+    class_labels: Optional[np.ndarray] = None,
+) -> float:
     """Return scalar metric used for inner CV model selection."""
     if task == "classification":
         if hasattr(model, "predict_proba"):
@@ -509,7 +558,10 @@ def _compute_inner_metric(task: str, y_true: np.ndarray, model: Any, X_val: np.n
         prob = np.clip(np.asarray(prob, dtype=float), 1e-7, 1 - 1e-7)
         from sklearn.metrics import log_loss
 
-        return float(log_loss(y_true, prob))
+        log_loss_kwargs: Dict[str, Any] = {}
+        if class_labels is not None and class_labels.size >= 2:
+            log_loss_kwargs["labels"] = class_labels
+        return float(log_loss(y_true, prob, **log_loss_kwargs))
 
     from sklearn.metrics import mean_squared_error
 
@@ -543,6 +595,8 @@ def _perform_inner_cv(
     inner_cfg = deepcopy(base_config.get("splits", {}).get("inner", {}) or {})
     inner_splits = max(2, int(inner_cfg.get("n_splits", 5) or 5))
     inner_seed = inner_cfg.get("seed")
+    default_inner_strat = True if task == "classification" else False
+    inner_stratify = _parse_stratify_option(inner_cfg.get("stratify"), default=default_inner_strat)
     inner_folds = outer_kfold_splits(
         n=X.shape[0],
         y=y if (task == "classification") else None,
@@ -551,8 +605,17 @@ def _perform_inner_cv(
         n_repeats=1,
         shuffle=bool(inner_cfg.get("shuffle", True)),
         seed=inner_seed,
-        stratify=(task == "classification" if str(inner_cfg.get("stratify", "auto")).lower() != "false" else False),
+        stratify=inner_stratify,
     )
+
+    class_labels: Optional[np.ndarray] = None
+    if task == "classification":
+        labels = np.unique(np.asarray(y, dtype=float))
+        if labels.size < 2:
+            raise ExperimentError(
+                "Classification inner CV requires at least two classes overall."
+            )
+        class_labels = labels
 
     history: List[Dict[str, Any]] = []
     best_candidate: Optional[Dict[str, float]] = None
@@ -561,6 +624,7 @@ def _perform_inner_cv(
     for candidate_values in np.array(np.meshgrid(*grid_values, indexing="ij")).T.reshape(-1, len(keys)):
         candidate = {key: float(val) for key, val in zip(keys, candidate_values)}
         fold_scores: List[float] = []
+        skipped_folds = 0
 
         for inner_fold in inner_folds:
             train_idx = inner_fold.train
@@ -581,17 +645,36 @@ def _perform_inner_cv(
             candidate_cfg["model"] = {**candidate_cfg["model"], **candidate}
             candidate_cfg["model"].pop("search", None)
 
+            if task == "classification":
+                unique_classes = np.unique(y_train)
+                if unique_classes.size < 2:
+                    skipped_folds += 1
+                    continue
+
             model = _instantiate_model(candidate_cfg, groups, X.shape[1])
             try:
                 model.fit(X_train, y_train, groups=groups)
             except TypeError:
                 model.fit(X_train, y_train)
 
-            score = _compute_inner_metric(task, y_val, model, X_val)
+            score = _compute_inner_metric(
+                task,
+                y_val,
+                model,
+                X_val,
+                class_labels=class_labels,
+            )
             fold_scores.append(score)
 
-        avg_score = float(np.mean(fold_scores))
-        history.append({"params": candidate, "score": avg_score})
+        if not fold_scores:
+            avg_score = math.inf
+        else:
+            avg_score = float(np.mean(fold_scores))
+
+        history_entry: Dict[str, Any] = {"params": candidate, "score": avg_score}
+        if skipped_folds:
+            history_entry["skipped_folds"] = skipped_folds
+        history.append(history_entry)
         if avg_score < best_score:
             best_score = avg_score
             best_candidate = candidate
@@ -736,32 +819,58 @@ def _run_fold_nested(
     else:
         y_test = np.asarray(y[test_idx], dtype=np.float32)
 
+    degenerate_model: Optional[_ConstantClassificationModel] = None
+    degenerate_label_value: Optional[float] = None
+    tuning_history: Optional[List[Dict[str, Any]]] = None
+    inner_params: Dict[str, float] = {}
+
     if task == "classification":
         y_train = np.round(np.clip(y_train, 0.0, 1.0)).astype(np.float32)
         y_test = np.round(np.clip(y_test, 0.0, 1.0)).astype(np.float32)
-
-    inner_params, tuning_history = _perform_inner_cv(
-        base_config,
-        X_train,
-        y_train,
-        model_groups,
-        task=task,
-        std_cfg=std_cfg,
-    )
+        train_classes = np.unique(y_train)
+        if train_classes.size < 2:
+            degenerate_label_value = float(train_classes[0]) if train_classes.size else 0.0
+            degenerate_model = _ConstantClassificationModel(
+                prob_positive=degenerate_label_value,
+                n_features=X_train.shape[1],
+            )
+            degenerate_model.fit(X_train, y_train)
+            tuning_history = [
+                {
+                    "params": {},
+                    "score": math.inf,
+                    "skipped_folds": "all",
+                    "reason": "single_class_outer_train",
+                }
+            ]
 
     model_config = deepcopy(base_config)
     model_config.setdefault("model", {})
     model_config["model"].pop("search", None)
-    for key, value in inner_params.items():
-        model_config["model"][key] = value
 
-    _maybe_calibrate_tau(model_config["model"], std_cfg, X_train, y_train, model_groups, task)
+    if degenerate_model is None:
+        inner_params, tuning_history = _perform_inner_cv(
+            base_config,
+            X_train,
+            y_train,
+            model_groups,
+            task=task,
+            std_cfg=std_cfg,
+        )
+        for key, value in inner_params.items():
+            model_config["model"][key] = value
+        _maybe_calibrate_tau(model_config["model"], std_cfg, X_train, y_train, model_groups, task)
+        model = _instantiate_model(model_config, model_groups, X_train.shape[1])
+        try:
+            model.fit(X_train, y_train, groups=model_groups)
+        except TypeError:
+            model.fit(X_train, y_train)
+        fold_status = "OK"
+    else:
+        model = degenerate_model
+        fold_status = "DEGENERATE_LABELS"
 
-    model = _instantiate_model(model_config, model_groups, X_train.shape[1])
-    try:
-        model.fit(X_train, y_train, groups=model_groups)
-    except TypeError:
-        model.fit(X_train, y_train)
+    tuning_history = tuning_history or []
 
     experiments_cfg = base_config.get("experiments", {}) or {}
     coverage_level = float(experiments_cfg.get("coverage_level", 0.9))
@@ -800,7 +909,7 @@ def _run_fold_nested(
         posterior_paths = _save_posterior_bundle(fold_dir, posterior_arrays)
 
     fold_summary = {
-        "status": "OK",
+        "status": fold_status,
         "repeat": int(fold.repeat),
         "fold": int(fold.fold),
         "hash": fold.hash,
@@ -809,6 +918,8 @@ def _run_fold_nested(
         "tuning_history": tuning_history,
         "posterior_files": posterior_paths,
     }
+    if degenerate_label_value is not None:
+        fold_summary["degenerate_label"] = degenerate_label_value
     (fold_dir / "fold_summary.json").write_text(json.dumps(_to_serializable(fold_summary), indent=2), encoding="utf-8")
 
     fold_summary["posterior_arrays"] = posterior_arrays if save_posterior else {}
