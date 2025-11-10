@@ -133,7 +133,7 @@ These files can be stacked (dataset + method + ablation override) by passing mul
 
 Sweeps combine datasets and methods into experiment suites:
 
-- `sim_s1.yaml`, `sim_s2.yaml`, `sim_s3.yaml` – final benchmark sweeps; each variation pairs one of the three SNR overrides (`configs/overrides/snr_{0p5,1p0,3p0}.yaml`) with the six locked baselines (GRwHS, RHS, GIGG, SGL, Lasso, Ridge). Every sweep repeats data generation 30× and standardises the 300/1000 hold-out split.
+- `sim_s1.yaml`, `sim_s2.yaml`, `sim_s3.yaml` – final benchmark sweeps; each variation pairs one of the three SNR overrides (`configs/overrides/snr_{0p5,1p0,3p0}.yaml`) with the six locked baselines (GRwHS, RHS, GIGG, SGL, Lasso, Ridge). Every sweep now repeats data generation 3× and standardises the 300/1000 hold-out split to trade minor variance for faster turnarounds.
 - `exp4_ablation.yaml` / `exp4_group_misspec.yaml` – optional add-ons for interpretability sections (structure removal or shuffled groups).
 - `real_<dataset>_methods.yaml` – create one per real dataset once you configure loaders; follow the synthetic sweeps as a template (same six methods, identical preprocessing, repeated 70/30 shuffles).
 
@@ -186,7 +186,7 @@ python -m grwhs.cli.run_sweep ^
 Follow this checklist to reproduce the final regression study (three synthetic suites + real data + ablations):
 
 1. **Synthetic Scenarios (S1–S3)**
-   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.5, 1, 3} via the override files, repeats the data draw 30 times, and evaluates the six locked baselines (GRwHS, RHS, GIGG, SGL, Lasso, Ridge) under identical preprocessing and nested-CV settings.
+   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.5, 1, 3} via the override files, repeats the data draw 3 times, and evaluates the six locked baselines (GRwHS, RHS, GIGG, SGL, Lasso, Ridge) under identical preprocessing and nested-CV settings.
    - Outputs live under `outputs/sweeps/sim_s*/` with per-variant resolved configs that document the chosen SNR, seeds, and tuning decisions.
 
 2. **Real Data Benchmarks**

@@ -87,7 +87,7 @@ data:
   noise_sigma: 0.8
 
 experiments:
-  repeats: 1
+  repeats: 3
   coverage_level: 0.9
   focus_metrics:
     predictive: ["RMSE", "PredictiveLogLikelihood", "MLPD"]

@@ -28,7 +28,7 @@ data:
             tag: "weak"
 
 experiments:
-  repeats: 30
+  repeats: 3
   coverage_level: 0.9
 
 splits:

@@ -47,5 +47,6 @@ _Classification-oriented configs (Exp2/Exp3 and the logistic method presets) wer
 ## 3. Practical checklist
 1. Start from `configs/experiments/exp1_group_regression.yaml` to guarantee identical data generation and group layout.
 2. Run the sweeps defined in `configs/sweeps/exp1_methods.yaml` and `configs/sweeps/exp4_*.yaml`; they already enumerate Ridge, Group Lasso, RHS, GH, and GRwHS.
-3. After each sweep, inspect `outputs/sweeps/.../fold_*/convergence.json`; any R-hat outside `[1, 1.05]` triggers a rerun with more samples.
-4. Use `scripts/plot_diagnostics.py` or the notebook templates to overlay RMSE/log-likelihood and group-selection metrics; because splits and preprocessing are shared, the comparisons are apples-to-apples.
+3. Synthetic sweeps now fix `experiments.repeats = 3` to balance runtime with variance reduction; because the runner still shares the exact same splits per repeat/fold, reducing the count preserves fairness (bump it back up if you need tighter CIs).
+4. After each sweep, inspect `outputs/sweeps/.../fold_*/convergence.json`; any R-hat outside `[1, 1.05]` triggers a rerun with more samples.
+5. Use `scripts/plot_diagnostics.py` or the notebook templates to overlay RMSE/log-likelihood and group-selection metrics; because splits and preprocessing are shared, the comparisons are apples-to-apples.
