@@ -118,7 +118,7 @@ Dataset files adjust only the `data` (and occasionally `standardization` or `spl
 Method presets collect model-specific hyperparameters and tuning instructions:
 
 - `grwhs_regression.yaml` – GRwHS Gibbs sampler with RHS-matched global/local priors (τ₀ from s₀=20, η=0.7, 3k iters / 1.5k burn-in).
-- `regularized_horseshoe.yaml` – RHS baseline sharing the same τ₀/slab width for fairness.
+- `regularized_horseshoe.yaml` – RHS baseline sharing the same τ₀/slab width *and* the exact Gibbs kernel as GRwHS, but with the group layer disabled (`use_groups=false`), so any runtime advantage does not come from better numerics.
 - `gigg.yaml` – GIGG Gibbs sampler (fixed a_g=1/n, EB-updated b_g via digamma inverse) with Woodbury accelerations baked into the model class.
 - `sparse_group_lasso.yaml` – skglm SGL with log-spaced α grid × {0.2,0.5,0.8} ℓ₁ ratios.
 - `lasso.yaml` – classic L1 path using auto-computed λ_max → 10⁻³ λ_max.
@@ -205,6 +205,8 @@ Follow this checklist to reproduce the final regression study (three synthetic s
 Each run directory records fold-level metrics (`fold_*` subdirectories), resolved configuration, and full metadata so reports can cross-reference calibration statistics (`tau_summary.json`) or tuning diagnostics (`tuning_summary.json`).
 
 > Need a quick reference for the fairness contract (identical preprocessing, nested CV grids, τ heuristics, R-hat checks)? See `docs/fair_benchmark_protocol.md`.
+>
+> **Implementation details.** `grwhs.experiments.runner` draws the outer folds once per dataset repeat and hands the exact same `OuterFold` objects to every model (no per-model shuffling). The nested inner CV routine is only invoked when a method config supplies a `model.search` grid (ridge/Lasso/SGL); Bayesian baselines (GRwHS, RHS, GIGG, etc.) never read `splits.inner`, so they do not indirectly peek at outer-test data.
 
 ## 5. Outputs & Artifacts
 

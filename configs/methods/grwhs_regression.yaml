@@ -6,11 +6,11 @@ model:
   eta: 0.7
   tau0: 0.00641500299099584
   s0: 1.0
-  iters: 3000
+  iters: 8000
 
 inference:
   gibbs:
-    burn_in: 1500
-    thin: 1
+    burn_in: 4000
+    thin: 2
     jitter: 1.0e-08
     seed: 321

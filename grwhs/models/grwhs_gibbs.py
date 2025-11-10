@@ -102,6 +102,7 @@ class GRwHS_Gibbs:
     tau0: float = 0.1        # global HC scale
     eta: float = 0.5         # base group HalfNormal scale (before size adjustment)
     s0: float = 1.0          # noise HC scale
+    use_groups: bool = True  # enable group shrinkage (phi)
 
     # Sampling controls
     iters: int = 2000
@@ -160,17 +161,27 @@ class GRwHS_Gibbs:
         if groups is None:
             groups = [[j] for j in range(p)]
         self.groups_ = groups
-        G = len(groups)
+
+        if self.use_groups:
+            sampler_groups = groups
+        else:
+            sampler_groups = [list(range(p))]
+
+        G = len(sampler_groups)
         group_id = np.empty(p, dtype=int)
         group_sizes = np.zeros(G, dtype=int)
-        for g, idxs in enumerate(groups):
-            group_id[idxs] = g
-            group_sizes[g] = len(idxs)
+        for g, idxs in enumerate(sampler_groups):
+            idx_arr = np.asarray(idxs, dtype=int)
+            group_id[idx_arr] = g
+            group_sizes[g] = len(idx_arr)
         self.group_id_ = group_id
         self.group_sizes_ = group_sizes
 
         # Size-adjusted HalfNormal prior for group scales: η_g = η / sqrt(p_g)
-        eta_g = self.eta / np.sqrt(group_sizes)
+        if self.use_groups:
+            eta_g = self.eta / np.sqrt(group_sizes)
+        else:
+            eta_g = np.ones(G)
 
         # Initialize parameters
         try:
@@ -182,7 +193,10 @@ class GRwHS_Gibbs:
             beta = np.zeros(p)
         sigma2 = 1.0
         tau = self.tau0
-        phi = np.ones(G) * (self.eta / np.sqrt(np.mean(group_sizes)))
+        if self.use_groups:
+            phi = np.ones(G) * (self.eta / np.sqrt(np.mean(group_sizes)))
+        else:
+            phi = np.ones(G)
         lam = np.ones(p)
 
         # Optional inverse-gamma auxiliaries
@@ -195,7 +209,7 @@ class GRwHS_Gibbs:
         coef_draws = np.zeros((kept, p))
         sigma2_draws = np.zeros(kept)
         tau_draws = np.zeros(kept)
-        phi_draws = np.zeros((kept, G))
+        phi_draws = np.zeros((kept, G)) if self.use_groups and kept > 0 else None
         lam_draws = np.zeros((kept, p))
 
         keep_i = 0
@@ -212,7 +226,10 @@ class GRwHS_Gibbs:
             # ---- 1) Compute tilde_lambda, prior precision d_j, and inverse C0 (prior covariance diag)
             tilde_lam = (self.c * lam) / np.sqrt(self.c ** 2 + (tau ** 2) * (lam ** 2))
             # prior variance v_j = φ_g^2 τ^2 \tildeλ_j^2 σ^2
-            phi_safe = np.maximum(phi, _PHI_EPS)
+            if self.use_groups:
+                phi_safe = np.maximum(phi, _PHI_EPS)
+            else:
+                phi_safe = np.ones_like(phi)
             phi_group_safe = phi_safe[group_id]
             v_prior = (phi_group_safe ** 2) * (tau ** 2) * (tilde_lam ** 2) * sigma2
             # Guard against numerical issues
@@ -260,26 +277,29 @@ class GRwHS_Gibbs:
 
             # ---- 4) Group scales φ_g: sample θ_g = φ_g^2 ~ GIG(λ=1/2 - p_g/2, χ=S_g, ψ=1/η_g^2)
             # S_g = (1/(τ^2 σ^2)) Σ_{j∈Gg} β_j^2 / \tildeλ_j^2
-            inv_tilde2 = 1.0 / np.maximum(tilde_lam ** 2, self.jitter)
-            # Aggregate by group
-            S_g = np.zeros(G)
-            for g in range(G):
-                idxs = groups[g]
-                S_g[g] = (beta[idxs] ** 2 * inv_tilde2[idxs]).sum()
-            S_g *= 1.0 / (tau ** 2 * sigma2)
-            lam_gig = 0.5 - 0.5 * group_sizes
-            chi_gig = np.maximum(S_g, self.jitter)
-            psi_gig = 1.0 / np.maximum(eta_g ** 2, self.jitter)
-            theta = np.zeros(G)
-            for g in range(G):
-                theta[g] = float(sample_gig(lambda_param=lam_gig[g], chi=chi_gig[g], psi=psi_gig[g], size=1, rng=self.rng)[0])
-            phi = np.sqrt(np.maximum(theta, 0.0))
-            adaptive_floor = max(_PHI_BASE_FLOOR, _PHI_ADAPT_COEFF * tau)
-            phi_floor_weight = max(_FLOOR_MIN_WEIGHT, burnin_w)
-            phi_floor_effective = max(_PHI_EPS, adaptive_floor * phi_floor_weight)
-            phi = np.maximum(phi, phi_floor_effective)
-            phi_safe = np.maximum(phi, _PHI_EPS)
-            phi_group_safe = phi_safe[group_id]
+            if self.use_groups:
+                inv_tilde2 = 1.0 / np.maximum(tilde_lam ** 2, self.jitter)
+                S_g = np.zeros(G)
+                for g in range(G):
+                    idxs = sampler_groups[g]
+                    idx_arr = np.asarray(idxs, dtype=int)
+                    S_g[g] = (beta[idx_arr] ** 2 * inv_tilde2[idx_arr]).sum()
+                S_g *= 1.0 / (tau ** 2 * sigma2)
+                lam_gig = 0.5 - 0.5 * group_sizes
+                chi_gig = np.maximum(S_g, self.jitter)
+                psi_gig = 1.0 / np.maximum(eta_g ** 2, self.jitter)
+                theta = np.zeros(G)
+                for g in range(G):
+                    theta[g] = float(sample_gig(lambda_param=lam_gig[g], chi=chi_gig[g], psi=psi_gig[g], size=1, rng=self.rng)[0])
+                phi = np.sqrt(np.maximum(theta, 0.0))
+                adaptive_floor = max(_PHI_BASE_FLOOR, _PHI_ADAPT_COEFF * tau)
+                phi_floor_weight = max(_FLOOR_MIN_WEIGHT, burnin_w)
+                phi_floor_effective = max(_PHI_EPS, adaptive_floor * phi_floor_weight)
+                phi = np.maximum(phi, phi_floor_effective)
+                phi_safe = np.maximum(phi, _PHI_EPS)
+                phi_group_safe = phi_safe[group_id]
+            else:
+                phi_group_safe = np.ones(p)
 
             # ---- 5) Global scale τ: slice sample v = log τ
             # log-target:
@@ -347,7 +367,8 @@ class GRwHS_Gibbs:
                 coef_draws[keep_i] = beta
                 sigma2_draws[keep_i] = sigma2
                 tau_draws[keep_i] = tau
-                phi_draws[keep_i] = phi
+                if phi_draws is not None:
+                    phi_draws[keep_i] = phi
                 lam_draws[keep_i] = lam
                 keep_i += 1
 
@@ -355,7 +376,7 @@ class GRwHS_Gibbs:
         self.coef_samples_ = coef_draws
         self.sigma2_samples_ = sigma2_draws
         self.tau_samples_ = tau_draws
-        self.phi_samples_ = phi_draws
+        self.phi_samples_ = phi_draws if phi_draws is not None else None
         self.lambda_samples_ = lam_draws
         self.coef_mean_ = coef_draws.mean(axis=0) if kept > 0 else np.zeros(p)
         self.intercept_ = 0.0  # X and y are assumed centered/standardized

@@ -1,15 +1,17 @@
 name: "regularized_horseshoe_regression"
 
 model:
-  name: "regularized_horseshoe"
-  scale_intercept: 10.0
-  sigma_scale: 1.0
-  slab_scale: 1.0
+  name: "grwhs_gibbs"
+  use_groups: false
+  c: 1.0
+  eta: 0.7
   tau0: 0.00641500299099584
-  num_warmup: 1000
-  num_samples: 2000
-  num_chains: 1
-  thinning: 1
-  target_accept_prob: 0.9
-  progress_bar: false
-  seed: 151
+  s0: 1.0
+  iters: 8000
+
+inference:
+  gibbs:
+    burn_in: 4000
+    thin: 2
+    jitter: 1.0e-08
+    seed: 151

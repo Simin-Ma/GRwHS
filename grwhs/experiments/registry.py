@@ -554,6 +554,7 @@ def _build_grwhs_gibbs(cfg: Dict[str, Any]) -> Any:
     c = float(_get(cfg, "model.c", 1.0))
     tau0 = float(_get(cfg, "model.tau0", 0.1))
     eta = float(_get(cfg, "model.eta", 0.5))
+    use_groups = bool(_get(cfg, "model.use_groups", True))
     s0 = float(_get(cfg, "model.s0", 1.0))
     iters = int(_get(cfg, "model.iters", 2000))
     seed = _get(
@@ -562,7 +563,16 @@ def _build_grwhs_gibbs(cfg: Dict[str, Any]) -> Any:
         _get(cfg, "model.seed", _get(cfg, "seed", 42)),
     )
     runtime_overrides = _gibbs_runtime_overrides(cfg)
-    sampler = GRwHS_Gibbs(c=c, tau0=tau0, eta=eta, s0=s0, iters=iters, seed=int(seed), **runtime_overrides)  # type: ignore
+    sampler = GRwHS_Gibbs(
+        c=c,
+        tau0=tau0,
+        eta=eta,
+        s0=s0,
+        iters=iters,
+        seed=int(seed),
+        use_groups=use_groups,
+        **runtime_overrides,
+    )  # type: ignore
     return sampler
 
 
