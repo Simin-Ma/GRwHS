@@ -3,15 +3,16 @@ name: "sparse_group_lasso"
 model:
   name: "sparse_group_lasso"
   fit_intercept: false
-  max_iter: 200
-  max_epochs: 100000
-  tol: 1.0e-06
+  max_iter: 100
+  max_epochs: 20000
+  tol: 1.0e-05
   warm_start: true
   ws_strategy: "fixpoint"
+  verbose: 1
   search:
     alpha:
       mode: "logspace"
       start: 1.0
-      stop: 0.001
-      num: 50
-    l1_ratio: [0.2, 0.5, 0.8]
+      stop: 0.01
+      num: 12
+    l1_ratio: [0.4, 0.7]

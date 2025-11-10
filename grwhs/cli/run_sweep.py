@@ -63,13 +63,8 @@ def _execute_task(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         resolved_model_name = get_model_name_from_config(resolved_cfg)
-        model_name_key = resolved_model_name.lower()
     except Exception:
         resolved_model_name = None
-        model_name_key = None
-
-    if model_name_key is not None and model_name_key != "grwhs_gibbs":
-        resolved_cfg.setdefault("experiments", {})["repeats"] = 1
 
     record: Dict[str, Any] = {
         "name": name,

@@ -93,9 +93,12 @@ class GIGGRegression:
     seed: int = 0
     b_init: float = 1.0
     b_floor: float = 0.25
+    b_max: float = 2.0
     tau_scale: float = 1.0
     sigma_scale: float = 1.0
     store_lambda: bool = False
+    a_value: Optional[float] = None
+    share_group_hyper: bool = False
 
     rng_: Generator = field(init=False, repr=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -125,7 +128,8 @@ class GIGGRegression:
         self.rng_ = default_rng(self.seed)
         rng = self.rng_
 
-        a_vec = np.full(G, 1.0 / max(n, 1))
+        a_const = float(self.a_value) if self.a_value is not None else 1.0 / max(n, 1)
+        a_vec = np.full(G, a_const)
         b_vec = np.full(G, max(self.b_init, self.b_floor))
 
         lambda_sq = np.ones(p, dtype=float)
@@ -206,15 +210,27 @@ class GIGGRegression:
 
             # ---- Empirical Bayes update for b_g
             log_gamma_mean = (it * log_gamma_mean + np.log(np.maximum(gamma_sq, self.jitter))) / (it + 1)
+            targets = np.empty(G, dtype=float)
             for gid, idxs in enumerate(normalised_groups):
                 log_lambda_group = float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter))))
                 log_lambda_mean[gid] = (it * log_lambda_mean[gid] + log_lambda_group) / (it + 1)
-                target = log_gamma_mean[gid] - log_lambda_mean[gid]
+                targets[gid] = log_gamma_mean[gid] - log_lambda_mean[gid]
+
+            if self.share_group_hyper:
+                aggregate = float(np.mean(targets))
                 try:
-                    b_update = _digamma_inv(target)
+                    b_update = _digamma_inv(aggregate)
                 except Exception:
-                    b_update = b_vec[gid]
-                b_vec[gid] = min(max(float(b_update), self.b_floor), 2.0)
+                    b_update = float(np.mean(b_vec))
+                clipped = min(max(float(b_update), self.b_floor), self.b_max)
+                b_vec.fill(clipped)
+            else:
+                for gid in range(G):
+                    try:
+                        b_update = _digamma_inv(targets[gid])
+                    except Exception:
+                        b_update = b_vec[gid]
+                    b_vec[gid] = min(max(float(b_update), self.b_floor), self.b_max)
 
             if it >= self.burnin and ((it - self.burnin) % max(self.thin, 1) == 0):
                 coef_draws[keep_idx] = beta

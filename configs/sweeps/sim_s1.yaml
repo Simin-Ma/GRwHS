@@ -67,6 +67,7 @@ variations:
     config_files:
       - "../overrides/snr_3p0.yaml"
       - "../methods/gigg.yaml"
+      - "../overrides/gigg_snr3_boost.yaml"
   - name: "snr3p0_sgl"
     config_files:
       - "../overrides/snr_3p0.yaml"
