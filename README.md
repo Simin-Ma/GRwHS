@@ -186,7 +186,7 @@ python -m grwhs.cli.run_sweep ^
 Follow this checklist to reproduce the final regression study (three synthetic suites + real data + ablations):
 
 1. **Synthetic Scenarios (S1–S3)**
-   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.5, 1, 3} via the override files, repeats the data draw 3 times, and evaluates the six locked baselines (GRwHS, RHS, GIGG, SGL, Lasso, Ridge) under identical preprocessing and nested-CV settings.
+   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.1, 0.5, 1, 3} via the override files, repeats the data draw 3 times, and evaluates the six locked baselines (GRwHS, RHS, GIGG, SGL, Lasso, Ridge) under identical preprocessing and nested-CV settings.
    - Outputs live under `outputs/sweeps/sim_s*/` with per-variant resolved configs that document the chosen SNR, seeds, and tuning decisions.
 
 2. **Real Data Benchmarks**
@@ -310,6 +310,49 @@ python scripts/plot_diagnostics.py \
 
 The script reads group structure, seeds, and posterior arrays directly from the stored artifacts, so the same command works for any dataset/method combination without hard-coded indices.
 
+### 8.2 GRwHS vs RHS Group-Level Comparison
+
+Use `scripts/plot_group_level_comparison.py` to regenerate the synthetic ground-truth coefficients, align them with each fold’s standardized coefficients, and build the GRwHS-vs-RHS figures that highlight structural gains:
+
+```bash
+python scripts/plot_group_level_comparison.py \
+  --grwhs-dir outputs/sweeps/sim_s3/snr1p0_grwhs-<timestamp> \
+  --rhs-dir  outputs/sweeps/sim_s3/snr1p0_rhs-<timestamp> \
+  --title "sim_s3 mixed signal (SNR=1.0)" \
+  --output-dir outputs/figures/sim_s3_snr1_grwhs_vs_rhs
+```
+
+Outputs:
+- `sim_s3_group_mse.png` – per-group MSE bars (GRwHS vs RHS) with the strong/medium/weak/null tags shown on the x-axis.
+- `sim_s3_group_scales.png` – posterior \(E[\log \phi_g]\) with 90% intervals, contrasted against the RHS global \(E[\log \tau]\).
+- `sim_s3_group_combined.png` – side-by-side panel (MSE + scales) for easy drop-in to the main text.
+- `sim_s3_group_calibration.png` – scatter of true group ‖β‖ vs the estimated ‖β̂‖ for both models, color-coded by group type.
+- `sim_s3_group_stacked.png` – stacked bars of strong/medium/weak/null signal mass comparing ground truth vs GRwHS vs RHS.
+- `sim_s3_triptych.png` – 3-in-1 figure (left: per-group MSE, right: log φ_g panel, bottom: MeanEffectiveNonzeros vs SNR with the current SNR highlighted).
+- `group_comparison_summary.json` – machine-readable dump (group tags, per-group statistics, figure paths) for tables or supplements.
+
+The script infers group tags from the sim_s3 blueprint, so the captions automatically read “strong dense group”, “medium”, “sparse/weak”, or “null” without any manual labeling.
+
+### 8.3 Coefficient-Level Recovery
+
+To inspect every coefficient (top-k, full scatter, stacked mass), run:
+
+```bash
+python scripts/plot_coefficient_recovery.py \
+  --grwhs-dir outputs/sweeps/sim_s3/snr3p0_grwhs-<timestamp> \
+  --rhs-dir  outputs/sweeps/sim_s3/snr3p0_rhs-<timestamp> \
+  --output-dir outputs/figures/sim_s3_snr3_coefficients \
+  --title "sim_s3 (SNR=3.0)" \
+  --top-k 40
+```
+
+Outputs:
+- `coeff_scatter_all_std.png` / `coeff_scatter_topk_std.png`: standardized true vs estimated β_j (all coefficients / top-k)。
+- `coeff_scatter_all_raw.png` / `coeff_scatter_topk_raw.png`: 同样的散点但映射回原始系数尺度。
+- `coeff_bar_topk.png`: grouped bars (truth/GRwHS/RHS) for the top-k coefficients.
+- `coeff_mass_stacked.png`: coefficient-level |β| mass share by group tag (truth vs GRwHS vs RHS).
+- `coefficients_summary.csv`: per-coefficient table with group tags, true/estimated values, and |β| ranking.
+
 ### 8.2 Randomized Sweep Selector
 
 Use `scripts/random_sweep_selector.py` to randomly subsample `configs/sweeps/mixed_signal_grid.yaml`, execute the corresponding sweeps, and report the best (lowest) RMSE achieved by `grwhs_gibbs`:
@@ -338,12 +381,22 @@ python -m pytest
 ```
 Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, convergence utilities, visualization scaffolding, and overall smoke tests.
 
-### 9.2 Manual Validation Checklist
-1. Execute the S1–S3 sweeps (all SNRs), the real-data sweeps you wired up, and optional Exp4 ablations.
-2. Inspect metrics via `metrics.json` and aggregated reports.
-3. Check each `repeat_*/fold_*/convergence.json` for acceptable R-hat/ESS.
-4. Generate plots with `scripts/plot_check.py` and review posterior traces/histograms.
-5. Ensure `posterior_samples.npz` exists when `save_posterior=true`.
+### 9.2 Full Validation Checklist (RHS-aware)
+Run the automated harness (covers the doctor-level checklist: sanity, degeneracy, sensitivity, negative controls, interpretability, failure notes):
+```bash
+python scripts/run_validation_checklist.py              # full battery
+python scripts/run_validation_checklist.py --minimum    # 14-item publishable core
+python scripts/run_validation_checklist.py --minimum --fast --output outputs/checklist.json
+```
+Outputs list each scenario with `status` (pass/warn), metrics, and notes. Core coverage:
+- **Sanity (SC-1/2/3):** pure noise shrinkage; no-group collapse to RHS; single strong signal protected without dragging neighbours.
+- **Degeneracy (D-1/2/3/4):** dense-weak → RHS, high-noise collapse, ridge-like behaviour when λ_j are constrained, slab extremes c→∞/small.
+- **Sensitivity (S-1/2/3/4):** smooth performance vs τ/ϕ/λ/c sweeps; stable group ordering and controlled false positives.
+- **Negative controls (NC-1/2):** dense-weak regime (GRwHS≈RHS≈Ridge); mild degradation under 20% mis-specified groups.
+- **Interpretability (E-1/2/3):** ϕ_g rank vs true group strength; ordering stability across seeds; κ separates strong/weak.
+- **Failure modes:** documents p≫n + high correlation and near-equal/overlapping groups where GRwHS should not beat RHS but must remain stable.
+
+If you need manual inspection beyond the harness: run `scripts/plot_check.py` on checklist-generated runs, check `convergence.json` for R-hat/ESS, and confirm `posterior_samples.npz` is present for Bayesian models.
 
 ---
 
@@ -364,6 +417,26 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 
 ### 10.4 Reporting Enhancements
 - Enhance `grwhs/cli/make_report.py` to produce Markdown/HTML, embed plots, or compute aggregated statistics across runs.
+
+### 10.5 Validation Checklist
+- 入口: `python scripts/run_validation_checklist.py [--minimum] [--fast] [--output path]`. `--minimum` 是 14 项核心，`--fast` 只缩短迭代/burn-in，阈值不变。
+- 关键参数（fast 数在括号内）：
+  - **SC-1 Null / Pure Noise**: `tau0=0.0015`, `eta=0.6`, iters/burn-in `4800/2200` (`3000/1500`); collapse_ok 当 `beta_abs<0.08` 且 `phi_spread<0.35`，仅在 `tau_median>0.5` 且未 collapse 时 WARN。
+  - **SC-2 No Group Structure**: grouped vs RHS, `eta=0.5`, iters/burn-in `700/250` (`400/250`); WARN 需 `phi_spread>0.45` 且 `max|Pr(phi_g>phi_h)-0.5|>0.35`，或 `rmse_gap>0.25`。
+  - **SC-3 Single Strong Signal**: `c=1.5`, `tau0=0.15`, `eta=0.5`, iters/burn-in `900/300` (`450/300`); warn 若 active beta 未保留或 `beta_abs_inactive>0.25`。
+  - **D-1 GRwHS -> RHS**: `eta=0.6`, iters/burn-in `800/250` (`450/250`); warn if `phi_spread>0.25` 或 `rmse_gap>0.15`。
+  - **D-2 High-Noise / Small-n**: `tau0=0.0025`, `eta=0.45`, iters/burn-in `3600/1400` (`2400/1000`); warn if (`tau_median>0.65` 且 `beta_abs>0.35`) 或 `beta_abs>0.45`，并附一次严格复核（iters/burn-in `5200/2000` 或 `3600/1600`）记录 `strict_tau_median/strict_beta_abs_mean/strict_rmse` 用于区分 fast 偏差与真实问题。
+  - **D-3 Local Shrinkage Collapse**: iters/burn-in `750/240` (`420/240`); lambda 无需 collapse，仅在 ridge-like `kappa` spread `>0.35` 时 WARN。
+  - **D-4 Slab Extremes**: `c=0.5` vs `c=50.0`, iters/burn-in `650/220` (`380/220`); 仅在极端 kappa 排序反转时 WARN（默认只记录）。
+  - **S-1 tau sensitivity**: `tau0` x {0.3,1,3,10} with `eta=0.6`, iters/burn-in `520/180` (`320/180`); warn if 相邻 RMSE 跳变 `>=0.35`。
+  - **S-2 phi_g sensitivity**: `eta` in {0.3,1,3}, iters/burn-in `520/170` (`320/170`); warn if 最小 Spearman(rank) `<0.6`。
+  - **S-3 lambda_j sensitivity**: iters/burn-in `520/170` (`320/170`); warn if active/inactive kappa gap `<0.05`。
+  - **S-4 Slab c sensitivity**: `c` in {0.5,1,2,5}, iters/burn-in `520/170` (`320/170`); 监控 kappa 单调性，连续 c 间 `kappa_mean` 下跌 `>0.1` 才 WARN（`r_mean` 仅记录）。
+  - **NC-1 Dense-and-Weak**: `eta=0.4`, iters/burn-in `1000/300` (`650/300`); warn if `rmse_gap>0.35` 或 ridge gap `>0.35`。
+  - **NC-2 Misspecified groups**: `eta=0.6`, iters/burn-in `520/170` (`320/170`); warn if `rmse_gap>0.4` 或 `tau_gap>0.35`。
+  - **E-1 / E-2 / E-3**: 共用 `520/170` (`320/170`); E-1 用 Spearman/Top-k/AUC，E-2 以“识别稳”为主：`order_corr_min>=0.4` 或 Top-k 命中/胜率≥0.7 即 PASS（绝对排序可不稳），E-3 检查 kappa 强>弱。
+  - **FailureModes**: 恒 INFO；记录已知困难区（近等强组、高相关且 p>>n 等）。
+- 采样器 `thin=2`，未列出参数沿用 `grwhs.models.grwhs_gibbs` 默认。
 
 ---
 
@@ -386,6 +459,8 @@ Runs unit tests for data generation, inference (SVI/Gibbs), GIG sampler, converg
 | Run S2 sweep | `python -m grwhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s2.yaml --jobs 6` |
 | Run Exp4 misspec sweep | `python -m grwhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/exp4_group_misspec.yaml --jobs 2` |
 | Generate plots | `python scripts/plot_check.py <run_dir>` |
+| GRwHS vs RHS per-group plots | `python scripts/plot_group_level_comparison.py --grwhs-dir <grwhs_variant_dir> --rhs-dir <rhs_variant_dir>` |
+| Coefficient recovery plots | `python scripts/plot_coefficient_recovery.py --grwhs-dir <grwhs_variant_dir> --rhs-dir <rhs_variant_dir>` |
 | Summarize runs | `python -m grwhs.cli.make_report --run <run_dir> [--run <run_dir>]` |
 | Run tests | `python -m pytest` |
 | Clean outputs (PowerShell) | `Remove-Item outputs\runs -Recurse -Force` |

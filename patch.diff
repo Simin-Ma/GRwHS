@@ -1,0 +1,37 @@
+*** Begin Patch
+*** Update File: scripts/plot_group_level_comparison.py
+@@
+ def _load_resolved_config(run_dir: Path) -> Mapping[str, object]:
+@@
+     return yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
++
++
++def _derive_context(grwhs_dir: Path, resolved_cfg: Mapping[str, object]) -> tuple[str, str, float]:
++    """Return (scenario_slug, snr_token, snr_value) for unique filenames."""
++    parts = list(grwhs_dir.parts)
++    scenario = "scenario"
++    if "sweeps" in parts:
++        try:
++            idx = parts.index("sweeps")
++            scenario = parts[idx + 1]
++        except Exception:
++            pass
++    snr_val = float(resolved_cfg.get("data", {}).get("snr", 0.0))
++    token = ("%0.1f" % snr_val).replace(".", "p")
++    return scenario, token, snr_val
+@@
+-    mse_path = output_dir / "sim_s3_group_mse.png"
+-    scales_path = output_dir / "sim_s3_group_scales.png"
+-    combined_path = output_dir / "sim_s3_group_combined.png"
+-    calibration_path = output_dir / "sim_s3_group_calibration.png"
+-    stacked_path = output_dir / "sim_s3_group_stacked.png"
+-    triptych_path = output_dir / "sim_s3_triptych.png"
++    scenario_slug, snr_token, _snr_val = _derive_context(grwhs_dir, resolved_cfg)
++    prefix = f"{scenario_slug}_snr{snr_token}"
++    mse_path = output_dir / f"{prefix}_group_mse.png"
++    scales_path = output_dir / f"{prefix}_group_scales.png"
++    combined_path = output_dir / f"{prefix}_group_combined.png"
++    calibration_path = output_dir / f"{prefix}_group_calibration.png"
++    stacked_path = output_dir / f"{prefix}_group_stacked.png"
++    triptych_path = output_dir / f"{prefix}_triptych.png"
+*** End Patch

@@ -5,6 +5,31 @@ common_config_files:
   - "../experiments/sim_s2.yaml"
 
 variations:
+  - name: "snr0p1_grwhs"
+    config_files:
+      - "../overrides/snr_0p1.yaml"
+      - "../methods/grwhs_regression.yaml"
+  - name: "snr0p1_rhs"
+    config_files:
+      - "../overrides/snr_0p1.yaml"
+      - "../methods/regularized_horseshoe.yaml"
+  - name: "snr0p1_gigg"
+    config_files:
+      - "../overrides/snr_0p1.yaml"
+      - "../methods/gigg.yaml"
+  - name: "snr0p1_sgl"
+    config_files:
+      - "../overrides/snr_0p1.yaml"
+      - "../methods/sparse_group_lasso.yaml"
+  - name: "snr0p1_lasso"
+    config_files:
+      - "../overrides/snr_0p1.yaml"
+      - "../methods/lasso.yaml"
+  - name: "snr0p1_ridge"
+    config_files:
+      - "../overrides/snr_0p1.yaml"
+      - "../methods/ridge.yaml"
+
   - name: "snr0p5_grwhs"
     config_files:
       - "../overrides/snr_0p5.yaml"
