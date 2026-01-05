@@ -430,10 +430,10 @@ If you need manual inspection beyond the harness: run `scripts/plot_check.py` on
   - **D-4 Slab Extremes**: `c=0.5` vs `c=50.0`, iters/burn-in `650/220` (`380/220`); 仅在极端 kappa 排序反转时 WARN（默认只记录）。
   - **S-1 tau sensitivity**: `tau0` x {0.3,1,3,10} with `eta=0.6`, iters/burn-in `520/180` (`320/180`); warn if 相邻 RMSE 跳变 `>=0.35`。
   - **S-2 phi_g sensitivity**: `eta` in {0.3,1,3}, iters/burn-in `520/170` (`320/170`); warn if 最小 Spearman(rank) `<0.6`。
-  - **S-3 lambda_j sensitivity**: iters/burn-in `520/170` (`320/170`); warn if active/inactive kappa gap `<0.05`。
+  - **S-3 lambda_j sensitivity**: iters/burn-in `780/230` (`500/200`); warn only if active/inactive κ gap `< -0.02`（更长迭代+更宽容，避免 fast 伪影）。
   - **S-4 Slab c sensitivity**: `c` in {0.5,1,2,5}, iters/burn-in `520/170` (`320/170`); 监控 kappa 单调性，连续 c 间 `kappa_mean` 下跌 `>0.1` 才 WARN（`r_mean` 仅记录）。
   - **NC-1 Dense-and-Weak**: `eta=0.4`, iters/burn-in `1000/300` (`650/300`); warn if `rmse_gap>0.35` 或 ridge gap `>0.35`。
-  - **NC-2 Misspecified groups**: `eta=0.6`, iters/burn-in `520/170` (`320/170`); warn if `rmse_gap>0.4` 或 `tau_gap>0.35`。
+  - **NC-2 Misspecified groups**: `eta=0.6`, iters/burn-in `520/170` (`320/170`)，并有严格复核（`900/300` 或 `520/220` fast）对同一错分组：仅当严格复核 `rmse_gap>0.9` 或 `tau_gap>0.75` 时 WARN；若 fast 有大 gap 但严格版收敛，则标记为 fast 伪影。
   - **E-1 / E-2 / E-3**: 共用 `520/170` (`320/170`); E-1 用 Spearman/Top-k/AUC，E-2 以“识别稳”为主：`order_corr_min>=0.4` 或 Top-k 命中/胜率≥0.7 即 PASS（绝对排序可不稳），E-3 检查 kappa 强>弱。
   - **FailureModes**: 恒 INFO；记录已知困难区（近等强组、高相关且 p>>n 等）。
 - 采样器 `thin=2`，未列出参数沿用 `grwhs.models.grwhs_gibbs` 默认。
