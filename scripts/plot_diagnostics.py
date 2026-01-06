@@ -118,43 +118,31 @@ def main() -> None:
     if artifacts.resolved_config:
         slab_width = float(artifacts.resolved_config.get("model", {}).get("c", slab_width))
 
-    if phi_samples is None:
-        raise RuntimeError("Posterior samples missing 'phi'; required for shrinkage diagnostics.")
+    mean_kappa = None
+    series = {"τ": tau_samples, "σ²": sigma2_series}
+    titles = {"τ": "Trace of global scale τ", "σ²": "Trace of noise variance σ²"}
+    if phi_samples is not None:
+        mean_kappa = compute_mean_kappa_series(
+            X=X_train,
+            group_index=group_index,
+            lambda_samples=lambda_samples,
+            tau_samples=tau_samples,
+            phi_samples=phi_samples,
+            sigma_samples=sigma_samples,
+            slab_width=slab_width,
+        )
+        series["Mean κ"] = mean_kappa
+        titles["Mean κ"] = "Mean shrinkage κ̄"
 
-    mean_kappa = compute_mean_kappa_series(
-        X=X_train,
-        group_index=group_index,
-        lambda_samples=lambda_samples,
-        tau_samples=tau_samples,
-        phi_samples=phi_samples,
-        sigma_samples=sigma_samples,
-        slab_width=slab_width,
-    )
+    trace_fig = trace_plot(series, burn_in=None, titles=titles)
 
-    trace_fig = trace_plot(
-        {
-            "τ": tau_samples,
-            "σ²": sigma2_series,
-            "Mean κ": mean_kappa,
-        },
-        burn_in=None,
-        titles={
-            "τ": "Trace of global scale τ",
-            "σ²": "Trace of noise variance σ²",
-            "Mean κ": "Mean shrinkage κ̄",
-        },
-    )
-
-    acf_tau = autocorrelation(tau_samples, min(args.max_lag, tau_samples.size - 1))
-    acf_sigma = autocorrelation(sigma2_series, min(args.max_lag, sigma2_series.size - 1))
-    acf_kappa = autocorrelation(mean_kappa, min(args.max_lag, mean_kappa.size - 1))
-    acf_fig = autocorrelation_plot(
-        {
-            "τ": acf_tau,
-            "σ²": acf_sigma,
-            "Mean κ": acf_kappa,
-        }
-    )
+    acf_series = {
+        "τ": autocorrelation(tau_samples, min(args.max_lag, tau_samples.size - 1)),
+        "σ²": autocorrelation(sigma2_series, min(args.max_lag, sigma2_series.size - 1)),
+    }
+    if mean_kappa is not None:
+        acf_series["Mean κ"] = autocorrelation(mean_kappa, min(args.max_lag, mean_kappa.size - 1))
+    acf_fig = autocorrelation_plot(acf_series)
 
     truths = _extract_truths(artifacts)
     strong_idx = artifacts.dataset_meta.get("strong_idx", [])
@@ -179,8 +167,10 @@ def main() -> None:
         title_prefix="Weak/Null",
     )
 
-    group_sizes = build_group_sizes(groups, p)
-    phi_fig = phi_violin_plot(phi_samples, group_sizes=group_sizes, max_groups=args.groups_to_plot)
+    phi_fig = None
+    if phi_samples is not None:
+        group_sizes = build_group_sizes(groups, p)
+        phi_fig = phi_violin_plot(phi_samples, group_sizes=group_sizes, max_groups=args.groups_to_plot)
 
     predictive_draws = prepare_predictive_draws(
         artifacts,
@@ -206,7 +196,8 @@ def main() -> None:
     acf_fig.savefig(dest / "acf_tau_sigma_kappa.png", dpi=args.dpi)
     strong_fig.savefig(dest / "posterior_density_strong.png", dpi=args.dpi)
     weak_fig.savefig(dest / "posterior_density_weak.png", dpi=args.dpi)
-    phi_fig.savefig(dest / "group_phi_violin.png", dpi=args.dpi)
+    if phi_fig is not None:
+        phi_fig.savefig(dest / "group_phi_violin.png", dpi=args.dpi)
     if coverage_fig is not None:
         coverage_fig.savefig(dest / "coverage_width.png", dpi=args.dpi)
 
@@ -226,28 +217,29 @@ def main() -> None:
         )
         recon_fig.savefig(dest / "posterior_reconstruction.png", dpi=args.dpi)
 
-    landscape_fig = group_shrinkage_landscape(
-        phi_samples=phi_samples,
-        groups=groups,
-        active_idx=active_idx,
-    )
-    landscape_fig.savefig(dest / "group_shrinkage_landscape.png", dpi=args.dpi)
+    if phi_samples is not None:
+        landscape_fig = group_shrinkage_landscape(
+            phi_samples=phi_samples,
+            groups=groups,
+            active_idx=active_idx,
+        )
+        landscape_fig.savefig(dest / "group_shrinkage_landscape.png", dpi=args.dpi)
 
-    heatmap_fig = group_coefficient_heatmap(
-        beta_samples=beta_trimmed,
-        phi_samples=phi_samples,
-        groups=groups,
-        active_idx=active_idx,
-    )
-    heatmap_fig.savefig(dest / "group_coefficient_heatmap.png", dpi=args.dpi)
+        heatmap_fig = group_coefficient_heatmap(
+            beta_samples=beta_trimmed,
+            phi_samples=phi_samples,
+            groups=groups,
+            active_idx=active_idx,
+        )
+        heatmap_fig.savefig(dest / "group_coefficient_heatmap.png", dpi=args.dpi)
 
-    scatter_fig = group_vs_individual_scatter(
-        phi_samples=phi_samples,
-        lambda_samples=lambda_samples,
-        groups=groups,
-        active_idx=active_idx,
-    )
-    scatter_fig.savefig(dest / "group_vs_individual_scatter.png", dpi=args.dpi)
+        scatter_fig = group_vs_individual_scatter(
+            phi_samples=phi_samples,
+            lambda_samples=lambda_samples,
+            groups=groups,
+            active_idx=active_idx,
+        )
+        scatter_fig.savefig(dest / "group_vs_individual_scatter.png", dpi=args.dpi)
 
     print(f"[OK] Figures written to {dest}")
 

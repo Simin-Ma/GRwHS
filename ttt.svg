@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650">
+  <defs>
+    <style>
+      .title { font: 700 28px Arial, Helvetica, sans-serif; fill:#111; }
+      .subtitle { font: 700 18px Arial, Helvetica, sans-serif; fill:#0b66c3; }
+      .body { font: 500 14px Arial, Helvetica, sans-serif; fill:#111; }
+      .small { font: 500 13px Arial, Helvetica, sans-serif; fill:#111; }
+      .muted { fill:#555; }
+      .box { fill:#fff; stroke:#111; stroke-width:2; }
+      .boxRound { fill:#fff; stroke:#111; stroke-width:2; rx:10; ry:10; }
+      .infoBox { fill:#f6fbff; stroke:#3a8bd6; stroke-width:3; rx:14; ry:14; }
+      .greenBox { fill:#e9f7ef; stroke:#25a65a; stroke-width:3; rx:14; ry:14; }
+      .red { fill:#d11; font: 700 13px Arial, Helvetica, sans-serif; }
+      .green { fill:#138a36; font: 700 13px Arial, Helvetica, sans-serif; }
+      .orange { fill:#d45b00; font: 700 13px Arial, Helvetica, sans-serif; }
+      .arrow { stroke:#111; stroke-width:2; fill:none; }
+      .dash { stroke:#999; stroke-width:2; stroke-dasharray:8 8; }
+    </style>
+
+    <marker id="arrowHead" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="600" y="42" text-anchor="middle" class="title">GR-RHS: The Evolution of Group-Aware Sparse Regression</text>
+
+  <!-- Top info box -->
+  <rect x="70" y="70" width="1060" height="90" class="infoBox"/>
+  <text x="600" y="102" text-anchor="middle" class="subtitle">Real-World Challenge: Data with Group Structure</text>
+
+  <text x="110" y="128" class="small">Natural grouping (pathways, families)</text>
+  <text x="110" y="148" class="small">Mixed signal strength (strong/medium/weak)</text>
+
+  <text x="820" y="128" class="small">High within-group correlation</text>
+  <text x="820" y="148" class="small">Need adaptive group-wise shrinkage</text>
+
+  <!-- Section headings -->
+  <text x="290" y="190" text-anchor="middle" class="body" style="font-weight:700;">Penalized Regression Path</text>
+  <text x="910" y="190" text-anchor="middle" class="body" style="font-weight:700;">Bayesian Path</text>
+
+  <!-- Vertical dashed divider -->
+  <line x1="600" y1="205" x2="600" y2="520" class="dash"/>
+
+  <!-- Left path: Lasso / Ridge -->
+  <rect x="130" y="230" width="220" height="70" class="boxRound"/>
+  <text x="230" y="262" text-anchor="middle" class="body" style="font-weight:700;">Lasso</text>
+  <text x="230" y="283" text-anchor="middle" class="small muted">Individual Sparsity</text>
+  <text x="95" y="312" class="red">Flaw: No group structure</text>
+
+  <rect x="360" y="230" width="220" height="70" class="boxRound"/>
+  <text x="470" y="262" text-anchor="middle" class="body" style="font-weight:700;">Ridge</text>
+  <text x="470" y="283" text-anchor="middle" class="small muted">No Sparsity</text>
+  <text x="370" y="312" class="red">Flaw: Dense solutions</text>
+
+  <!-- Left: SGL -->
+  <rect x="295" y="345" width="250" height="80" class="boxRound"/>
+  <text x="420" y="377" text-anchor="middle" class="body" style="font-weight:700;">SGL</text>
+  <text x="420" y="398" text-anchor="middle" class="small muted">Sparse Group Lasso</text>
+
+  <text x="150" y="448" class="green">Solution: Group + Individual sparsity</text>
+  <text x="340" y="468" class="red">But: Rigid shrinkage patterns</text>
+
+  <!-- Arrows to SGL -->
+  <path d="M 260 300 C 300 320, 330 330, 380 345" class="arrow" marker-end="url(#arrowHead)"/>
+  <path d="M 520 300 C 500 320, 470 330, 460 345" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <!-- Right path: Horseshoe -->
+  <rect x="770" y="230" width="260" height="70" class="boxRound"/>
+  <text x="900" y="262" text-anchor="middle" class="body" style="font-weight:700;">Horseshoe</text>
+  <text x="900" y="283" text-anchor="middle" class="small muted">Global-Local Framework</text>
+  <text x="750" y="312" class="red" text-anchor="middle">Flaw: Group blind + Sampling instability</text>
+
+  <!-- Right: RHS and GIGG -->
+  <rect x="700" y="345" width="240" height="85" class="boxRound"/>
+  <text x="820" y="375" text-anchor="middle" class="body" style="font-weight:700;">RHS</text>
+  <text x="820" y="397" text-anchor="middle" class="small muted">Regularized Horseshoe</text>
+  <text x="700" y="448" class="green">Solution: Numerical stability</text>
+  <text x="742" y="468" class="red">But: Still group blind</text>
+
+  <rect x="960" y="345" width="240" height="85" class="boxRound"/>
+  <text x="1080" y="375" text-anchor="middle" class="body" style="font-weight:700;">GIGG</text>
+  <text x="1080" y="397" text-anchor="middle" class="small muted">Group Structure</text>
+  <text x="960" y="448" class="green">Solution: Group hierarchy</text>
+  <text x="960" y="468" class="red">But: Computationally complex</text>
+
+  <!-- Arrows from Horseshoe to RHS & GIGG -->
+  <path d="M 900 300 C 860 320, 840 330, 820 345" class="arrow" marker-end="url(#arrowHead)"/>
+  <path d="M 900 300 C 960 320, 1010 330, 1080 345" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <!-- Bottom GR-RHS -->
+  <rect x="355" y="520" width="490" height="85" class="greenBox"/>
+  <text x="600" y="555" text-anchor="middle" class="body" style="font-weight:700;">GR-RHS</text>
+  <text x="600" y="578" text-anchor="middle" class="small muted">Group-Regularized Regularized Horseshoe</text>
+
+  <text x="600" y="630" text-anchor="middle" class="green" style="font-size:14px;">
+    Solution: Group-aware + Computationally stable + Adaptive shrinkage
+  </text>
+</svg>

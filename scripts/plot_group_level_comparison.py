@@ -149,16 +149,27 @@ def _regenerate_beta(resolved_cfg: Mapping[str, object]) -> np.ndarray:
 def _iter_fold_dirs(run_dir: Path) -> Iterable[Path]:
     for repeat_dir in sorted(run_dir.glob("repeat_*")):
         for fold_dir in sorted(repeat_dir.glob("fold_*")):
-            if (fold_dir / "posterior_summary.parquet").exists():
+            if (fold_dir / "posterior_summary.parquet").exists() or (fold_dir / "posterior_summary.csv").exists():
                 yield fold_dir
 
 
 def _load_beta_mean(fold_dir: Path) -> np.ndarray:
-    summary_path = fold_dir / "posterior_summary.parquet"
-    df = pd.read_parquet(summary_path)
+    parquet_path = fold_dir / "posterior_summary.parquet"
+    csv_path = fold_dir / "posterior_summary.csv"
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+    elif parquet_path.exists():
+        try:
+            df = pd.read_parquet(parquet_path)
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                f"Failed to read {parquet_path}; install a parquet engine (e.g. pyarrow) or write posterior_summary.csv."
+            ) from exc
+    else:
+        raise FileNotFoundError(f"posterior_summary not found under {fold_dir}")
     beta_df = df[df["parameter"] == "beta"].sort_values("index")
     if beta_df.empty:
-        raise RuntimeError(f"No beta entries found in {summary_path}")
+        raise RuntimeError(f"No beta entries found in posterior_summary under {fold_dir}")
     return beta_df["mean"].to_numpy(dtype=float)
 
 

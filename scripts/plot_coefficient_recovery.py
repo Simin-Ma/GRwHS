@@ -119,10 +119,19 @@ def _load_x_scale(run_dir: Path) -> np.ndarray:
 
 
 def _load_beta_hat(run_dir: Path) -> np.ndarray:
-    summary_path = run_dir / "posterior_summary.parquet"
-    if not summary_path.exists():
+    parquet_path = run_dir / "posterior_summary.parquet"
+    csv_path = run_dir / "posterior_summary.csv"
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+    elif parquet_path.exists():
+        try:
+            df = pd.read_parquet(parquet_path)
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                f"Failed to read {parquet_path}; install a parquet engine (e.g. pyarrow) or write posterior_summary.csv."
+            ) from exc
+    else:
         raise FileNotFoundError(f"posterior_summary not found under {run_dir}")
-    df = pd.read_parquet(summary_path)
     beta_df = df[df["parameter"] == "beta"].sort_values("index")
     if beta_df.empty:
         raise RuntimeError("posterior_summary contains no beta rows.")

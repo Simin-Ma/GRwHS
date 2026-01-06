@@ -430,11 +430,11 @@ If you need manual inspection beyond the harness: run `scripts/plot_check.py` on
   - **D-4 Slab Extremes**: `c=0.5` vs `c=50.0`, iters/burn-in `650/220` (`380/220`); warn only when the extreme values reverse the `kappa` ordering, otherwise just document the values.
   - **S-1 tau sensitivity**: `tau0` in {0.3, 1, 3, 10} with `eta=0.6`, iters/burn-in `520/180` (`320/180`); warn if adjacent RMSE jumps exceed `0.35`.
   - **S-2 phi_g sensitivity**: `eta` in {0.3, 1, 3}, iters/burn-in `520/170` (`320/170`); warn if the minimum Spearman(rank) drops below `0.6`.
-  - **S-3 lambda_j sensitivity**: iters/burn-in `780/230` (`500/200`); warn only if the active/inactive κ gap is `< -0.02` (longer iterations and wider tolerance help avoid fast-run artifacts).
-  - **S-4 Slab c sensitivity**: `c` in {0.5, 1, 2, 5}, iters/burn-in `520/170` (`320/170`); monitor whether `kappa_mean` drops by more than `0.1` as `c` increases—warn only when this monotonicity breach occurs (`r_mean` is logged but does not trigger warnings).
+  - **S-3 lambda_j sensitivity**: iters/burn-in `780/230` (`500/200`); warn only if the active/inactive kappa gap is `< -0.02` (longer iterations and wider tolerance help avoid fast-run artifacts).
+  - **S-4 Slab c sensitivity**: `c` in {0.5, 1, 2, 5}, iters/burn-in `520/170` (`320/170`); monitor whether `kappa_mean` drops by more than `0.1` as `c` increases - warn only when this monotonicity breach occurs (`r_mean` is logged but does not trigger warnings).
   - **NC-1 Dense-and-Weak**: `eta=0.4`, iters/burn-in `1000/300` (`650/300`); warn if `rmse_gap>0.35` or the ridge gap exceeds `0.35`.
   - **NC-2 Misspecified groups**: `eta=0.6`, iters/burn-in `520/170` (`320/170`), plus a strict rerun (`900/300` or `520/220` fast) on the same mis-specified split; warn only when the strict replay still produces `rmse_gap>0.9` or `tau_gap>0.75`, otherwise attribute the fast-run deviation to artifacts.
-  - **E-1 / E-2 / E-3**: shared iters/burn `520/170` (`320/170`); E-1 evaluates Spearman/Top-k/AUC, E-2 focuses on ranking stability (`order_corr_min>=0.4` or Top-k hit/win rate ≥0.7 counts as PASS even if absolute ordering wobbles), and E-3 checks that κ separates strong from weak groups.
+  - **E-1 / E-2 / E-3**: shared iters/burn `520/170` (`320/170`); E-1 evaluates Spearman/Top-k/AUC, E-2 focuses on ranking stability (`order_corr_min>=0.4` or Top-k hit/win rate >= 0.7 counts as PASS even if absolute ordering wobbles), and E-3 checks that kappa separates strong from weak groups.
   - **FailureModes**: always logged at INFO; document known hard regimes (near-equal strong groups, highly correlated features with `p>>n`, etc.).
 
 #### PASS/WARN criteria summary (table)
@@ -445,7 +445,7 @@ The checklist is rule-based: each scenario computes metrics and assigns PASS/WAR
 | SC-1 | Null Model / Pure Noise | `beta_abs_mean <= 0.12` and `phi_spread <= 0.35`; `tau_median` may be `> 0.5` only if `beta_abs_mean < 0.08` and `phi_spread < 0.35` | `beta_abs_mean > 0.12`; `phi_spread > 0.35`; `tau_median > 0.5` without collapse; `tau_median > 0.4` while not collapsed |
 | SC-2 | No Group Structure | `rmse_gap <= 0.25` and NOT(`phi_spread > 0.45` AND `phi_pair_max_dev > 0.35`) | `rmse_gap > 0.25`; OR (`phi_spread > 0.45` AND `phi_pair_max_dev > 0.35`) |
 | SC-3 | Single Strong Signal | `lambda_median_active > lambda_median_inactive` and `beta_abs_inactive <= 0.25` | `lambda_median_active <= lambda_median_inactive`; `beta_abs_inactive > 0.25` |
-| D-1 | GRRHS → RHS (dense-weak) | `phi_spread <= 0.25` and `rmse_gap <= 0.15` | `phi_spread > 0.25`; `rmse_gap > 0.15` |
+| D-1 | GRRHS -> RHS (dense-weak) | `phi_spread <= 0.25` and `rmse_gap <= 0.15` | `phi_spread > 0.25`; `rmse_gap > 0.15` |
 | D-2 | High-Noise / Small-Sample | NOT( (`tau_median > 0.65` AND `beta_abs_mean > 0.35`) OR `beta_abs_mean > 0.45` ) | (`tau_median > 0.65` AND `beta_abs_mean > 0.35`); OR `beta_abs_mean > 0.45` (strict rerun used to label fast artifacts vs persistent issues) |
 | D-3 | Local Shrinkage Collapse | `ridge_like_kappa_spread <= 0.35` | `ridge_like_kappa_spread > 0.35` |
 | D-4 | Slab Extremes | `c_small_beta_mean <= 1.2 * c_large_beta_mean` and `ordering_corr >= 0.8` | `c_small_beta_mean > 1.2 * c_large_beta_mean`; `ordering_corr < 0.8` |
@@ -459,6 +459,29 @@ The checklist is rule-based: each scenario computes metrics and assigns PASS/WAR
 | E-2 | Group ordering stability | Any of: `order_corr_min >= 0.4` OR `win_prob_active_over_inactive >= 0.7` OR `topk_hit_mean >= 0.7` | None of the PASS conditions met |
 | E-3 | Shrinkage factor kappa | `kappa_active_mean > kappa_inactive_mean` | `kappa_active_mean <= kappa_inactive_mean` (or active/inactive sets missing) |
 | FailureModes | Documented failure regions | Always `INFO` (documents known hard regimes) | N/A |
+
+#### Validation synthetic datasets (per-scenario specs)
+The checklist scenarios each generate a small synthetic dataset tailored to the specific behavior under test (not the same `sim_s*` sweep datasets). Unless stated otherwise: task is regression, `correlation.type` defaults to `independent`, and `noise_sigma` defaults to `1.0`. Sizes below are written as `strict (fast)`.
+
+| Key | Scenario | n | p | G | Group sizing | X correlation | Signal / beta construction | Noise control | Special manipulation |
+|---:|---|---:|---:|---:|---|---|---|---|---|
+| SC-1 | Null Model / Pure Noise | 200 (120) | 40 | 5 | equal, contiguous | independent | `signal.sparsity=0.0` (beta all zeros) | fixed `noise_sigma=1.0` | None |
+| SC-2 | No Group Structure | 180 (120) | 36 | 6 | equal, contiguous | independent | random sparse beta: `sparsity=0.25`, `strong_frac=0.4`, `beta_scale_strong=1.0`, `beta_scale_weak=0.4` | default noise | compares grouped vs RHS (`use_groups=true/false`) |
+| SC-3 | Single Strong Signal | 160 (120) | 24 | 4 | equal, contiguous | independent | exactly one active feature: `sparsity=1/24`, `strong_frac=1.0`, `beta_scale_strong=3.0` | fixed `noise_sigma=0.7` | None |
+| D-1 | GRRHS -> RHS (dense-weak) | 120 | 48 | 6 | equal, contiguous | independent | dense-weak beta: `sparsity=0.8`, `strong_frac=1.0`, `beta_scale_strong=0.35`, `beta_scale_weak=0.2` | SNR-matched (`snr=1.0`) | compares grouped vs RHS (`use_groups=true/false`) |
+| D-2 | High-Noise / Small-Sample | 48 (40) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.15`, `strong_frac=0.5`, `beta_scale_strong=1.0`, `beta_scale_weak=0.4` | fixed high `noise_sigma=4.0` | includes strict rerun to label fast artifacts vs persistent issues |
+| D-3 | Local Shrinkage Collapse | 80 (64) | 32 | 4 | equal, contiguous | independent | dense-weak beta as in D-1 | SNR-matched (`snr=0.8`) | forces lambda to a constant post-hoc, checks ridge-like kappa spread |
+| D-4 | Slab Extremes | 140 (110) | 28 | 4 | equal, contiguous | independent | random sparse beta: `sparsity=0.3`, `strong_frac=0.5`, `beta_scale_strong=1.4`, `beta_scale_weak=0.6` | default noise | fits with `c=0.5` vs `c=50.0`, compares ordering / shrinkage |
+| S-1 | Global tau sensitivity | 150 (110) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.25`, `strong_frac=0.6`, `beta_scale_strong=1.3`, `beta_scale_weak=0.5` | default noise | same dataset, sweeps `tau0=0.2*{0.3,1,3,10}` |
+| S-2 | Group-level phi sensitivity | 140 (110) | 32 | 4 | variable, contiguous | independent | random sparse beta: `sparsity=0.35`, `strong_frac=0.5`, `beta_scale_strong=1.2`, `beta_scale_weak=0.5` | default noise | same dataset, sweeps `eta in {0.3,1,3}` |
+| S-3 | Local lambda sensitivity | 150 (110) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.2`, `strong_frac=0.5`, `beta_scale_strong=1.5`, `beta_scale_weak=0.5` | default noise | same dataset, evaluates lambda scaling `{0.5,1,2}` via post-hoc diagnostics |
+| S-4 | Slab c sensitivity | 150 (120) | 28 | 4 | equal, contiguous | independent | random sparse beta: `sparsity=0.22`, `strong_frac=0.5`, `beta_scale_strong=1.4`, `beta_scale_weak=0.5` | default noise | same dataset, sweeps `c in {0.5,1,2,5}` |
+| NC-1 | Dense-and-Weak control | 120 | 48 | 6 | equal, contiguous | independent | dense-weak beta: `sparsity=0.8`, `strong_frac=1.0`, `beta_scale_strong=0.35`, `beta_scale_weak=0.2` | SNR-matched (`snr=0.8`) | compares GRRHS vs RHS vs ridge |
+| NC-2 | Misspecified groupings | 160 (120) | 32 | 4 | equal, contiguous | independent | random sparse beta: `sparsity=0.3`, `strong_frac=0.6`, `beta_scale_strong=1.2`, `beta_scale_weak=0.4` | default noise | reassigns 20% of features to a different group (same X/y/beta), compares strict gaps |
+| E-1 | phi_g vs true group strength | 150 (120) | 36 | 6 | equal, contiguous | independent | blueprint: groups {0,1} get 4 strong (scale 2.0); groups {2,3} get 4 medium (scale 1.0); groups {4,5} get none | default noise | evaluates rank correlation / separability between true group norms and phi medians |
+| E-2 | Group ordering stability | 150 (120) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.3`, `strong_frac=0.5`, `beta_scale_strong=1.3`, `beta_scale_weak=0.5` | default noise | re-fits 3 times with different inference seeds (same dataset) |
+| E-3 | Shrinkage factor kappa | 150 (120) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.25`, `strong_frac=0.5`, `beta_scale_strong=1.4`, `beta_scale_weak=0.4` | default noise | checks that kappa separates active vs inactive features |
+| FailureModes | Documented failure regions | 60 (50) | 120 | 8 | equal, contiguous | block: `rho=0.7`, `block_size=10` | random sparse beta: `sparsity=0.2`, `strong_frac=0.5`, `beta_scale_strong=1.0`, `beta_scale_weak=0.3` | fixed `noise_sigma=2.0` | informational only; stresses `p >> n` + strong correlations |
 - Sampler `thin=2`; any unstated parameters inherit the defaults from `grrhs.models.grrhs_gibbs`.
 
 ---
