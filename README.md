@@ -1,4 +1,4 @@
-# GRRHS Experimentation Toolkit
+# GR-RHS Experimentation Toolkit
 
 Comprehensive infrastructure for benchmarking generalized regularized horseshoe (GRRHS) models across synthetic group regression benchmarks, real pathway-aware regression-style datasets, and targeted robustness/ablation studies. The toolkit helps you generate data, train multiple model families, evaluate metrics, track posterior convergence, and produce reproducible reports and plots.
 
@@ -347,8 +347,8 @@ python scripts/plot_coefficient_recovery.py \
 ```
 
 Outputs:
-- `coeff_scatter_all_std.png` / `coeff_scatter_topk_std.png`: standardized true vs estimated β_j (all coefficients / top-k)。
-- `coeff_scatter_all_raw.png` / `coeff_scatter_topk_raw.png`: 同样的散点但映射回原始系数尺度。
+- `coeff_scatter_all_std.png` / `coeff_scatter_topk_std.png`: standardized true vs estimated β_j (all coefficients / top-k).
+- `coeff_scatter_all_raw.png` / `coeff_scatter_topk_raw.png`: the same scatter points shown on the original coefficient scale.
 - `coeff_bar_topk.png`: grouped bars (truth/GRRHS/RHS) for the top-k coefficients.
 - `coeff_mass_stacked.png`: coefficient-level |β| mass share by group tag (truth vs GRRHS vs RHS).
 - `coefficients_summary.csv`: per-coefficient table with group tags, true/estimated values, and |β| ranking.
@@ -419,24 +419,24 @@ If you need manual inspection beyond the harness: run `scripts/plot_check.py` on
 - Enhance `grrhs/cli/make_report.py` to produce Markdown/HTML, embed plots, or compute aggregated statistics across runs.
 
 ### 10.5 Validation Checklist
-- 入口: `python scripts/run_validation_checklist.py [--minimum] [--fast] [--output path]`. `--minimum` 是 14 项核心，`--fast` 只缩短迭代/burn-in，阈值不变。
-- 关键参数（fast 数在括号内）：
-  - **SC-1 Null / Pure Noise**: `tau0=0.0015`, `eta=0.6`, iters/burn-in `4800/2200` (`3000/1500`); collapse_ok 当 `beta_abs<0.08` 且 `phi_spread<0.35`，仅在 `tau_median>0.5` 且未 collapse 时 WARN。
-  - **SC-2 No Group Structure**: grouped vs RHS, `eta=0.5`, iters/burn-in `700/250` (`400/250`); WARN 需 `phi_spread>0.45` 且 `max|Pr(phi_g>phi_h)-0.5|>0.35`，或 `rmse_gap>0.25`。
-  - **SC-3 Single Strong Signal**: `c=1.5`, `tau0=0.15`, `eta=0.5`, iters/burn-in `900/300` (`450/300`); warn 若 active beta 未保留或 `beta_abs_inactive>0.25`。
-  - **D-1 GRRHS -> RHS**: `eta=0.6`, iters/burn-in `800/250` (`450/250`); warn if `phi_spread>0.25` 或 `rmse_gap>0.15`。
-  - **D-2 High-Noise / Small-n**: `tau0=0.0025`, `eta=0.45`, iters/burn-in `3600/1400` (`2400/1000`); warn if (`tau_median>0.65` 且 `beta_abs>0.35`) 或 `beta_abs>0.45`，并附一次严格复核（iters/burn-in `5200/2000` 或 `3600/1600`）记录 `strict_tau_median/strict_beta_abs_mean/strict_rmse` 用于区分 fast 偏差与真实问题。
-  - **D-3 Local Shrinkage Collapse**: iters/burn-in `750/240` (`420/240`); lambda 无需 collapse，仅在 ridge-like `kappa` spread `>0.35` 时 WARN。
-  - **D-4 Slab Extremes**: `c=0.5` vs `c=50.0`, iters/burn-in `650/220` (`380/220`); 仅在极端 kappa 排序反转时 WARN（默认只记录）。
-  - **S-1 tau sensitivity**: `tau0` x {0.3,1,3,10} with `eta=0.6`, iters/burn-in `520/180` (`320/180`); warn if 相邻 RMSE 跳变 `>=0.35`。
-  - **S-2 phi_g sensitivity**: `eta` in {0.3,1,3}, iters/burn-in `520/170` (`320/170`); warn if 最小 Spearman(rank) `<0.6`。
-  - **S-3 lambda_j sensitivity**: iters/burn-in `780/230` (`500/200`); warn only if active/inactive κ gap `< -0.02`（更长迭代+更宽容，避免 fast 伪影）。
-  - **S-4 Slab c sensitivity**: `c` in {0.5,1,2,5}, iters/burn-in `520/170` (`320/170`); 监控 kappa 单调性，连续 c 间 `kappa_mean` 下跌 `>0.1` 才 WARN（`r_mean` 仅记录）。
-  - **NC-1 Dense-and-Weak**: `eta=0.4`, iters/burn-in `1000/300` (`650/300`); warn if `rmse_gap>0.35` 或 ridge gap `>0.35`。
-  - **NC-2 Misspecified groups**: `eta=0.6`, iters/burn-in `520/170` (`320/170`)，并有严格复核（`900/300` 或 `520/220` fast）对同一错分组：仅当严格复核 `rmse_gap>0.9` 或 `tau_gap>0.75` 时 WARN；若 fast 有大 gap 但严格版收敛，则标记为 fast 伪影。
-  - **E-1 / E-2 / E-3**: 共用 `520/170` (`320/170`); E-1 用 Spearman/Top-k/AUC，E-2 以“识别稳”为主：`order_corr_min>=0.4` 或 Top-k 命中/胜率≥0.7 即 PASS（绝对排序可不稳），E-3 检查 kappa 强>弱。
-  - **FailureModes**: 恒 INFO；记录已知困难区（近等强组、高相关且 p>>n 等）。
-- 采样器 `thin=2`，未列出参数沿用 `grrhs.models.grrhs_gibbs` 默认。
+- Run the checklist via `python scripts/run_validation_checklist.py [--minimum] [--fast] [--output path]`. `--minimum` limits the run to the 14 core scenarios, while `--fast` shortens iterations/burn-in without changing thresholds.
+- Key parameters (fast-level defaults in parentheses):
+  - **SC-1 Null / Pure Noise**: `tau0=0.0015`, `eta=0.6`, iters/burn-in `4800/2200` (`3000/1500`); collapse_ok when `beta_abs<0.08` and `phi_spread<0.35`, warn only if `tau_median>0.5` but collapse is detected.
+  - **SC-2 No Group Structure**: grouped vs RHS, `eta=0.5`, iters/burn-in `700/250` (`400/250`); warn when `phi_spread>0.45` and `max|Pr(phi_g>phi_h)-0.5|>0.35`, or `rmse_gap>0.25`.
+  - **SC-3 Single Strong Signal**: `c=1.5`, `tau0=0.15`, `eta=0.5`, iters/burn-in `900/300` (`450/300`); warn when the active coefficient is not preserved or `beta_abs_inactive>0.25`.
+  - **D-1 GRRHS -> RHS**: `eta=0.6`, iters/burn-in `800/250` (`450/250`); warn if `phi_spread>0.25` or `rmse_gap>0.15`.
+  - **D-2 High-Noise / Small-n**: `tau0=0.0025`, `eta=0.45`, iters/burn-in `3600/1400` (`2400/1000`); warn if (`tau_median>0.65` and `beta_abs>0.35`) or `beta_abs>0.45`. Log one strict replay (iters/burn-in `5200/2000` or `3600/1600`) and record `strict_tau_median`, `strict_beta_abs_mean`, and `strict_rmse` to distinguish fast-specific deviations from actual failures.
+  - **D-3 Local Shrinkage Collapse**: iters/burn-in `750/240` (`420/240`); lambda collapse is not expected, warn only if the ridge-like `kappa` spread exceeds `0.35`.
+  - **D-4 Slab Extremes**: `c=0.5` vs `c=50.0`, iters/burn-in `650/220` (`380/220`); warn only when the extreme values reverse the `kappa` ordering, otherwise just document the values.
+  - **S-1 tau sensitivity**: `tau0` in {0.3, 1, 3, 10} with `eta=0.6`, iters/burn-in `520/180` (`320/180`); warn if adjacent RMSE jumps exceed `0.35`.
+  - **S-2 phi_g sensitivity**: `eta` in {0.3, 1, 3}, iters/burn-in `520/170` (`320/170`); warn if the minimum Spearman(rank) drops below `0.6`.
+  - **S-3 lambda_j sensitivity**: iters/burn-in `780/230` (`500/200`); warn only if the active/inactive κ gap is `< -0.02` (longer iterations and wider tolerance help avoid fast-run artifacts).
+  - **S-4 Slab c sensitivity**: `c` in {0.5, 1, 2, 5}, iters/burn-in `520/170` (`320/170`); monitor whether `kappa_mean` drops by more than `0.1` as `c` increases—warn only when this monotonicity breach occurs (`r_mean` is logged but does not trigger warnings).
+  - **NC-1 Dense-and-Weak**: `eta=0.4`, iters/burn-in `1000/300` (`650/300`); warn if `rmse_gap>0.35` or the ridge gap exceeds `0.35`.
+  - **NC-2 Misspecified groups**: `eta=0.6`, iters/burn-in `520/170` (`320/170`), plus a strict rerun (`900/300` or `520/220` fast) on the same mis-specified split; warn only when the strict replay still produces `rmse_gap>0.9` or `tau_gap>0.75`, otherwise attribute the fast-run deviation to artifacts.
+  - **E-1 / E-2 / E-3**: shared iters/burn `520/170` (`320/170`); E-1 evaluates Spearman/Top-k/AUC, E-2 focuses on ranking stability (`order_corr_min>=0.4` or Top-k hit/win rate ≥0.7 counts as PASS even if absolute ordering wobbles), and E-3 checks that κ separates strong from weak groups.
+  - **FailureModes**: always logged at INFO; document known hard regimes (near-equal strong groups, highly correlated features with `p>>n`, etc.).
+- Sampler `thin=2`; any unstated parameters inherit the defaults from `grrhs.models.grrhs_gibbs`.
 
 ---
 
