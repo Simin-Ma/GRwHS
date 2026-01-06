@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from grwhs.experiments.aggregator import aggregate_runs
+from grrhs.experiments.aggregator import aggregate_runs
 
 
 def _is_nan(value: Any) -> bool:
@@ -81,7 +81,7 @@ def main() -> None:
     parser.add_argument("runs_root", type=Path, help="Sweep directory containing run subfolders")
     parser.add_argument("--metric", default="RMSE", help="Metric key to score runs by (lower is better by default)")
     parser.add_argument("--top", type=int, default=10, help="Number of top runs to display")
-    parser.add_argument("--model", default=None, help="Filter by model name (e.g., grwhs_gibbs)")
+    parser.add_argument("--model", default=None, help="Filter by model name (e.g., grrhs_gibbs)")
     parser.add_argument("--maximize", action="store_true", help="Treat higher metric values as better")
     parser.add_argument("--json", action="store_true", help="Emit results as JSON instead of text")
     args = parser.parse_args()

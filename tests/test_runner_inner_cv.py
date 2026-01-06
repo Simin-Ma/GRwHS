@@ -2,7 +2,7 @@ import numpy as np
 
 from data.preprocess import StandardizationConfig
 from data.splits import OuterFold
-from grwhs.experiments.runner import _perform_inner_cv, _run_fold_nested
+from grrhs.experiments.runner import _perform_inner_cv, _run_fold_nested
 
 
 def test_inner_cv_skips_single_class_folds():

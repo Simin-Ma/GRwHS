@@ -36,7 +36,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--labels",
         nargs="+",
-        default=["grwhs", "rhs"],
+        default=["grrhs", "rhs"],
         help="Variation suffixes to plot (matched against variation names).",
     )
     parser.add_argument(
@@ -52,7 +52,7 @@ def _parse_args() -> argparse.Namespace:
 
 def _variation_label(var: str) -> tuple[float | None, str | None]:
     """
-    Parse entries like 'snr0p5_grwhs' -> (0.5, 'grwhs').
+    Parse entries like 'snr0p5_grrhs' -> (0.5, 'grrhs').
     Returns (None, None) if parsing fails.
     """
     parts = var.split("_", 1)
@@ -90,7 +90,7 @@ def _load_data(csv_path: Path, labels: Iterable[str]) -> pd.DataFrame:
 
 def _format_label(label: str) -> str:
     mapping: Dict[str, str] = {
-        "grwhs": "GRwHS",
+        "grrhs": "GRRHS",
         "rhs": "RHS",
     }
     return mapping.get(label.lower(), label)
@@ -99,7 +99,7 @@ def _format_label(label: str) -> str:
 def _plot(df: pd.DataFrame, output: Path, title: str, ylim: tuple[float, float] | None) -> None:
     fig, ax = plt.subplots(figsize=(6.5, 4.0))
     styles = {
-        "grwhs": {"color": "#1f77b4", "marker": "o"},
+        "grrhs": {"color": "#1f77b4", "marker": "o"},
         "rhs": {"color": "#7f7f7f", "marker": "^"},
     }
     for label, group in df.groupby("label"):

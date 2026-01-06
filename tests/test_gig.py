@@ -5,7 +5,7 @@ import numpy.testing as npt
 import pytest
 from scipy.stats import geninvgauss
 
-from grwhs.inference.gig import sample_gig
+from grrhs.inference.gig import sample_gig
 
 
 def test_sample_gig_vectorized_matches_scipy_rvs():

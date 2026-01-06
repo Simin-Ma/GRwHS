@@ -5,4 +5,4 @@ name: "exp4_regression_ablation"
 experiments:
   repeats: 1
   coverage_level: 0.9
-  notes: "Used for GRwHS vs RHS ablations (no further data changes)."
+  notes: "Used for GRRHS vs RHS ablations (no further data changes)."

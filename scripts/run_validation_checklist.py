@@ -1,4 +1,4 @@
-"""Execute the GRwHS validation checklist."""
+"""Execute the GRRHS validation checklist."""
 from __future__ import annotations
 
 import argparse
@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from grwhs.diagnostics.validation import ValidationChecklistRunner
+from grrhs.diagnostics.validation import ValidationChecklistRunner
 
 
 def _to_serializable(obj: Any) -> Any:
@@ -21,7 +21,7 @@ def _to_serializable(obj: Any) -> Any:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the GRwHS validation checklist scenarios.")
+    parser = argparse.ArgumentParser(description="Run the GRRHS validation checklist scenarios.")
     parser.add_argument("--minimum", action="store_true", help="Run only the minimum publishable subset.")
     parser.add_argument("--fast", action="store_true", help="Use faster (fewer-iteration) settings.")
     parser.add_argument(

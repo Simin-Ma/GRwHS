@@ -5,10 +5,10 @@ common_config_files:
   - "../experiments/sim_s2.yaml"
 
 variations:
-  - name: "snr0p1_grwhs"
+  - name: "snr0p1_grrhs"
     config_files:
       - "../overrides/snr_0p1.yaml"
-      - "../methods/grwhs_regression.yaml"
+      - "../methods/grrhs_regression.yaml"
   - name: "snr0p1_rhs"
     config_files:
       - "../overrides/snr_0p1.yaml"
@@ -30,10 +30,10 @@ variations:
       - "../overrides/snr_0p1.yaml"
       - "../methods/ridge.yaml"
 
-  - name: "snr0p5_grwhs"
+  - name: "snr0p5_grrhs"
     config_files:
       - "../overrides/snr_0p5.yaml"
-      - "../methods/grwhs_regression.yaml"
+      - "../methods/grrhs_regression.yaml"
   - name: "snr0p5_rhs"
     config_files:
       - "../overrides/snr_0p5.yaml"
@@ -55,10 +55,10 @@ variations:
       - "../overrides/snr_0p5.yaml"
       - "../methods/ridge.yaml"
 
-  - name: "snr1p0_grwhs"
+  - name: "snr1p0_grrhs"
     config_files:
       - "../overrides/snr_1p0.yaml"
-      - "../methods/grwhs_regression.yaml"
+      - "../methods/grrhs_regression.yaml"
   - name: "snr1p0_rhs"
     config_files:
       - "../overrides/snr_1p0.yaml"
@@ -80,10 +80,10 @@ variations:
       - "../overrides/snr_1p0.yaml"
       - "../methods/ridge.yaml"
 
-  - name: "snr3p0_grwhs"
+  - name: "snr3p0_grrhs"
     config_files:
       - "../overrides/snr_3p0.yaml"
-      - "../methods/grwhs_regression.yaml"
+      - "../methods/grrhs_regression.yaml"
   - name: "snr3p0_rhs"
     config_files:
       - "../overrides/snr_3p0.yaml"

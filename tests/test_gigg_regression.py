@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from data.generators import SyntheticConfig, generate_synthetic
-from grwhs.models.gigg_regression import GIGGRegression
+from grrhs.models.gigg_regression import GIGGRegression
 
 
 def test_gigg_regression_smoke():

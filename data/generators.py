@@ -1,4 +1,4 @@
-"""Synthetic data generators for GRwHS experiments."""
+"""Synthetic data generators for GRRHS experiments."""
 from __future__ import annotations
 
 from collections import defaultdict

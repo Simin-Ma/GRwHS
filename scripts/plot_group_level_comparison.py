@@ -1,4 +1,4 @@
-"""Generate GRwHS vs RHS group-level comparison plots and summaries."""
+"""Generate GRRHS vs RHS group-level comparison plots and summaries."""
 from __future__ import annotations
 
 import argparse
@@ -38,15 +38,15 @@ TAG_COLORS = {
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot group-level estimation error, scales, and calibration for GRwHS vs RHS."
+        description="Plot group-level estimation error, scales, and calibration for GRRHS vs RHS."
     )
-    parser.add_argument("--grwhs-dir", required=True, type=Path, help="Path to GRwHS sweep variation directory.")
+    parser.add_argument("--grrhs-dir", required=True, type=Path, help="Path to GRRHS sweep variation directory.")
     parser.add_argument("--rhs-dir", required=True, type=Path, help="Path to RHS sweep variation directory.")
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
-        help="Directory to write figures (default: <grwhs-dir>/figures_group_comparison).",
+        help="Directory to write figures (default: <grrhs-dir>/figures_group_comparison).",
     )
     parser.add_argument(
         "--title",
@@ -81,9 +81,9 @@ def _load_resolved_config(run_dir: Path) -> Mapping[str, object]:
     return yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
 
 
-def _derive_context(grwhs_dir: Path, resolved_cfg: Mapping[str, object]) -> tuple[str, str, float]:
+def _derive_context(grrhs_dir: Path, resolved_cfg: Mapping[str, object]) -> tuple[str, str, float]:
     """Return (scenario_slug, snr_token, snr_value) for unique filenames."""
-    parts = list(grwhs_dir.parts)
+    parts = list(grrhs_dir.parts)
     scenario = "scenario"
     if "sweeps" in parts:
         try:
@@ -281,7 +281,7 @@ def _tick_colors(group_tags: Sequence[str]) -> List[str]:
 
 
 def _format_label(label: str) -> str:
-    mapping = {"grwhs": "GRwHS", "rhs": "RHS"}
+    mapping = {"grrhs": "GRRHS", "rhs": "RHS"}
     return mapping.get(str(label).lower(), label)
 
 
@@ -289,7 +289,7 @@ def _plot_group_mse(
     *,
     save_path: Path | None,
     groups: Sequence[Sequence[int]],
-    stats_grwhs: Mapping[int, Mapping[str, float]],
+    stats_grrhs: Mapping[int, Mapping[str, float]],
     stats_rhs: Mapping[int, Mapping[str, float]],
     title: str,
     xtick_labels: Sequence[str],
@@ -306,18 +306,18 @@ def _plot_group_mse(
 
     group_ids = np.arange(len(groups))
     width = 0.35
-    mse_grwhs = np.array([stats_grwhs[g]["mean"] for g in group_ids])
-    err_grwhs = np.array([stats_grwhs[g]["stderr"] for g in group_ids])
+    mse_grrhs = np.array([stats_grrhs[g]["mean"] for g in group_ids])
+    err_grrhs = np.array([stats_grrhs[g]["stderr"] for g in group_ids])
     mse_rhs = np.array([stats_rhs[g]["mean"] for g in group_ids])
     err_rhs = np.array([stats_rhs[g]["stderr"] for g in group_ids])
 
     ax.bar(
         group_ids - width / 2,
-        mse_grwhs,
+        mse_grrhs,
         width,
-        yerr=err_grwhs,
+        yerr=err_grrhs,
         capsize=4,
-        label="GRwHS",
+        label="GRRHS",
         color="#1f77b4",
     )
     ax.bar(
@@ -382,7 +382,7 @@ def _plot_group_scales(
         color="#1f77b4",
         ecolor="#1f77b4",
         capsize=4,
-        label="GRwHS $E[\\log \\phi_g]$",
+        label="GRRHS $E[\\log \\phi_g]$",
     )
 
     span_x = np.linspace(-0.5, num_groups - 0.5, 200)
@@ -410,7 +410,7 @@ def _plot_combined_panel(
     out_path: Path,
     *,
     groups: Sequence[Sequence[int]],
-    stats_grwhs: Mapping[int, Mapping[str, float]],
+    stats_grrhs: Mapping[int, Mapping[str, float]],
     stats_rhs: Mapping[int, Mapping[str, float]],
     log_phi: np.ndarray,
     log_tau: np.ndarray,
@@ -422,7 +422,7 @@ def _plot_combined_panel(
     _plot_group_mse(
         save_path=None,
         groups=groups,
-        stats_grwhs=stats_grwhs,
+        stats_grrhs=stats_grrhs,
         stats_rhs=stats_rhs,
         title=f"{title}: per-group error",
         xtick_labels=xtick_labels,
@@ -450,7 +450,7 @@ def _plot_group_calibration(
     out_path: Path,
     *,
     true_norm_stats: Mapping[int, Mapping[str, float]],
-    est_norm_grwhs: Mapping[int, Mapping[str, float]],
+    est_norm_grrhs: Mapping[int, Mapping[str, float]],
     est_norm_rhs: Mapping[int, Mapping[str, float]],
     group_tags: Sequence[str],
     title: str,
@@ -467,7 +467,7 @@ def _plot_group_calibration(
         x = true_norm_stats[gid]["mean"]
         if not np.isfinite(x):
             continue
-        est_g = est_norm_grwhs[gid]
+        est_g = est_norm_grrhs[gid]
         est_r = est_norm_rhs[gid]
         ax.errorbar(
             x,
@@ -498,7 +498,7 @@ def _plot_group_calibration(
     ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.6)
 
     model_handles = [
-        Line2D([0], [0], marker="o", color="white", markerfacecolor="white", markeredgecolor="black", label="GRwHS"),
+        Line2D([0], [0], marker="o", color="white", markerfacecolor="white", markeredgecolor="black", label="GRRHS"),
         Line2D([0], [0], marker="^", color="white", markerfacecolor="white", markeredgecolor="black", label="RHS"),
     ]
     legend1 = ax.legend(handles=model_handles, loc="upper left", title="Model")
@@ -532,7 +532,7 @@ def _plot_tag_stacked_bar(
     *,
     group_tags: Sequence[str],
     true_counts: Mapping[int, int],
-    est_grwhs: Mapping[int, Mapping[str, float]],
+    est_grrhs: Mapping[int, Mapping[str, float]],
     est_rhs: Mapping[int, Mapping[str, float]],
 ) -> None:
     order = ["strong", "medium", "weak", "null"]
@@ -540,17 +540,17 @@ def _plot_tag_stacked_bar(
         group_tags=group_tags,
         group_values={gid: count for gid, count in true_counts.items()},
     )
-    grwhs_values = _aggregate_tag_distribution(
+    grrhs_values = _aggregate_tag_distribution(
         group_tags=group_tags,
-        group_values={gid: est_grwhs[gid]["mean"] for gid in range(len(group_tags))},
+        group_values={gid: est_grrhs[gid]["mean"] for gid in range(len(group_tags))},
     )
     rhs_values = _aggregate_tag_distribution(
         group_tags=group_tags,
         group_values={gid: est_rhs[gid]["mean"] for gid in range(len(group_tags))},
     )
 
-    labels = ["Truth", "GRwHS", "RHS"]
-    data = [truth_values, grwhs_values, rhs_values]
+    labels = ["Truth", "GRRHS", "RHS"]
+    data = [truth_values, grrhs_values, rhs_values]
 
     fig, ax = plt.subplots(figsize=(5.8, 4.2))
     bottoms = [0.0, 0.0, 0.0]
@@ -613,7 +613,7 @@ def _plot_triptych(
     out_path: Path,
     *,
     groups: Sequence[Sequence[int]],
-    stats_grwhs: Mapping[int, Mapping[str, float]],
+    stats_grrhs: Mapping[int, Mapping[str, float]],
     stats_rhs: Mapping[int, Mapping[str, float]],
     log_phi: np.ndarray,
     log_tau: np.ndarray,
@@ -631,7 +631,7 @@ def _plot_triptych(
     _plot_group_mse(
         save_path=None,
         groups=groups,
-        stats_grwhs=stats_grwhs,
+        stats_grrhs=stats_grrhs,
         stats_rhs=stats_rhs,
         title="Per-group error",
         xtick_labels=xtick_labels,
@@ -655,7 +655,7 @@ def _plot_triptych(
 
     ax_mean = fig.add_subplot(gs[1, :])
     for label, group in sweep_df.groupby("label"):
-        style = {"grwhs": {"color": "#1f77b4", "marker": "o"}, "rhs": {"color": "#7f7f7f", "marker": "^"}}.get(label, {})
+        style = {"grrhs": {"color": "#1f77b4", "marker": "o"}, "rhs": {"color": "#7f7f7f", "marker": "^"}}.get(label, {})
         group = group.sort_values("snr")
         ax_mean.plot(
             group["snr"],
@@ -688,42 +688,42 @@ def _plot_triptych(
 
 def main() -> None:
     args = _parse_args()
-    grwhs_dir = args.grwhs_dir.expanduser().resolve()
+    grrhs_dir = args.grrhs_dir.expanduser().resolve()
     rhs_dir = args.rhs_dir.expanduser().resolve()
-    if not grwhs_dir.exists():
-        raise FileNotFoundError(f"GRwHS directory not found: {grwhs_dir}")
+    if not grrhs_dir.exists():
+        raise FileNotFoundError(f"GRRHS directory not found: {grrhs_dir}")
     if not rhs_dir.exists():
         raise FileNotFoundError(f"RHS directory not found: {rhs_dir}")
 
-    output_dir = args.output_dir or (grwhs_dir / "figures_group_comparison")
+    output_dir = args.output_dir or (grrhs_dir / "figures_group_comparison")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    groups, meta = _load_groups_and_meta(grwhs_dir)
+    groups, meta = _load_groups_and_meta(grrhs_dir)
     groups_rhs, meta_rhs = _load_groups_and_meta(rhs_dir)
     if len(groups) != len(groups_rhs) or any(g1 != g2 for g1, g2 in zip(groups, groups_rhs)):
-        raise RuntimeError("GRwHS and RHS runs use mismatched group structures.")
+        raise RuntimeError("GRRHS and RHS runs use mismatched group structures.")
 
     group_tags = _infer_group_tags(meta, len(groups))
     xtick_labels = _format_tick_labels(group_tags)
     tick_colors = _tick_colors(group_tags)
 
-    resolved_cfg = _load_resolved_config(grwhs_dir)
+    resolved_cfg = _load_resolved_config(grrhs_dir)
     beta_true = _regenerate_beta(resolved_cfg)
     if beta_true.shape[0] != sum(len(g) for g in groups):
         raise RuntimeError("β dimension does not match group specification.")
 
-    grwhs_metrics = _collect_group_metrics(grwhs_dir, beta_true, groups)
+    grrhs_metrics = _collect_group_metrics(grrhs_dir, beta_true, groups)
     rhs_metrics = _collect_group_metrics(rhs_dir, beta_true, groups)
-    stats_grwhs = _summarize_group_stats(grwhs_metrics["mse"])
+    stats_grrhs = _summarize_group_stats(grrhs_metrics["mse"])
     stats_rhs = _summarize_group_stats(rhs_metrics["mse"])
-    true_norm_stats = _summarize_group_quantiles(grwhs_metrics["true_norm"], low=5, high=95)
-    est_norm_grwhs = _summarize_group_quantiles(grwhs_metrics["est_norm"])
+    true_norm_stats = _summarize_group_quantiles(grrhs_metrics["true_norm"], low=5, high=95)
+    est_norm_grrhs = _summarize_group_quantiles(grrhs_metrics["est_norm"])
     est_norm_rhs = _summarize_group_quantiles(rhs_metrics["est_norm"])
 
-    log_phi = _collect_log_phi(grwhs_dir, args.eps)
+    log_phi = _collect_log_phi(grrhs_dir, args.eps)
     log_tau = _collect_log_tau(rhs_dir, args.eps)
 
-    scenario_slug, snr_token, _snr_val = _derive_context(grwhs_dir, resolved_cfg)
+    scenario_slug, snr_token, _snr_val = _derive_context(grrhs_dir, resolved_cfg)
     prefix = f"{scenario_slug}_snr{snr_token}"
     mse_path = output_dir / f"{prefix}_group_mse.png"
     scales_path = output_dir / f"{prefix}_group_scales.png"
@@ -735,7 +735,7 @@ def main() -> None:
     _plot_group_mse(
         save_path=mse_path,
         groups=groups,
-        stats_grwhs=stats_grwhs,
+        stats_grrhs=stats_grrhs,
         stats_rhs=stats_rhs,
         title=f"{args.title}: per-group estimation error",
         xtick_labels=xtick_labels,
@@ -755,7 +755,7 @@ def main() -> None:
     _plot_combined_panel(
         combined_path,
         groups=groups,
-        stats_grwhs=stats_grwhs,
+        stats_grrhs=stats_grrhs,
         stats_rhs=stats_rhs,
         log_phi=log_phi,
         log_tau=log_tau,
@@ -766,7 +766,7 @@ def main() -> None:
     _plot_group_calibration(
         calibration_path,
         true_norm_stats=true_norm_stats,
-        est_norm_grwhs=est_norm_grwhs,
+        est_norm_grrhs=est_norm_grrhs,
         est_norm_rhs=est_norm_rhs,
         group_tags=group_tags,
         title=args.title,
@@ -778,18 +778,18 @@ def main() -> None:
             stacked_path,
             group_tags=group_tags,
             true_counts=true_counts,
-            est_grwhs=est_norm_grwhs,
+            est_grrhs=est_norm_grrhs,
             est_rhs=est_norm_rhs,
         )
 
     triptych_generated = False
     if args.sweep_csv and args.sweep_csv.exists():
-        sweep_df = _load_sweep_mean_effective(args.sweep_csv, labels=["grwhs", "rhs"])
+        sweep_df = _load_sweep_mean_effective(args.sweep_csv, labels=["grrhs", "rhs"])
         current_snr = float(resolved_cfg.get("data", {}).get("snr", meta.get("metadata", {}).get("info", {}).get("snr", 0.0)))
         _plot_triptych(
             triptych_path,
             groups=groups,
-            stats_grwhs=stats_grwhs,
+            stats_grrhs=stats_grrhs,
             stats_rhs=stats_rhs,
             log_phi=log_phi,
             log_tau=log_tau,
@@ -805,7 +805,7 @@ def main() -> None:
         "group_tags": group_tags,
         "beta_dimension": int(beta_true.shape[0]),
         "mse": {
-            "grwhs": {gid: stats_grwhs[gid] for gid in range(len(groups))},
+            "grrhs": {gid: stats_grrhs[gid] for gid in range(len(groups))},
             "rhs": {gid: stats_rhs[gid] for gid in range(len(groups))},
         },
         "log_phi": {
@@ -820,15 +820,15 @@ def main() -> None:
         },
         "group_norms": {
             "true": {gid: true_norm_stats[gid] for gid in range(len(groups))},
-            "grwhs": {gid: est_norm_grwhs[gid] for gid in range(len(groups))},
+            "grrhs": {gid: est_norm_grrhs[gid] for gid in range(len(groups))},
             "rhs": {gid: est_norm_rhs[gid] for gid in range(len(groups))},
         },
         "tag_distribution": {
             "truth_counts": true_counts,
             "truth_share": _aggregate_tag_distribution(group_tags=group_tags, group_values=true_counts),
-            "grwhs_share": _aggregate_tag_distribution(
+            "grrhs_share": _aggregate_tag_distribution(
                 group_tags=group_tags,
-                group_values={gid: est_norm_grwhs[gid]["mean"] for gid in range(len(groups))},
+                group_values={gid: est_norm_grrhs[gid]["mean"] for gid in range(len(groups))},
             ),
             "rhs_share": _aggregate_tag_distribution(
                 group_tags=group_tags,

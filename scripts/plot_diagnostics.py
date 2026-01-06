@@ -1,4 +1,4 @@
-"""CLI utility to generate configurable diagnostics plots for GRwHS runs."""
+"""CLI utility to generate configurable diagnostics plots for GRRHS runs."""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +7,7 @@ from typing import List, Sequence
 
 import numpy as np
 
-from grwhs.viz.diagnostics import (
+from grrhs.viz.diagnostics import (
     RunArtifacts,
     autocorrelation,
     autocorrelation_plot,
@@ -23,8 +23,8 @@ from grwhs.viz.diagnostics import (
     reconstruction_plot,
     trace_plot,
 )
-from grwhs.viz.diagnostics import coverage_width_curve as coverage_width_plot
-from grwhs.viz.diagnostics import _flatten_groups, _select_indices
+from grrhs.viz.diagnostics import coverage_width_curve as coverage_width_plot
+from grrhs.viz.diagnostics import _flatten_groups, _select_indices
 
 
 def _resolve_groups(artifacts: RunArtifacts, p: int) -> Sequence[Sequence[int]]:
@@ -42,7 +42,7 @@ def _extract_truths(artifacts: RunArtifacts) -> np.ndarray:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate diagnostics plots for a GRwHS run.")
+    parser = argparse.ArgumentParser(description="Generate diagnostics plots for a GRRHS run.")
     parser.add_argument("--run-dir", required=True, type=Path, help="Path to the primary run directory.")
     parser.add_argument("--dest", type=Path, default=None, help="Directory to write plots (default: <run>/figures).")
     parser.add_argument("--burn-in", type=int, default=None, help="Burn-in iterations to discard in plots.")

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from grwhs.models.baselines import ElasticNet, GroupLasso, Lasso, Ridge, SparseGroupLasso
+from grrhs.models.baselines import ElasticNet, GroupLasso, Lasso, Ridge, SparseGroupLasso
 
 
 def _make_regression(n: int, p: int, seed: int = 0):

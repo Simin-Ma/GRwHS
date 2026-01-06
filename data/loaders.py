@@ -1,5 +1,5 @@
 
-"""Real dataset loading helpers for GRwHS experiments."""
+"""Real dataset loading helpers for GRRHS experiments."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

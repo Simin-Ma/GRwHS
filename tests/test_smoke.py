@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from grwhs.experiments.runner import run_experiment
+from grrhs.experiments.runner import run_experiment
 
 
 def _tiny_nested_splits(stratify: str | bool = "auto") -> dict:

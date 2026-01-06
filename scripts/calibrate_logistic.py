@@ -117,7 +117,7 @@ def aggregate(results: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, Tuple
 
 
 def main() -> None:
-    run_root = Path("outputs/runs/exp2_grwhs_logistic-20251019-205003")
+    run_root = Path("outputs/runs/exp2_grrhs_logistic-20251019-205003")
     repeats = sorted(run_root.glob("repeat_*"))
     per_method_results: Dict[str, list] = {"baseline": [], "platt": [], "isotonic": []}
     per_repeat_output: Dict[str, Dict[str, Dict[str, float]]] = {}

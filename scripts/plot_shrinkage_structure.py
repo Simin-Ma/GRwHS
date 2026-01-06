@@ -1,4 +1,4 @@
-"""CLI utility to visualize shrinkage structure for RHS and GRwHS runs."""
+"""CLI utility to visualize shrinkage structure for RHS and GRRHS runs."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +10,7 @@ from typing import List, Optional, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-from grwhs.viz.diagnostics import (
+from grrhs.viz.diagnostics import (
     RunArtifacts,
     _flatten_groups,
     group_interval_calibration_scatter,
@@ -45,8 +45,8 @@ def _resolve_label(model_name: Optional[str]) -> str:
     name = model_name.lower()
     if name in {"regularized_horseshoe", "rhs", "rhs_gibbs"}:
         return "RHS"
-    if name in {"grwhs", "grwhs_gibbs"}:
-        return "GRwHS"
+    if name in {"grrhs", "grrhs_gibbs"}:
+        return "GRRHS"
     if name == "horseshoe":
         return "HS"
     return model_name

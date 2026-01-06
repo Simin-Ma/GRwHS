@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import numpy.testing as npt
 
-from grwhs.inference.woodbury import woodbury_inverse
+from grrhs.inference.woodbury import woodbury_inverse
 
 
 def test_woodbury_inverse_matches_direct_inversion():

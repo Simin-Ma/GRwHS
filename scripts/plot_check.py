@@ -1,4 +1,4 @@
-"""Generate standard and posterior plots for a GRwHS run."""
+"""Generate standard and posterior plots for a GRRHS run."""
 from __future__ import annotations
 
 import argparse
@@ -14,12 +14,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from grwhs.viz import plots
-from grwhs.models.baselines import Ridge
+from grrhs.viz import plots
+from grrhs.models.baselines import Ridge
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate sanity and posterior plots for a GRwHS run")
+    parser = argparse.ArgumentParser(description="Generate sanity and posterior plots for a GRRHS run")
     parser.add_argument("run_dir", nargs="?", default=None, help="Path to run directory")
     parser.add_argument("--out", type=Path, default=None, help="Destination directory for plots")
     return parser.parse_args()

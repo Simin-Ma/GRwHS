@@ -15,4 +15,4 @@ experiments:
     shrinkage: ["MeanKappa", "EffectiveDoF"]
   diagnostics:
     compare_against: "regularized_horseshoe"
-    expectations: "GRwHS collapses to RHS-like behavior when grouping is random."
+    expectations: "GRRHS collapses to RHS-like behavior when grouping is random."

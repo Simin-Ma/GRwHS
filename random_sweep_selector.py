@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Random sweep driver for Toy Regression GRwHS tuning.
+Random sweep driver for Toy Regression GRRHS tuning.
 
 Features
 --------
@@ -47,7 +47,7 @@ import yaml
 # =============================================================================
 
 # Command used to launch one experiment run. Override if needed.
-RUN_EXPERIMENT_ENTRY: List[str] = [sys.executable, "-m", "grwhs.cli.run_experiment", "--config"]
+RUN_EXPERIMENT_ENTRY: List[str] = [sys.executable, "-m", "grrhs.cli.run_experiment", "--config"]
 
 # Expected output filenames within each run directory.
 DIAG_FILENAME = "convergence.json"
@@ -333,7 +333,7 @@ def _infer_repo_root(base_cfg_path: Path) -> Path:
     """Heuristic to locate the repository root given a base config path."""
     candidates = list(base_cfg_path.parents)
     for candidate in candidates:
-        if (candidate / "grwhs").exists():
+        if (candidate / "grrhs").exists():
             return candidate
     return base_cfg_path.parent
 
@@ -465,7 +465,7 @@ def run_once(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Random search with convergence safety checks for GRwHS."
+        description="Random search with convergence safety checks for GRRHS."
     )
     parser.add_argument(
         "--base_config",

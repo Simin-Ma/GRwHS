@@ -30,7 +30,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _find_image(fig_root: Path, scenario: str, token: str) -> Path:
-    base = fig_root / f"{scenario}_snr{token}_grwhs_vs_rhs" / "coefficients"
+    base = fig_root / f"{scenario}_snr{token}_grrhs_vs_rhs" / "coefficients"
     pref = base / f"{scenario}_snr{token}_coeff_bar_topk.png"
     if pref.exists():
         return pref
@@ -54,7 +54,7 @@ def main() -> None:
         ax.set_title(titles[tok])
         ax.axis("off")
 
-    fig.suptitle(f"{args.scenario}: Top-{args.top_k} coefficients (Truth vs GRwHS vs RHS)", y=0.98)
+    fig.suptitle(f"{args.scenario}: Top-{args.top_k} coefficients (Truth vs GRRHS vs RHS)", y=0.98)
     fig.tight_layout()
     out_path = outdir / f"{args.scenario}_snr_all_coeff_topk.png"
     fig.savefig(out_path, dpi=200, bbox_inches="tight")

@@ -4,7 +4,7 @@ import numpy as np
 import numpy.testing as npt
 from scipy.stats import geninvgauss
 
-from grwhs.diagnostics.shrinkage import (
+from grrhs.diagnostics.shrinkage import (
     regularized_lambda,
     prior_precision,
     shrinkage_kappa,
@@ -12,7 +12,7 @@ from grwhs.diagnostics.shrinkage import (
     slab_spike_ratio,
     edf_by_group,
 )
-from grwhs.inference.gig import sample_gig
+from grrhs.inference.gig import sample_gig
 
 
 def test_regularized_lambda_matches_manual_formula():

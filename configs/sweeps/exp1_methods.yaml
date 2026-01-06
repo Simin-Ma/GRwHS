@@ -5,9 +5,9 @@ common_config_files:
   - "../experiments/exp1_group_regression.yaml"
 
 variations:
-  - name: "grwhs"
+  - name: "grrhs"
     config_files:
-      - "../methods/grwhs_regression.yaml"
+      - "../methods/grrhs_regression.yaml"
   - name: "group_horseshoe"
     config_files:
       - "../methods/group_horseshoe.yaml"

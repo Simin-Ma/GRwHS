@@ -3,11 +3,11 @@ from __future__ import annotations
 import numpy as np
 import numpy.testing as npt
 
-from grwhs.diagnostics.postprocess import (
+from grrhs.diagnostics.postprocess import (
     anchor_log_group_scales,
     compute_diagnostics_from_samples,
 )
-from grwhs.diagnostics.shrinkage import (
+from grrhs.diagnostics.shrinkage import (
     edf_by_group,
     prior_precision,
     regularized_lambda,

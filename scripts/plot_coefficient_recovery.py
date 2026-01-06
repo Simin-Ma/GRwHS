@@ -1,4 +1,4 @@
-"""Coefficient-level recovery plots comparing GRwHS vs RHS."""
+"""Coefficient-level recovery plots comparing GRRHS vs RHS."""
 from __future__ import annotations
 
 import argparse
@@ -25,7 +25,7 @@ TAG_COLORS = {
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Produce coefficient-level recovery plots.")
-    parser.add_argument("--grwhs-dir", required=True, type=Path, help="GRwHS run directory.")
+    parser.add_argument("--grrhs-dir", required=True, type=Path, help="GRRHS run directory.")
     parser.add_argument("--rhs-dir", required=True, type=Path, help="RHS run directory.")
     parser.add_argument("--output-dir", required=True, type=Path, help="Destination directory for figures.")
     parser.add_argument("--title", type=str, default="Coefficient recovery", help="Figure title prefix.")
@@ -40,8 +40,8 @@ def _load_resolved_config(run_dir: Path) -> Mapping[str, object]:
     return yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
 
 
-def _derive_context(grwhs_dir: Path, resolved_cfg: Mapping[str, object]) -> tuple[str, str, float]:
-    parts = list(grwhs_dir.parts)
+def _derive_context(grrhs_dir: Path, resolved_cfg: Mapping[str, object]) -> tuple[str, str, float]:
+    parts = list(grrhs_dir.parts)
     scenario = "scenario"
     if "sweeps" in parts:
         try:
@@ -133,9 +133,9 @@ def _build_dataframe(
     *,
     beta_true_std: np.ndarray,
     beta_true_raw: np.ndarray,
-    beta_hat_grwhs_std: np.ndarray,
+    beta_hat_grrhs_std: np.ndarray,
     beta_hat_rhs_std: np.ndarray,
-    beta_hat_grwhs_raw: np.ndarray,
+    beta_hat_grrhs_raw: np.ndarray,
     beta_hat_rhs_raw: np.ndarray,
     group_tags: Sequence[str],
     groups: Sequence[Sequence[int]],
@@ -152,9 +152,9 @@ def _build_dataframe(
             "tag": tags,
             "beta_true": beta_true_std,
             "beta_true_raw": beta_true_raw,
-            "beta_grwhs": beta_hat_grwhs_std,
+            "beta_grrhs": beta_hat_grrhs_std,
             "beta_rhs": beta_hat_rhs_std,
-            "beta_grwhs_raw": beta_hat_grwhs_raw,
+            "beta_grrhs_raw": beta_hat_grrhs_raw,
             "beta_rhs_raw": beta_hat_rhs_raw,
         }
     )
@@ -169,7 +169,7 @@ def _scatter_plot(
     out_path: Path,
     title: str,
     true_col: str,
-    grwhs_col: str,
+    grrhs_col: str,
     rhs_col: str,
     xlabel: str,
     include_indices: Sequence[int] | None,
@@ -179,7 +179,7 @@ def _scatter_plot(
     colors = df["tag"].map(TAG_COLORS).fillna("#aaaaaa")
     fig, ax = plt.subplots(figsize=(6.2, 5.2))
     ax.axline((0, 0), slope=1.0, linestyle="--", color="#666666", linewidth=1.0)
-    ax.scatter(df[true_col], df[grwhs_col], s=35, marker="o", facecolors=colors, edgecolors="black", label="GRwHS")
+    ax.scatter(df[true_col], df[grrhs_col], s=35, marker="o", facecolors=colors, edgecolors="black", label="GRRHS")
     ax.scatter(df[true_col], df[rhs_col], s=35, marker="^", facecolors=colors, edgecolors="black", alpha=0.85, label="RHS")
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Estimated coefficient β̂_j")
@@ -201,7 +201,7 @@ def _bar_plot_topk(df: pd.DataFrame, out_path: Path, title: str, k: int) -> None
     width = 0.25
     fig, ax = plt.subplots(figsize=(max(6.5, 0.35 * k + 2), 4.5))
     ax.bar(idx - width, top["beta_true"], width, color="#9edae5", label="Truth")
-    ax.bar(idx, top["beta_grwhs"], width, color="#1f77b4", label="GRwHS")
+    ax.bar(idx, top["beta_grrhs"], width, color="#1f77b4", label="GRRHS")
     ax.bar(idx + width, top["beta_rhs"], width, color="#7f7f7f", label="RHS")
     ax.set_xticks(idx, [f"β{c}" for c in top["coef"]], rotation=45, ha="right")
     ax.set_ylabel("Coefficient value (standardized)")
@@ -225,7 +225,7 @@ def _stacked_mass_plot(df: pd.DataFrame, out_path: Path) -> None:
 
     rows = [
         ("Truth", share(df["beta_true"])),
-        ("GRwHS", share(df["beta_grwhs"])),
+        ("GRRHS", share(df["beta_grrhs"])),
         ("RHS", share(df["beta_rhs"])),
     ]
     labels = [r[0] for r in rows]
@@ -246,38 +246,38 @@ def _stacked_mass_plot(df: pd.DataFrame, out_path: Path) -> None:
 
 def main() -> None:
     args = _parse_args()
-    grwhs_dir = args.grwhs_dir.expanduser().resolve()
+    grrhs_dir = args.grrhs_dir.expanduser().resolve()
     rhs_dir = args.rhs_dir.expanduser().resolve()
-    if not grwhs_dir.exists() or not rhs_dir.exists():
+    if not grrhs_dir.exists() or not rhs_dir.exists():
         raise FileNotFoundError("Run directories not found.")
 
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    groups, meta = _load_groups_and_meta(grwhs_dir)
+    groups, meta = _load_groups_and_meta(grrhs_dir)
     group_tags = _infer_group_tags(meta, len(groups))
 
-    resolved_cfg = _load_resolved_config(grwhs_dir)
+    resolved_cfg = _load_resolved_config(grrhs_dir)
     beta_true = _regenerate_beta(resolved_cfg)
-    x_scale = _load_x_scale(grwhs_dir)
+    x_scale = _load_x_scale(grrhs_dir)
     safe_scale = np.where(x_scale == 0, 1.0, x_scale)
     beta_true_std = beta_true * x_scale
     beta_true_raw = beta_true.copy()
 
-    beta_hat_grwhs = _load_beta_hat(grwhs_dir)
+    beta_hat_grrhs = _load_beta_hat(grrhs_dir)
     beta_hat_rhs = _load_beta_hat(rhs_dir)
 
-    if beta_hat_grwhs.shape[0] != beta_true_std.shape[0]:
-        raise ValueError("β dimension mismatch for GRwHS run.")
+    if beta_hat_grrhs.shape[0] != beta_true_std.shape[0]:
+        raise ValueError("β dimension mismatch for GRRHS run.")
     if beta_hat_rhs.shape[0] != beta_true_std.shape[0]:
         raise ValueError("β dimension mismatch for RHS run.")
 
     df = _build_dataframe(
         beta_true_std=beta_true_std,
         beta_true_raw=beta_true_raw,
-        beta_hat_grwhs_std=beta_hat_grwhs,
+        beta_hat_grrhs_std=beta_hat_grrhs,
         beta_hat_rhs_std=beta_hat_rhs,
-        beta_hat_grwhs_raw=beta_hat_grwhs / safe_scale,
+        beta_hat_grrhs_raw=beta_hat_grrhs / safe_scale,
         beta_hat_rhs_raw=beta_hat_rhs / safe_scale,
         group_tags=group_tags,
         groups=groups,
@@ -287,7 +287,7 @@ def main() -> None:
     df_sorted_raw = df.sort_values("abs_true_raw", ascending=False)
     top_raw_idx = df_sorted_raw.head(args.top_k).index
 
-    scenario_slug, snr_token, _ = _derive_context(grwhs_dir, resolved_cfg)
+    scenario_slug, snr_token, _ = _derive_context(grrhs_dir, resolved_cfg)
     prefix = f"{scenario_slug}_snr{snr_token}"
 
     _scatter_plot(
@@ -295,7 +295,7 @@ def main() -> None:
         out_path=output_dir / f"{prefix}_coeff_scatter_all_std.png",
         title=f"{args.title}: all coefficients (standardized)",
         true_col="beta_true",
-        grwhs_col="beta_grwhs",
+        grrhs_col="beta_grrhs",
         rhs_col="beta_rhs",
         xlabel="True coefficient β_j (standardized)",
         include_indices=None,
@@ -305,7 +305,7 @@ def main() -> None:
         out_path=output_dir / f"{prefix}_coeff_scatter_topk_std.png",
         title=f"{args.title}: top-{args.top_k} (standardized)",
         true_col="beta_true",
-        grwhs_col="beta_grwhs",
+        grrhs_col="beta_grrhs",
         rhs_col="beta_rhs",
         xlabel="True coefficient β_j (standardized)",
         include_indices=top_std_idx,
@@ -315,7 +315,7 @@ def main() -> None:
         out_path=output_dir / f"{prefix}_coeff_scatter_all_raw.png",
         title=f"{args.title}: all coefficients (raw units)",
         true_col="beta_true_raw",
-        grwhs_col="beta_grwhs_raw",
+        grrhs_col="beta_grrhs_raw",
         rhs_col="beta_rhs_raw",
         xlabel="True coefficient β_j (raw units)",
         include_indices=None,
@@ -325,7 +325,7 @@ def main() -> None:
         out_path=output_dir / f"{prefix}_coeff_scatter_topk_raw.png",
         title=f"{args.title}: top-{args.top_k} (raw units)",
         true_col="beta_true_raw",
-        grwhs_col="beta_grwhs_raw",
+        grrhs_col="beta_grrhs_raw",
         rhs_col="beta_rhs_raw",
         xlabel="True coefficient β_j (raw units)",
         include_indices=top_raw_idx,

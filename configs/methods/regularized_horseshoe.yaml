@@ -1,7 +1,7 @@
 name: "regularized_horseshoe_regression"
 
 model:
-  name: "grwhs_gibbs"
+  name: "grrhs_gibbs"
   use_groups: false
   c: 1.0
   eta: 0.7

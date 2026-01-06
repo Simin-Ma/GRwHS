@@ -5,9 +5,9 @@ This note captures the fairness rules baked into the current regression-focused 
 ## 0. Shared fairness contract
 - **Standardization** - every run inherits `configs/base.yaml`, which enforces mean-zero `y` and unit-variance columns for `X`.
 - **Identical splits** - `configs/base.yaml` also pins nested CV to outer 5-fold (with optional repeats) and inner 5-fold CV. All models consume the exact same `splits` object materialized inside `outputs/.../repeat_*/fold_*`.
-- **Group metadata** - a single set of contiguous groups comes from the experiment YAML (e.g. `configs/experiments/exp1_group_regression.yaml`), and the runner passes that same grouping to Group Lasso, Group Horseshoe, and GRwHS.
-- **Reported metrics** - regression runs always log RMSE, predictive log-likelihood, MLPD, AUC-PR, F1, Coverage90, IntervalWidth90, shrinkage diagnostics, and group-level stats (see `grwhs/metrics/evaluation.py`).
-- **Convergence checks** - Bayesian models must satisfy `rhat_max <= 1.05` before a fold is deemed valid. The runner writes `convergence.json` per fold so we can audit RHS/GH/GRwHS side by side.
+- **Group metadata** - a single set of contiguous groups comes from the experiment YAML (e.g. `configs/experiments/exp1_group_regression.yaml`), and the runner passes that same grouping to Group Lasso, Group Horseshoe, and GRRHS.
+- **Reported metrics** - regression runs always log RMSE, predictive log-likelihood, MLPD, AUC-PR, F1, Coverage90, IntervalWidth90, shrinkage diagnostics, and group-level stats (see `grrhs/metrics/evaluation.py`).
+- **Convergence checks** - Bayesian models must satisfy `rhat_max <= 1.05` before a fold is deemed valid. The runner writes `convergence.json` per fold so we can audit RHS/GH/GRRHS side by side.
 
 ## 1. Frequentist baselines (nested CV)
 
@@ -27,7 +27,7 @@ This note captures the fairness rules baked into the current regression-focused 
 All horseshoe-like models now share:
 - Expected signal size `s = 30` (`model.tau.p0.value`) which stays constant across Exp1/Exp4.
 - Automatic tau heuristic: `_maybe_calibrate_tau` turns `s` into `tau0 = (s / (p - s)) / sqrt(n)` when `standardization.X = unit_variance`.
-- Common slab width `c = 1.5` (regularized HS and GRwHS).
+- Common slab width `c = 1.5` (regularized HS and GRRHS).
 - Identical NUTS settings for RHS and Group HS (2k warmup + 2k posterior draws, 1 chain, thinning 1, `target_accept = 0.9`).
 
 ### Regularized Horseshoe (RHS)
@@ -36,17 +36,17 @@ All horseshoe-like models now share:
 
 ### Group Horseshoe (GH)
 - Config: `configs/methods/group_horseshoe.yaml`.
-- Shares the same `s = 30` prior via `model.tau`, the same NUTS budget, and uses the same groups as GRwHS.
+- Shares the same `s = 30` prior via `model.tau`, the same NUTS budget, and uses the same groups as GRRHS.
 
-### GRwHS (our model)
-- Config: `configs/methods/grwhs_regression.yaml` (`c = 1.5`, `eta = 0.5`, `tau.p0.value = 30`).
+### GRRHS (our model)
+- Config: `configs/methods/grrhs_regression.yaml` (`c = 1.5`, `eta = 0.5`, `tau.p0.value = 30`).
 - Gibbs sampler runs 20k iterations (10k burn-in) with identical jitter/seed per fold.
 
 _Classification-oriented configs (Exp2/Exp3 and the logistic method presets) were removed to keep the repository focused on regression. Recover them from git history if you need them again._
 
 ## 3. Practical checklist
 1. Start from `configs/experiments/exp1_group_regression.yaml` to guarantee identical data generation and group layout.
-2. Run the sweeps defined in `configs/sweeps/exp1_methods.yaml` and `configs/sweeps/exp4_*.yaml`; they already enumerate Ridge, Group Lasso, RHS, GH, and GRwHS.
+2. Run the sweeps defined in `configs/sweeps/exp1_methods.yaml` and `configs/sweeps/exp4_*.yaml`; they already enumerate Ridge, Group Lasso, RHS, GH, and GRRHS.
 3. Synthetic sweeps now fix `experiments.repeats = 3` to balance runtime with variance reduction; because the runner still shares the exact same splits per repeat/fold, reducing the count preserves fairness (bump it back up if you need tighter CIs).
 4. After each sweep, inspect `outputs/sweeps/.../fold_*/convergence.json`; any R-hat outside `[1, 1.05]` triggers a rerun with more samples.
 5. Use `scripts/plot_diagnostics.py` or the notebook templates to overlay RMSE/log-likelihood and group-selection metrics; because splits and preprocessing are shared, the comparisons are apples-to-apples.

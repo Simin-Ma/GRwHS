@@ -1,4 +1,4 @@
-"""Data preprocessing utilities for GRwHS datasets."""
+"""Data preprocessing utilities for GRRHS datasets."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -19,7 +19,7 @@ __all__ = [
 
 
 def tau0_heuristic(n: int, p: int, s_guess: int, X_scaling: str | None) -> float:
-    """Heuristic global scale for GRwHS; mirrors run_experiment expectations."""
+    """Heuristic global scale for GRRHS; mirrors run_experiment expectations."""
     s = max(1, min(int(s_guess), max(1, p - 1)))
     if str(X_scaling or "unit_variance").lower() == "unit_l2":
         return float(s / (p - s))

@@ -10,12 +10,12 @@ import numpy as np
 import yaml
 
 from data.loaders import load_real_dataset
-from grwhs.experiments import registry as registry_module
-from grwhs.experiments.aggregator import aggregate_runs
-from grwhs.experiments.runner import run_experiment
-from grwhs.inference.samplers import slice_sample_1d
-from grwhs.cli import make_report as make_report_cli
-from grwhs.cli import run_sweep as run_sweep_cli
+from grrhs.experiments import registry as registry_module
+from grrhs.experiments.aggregator import aggregate_runs
+from grrhs.experiments.runner import run_experiment
+from grrhs.inference.samplers import slice_sample_1d
+from grrhs.cli import make_report as make_report_cli
+from grrhs.cli import run_sweep as run_sweep_cli
 
 
 def _invoke_cli(main_fn, arguments):

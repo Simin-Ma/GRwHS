@@ -66,11 +66,11 @@ def _plot_scales_panel(ax: plt.Axes, summary: Mapping[str, object], title: str, 
 
 
 def _plot_mse_panel(ax: plt.Axes, summary: Mapping[str, object], title: str, xtick_labels: Sequence[str], colors: Sequence[str]) -> None:
-    mse_g = [summary["mse"]["grwhs"][str(g)]["mean"] for g in range(len(xtick_labels))]
+    mse_g = [summary["mse"]["grrhs"][str(g)]["mean"] for g in range(len(xtick_labels))]
     mse_r = [summary["mse"]["rhs"][str(g)]["mean"] for g in range(len(xtick_labels))]
     x = np.arange(len(xtick_labels))
     width = 0.35
-    ax.bar(x - width / 2, mse_g, width, color="#1f77b4", label="GRwHS")
+    ax.bar(x - width / 2, mse_g, width, color="#1f77b4", label="GRRHS")
     ax.bar(x + width / 2, mse_r, width, color="#7f7f7f", label="RHS")
     ax.set_xticks(x, xtick_labels)
     for tick, color in zip(ax.get_xticklabels(), colors):
@@ -87,7 +87,7 @@ def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
 
     # Load one summary to recover group tags
-    sample_dir = fig_root / f"{args.scenario}_snr0p1_grwhs_vs_rhs"
+    sample_dir = fig_root / f"{args.scenario}_snr0p1_grrhs_vs_rhs"
     sample_summary = _load_summary(sample_dir / "group_comparison_summary.json")
     tags = list(sample_summary["group_tags"])  # strong/medium/weak/null
     xtick_labels = [f"g{g}\n({t})" for g, t in enumerate(tags)]
@@ -100,7 +100,7 @@ def main() -> None:
     fig, axes = plt.subplots(2, 2, figsize=(14, 8))
     titles = {"0p1": "SNR=0.1", "0p5": "SNR=0.5", "1p0": "SNR=1.0", "3p0": "SNR=3.0"}
     for ax, tok in zip(axes.flat, SNR_TOKENS):
-        summary = _load_summary(fig_root / f"{args.scenario}_snr{tok}_grwhs_vs_rhs" / "group_comparison_summary.json")
+        summary = _load_summary(fig_root / f"{args.scenario}_snr{tok}_grrhs_vs_rhs" / "group_comparison_summary.json")
         _plot_scales_panel(ax, summary, titles[tok], xtick_labels, tick_colors)
     fig.suptitle(f"{args.scenario}: Group shrinkage scales across SNR", y=0.98)
     fig.tight_layout()
@@ -110,7 +110,7 @@ def main() -> None:
     # Compose MSE panel
     fig, axes = plt.subplots(2, 2, figsize=(14, 8))
     for ax, tok in zip(axes.flat, SNR_TOKENS):
-        summary = _load_summary(fig_root / f"{args.scenario}_snr{tok}_grwhs_vs_rhs" / "group_comparison_summary.json")
+        summary = _load_summary(fig_root / f"{args.scenario}_snr{tok}_grrhs_vs_rhs" / "group_comparison_summary.json")
         _plot_mse_panel(ax, summary, titles[tok], xtick_labels, tick_colors)
     fig.suptitle(f"{args.scenario}: Per-group error across SNR", y=0.98)
     fig.tight_layout()
