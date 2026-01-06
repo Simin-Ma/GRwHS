@@ -436,6 +436,29 @@ If you need manual inspection beyond the harness: run `scripts/plot_check.py` on
   - **NC-2 Misspecified groups**: `eta=0.6`, iters/burn-in `520/170` (`320/170`), plus a strict rerun (`900/300` or `520/220` fast) on the same mis-specified split; warn only when the strict replay still produces `rmse_gap>0.9` or `tau_gap>0.75`, otherwise attribute the fast-run deviation to artifacts.
   - **E-1 / E-2 / E-3**: shared iters/burn `520/170` (`320/170`); E-1 evaluates Spearman/Top-k/AUC, E-2 focuses on ranking stability (`order_corr_min>=0.4` or Top-k hit/win rate ≥0.7 counts as PASS even if absolute ordering wobbles), and E-3 checks that κ separates strong from weak groups.
   - **FailureModes**: always logged at INFO; document known hard regimes (near-equal strong groups, highly correlated features with `p>>n`, etc.).
+
+#### PASS/WARN criteria summary (table)
+The checklist is rule-based: each scenario computes metrics and assigns PASS/WARN using fixed thresholds implemented in `grrhs/diagnostics/validation.py`.
+
+| Key | Scenario | PASS means (rules) | WARN triggers |
+|---:|---|---|---|
+| SC-1 | Null Model / Pure Noise | `beta_abs_mean <= 0.12` and `phi_spread <= 0.35`; `tau_median` may be `> 0.5` only if `beta_abs_mean < 0.08` and `phi_spread < 0.35` | `beta_abs_mean > 0.12`; `phi_spread > 0.35`; `tau_median > 0.5` without collapse; `tau_median > 0.4` while not collapsed |
+| SC-2 | No Group Structure | `rmse_gap <= 0.25` and NOT(`phi_spread > 0.45` AND `phi_pair_max_dev > 0.35`) | `rmse_gap > 0.25`; OR (`phi_spread > 0.45` AND `phi_pair_max_dev > 0.35`) |
+| SC-3 | Single Strong Signal | `lambda_median_active > lambda_median_inactive` and `beta_abs_inactive <= 0.25` | `lambda_median_active <= lambda_median_inactive`; `beta_abs_inactive > 0.25` |
+| D-1 | GRRHS → RHS (dense-weak) | `phi_spread <= 0.25` and `rmse_gap <= 0.15` | `phi_spread > 0.25`; `rmse_gap > 0.15` |
+| D-2 | High-Noise / Small-Sample | NOT( (`tau_median > 0.65` AND `beta_abs_mean > 0.35`) OR `beta_abs_mean > 0.45` ) | (`tau_median > 0.65` AND `beta_abs_mean > 0.35`); OR `beta_abs_mean > 0.45` (strict rerun used to label fast artifacts vs persistent issues) |
+| D-3 | Local Shrinkage Collapse | `ridge_like_kappa_spread <= 0.35` | `ridge_like_kappa_spread > 0.35` |
+| D-4 | Slab Extremes | `c_small_beta_mean <= 1.2 * c_large_beta_mean` and `ordering_corr >= 0.8` | `c_small_beta_mean > 1.2 * c_large_beta_mean`; `ordering_corr < 0.8` |
+| S-1 | Global tau sensitivity | `rmse_max_step < 0.35` | `rmse_max_step >= 0.35` |
+| S-2 | Group-level phi sensitivity | `phi_order_corr_min >= 0.6` | `phi_order_corr_min < 0.6` |
+| S-3 | Local lambda sensitivity | `min(kappa_active_mean) - max(kappa_inactive_mean) >= -0.02` | `min(kappa_active_mean) - max(kappa_inactive_mean) < -0.02` |
+| S-4 | Slab c sensitivity | No drop in `kappa_mean` larger than `0.1` when sweeping `c` upward | Any negative step in `kappa_mean` less than `-0.1` |
+| NC-1 | Dense-and-Weak control | `rmse_gap_grrhs_rhs < 0.35` AND `abs(rmse_ridge - rmse_grrhs) < 0.35` | `rmse_gap_grrhs_rhs > 0.35` OR `abs(rmse_ridge - rmse_grrhs) > 0.35` |
+| NC-2 | Misspecified groupings | Strict rerun satisfies `rmse_gap_strict <= 0.9` AND `tau_gap_strict <= 0.75` | `rmse_gap_strict > 0.9`; `tau_gap_strict > 0.75` |
+| E-1 | phi_g vs true group strength | Any of: `spearman >= 0.45` OR `topk_hit_rate >= 0.6` OR `auc_group_separation >= 0.65` | None of the PASS conditions met |
+| E-2 | Group ordering stability | Any of: `order_corr_min >= 0.4` OR `win_prob_active_over_inactive >= 0.7` OR `topk_hit_mean >= 0.7` | None of the PASS conditions met |
+| E-3 | Shrinkage factor kappa | `kappa_active_mean > kappa_inactive_mean` | `kappa_active_mean <= kappa_inactive_mean` (or active/inactive sets missing) |
+| FailureModes | Documented failure regions | Always `INFO` (documents known hard regimes) | N/A |
 - Sampler `thin=2`; any unstated parameters inherit the defaults from `grrhs.models.grrhs_gibbs`.
 
 ---
