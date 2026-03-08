@@ -1,0 +1,35 @@
+name: "real_nhanes_2003_2004_ggt_methods_tuned"
+output_dir: "outputs/sweeps/real_nhanes_2003_2004_ggt_methods_tuned"
+
+common_config_files:
+  - "../experiments/real_nhanes_2003_2004_ggt.yaml"
+
+variations:
+  - name: "nhanes_grrhs_tuned"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+      - "../overrides/nhanes_grrhs_tuned.yaml"
+  - name: "nhanes_rhs_tuned"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+      - "../overrides/nhanes_rhs_tuned.yaml"
+  - name: "nhanes_group_horseshoe_tuned"
+    config_files:
+      - "../methods/group_horseshoe.yaml"
+      - "../overrides/nhanes_group_horseshoe_tuned.yaml"
+  - name: "nhanes_gigg_tuned"
+    config_files:
+      - "../methods/gigg.yaml"
+      - "../overrides/nhanes_gigg_tuned.yaml"
+  - name: "nhanes_sgl_tuned"
+    config_files:
+      - "../methods/sparse_group_lasso.yaml"
+      - "../overrides/nhanes_sgl_tuned.yaml"
+  - name: "nhanes_lasso_tuned"
+    config_files:
+      - "../methods/lasso.yaml"
+      - "../overrides/nhanes_lasso_tuned.yaml"
+  - name: "nhanes_ridge_tuned"
+    config_files:
+      - "../methods/ridge.yaml"
+      - "../overrides/nhanes_ridge_tuned.yaml"

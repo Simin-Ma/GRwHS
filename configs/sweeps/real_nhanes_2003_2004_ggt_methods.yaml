@@ -11,6 +11,9 @@ variations:
   - name: "nhanes_rhs"
     config_files:
       - "../methods/regularized_horseshoe.yaml"
+  - name: "nhanes_group_horseshoe"
+    config_files:
+      - "../methods/group_horseshoe.yaml"
   - name: "nhanes_gigg"
     config_files:
       - "../methods/gigg.yaml"

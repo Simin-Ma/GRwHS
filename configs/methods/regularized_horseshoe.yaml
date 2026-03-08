@@ -8,6 +8,38 @@ model:
   tau0: 0.00641500299099584
   s0: 1.0
   iters: 10000
+  tau:
+    mode: "calibrated"
+    target: "coefficients"
+    p0:
+      value: 20
+    sigma_reference: 1.0
+    sigma_classification: 2.0
+  search:
+    strategy: "bayes"
+    budget: 6
+    init_points: 3
+    random_candidates: 128
+    seed: 151
+    runtime_overrides:
+      model:
+        iters: 2500
+      inference:
+        gibbs:
+          burn_in: 1250
+    space:
+      c:
+        mode: "logspace"
+        low: 0.5
+        high: 4.0
+      s0:
+        mode: "logspace"
+        low: 0.5
+        high: 2.5
+      tau.p0.value:
+        mode: "int"
+        low: 5
+        high: 45
 
 inference:
   gibbs:

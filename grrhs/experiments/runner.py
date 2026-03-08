@@ -26,6 +26,18 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
+from scipy.stats import norm
+
+try:
+    from sklearn.gaussian_process import GaussianProcessRegressor
+    from sklearn.gaussian_process.kernels import Matern, WhiteKernel
+
+    _HAS_SKLEARN_GP = True
+except Exception:  # pragma: no cover - scikit-learn is a dependency but keep fallback
+    GaussianProcessRegressor = None  # type: ignore
+    Matern = None  # type: ignore
+    WhiteKernel = None  # type: ignore
+    _HAS_SKLEARN_GP = False
 
 try:  # Optional dependency used for parquet export
     import pandas as pd  # type: ignore
@@ -603,6 +615,46 @@ def _compute_lasso_lambda_max(X: np.ndarray, y: np.ndarray) -> float:
     return max(lam, 1e-8)
 
 
+def _set_nested_config_value(root: MutableMapping[str, Any], dotted_key: str, value: Any) -> None:
+    """Assign a value into a nested mapping using dotted path notation."""
+    parts = [part for part in str(dotted_key).split(".") if part]
+    if not parts:
+        raise ExperimentError("Search parameter name cannot be empty.")
+    cursor: MutableMapping[str, Any] = root
+    for part in parts[:-1]:
+        current = cursor.get(part)
+        if not isinstance(current, MutableMapping):
+            current = {}
+            cursor[part] = current
+        cursor = current
+    cursor[parts[-1]] = value
+
+
+def _build_candidate_config(base_config: Mapping[str, Any], candidate: Mapping[str, Any]) -> Dict[str, Any]:
+    """Apply candidate hyper-parameters, including dotted nested paths, to a config."""
+    candidate_cfg = deepcopy(base_config)
+    model_cfg = candidate_cfg.setdefault("model", {})
+    if not isinstance(model_cfg, MutableMapping):
+        raise ExperimentError("Expected config['model'] to be a mapping.")
+    for key, value in candidate.items():
+        if "." in str(key):
+            _set_nested_config_value(model_cfg, str(key), value)
+        else:
+            model_cfg[str(key)] = value
+    model_cfg.pop("search", None)
+    return candidate_cfg
+
+
+def _apply_mapping_overrides(root: MutableMapping[str, Any], overrides: Mapping[str, Any], prefix: str = "") -> None:
+    """Recursively apply nested mapping overrides using dotted-path assignment."""
+    for key, value in overrides.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, Mapping):
+            _apply_mapping_overrides(root, value, prefix=path)
+        else:
+            _set_nested_config_value(root, path, value)
+
+
 def _expand_search_values(values: Any, key: str, X_ref: np.ndarray, y_ref: np.ndarray) -> List[float]:
     """Expand declarative search specifications into explicit numeric grids."""
     if isinstance(values, Mapping):
@@ -630,6 +682,321 @@ def _expand_search_values(values: Any, key: str, X_ref: np.ndarray, y_ref: np.nd
     raise ExperimentError(f"search grid for '{key}' must be a list or mapping.")
 
 
+def _split_search_config(search_cfg: Mapping[str, Any]) -> Tuple[str, Mapping[str, Any], Dict[str, Any]]:
+    """Separate search strategy, parameter space, and control options."""
+    if "strategy" not in search_cfg:
+        return "grid", search_cfg, {}
+
+    strategy = str(search_cfg.get("strategy", "grid")).strip().lower()
+    space = search_cfg.get("space")
+    if not isinstance(space, Mapping) or not space:
+        raise ExperimentError("model.search.space must be a non-empty mapping when strategy is specified.")
+    controls = {
+        key: deepcopy(value)
+        for key, value in search_cfg.items()
+        if key not in {"strategy", "space"}
+    }
+    return strategy, space, controls
+
+
+def _coerce_search_float(value: Any, *, key: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ExperimentError(f"Search parameter '{key}' must be numeric; received {value!r}.") from exc
+
+
+def _build_bayes_dimension(spec: Any, key: str, X_ref: np.ndarray, y_ref: np.ndarray) -> Dict[str, Any]:
+    """Normalize one BO search-dimension specification."""
+    if isinstance(spec, (list, tuple)):
+        choices = [_coerce_search_float(value, key=key) for value in spec]
+        if not choices:
+            raise ExperimentError(f"Bayesian search choices for '{key}' cannot be empty.")
+        return {"kind": "choice", "choices": choices}
+    if not isinstance(spec, Mapping):
+        raise ExperimentError(f"Bayesian search spec for '{key}' must be a mapping or list.")
+
+    mode = str(spec.get("mode", "uniform")).strip().lower()
+    if mode in {"lasso_path", "lasso"}:
+        lam_max = _compute_lasso_lambda_max(X_ref, y_ref)
+        min_ratio = float(spec.get("min_ratio", spec.get("ratio", 1e-3)))
+        low = lam_max * max(min_ratio, 1e-6)
+        high = lam_max
+        return {"kind": "float", "scale": "log", "low": float(min(low, high)), "high": float(max(low, high))}
+    if mode in {"logspace", "geomspace", "loguniform"}:
+        low = spec.get("low", spec.get("stop", spec.get("min", None)))
+        high = spec.get("high", spec.get("start", spec.get("max", None)))
+        if low is None or high is None:
+            raise ExperimentError(f"Bayesian log-space search for '{key}' requires 'low'/'high' bounds.")
+        low_val = _coerce_search_float(low, key=key)
+        high_val = _coerce_search_float(high, key=key)
+        if low_val <= 0 or high_val <= 0:
+            raise ExperimentError(f"Bayesian log-space search for '{key}' requires positive bounds.")
+        return {"kind": "float", "scale": "log", "low": float(min(low_val, high_val)), "high": float(max(low_val, high_val))}
+    if mode in {"uniform", "float", "linear"}:
+        low = spec.get("low", spec.get("min", None))
+        high = spec.get("high", spec.get("max", None))
+        if low is None or high is None:
+            raise ExperimentError(f"Bayesian search for '{key}' requires 'low'/'high' bounds.")
+        low_val = _coerce_search_float(low, key=key)
+        high_val = _coerce_search_float(high, key=key)
+        return {"kind": "float", "scale": "linear", "low": float(min(low_val, high_val)), "high": float(max(low_val, high_val))}
+    if mode in {"int", "integer"}:
+        low = spec.get("low", spec.get("min", None))
+        high = spec.get("high", spec.get("max", None))
+        if low is None or high is None:
+            raise ExperimentError(f"Bayesian integer search for '{key}' requires 'low'/'high' bounds.")
+        low_val = int(round(_coerce_search_float(low, key=key)))
+        high_val = int(round(_coerce_search_float(high, key=key)))
+        if low_val > high_val:
+            low_val, high_val = high_val, low_val
+        return {"kind": "int", "scale": "linear", "low": low_val, "high": high_val}
+    raise ExperimentError(f"Unsupported Bayesian search mode '{mode}' for '{key}'.")
+
+
+def _sample_dimension(spec: Mapping[str, Any], rng: np.random.Generator, *, n_samples: int) -> np.ndarray:
+    """Sample candidate values directly in parameter space."""
+    kind = str(spec["kind"])
+    if kind == "choice":
+        choices = np.asarray(spec["choices"], dtype=float)
+        idx = rng.integers(0, len(choices), size=n_samples)
+        return choices[idx]
+    low = float(spec["low"])
+    high = float(spec["high"])
+    if kind == "int":
+        return rng.integers(int(low), int(high) + 1, size=n_samples).astype(float)
+    if str(spec.get("scale", "linear")) == "log":
+        return np.exp(rng.uniform(np.log(low), np.log(high), size=n_samples))
+    return rng.uniform(low, high, size=n_samples)
+
+
+def _transform_dimension_values(values: np.ndarray, spec: Mapping[str, Any]) -> np.ndarray:
+    """Map parameter values to a smoother space for GP fitting."""
+    arr = np.asarray(values, dtype=float)
+    if str(spec["kind"]) == "choice":
+        choices = np.asarray(spec["choices"], dtype=float)
+        return np.searchsorted(choices, arr).astype(float)
+    if str(spec.get("scale", "linear")) == "log":
+        return np.log(np.clip(arr, 1e-12, None))
+    return arr
+
+
+def _decode_dimension_value(value: float, spec: Mapping[str, Any]) -> Any:
+    """Map one proposed value back to parameter space."""
+    kind = str(spec["kind"])
+    if kind == "choice":
+        choices = list(spec["choices"])
+        idx = int(np.clip(round(float(value)), 0, len(choices) - 1))
+        return float(choices[idx])
+    if kind == "int":
+        low = int(spec["low"])
+        high = int(spec["high"])
+        return int(np.clip(round(float(value)), low, high))
+    return float(np.clip(value, float(spec["low"]), float(spec["high"])))
+
+
+def _candidate_signature(candidate: Mapping[str, Any]) -> Tuple[Tuple[str, Any], ...]:
+    """Hashable representation used to avoid duplicate BO evaluations."""
+    return tuple(sorted((str(key), _to_serializable(value)) for key, value in candidate.items()))
+
+
+def _evaluate_inner_candidate(
+    base_config: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    *,
+    C: Optional[np.ndarray],
+    task: str,
+    std_cfg: StandardizationConfig,
+    inner_folds: Sequence[OuterFold],
+    class_labels: Optional[np.ndarray],
+    runtime_overrides: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Evaluate one inner-CV candidate and return score plus diagnostics."""
+    fold_scores: List[float] = []
+    skipped_folds = 0
+
+    for inner_fold in inner_folds:
+        train_idx = inner_fold.train
+        val_idx = inner_fold.test
+
+        std_train = apply_standardization(X[train_idx], y[train_idx], std_cfg)
+        X_train = std_train.X
+        y_train = std_train.y
+        X_val = apply_standardizer(X[val_idx], x_mean=std_train.x_mean, x_scale=std_train.x_scale)
+        if std_cfg.y_center:
+            y_val = apply_y_mean(y[val_idx], mean=std_train.y_mean)
+        else:
+            y_val = np.asarray(y[val_idx], dtype=np.float32)
+
+        if C is not None:
+            C_train_raw = np.asarray(C[train_idx], dtype=np.float32)
+            C_val_raw = np.asarray(C[val_idx], dtype=np.float32)
+            C_train, C_val, _, _, _ = _standardize_covariates_train_test(C_train_raw, C_val_raw)
+            X_train, X_val, _ = _residualize_against_covariates(X_train, X_val, C_train, C_val)
+            y_train, y_val, _ = _residualize_against_covariates(y_train, y_val, C_train, C_val)
+
+        if task == "classification":
+            unique_classes = np.unique(y_train)
+            if unique_classes.size < 2:
+                skipped_folds += 1
+                continue
+
+        candidate_cfg = _build_candidate_config(base_config, candidate)
+        if runtime_overrides:
+            _apply_mapping_overrides(candidate_cfg, runtime_overrides)
+        _maybe_calibrate_tau(candidate_cfg["model"], std_cfg, X_train, y_train, groups, task)
+        model = _instantiate_model(candidate_cfg, groups, X.shape[1])
+        try:
+            model.fit(X_train, y_train, groups=groups)
+        except TypeError:
+            model.fit(X_train, y_train)
+
+        score = _compute_inner_metric(task, y_val, model, X_val, class_labels=class_labels)
+        fold_scores.append(score)
+
+    avg_score = math.inf if not fold_scores else float(np.mean(fold_scores))
+    result: Dict[str, Any] = {"params": dict(candidate), "score": avg_score}
+    if skipped_folds:
+        result["skipped_folds"] = skipped_folds
+    return result
+
+
+def _perform_inner_bayes_opt(
+    base_config: Mapping[str, Any],
+    search_space: Mapping[str, Any],
+    controls: Mapping[str, Any],
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    *,
+    C: Optional[np.ndarray],
+    task: str,
+    std_cfg: StandardizationConfig,
+    inner_folds: Sequence[OuterFold],
+    class_labels: Optional[np.ndarray],
+    X_ref: np.ndarray,
+    y_ref: np.ndarray,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Low-dimensional GP-based Bayesian optimization for expensive models."""
+    if not _HAS_SKLEARN_GP:
+        raise ExperimentError("Bayesian optimization requires scikit-learn GaussianProcessRegressor.")
+
+    dims = {key: _build_bayes_dimension(spec, key, X_ref, y_ref) for key, spec in search_space.items()}
+    if len(dims) == 0:
+        return {}, []
+    if len(dims) > 4:
+        raise ExperimentError("Bayesian optimization in this runner supports up to 4 search dimensions.")
+
+    runtime_cfg = base_config.get("runtime", {})
+    search_seed = _resolve_seed(
+        controls.get("seed"),
+        base_config.get("seed"),
+        runtime_cfg.get("seed") if isinstance(runtime_cfg, Mapping) else None,
+    )
+    rng = np.random.default_rng(search_seed)
+    keys = list(sorted(dims.keys()))
+    budget = max(1, int(controls.get("budget", max(8, 3 * len(keys)))))
+    init_points = max(2, int(controls.get("init_points", min(budget, 2 * len(keys) + 1))))
+    random_candidates = max(64, int(controls.get("random_candidates", 256)))
+
+    history: List[Dict[str, Any]] = []
+    evaluated: Dict[Tuple[Tuple[str, Any], ...], Dict[str, Any]] = {}
+    runtime_overrides = controls.get("runtime_overrides")
+    if runtime_overrides is not None and not isinstance(runtime_overrides, Mapping):
+        raise ExperimentError("model.search.runtime_overrides must be a mapping when provided.")
+
+    def sample_candidate() -> Dict[str, Any]:
+        candidate: Dict[str, Any] = {}
+        for key in keys:
+            raw = _sample_dimension(dims[key], rng, n_samples=1)[0]
+            candidate[key] = _decode_dimension_value(raw, dims[key])
+        return candidate
+
+    def evaluate(candidate: Dict[str, Any], *, stage: str) -> Dict[str, Any]:
+        signature = _candidate_signature(candidate)
+        if signature in evaluated:
+            return evaluated[signature]
+        result = _evaluate_inner_candidate(
+            base_config,
+            candidate,
+            X,
+            y,
+            groups,
+            C=C,
+            task=task,
+            std_cfg=std_cfg,
+            inner_folds=inner_folds,
+            class_labels=class_labels,
+            runtime_overrides=runtime_overrides if isinstance(runtime_overrides, Mapping) else None,
+        )
+        result["stage"] = stage
+        evaluated[signature] = result
+        history.append(result)
+        return result
+
+    init_target = min(init_points, budget)
+    init_attempts = 0
+    while len(history) < init_target and init_attempts < max(16, 8 * init_target):
+        before = len(history)
+        evaluate(sample_candidate(), stage="init")
+        init_attempts += 1
+        if len(history) == before and len(evaluated) == before:
+            continue
+
+    while len(history) < budget:
+        X_obs = np.column_stack(
+            [
+                _transform_dimension_values(
+                    np.asarray([entry["params"][key] for entry in history], dtype=float),
+                    dims[key],
+                )
+                for key in keys
+            ]
+        )
+        y_obs = np.asarray([float(entry["score"]) for entry in history], dtype=float)
+
+        kernel = Matern(length_scale=np.ones(len(keys)), nu=2.5) + WhiteKernel(noise_level=1e-6)
+        gp = GaussianProcessRegressor(
+            kernel=kernel,
+            alpha=1e-6,
+            normalize_y=True,
+            n_restarts_optimizer=1,
+            random_state=search_seed,
+        )
+        gp.fit(X_obs, y_obs)
+
+        raw_candidates = {key: _sample_dimension(dims[key], rng, n_samples=random_candidates) for key in keys}
+        X_pool = np.column_stack([_transform_dimension_values(raw_candidates[key], dims[key]) for key in keys])
+        mean, std = gp.predict(X_pool, return_std=True)
+        std = np.maximum(std, 1e-12)
+        best_so_far = float(np.min(y_obs))
+        z = (best_so_far - mean) / std
+        expected_improvement = (best_so_far - mean) * norm.cdf(z) + std * norm.pdf(z)
+
+        proposal: Optional[Dict[str, Any]] = None
+        for idx in np.argsort(-expected_improvement):
+            candidate = {key: _decode_dimension_value(raw_candidates[key][idx], dims[key]) for key in keys}
+            if _candidate_signature(candidate) not in evaluated:
+                proposal = candidate
+                break
+        if proposal is None:
+            retry_limit = max(16, random_candidates // 4)
+            for _ in range(retry_limit):
+                candidate = sample_candidate()
+                if _candidate_signature(candidate) not in evaluated:
+                    proposal = candidate
+                    break
+        if proposal is None:
+            break
+        evaluate(proposal, stage="bayes")
+
+    best_entry = min(history, key=lambda entry: float(entry["score"]))
+    return dict(best_entry["params"]), history
+
+
 def _perform_inner_cv(
     base_config: Mapping[str, Any],
     X: np.ndarray,
@@ -639,8 +1006,8 @@ def _perform_inner_cv(
     C: Optional[np.ndarray] = None,
     task: str,
     std_cfg: StandardizationConfig,
-) -> Tuple[Dict[str, float], Optional[List[Dict[str, Any]]]]:
-    """Grid-search hyper-parameters for frequentist baselines."""
+) -> Tuple[Dict[str, Any], Optional[List[Dict[str, Any]]]]:
+    """Select inner-CV hyper-parameters via grid search or low-dimensional BO."""
 
     search_cfg = deepcopy(base_config.get("model", {}).get("search"))
     if not isinstance(search_cfg, Mapping) or not search_cfg:
@@ -650,12 +1017,7 @@ def _perform_inner_cv(
     X_ref = std_all.X
     y_ref = std_all.y
 
-    keys = sorted(search_cfg.keys())
-    grid_values: List[List[float]] = []
-    for key in keys:
-        values = search_cfg[key]
-        expanded = _expand_search_values(values, key, X_ref, y_ref)
-        grid_values.append(expanded)
+    strategy, param_space, controls = _split_search_config(search_cfg)
 
     inner_cfg = deepcopy(base_config.get("splits", {}).get("inner", {}) or {})
     inner_splits = max(2, int(inner_cfg.get("n_splits", 5) or 5))
@@ -682,71 +1044,54 @@ def _perform_inner_cv(
             )
         class_labels = labels
 
+    if strategy == "bayes":
+        best_candidate, history = _perform_inner_bayes_opt(
+            base_config,
+            param_space,
+            controls,
+            X,
+            y,
+            groups,
+            C=C,
+            task=task,
+            std_cfg=std_cfg,
+            inner_folds=inner_folds,
+            class_labels=class_labels,
+            X_ref=X_ref,
+            y_ref=y_ref,
+        )
+        return best_candidate, history
+    if strategy != "grid":
+        raise ExperimentError(f"Unsupported search strategy '{strategy}'.")
+
+    keys = sorted(param_space.keys())
+    grid_values: List[List[float]] = []
+    for key in keys:
+        values = param_space[key]
+        expanded = _expand_search_values(values, key, X_ref, y_ref)
+        grid_values.append(expanded)
+
     history: List[Dict[str, Any]] = []
     best_candidate: Optional[Dict[str, float]] = None
     best_score = math.inf
 
     for candidate_values in np.array(np.meshgrid(*grid_values, indexing="ij")).T.reshape(-1, len(keys)):
         candidate = {key: float(val) for key, val in zip(keys, candidate_values)}
-        fold_scores: List[float] = []
-        skipped_folds = 0
-
-        for inner_fold in inner_folds:
-            train_idx = inner_fold.train
-            val_idx = inner_fold.test
-
-            std_train = apply_standardization(X[train_idx], y[train_idx], std_cfg)
-            X_train = std_train.X
-            y_train = std_train.y
-            X_val = apply_standardizer(X[val_idx], x_mean=std_train.x_mean, x_scale=std_train.x_scale)
-            if std_cfg.y_center:
-                y_val = apply_y_mean(y[val_idx], mean=std_train.y_mean)
-            else:
-                y_val = np.asarray(y[val_idx], dtype=np.float32)
-
-            if C is not None:
-                C_train_raw = np.asarray(C[train_idx], dtype=np.float32)
-                C_val_raw = np.asarray(C[val_idx], dtype=np.float32)
-                C_train, C_val, _, _, _ = _standardize_covariates_train_test(C_train_raw, C_val_raw)
-                X_train, X_val, _ = _residualize_against_covariates(X_train, X_val, C_train, C_val)
-                y_train, y_val, _ = _residualize_against_covariates(y_train, y_val, C_train, C_val)
-
-            candidate_cfg = deepcopy(base_config)
-            candidate_cfg.setdefault("model", {})
-            candidate_cfg = deepcopy(candidate_cfg)
-            candidate_cfg["model"] = {**candidate_cfg["model"], **candidate}
-            candidate_cfg["model"].pop("search", None)
-
-            if task == "classification":
-                unique_classes = np.unique(y_train)
-                if unique_classes.size < 2:
-                    skipped_folds += 1
-                    continue
-
-            model = _instantiate_model(candidate_cfg, groups, X.shape[1])
-            try:
-                model.fit(X_train, y_train, groups=groups)
-            except TypeError:
-                model.fit(X_train, y_train)
-
-            score = _compute_inner_metric(
-                task,
-                y_val,
-                model,
-                X_val,
-                class_labels=class_labels,
-            )
-            fold_scores.append(score)
-
-        if not fold_scores:
-            avg_score = math.inf
-        else:
-            avg_score = float(np.mean(fold_scores))
-
-        history_entry: Dict[str, Any] = {"params": candidate, "score": avg_score}
-        if skipped_folds:
-            history_entry["skipped_folds"] = skipped_folds
+        history_entry = _evaluate_inner_candidate(
+            base_config,
+            candidate,
+            X,
+            y,
+            groups,
+            C=C,
+            task=task,
+            std_cfg=std_cfg,
+            inner_folds=inner_folds,
+            class_labels=class_labels,
+        )
+        history_entry["stage"] = "grid"
         history.append(history_entry)
+        avg_score = float(history_entry["score"])
         if avg_score < best_score:
             best_score = avg_score
             best_candidate = candidate
@@ -1072,7 +1417,10 @@ def _run_fold_nested(
             std_cfg=std_cfg,
         )
         for key, value in inner_params.items():
-            model_config["model"][key] = value
+            if "." in str(key):
+                _set_nested_config_value(model_config["model"], str(key), value)
+            else:
+                model_config["model"][key] = value
         _maybe_calibrate_tau(model_config["model"], std_cfg, X_train_model, y_train, model_groups, task)
         model = _instantiate_model(model_config, model_groups, X_train_model.shape[1])
         try:
