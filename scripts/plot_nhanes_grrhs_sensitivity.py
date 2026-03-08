@@ -17,7 +17,7 @@ def _load_frame(path: Path) -> pd.DataFrame:
     return frame
 
 
-def plot_tuning(summary_csv: Path, out_path: Path, *, rhs_rmse: float, rhs_mlpd: float) -> None:
+def plot_sensitivity(summary_csv: Path, out_path: Path, *, rhs_rmse: float, rhs_mlpd: float) -> None:
     frame = _load_frame(summary_csv)
 
     fig, axes = plt.subplots(1, 3, figsize=(14.2, 4.8))
@@ -25,21 +25,21 @@ def plot_tuning(summary_csv: Path, out_path: Path, *, rhs_rmse: float, rhs_mlpd:
     legend_labels = []
     specs = [
         ("eta", "eta sweep"),
-        ("tau0", "tau0 sweep"),
+        ("p0", "p0 sweep"),
         ("c", "c sweep"),
     ]
 
     for ax, (param, title) in zip(axes, specs):
         sub = frame.sort_values(param).copy()
         if param == "eta":
-            sub = sub[sub["tau0"].round(12) == round(0.00641500299099584, 12)]
+            sub = sub[sub["p0"] == 20]
             sub = sub[sub["c"].round(12) == 1.0]
-        elif param == "tau0":
-            sub = sub[sub["eta"].round(12) == 0.7]
+        elif param == "p0":
+            sub = sub[sub["eta"].round(12) == 0.6]
             sub = sub[sub["c"].round(12) == 1.0]
         elif param == "c":
-            sub = sub[sub["eta"].round(12) == 0.7]
-            sub = sub[sub["tau0"].round(12) == round(0.00641500299099584, 12)]
+            sub = sub[sub["eta"].round(12) == 0.6]
+            sub = sub[sub["p0"] == 20]
 
         ax.plot(sub[param], sub["RMSE"], marker="o", linewidth=2.0, color="#153B50", label="GR-RHS RMSE")
         ax.axhline(rhs_rmse, color="#2F6690", linestyle="--", linewidth=1.4, label="RHS RMSE")
@@ -60,7 +60,7 @@ def plot_tuning(summary_csv: Path, out_path: Path, *, rhs_rmse: float, rhs_mlpd:
             legend_labels = l1 + l2
 
     fig.legend(legend_handles, legend_labels, loc="upper center", ncol=4, frameon=False, fontsize=10)
-    fig.suptitle("NHANES GR-RHS exploratory tuning", fontsize=18, fontweight="bold", y=1.02)
+    fig.suptitle("NHANES GR-RHS sensitivity analysis", fontsize=18, fontweight="bold", y=1.02)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
@@ -68,24 +68,24 @@ def plot_tuning(summary_csv: Path, out_path: Path, *, rhs_rmse: float, rhs_mlpd:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot exploratory NHANES GR-RHS tuning results.")
+    parser = argparse.ArgumentParser(description="Plot NHANES GR-RHS sensitivity results.")
     parser.add_argument(
         "--summary-csv",
         type=Path,
-        default=Path("outputs/reports/nhanes_grrhs_tuning_summary.csv"),
-        help="CSV from summarize_nhanes_grrhs_tuning.py",
+        default=Path("outputs/reports/nhanes_grrhs_sensitivity_summary.csv"),
+        help="CSV from summarize_nhanes_grrhs_sensitivity.py",
     )
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("outputs/reports/nhanes_grrhs_tuning.png"),
+        default=Path("outputs/reports/nhanes_grrhs_sensitivity.png"),
         help="Destination PNG path.",
     )
     parser.add_argument("--rhs-rmse", type=float, default=0.5958629598532049)
     parser.add_argument("--rhs-mlpd", type=float, default=-0.9009611069874411)
     args = parser.parse_args()
 
-    plot_tuning(args.summary_csv, args.out, rhs_rmse=args.rhs_rmse, rhs_mlpd=args.rhs_mlpd)
+    plot_sensitivity(args.summary_csv, args.out, rhs_rmse=args.rhs_rmse, rhs_mlpd=args.rhs_mlpd)
     print(f"[ok] plot written to {args.out}")
 
 

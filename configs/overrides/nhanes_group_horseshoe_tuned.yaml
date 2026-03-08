@@ -1,7 +1,0 @@
-model:
-  group_scale: 1.798874491119143
-  slab_scale: 1.7939159558907076
-  tau:
-    p0:
-      value: 19
-  search: null

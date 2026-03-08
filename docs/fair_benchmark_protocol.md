@@ -25,22 +25,22 @@ This note captures the fairness rules baked into the current regression-focused 
 ## 2. Horseshoe-family baselines
 
 All horseshoe-like models now share:
-- Expected signal size `s = 30` (`model.tau.p0.value`) which stays constant across Exp1/Exp4.
+- Expected signal size `s = 20` (`model.tau.p0.value`) which stays constant across Exp1/Exp4.
 - Automatic tau heuristic: `_maybe_calibrate_tau` turns `s` into `tau0 = (s / (p - s)) / sqrt(n)` when `standardization.X = unit_variance`.
-- Common slab width `c = 1.5` (regularized HS and GRRHS).
-- Identical NUTS settings for RHS and Group HS (2k warmup + 2k posterior draws, 1 chain, thinning 1, `target_accept = 0.9`).
+- Common slab width `c = 1.0` (regularized HS and GRRHS).
+- Bayesian baselines are run with fixed prior defaults; only convex baselines use inner-CV hyperparameter search.
 
 ### Regularized Horseshoe (RHS)
 - Config: `configs/methods/regularized_horseshoe.yaml`.
-- Relies on the calibrated `tau0`, slab scale 1.5, and the shared Half-Cauchy noise prior (`sigma_scale = 1.0`).
+- Relies on the calibrated `tau0`, slab scale 1.0, and the shared Half-Cauchy noise prior (`sigma_scale = 1.0`).
 
 ### Group Horseshoe (GH)
 - Config: `configs/methods/group_horseshoe.yaml`.
-- Shares the same `s = 30` prior via `model.tau`, the same NUTS budget, and uses the same groups as GRRHS.
+- Shares the same `s = 20` prior via `model.tau`, uses 2k warmup + 2k posterior draws (1 chain, thinning 1, `target_accept = 0.9`), and uses the same groups as GRRHS.
 
 ### GRRHS (our model)
-- Config: `configs/methods/grrhs_regression.yaml` (`c = 1.5`, `eta = 0.5`, `tau.p0.value = 30`).
-- Gibbs sampler runs 20k iterations (10k burn-in) with identical jitter/seed per fold.
+- Config: `configs/methods/grrhs_regression.yaml` (`c = 1.0`, `eta = 0.5`, `tau.p0.value = 20`).
+- Gibbs sampler runs 8k iterations (4k burn-in) with identical jitter/seed per fold.
 
 _Classification-oriented configs (Exp2/Exp3 and the logistic method presets) were removed to keep the repository focused on regression. Recover them from git history if you need them again._
 

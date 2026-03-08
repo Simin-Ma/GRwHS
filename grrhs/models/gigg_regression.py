@@ -92,13 +92,15 @@ class GIGGRegression:
     jitter: float = 1e-8
     seed: int = 0
     b_init: float = 1.0
-    b_floor: float = 0.25
-    b_max: float = 2.0
+    b_floor: float = 1e-3
+    b_max: float = 4.0
     tau_scale: float = 1.0
     sigma_scale: float = 1.0
     store_lambda: bool = False
     a_value: Optional[float] = None
     share_group_hyper: bool = False
+    mmle_enabled: bool = True
+    mmle_update: str = "paper_lambda_only"
 
     rng_: Generator = field(init=False, repr=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -106,7 +108,9 @@ class GIGGRegression:
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     gamma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    b_samples_: Optional[np.ndarray] = field(default=None, init=False)
     coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
+    b_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
 
     def fit(self, X: np.ndarray, y: np.ndarray, *, groups: Sequence[Sequence[int]]) -> "GIGGRegression":
@@ -148,8 +152,8 @@ class GIGGRegression:
         sigma_draws = np.zeros(kept, dtype=float)
         gamma_draws = np.zeros((kept, G), dtype=float)
         lambda_draws = np.zeros((kept, p), dtype=float) if self.store_lambda else None
+        b_draws = np.zeros((kept, G), dtype=float)
 
-        log_gamma_mean = np.log(np.maximum(gamma_sq, self.jitter))
         log_lambda_mean = np.zeros(G, dtype=float)
 
         keep_idx = 0
@@ -176,7 +180,7 @@ class GIGGRegression:
             for gid, idxs in enumerate(normalised_groups):
                 lam_param = float(a_vec[gid] - 0.5 * group_sizes[gid])
                 chi = np.sum(beta[idxs] ** 2 / np.maximum(lambda_sq[idxs], self.jitter))
-                psi = 2.0 * max(b_vec[gid], self.b_floor)
+                psi = 2.0
                 theta = sample_gig(
                     lambda_param=lam_param,
                     chi=max(chi, self.jitter),
@@ -208,29 +212,35 @@ class GIGGRegression:
             sigma_sq = invgamma.rvs(a=shape_sigma, scale=scale_sigma, random_state=rng)
             xi_sigma = invgamma.rvs(a=1.0, scale=1.0 + 1.0 / max(sigma_sq, self.jitter), random_state=rng)
 
-            # ---- Empirical Bayes update for b_g
-            log_gamma_mean = (it * log_gamma_mean + np.log(np.maximum(gamma_sq, self.jitter))) / (it + 1)
-            targets = np.empty(G, dtype=float)
-            for gid, idxs in enumerate(normalised_groups):
-                log_lambda_group = float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter))))
-                log_lambda_mean[gid] = (it * log_lambda_mean[gid] + log_lambda_group) / (it + 1)
-                targets[gid] = log_gamma_mean[gid] - log_lambda_mean[gid]
+            # Empirical Bayes update for b_g following the paper's b-only MMLE path:
+            #   b_g^{l+1} = psi_0^{-1}( - E[ mean_j log(lambda_gj^2) | y ] )
+            if self.mmle_enabled:
+                targets = np.empty(G, dtype=float)
+                for gid, idxs in enumerate(normalised_groups):
+                    log_lambda_group = float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter))))
+                    log_lambda_mean[gid] = (it * log_lambda_mean[gid] + log_lambda_group) / (it + 1)
+                    if self.mmle_update == "paper_lambda_only":
+                        targets[gid] = -log_lambda_mean[gid]
+                    elif self.mmle_update == "legacy_gamma_minus_lambda":
+                        targets[gid] = float(np.log(max(gamma_sq[gid], self.jitter))) - log_lambda_mean[gid]
+                    else:
+                        raise ValueError(f"Unsupported mmle_update '{self.mmle_update}'.")
 
-            if self.share_group_hyper:
-                aggregate = float(np.mean(targets))
-                try:
-                    b_update = _digamma_inv(aggregate)
-                except Exception:
-                    b_update = float(np.mean(b_vec))
-                clipped = min(max(float(b_update), self.b_floor), self.b_max)
-                b_vec.fill(clipped)
-            else:
-                for gid in range(G):
+                if self.share_group_hyper:
+                    aggregate = float(np.mean(targets))
                     try:
-                        b_update = _digamma_inv(targets[gid])
+                        b_update = _digamma_inv(aggregate)
                     except Exception:
-                        b_update = b_vec[gid]
-                    b_vec[gid] = min(max(float(b_update), self.b_floor), self.b_max)
+                        b_update = float(np.mean(b_vec))
+                    clipped = min(max(float(b_update), self.b_floor), self.b_max)
+                    b_vec.fill(clipped)
+                else:
+                    for gid in range(G):
+                        try:
+                            b_update = _digamma_inv(targets[gid])
+                        except Exception:
+                            b_update = b_vec[gid]
+                        b_vec[gid] = min(max(float(b_update), self.b_floor), self.b_max)
 
             if it >= self.burnin and ((it - self.burnin) % max(self.thin, 1) == 0):
                 coef_draws[keep_idx] = beta
@@ -239,6 +249,7 @@ class GIGGRegression:
                 gamma_draws[keep_idx] = gamma_sq
                 if lambda_draws is not None:
                     lambda_draws[keep_idx] = lambda_sq
+                b_draws[keep_idx] = b_vec
                 keep_idx += 1
 
         self.coef_samples_ = coef_draws if kept else None
@@ -246,7 +257,9 @@ class GIGGRegression:
         self.sigma_samples_ = sigma_draws if kept else None
         self.gamma_samples_ = gamma_draws if kept else None
         self.lambda_samples_ = lambda_draws if lambda_draws is not None else None
+        self.b_samples_ = b_draws if kept else None
         self.coef_mean_ = coef_draws.mean(axis=0) if kept else beta
+        self.b_mean_ = b_draws.mean(axis=0) if kept else b_vec.copy()
         self.intercept_ = 0.0
         return self
 

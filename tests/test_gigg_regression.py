@@ -33,3 +33,5 @@ def test_gigg_regression_smoke():
     assert model.tau_samples_ is not None
     assert model.gamma_samples_ is not None
     assert model.lambda_samples_ is not None
+    assert model.b_samples_ is not None
+    assert model.b_mean_ is not None

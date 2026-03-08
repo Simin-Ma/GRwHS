@@ -1,0 +1,16 @@
+model:
+  a_value: null
+  b_init: 1.0
+  b_floor: 0.001
+  b_max: 4.0
+  mmle_enabled: true
+  mmle_update: paper_lambda_only
+  share_group_hyper: false
+  iters: 60000
+  store_lambda: true
+  search: null
+
+inference:
+  gibbs:
+    burn_in: 10000
+    thin: 5

@@ -10,7 +10,7 @@ model:
     mode: "calibrated"
     target: "coefficients"
     p0:
-      value: 30
+      value: 20
     sigma_reference: 1.0
     sigma_classification: 2.0
   num_warmup: 2000
@@ -20,26 +20,3 @@ model:
   target_accept_prob: 0.9
   progress_bar: false
   seed: 2025
-  search:
-    strategy: "bayes"
-    budget: 6
-    init_points: 3
-    random_candidates: 128
-    seed: 2025
-    runtime_overrides:
-      model:
-        num_warmup: 300
-        num_samples: 300
-    space:
-      group_scale:
-        mode: "logspace"
-        low: 0.3
-        high: 3.0
-      slab_scale:
-        mode: "logspace"
-        low: 0.5
-        high: 3.0
-      tau.p0.value:
-        mode: "int"
-        low: 5
-        high: 50

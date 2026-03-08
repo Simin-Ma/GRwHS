@@ -446,10 +446,15 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
         _get(cfg, "model.seed", _get(cfg, "seed", 0)),
     )
     b_init = float(_get(cfg, "model.b_init", 1.0))
-    b_floor = float(_get(cfg, "model.b_floor", 0.25))
+    b_floor = float(_get(cfg, "model.b_floor", 1e-3))
+    b_max = float(_get(cfg, "model.b_max", 4.0))
     tau_scale = float(_get(cfg, "model.tau_init", _get(cfg, "model.tau_scale", 1.0)))
     sigma_scale = float(_get(cfg, "model.sigma_init", _get(cfg, "model.sigma_scale", 1.0)))
     store_lambda = bool(_get(cfg, "model.store_lambda", False))
+    a_value = _get(cfg, "model.a_value", None)
+    share_group_hyper = bool(_get(cfg, "model.share_group_hyper", False))
+    mmle_enabled = bool(_get(cfg, "model.mmle_enabled", True))
+    mmle_update = str(_get(cfg, "model.mmle_update", "paper_lambda_only"))
 
     return GIGGRegression(
         iters=iters,
@@ -459,9 +464,14 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
         seed=int(seed) if seed is not None else 0,
         b_init=b_init,
         b_floor=b_floor,
+        b_max=b_max,
         tau_scale=tau_scale,
         sigma_scale=sigma_scale,
         store_lambda=store_lambda,
+        a_value=None if a_value is None else float(a_value),
+        share_group_hyper=share_group_hyper,
+        mmle_enabled=mmle_enabled,
+        mmle_update=mmle_update,
     )
 
 

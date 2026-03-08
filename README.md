@@ -115,11 +115,11 @@ Dataset files adjust only the `data` (and occasionally `standardization` or `spl
 
 ### 3.3 Method presets (`configs/methods/*.yaml`)
 
-Method presets collect model-specific hyperparameters and tuning instructions:
+Method presets collect model-specific defaults and, for convex baselines only, tuning instructions:
 
-- `grrhs_regression.yaml` – GRRHS Gibbs sampler with RHS-matched global/local priors (τ₀ from s₀=20, η=0.7, 3k iters / 1.5k burn-in).
-- `regularized_horseshoe.yaml` – RHS baseline sharing the same τ₀/slab width *and* the exact Gibbs kernel as GRRHS, but with the group layer disabled (`use_groups=false`), so any runtime advantage does not come from better numerics.
-- `gigg.yaml` – GIGG Gibbs sampler (fixed a_g=1/n, EB-updated b_g via digamma inverse) with Woodbury accelerations baked into the model class.
+- `grrhs_regression.yaml` – GRRHS Gibbs sampler with fixed default prior shape (`c=1.0`, `eta=0.5`) and calibrated global shrinkage from `tau.p0.value = 20`.
+- `regularized_horseshoe.yaml` – RHS baseline sharing the same calibrated `tau` heuristic and slab width as GRRHS, with the group layer disabled (`use_groups=false`).
+- `gigg.yaml` – GIGG Gibbs sampler with fixed default group-dependence settings (`b_init=1.0`, `b_floor=0.25`, `tau_scale=1.0`) and Woodbury accelerations baked into the model class.
 - `sparse_group_lasso.yaml` – skglm SGL with log-spaced α grid × {0.2,0.5,0.8} ℓ₁ ratios.
 - `lasso.yaml` – classic L1 path using auto-computed λ_max → 10⁻³ λ_max.
 - `ridge.yaml` – eight-point L2 grid spanning 1e-4…1e3.
@@ -187,12 +187,13 @@ Follow this checklist to reproduce the final regression study (three synthetic s
 
 1. **Synthetic Scenarios (S1–S3)**
    - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.1, 0.5, 1, 3} via the override files, repeats the data draw 3 times, and evaluates the six locked baselines (GRRHS, RHS, GIGG, SGL, Lasso, Ridge) under identical preprocessing and nested-CV settings.
-   - Outputs live under `outputs/sweeps/sim_s*/` with per-variant resolved configs that document the chosen SNR, seeds, and tuning decisions.
+   - Outputs live under `outputs/sweeps/sim_s*/` with per-variant resolved configs that document the chosen SNR, seeds, and fixed prior settings.
 
 2. **Real Data Benchmarks**
-   - Create `configs/experiments/real_<dataset>.yaml` for each dataset (specify loader module + split policy, or furnish `path_X`, `path_y`, and `path_group_map`). Keep the same preprocessing as synthetic runs (train-only standardisation, shared splits across methods).
-   - Mirror the synthetic sweeps by adding `configs/sweeps/real_<dataset>_methods.yaml`: six methods, no hyperparameter fiddling beyond what is already codified in `configs/methods/`, and repeated 70/30 (or 5× CV) splits for standard errors.
-   - Typical candidates: a crisis-omics regression task with pathway groupings + a second dataset where group structure is curated (e.g. proteomics pathways). Store raw data under `data/real/` and point YAMLs to the loader helper you wire up in `data/loaders.py`.
+    - Create `configs/experiments/real_<dataset>.yaml` for each dataset (specify loader module + split policy, or furnish `path_X`, `path_y`, and `path_group_map`). Keep the same preprocessing as synthetic runs (train-only standardisation, shared splits across methods).
+    - Mirror the synthetic sweeps by adding `configs/sweeps/real_<dataset>_methods.yaml`: six methods, no hyperparameter fiddling beyond what is already codified in `configs/methods/`, and repeated 70/30 (or 5× CV) splits for standard errors.
+    - For GRRHS-specific prior robustness, use a dedicated sensitivity sweep such as `configs/sweeps/real_nhanes_2003_2004_grrhs_sensitivity.yaml` instead of tuned overrides.
+    - Typical candidates: a crisis-omics regression task with pathway groupings + a second dataset where group structure is curated (e.g. proteomics pathways). Store raw data under `data/real/` and point YAMLs to the loader helper you wire up in `data/loaders.py`.
 
 3. **Ablations & Robustness**
    - `configs/sweeps/exp4_ablation.yaml` isolates the “remove group layer” comparison (GRRHS vs RHS) on the S1 blueprint.
@@ -202,11 +203,11 @@ Follow this checklist to reproduce the final regression study (three synthetic s
    - Use `python -m grrhs.cli.make_report --runs <glob>` to aggregate metrics across all sweeps and real-data repeats.
    - Every run already stores fold-level JSON/NPZ artefacts plus posterior diagnostics, so you can filter by scenario/SNR/model when building tables.
 
-Each run directory records fold-level metrics (`fold_*` subdirectories), resolved configuration, and full metadata so reports can cross-reference calibration statistics (`tau_summary.json`) or tuning diagnostics (`tuning_summary.json`).
+Each run directory records fold-level metrics (`fold_*` subdirectories), resolved configuration, and full metadata so reports can cross-reference calibration statistics (`tau_summary.json`) and posterior diagnostics.
 
 > Need a quick reference for the fairness contract (identical preprocessing, nested CV grids, τ heuristics, R-hat checks)? See `docs/fair_benchmark_protocol.md`.
 >
-> **Implementation details.** `grrhs.experiments.runner` draws the outer folds once per dataset repeat and hands the exact same `OuterFold` objects to every model (no per-model shuffling). The nested inner CV routine is only invoked when a method config supplies a `model.search` grid (ridge/Lasso/SGL); Bayesian baselines (GRRHS, RHS, GIGG, etc.) never read `splits.inner`, so they do not indirectly peek at outer-test data.
+> **Implementation details.** `grrhs.experiments.runner` draws the outer folds once per dataset repeat and hands the exact same `OuterFold` objects to every model (no per-model shuffling). The nested inner CV routine is only invoked for convex baselines that explicitly define a `model.search` grid (ridge/Lasso/SGL); Bayesian baselines (GRRHS, RHS, GIGG, etc.) use fixed defaults plus optional sensitivity sweeps and never read `splits.inner`.
 
 ### 4.0 Recommended Metric Systems
 

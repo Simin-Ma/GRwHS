@@ -16,15 +16,17 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 
 def _extract_param(cfg: Dict[str, Any]) -> Dict[str, Any]:
     model = cfg.get("model", {}) if isinstance(cfg.get("model"), dict) else {}
+    tau_cfg = model.get("tau", {}) if isinstance(model.get("tau"), dict) else {}
+    p0_cfg = tau_cfg.get("p0", {}) if isinstance(tau_cfg.get("p0"), dict) else {}
     return {
         "eta": model.get("eta"),
-        "tau0": model.get("tau0"),
+        "p0": p0_cfg.get("value", tau_cfg.get("p0")),
         "c": model.get("c"),
         "iters": model.get("iters"),
     }
 
 
-def summarize_tuning(sweep_dir: Path, rhs_metrics_path: Path, out_csv: Path) -> pd.DataFrame:
+def summarize_sensitivity(sweep_dir: Path, rhs_metrics_path: Path, out_csv: Path) -> pd.DataFrame:
     rhs_payload = json.loads(rhs_metrics_path.read_text(encoding="utf-8"))
     rhs_metrics = rhs_payload.get("metrics", rhs_payload)
     rhs_rmse = float(rhs_metrics["RMSE"])
@@ -65,12 +67,12 @@ def summarize_tuning(sweep_dir: Path, rhs_metrics_path: Path, out_csv: Path) -> 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Summarize exploratory NHANES GR-RHS tuning results.")
+    parser = argparse.ArgumentParser(description="Summarize NHANES GR-RHS sensitivity results.")
     parser.add_argument(
         "--sweep-dir",
         type=Path,
-        default=Path("outputs/sweeps/real_nhanes_2003_2004_grrhs_tuning"),
-        help="Directory containing tuning run subdirectories.",
+        default=Path("outputs/sweeps/real_nhanes_2003_2004_grrhs_sensitivity"),
+        help="Directory containing sensitivity run subdirectories.",
     )
     parser.add_argument(
         "--rhs-metrics",
@@ -81,12 +83,12 @@ def main() -> None:
     parser.add_argument(
         "--out-csv",
         type=Path,
-        default=Path("outputs/reports/nhanes_grrhs_tuning_summary.csv"),
+        default=Path("outputs/reports/nhanes_grrhs_sensitivity_summary.csv"),
         help="Destination CSV path.",
     )
     args = parser.parse_args()
 
-    frame = summarize_tuning(args.sweep_dir, args.rhs_metrics, args.out_csv)
+    frame = summarize_sensitivity(args.sweep_dir, args.rhs_metrics, args.out_csv)
     print(frame.to_string(index=False))
     print(f"[ok] summary written to {args.out_csv}")
 

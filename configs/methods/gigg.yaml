@@ -8,31 +8,6 @@ model:
   tau_scale: 1.0
   sigma_scale: 1.0
   store_lambda: false
-  search:
-    strategy: "bayes"
-    budget: 6
-    init_points: 3
-    random_candidates: 128
-    seed: 2025
-    runtime_overrides:
-      model:
-        iters: 2500
-      inference:
-        gibbs:
-          burn_in: 1250
-    space:
-      b_init:
-        mode: "uniform"
-        low: 0.4
-        high: 1.8
-      b_floor:
-        mode: "uniform"
-        low: 0.1
-        high: 0.6
-      tau_scale:
-        mode: "logspace"
-        low: 0.25
-        high: 2.5
 
 inference:
   gibbs:
