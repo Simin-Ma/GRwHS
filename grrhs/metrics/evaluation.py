@@ -66,6 +66,15 @@ def _flatten_sample_axes(arr: np.ndarray, *, scalar_param: bool) -> np.ndarray:
     return data.reshape(-1, *data.shape[2:])
 
 
+def _flatten_loglik_axes(arr: np.ndarray) -> np.ndarray:
+    """Flatten optional chain/draw axes for per-observation log-likelihood draws."""
+
+    data = np.asarray(arr, dtype=float)
+    if data.ndim <= 2:
+        return data
+    return data.reshape(-1, data.shape[-1])
+
+
 def _mlpd_from_loglik_samples(loglik_samples: np.ndarray) -> Optional[float]:
     """
     Compute mean log predictive density via log-sum-exp across posterior draws.
@@ -578,21 +587,21 @@ def _predictive_draws(
     return preds
 
 
-def _log_likelihood_samples(
+def _gaussian_log_likelihood_samples(
     y_true: np.ndarray,
-    pred_draws: Optional[np.ndarray],
+    mean_draws: Optional[np.ndarray],
     sigma_samples: Optional[np.ndarray],
 ) -> Optional[np.ndarray]:
-    if pred_draws is None or sigma_samples is None:
+    if mean_draws is None or sigma_samples is None:
         return None
-    S, n = pred_draws.shape
+    S, n = mean_draws.shape
     sigma = np.asarray(sigma_samples, dtype=float).reshape(-1)
     if sigma.size == 1:
         sigma = np.repeat(sigma, S)
     elif sigma.size != S:
         sigma = sigma[:S]
     sigma = np.maximum(sigma, 1e-8)
-    resid = y_true[np.newaxis, :] - pred_draws
+    resid = y_true[np.newaxis, :] - mean_draws
     log_sigma = np.log(sigma)[:, np.newaxis]
     loglik = -0.5 * ((resid**2) / (sigma[:, np.newaxis] ** 2)) - np.log(np.sqrt(2 * np.pi)) - log_sigma
     return loglik
@@ -636,6 +645,9 @@ def evaluate_model_metrics(
             pred_mean = None
 
     posterior = _prepare_posterior_samples(model)
+    explicit_loglik_samples = _as_numpy(getattr(model, "loglik_samples_", None))
+    if explicit_loglik_samples is not None:
+        explicit_loglik_samples = _flatten_loglik_axes(np.asarray(explicit_loglik_samples, dtype=float))
 
     coef_hat = _as_numpy(getattr(model, "coef_", None))
     if coef_hat is not None and posterior.coef is None:
@@ -714,9 +726,19 @@ def evaluate_model_metrics(
             except Exception:
                 pseudo_sigma2 = None
 
+    mean_draws = None
     pred_draws = None
     loglik_samples = None
     if task_label == "regression":
+        if pred_draws_override is not None:
+            mean_draws = np.asarray(pred_draws_override, dtype=float)
+        elif Xte is not None and posterior.coef is not None:
+            mean_draws = _predictive_draws(
+                Xte,
+                posterior.coef,
+                intercept_val,
+                sigma_samples=None,
+            )
         if pred_draws_override is not None:
             pred_draws = np.asarray(pred_draws_override, dtype=float)
         elif Xte is not None and posterior.coef is not None:
@@ -726,8 +748,10 @@ def evaluate_model_metrics(
                 intercept_val,
                 sigma_samples=posterior.sigma,
             )
-        if yte is not None and pred_draws is not None and posterior.sigma is not None:
-            loglik_samples = _log_likelihood_samples(yte, pred_draws, posterior.sigma)
+        if explicit_loglik_samples is not None:
+            loglik_samples = explicit_loglik_samples
+        elif yte is not None and mean_draws is not None and posterior.sigma is not None:
+            loglik_samples = _gaussian_log_likelihood_samples(yte, mean_draws, posterior.sigma)
         metrics.update(
             predictive_metrics(
                 yte,

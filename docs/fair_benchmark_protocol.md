@@ -19,8 +19,10 @@ This note documents the fairness contract implemented by the current regression 
 
 ### Predictive density metrics
 - The default benchmark mode is now `experiments.evaluation.predictive_density_mode: "strict"`.
-- In `strict` mode, `MLPD` / `PredictiveLogLikelihood` are only reported when the model exposes posterior predictive log-likelihood draws.
+- In `strict` mode, `MLPD` / `PredictiveLogLikelihood` are only reported when the evaluator can form exact held-out log-likelihood draws under the model's own likelihood
+  (either from explicit `loglik_samples_` or from posterior parameter draws that determine that likelihood exactly).
 - Deterministic baselines therefore return `MLPD_source: "disabled"` instead of a pseudo-likelihood.
+- Regression density metrics are computed from `log p(y_test | theta)` under posterior draws, not by adding predictive noise first and scoring that noisy draw a second time.
 - If you explicitly switch to `predictive_density_mode: "mixed"`, deterministic baselines may use a Gaussian proxy; those folds are marked with `MLPD_source: "gaussian_proxy"`.
 
 Paper guidance: use `RMSE` as the main predictive ranking metric unless every compared model reports predictive densities under the same likelihood construction.

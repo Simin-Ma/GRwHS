@@ -7,15 +7,40 @@ import numpy as np
 
 Array = np.ndarray
 
+_SCALAR_PARAMETER_NAMES = {
+    "sigma",
+    "sigma2",
+    "tau",
+    "tau2",
+    "c",
+    "beta0",
+    "intercept",
+}
 
-def _reshape_samples(samples: Array) -> Tuple[Array, Tuple[int, ...]]:
+
+def _reshape_samples(samples: Array, *, scalar_param: bool = False) -> Tuple[Array, Tuple[int, ...]]:
     arr = np.asarray(samples, dtype=float)
     if arr.ndim == 0:
         raise ValueError("samples must have at least one dimension (draws)")
 
-    if arr.ndim == 1:
+    if scalar_param:
+        if arr.ndim == 1:
+            arr = arr.reshape(1, arr.shape[0], 1)
+            param_shape = ()
+        elif arr.ndim == 2:
+            # Scalar parameters may be stored as (chains, draws).
+            arr = arr.reshape(arr.shape[0], arr.shape[1], 1)
+            param_shape = ()
+        else:
+            trailing_shape = arr.shape[2:]
+            if int(np.prod(trailing_shape, dtype=int)) == 1:
+                arr = arr.reshape(arr.shape[0], arr.shape[1], 1)
+                param_shape = ()
+            else:
+                param_shape = trailing_shape
+    elif arr.ndim == 1:
         arr = arr.reshape(1, arr.shape[0], 1)
-        param_shape: Tuple[int, ...] = ()
+        param_shape = ()
     elif arr.ndim == 2:
         # interpret as (draws, parameters)
         arr = arr.reshape(1, arr.shape[0], arr.shape[1])
@@ -61,8 +86,8 @@ def _rhat_from_chains(chains: Array) -> Array:
     return rhat
 
 
-def split_rhat(samples: Array) -> Array:
-    arr, param_shape = _reshape_samples(samples)
+def split_rhat(samples: Array, *, scalar_param: bool = False) -> Array:
+    arr, param_shape = _reshape_samples(samples, scalar_param=scalar_param)
     split = _split_chains(arr)
     rhat = _rhat_from_chains(split)
     if param_shape:
@@ -123,8 +148,8 @@ def _ess_from_chains(chains: Array) -> Array:
     return ess if param_shape else np.squeeze(ess)
 
 
-def effective_sample_size(samples: Array) -> Array:
-    arr, param_shape = _reshape_samples(samples)
+def effective_sample_size(samples: Array, *, scalar_param: bool = False) -> Array:
+    arr, param_shape = _reshape_samples(samples, scalar_param=scalar_param)
     split = _split_chains(arr)
     ess = _ess_from_chains(split)
     if param_shape:
@@ -132,7 +157,12 @@ def effective_sample_size(samples: Array) -> Array:
     return np.squeeze(ess)
 
 
-def _diagnostic_metadata(samples: Array, *, min_chains_for_rhat: int = 2) -> Dict[str, Any]:
+def _diagnostic_metadata(
+    samples: Array,
+    *,
+    min_chains_for_rhat: int = 2,
+    scalar_param: bool = False,
+) -> Dict[str, Any]:
     arr = np.asarray(samples, dtype=float)
     if arr.ndim == 0:
         raise ValueError("samples must have at least one dimension (draws)")
@@ -140,8 +170,12 @@ def _diagnostic_metadata(samples: Array, *, min_chains_for_rhat: int = 2) -> Dic
         raw_num_chains = 1
         raw_num_draws = int(arr.shape[0])
     elif arr.ndim == 2:
-        raw_num_chains = 1
-        raw_num_draws = int(arr.shape[0])
+        if scalar_param:
+            raw_num_chains = int(arr.shape[0])
+            raw_num_draws = int(arr.shape[1])
+        else:
+            raw_num_chains = 1
+            raw_num_draws = int(arr.shape[0])
     else:
         raw_num_chains = int(arr.shape[0])
         raw_num_draws = int(arr.shape[1])
@@ -159,10 +193,15 @@ def summarize_convergence(
 ) -> Dict[str, Dict[str, Any]]:
     summary: Dict[str, Dict[str, Any]] = {}
     for name, arr in samples.items():
+        scalar_param = str(name).strip().lower() in _SCALAR_PARAMETER_NAMES
         try:
-            meta = _diagnostic_metadata(arr, min_chains_for_rhat=min_chains_for_rhat)
-            rhat = split_rhat(arr)
-            ess = effective_sample_size(arr)
+            meta = _diagnostic_metadata(
+                arr,
+                min_chains_for_rhat=min_chains_for_rhat,
+                scalar_param=scalar_param,
+            )
+            rhat = split_rhat(arr, scalar_param=scalar_param)
+            ess = effective_sample_size(arr, scalar_param=scalar_param)
             flat_rhat = np.asarray(rhat).ravel()
             flat_ess = np.asarray(ess).ravel()
             summary[name] = {
@@ -175,6 +214,10 @@ def summarize_convergence(
         except ValueError as exc:
             summary[name] = {
                 "error": str(exc),
-                **_diagnostic_metadata(arr, min_chains_for_rhat=min_chains_for_rhat),
+                **_diagnostic_metadata(
+                    arr,
+                    min_chains_for_rhat=min_chains_for_rhat,
+                    scalar_param=scalar_param,
+                ),
             }
     return summary

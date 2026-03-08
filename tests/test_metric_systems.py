@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from scipy.special import logsumexp
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -185,6 +186,42 @@ def test_strict_predictive_density_disables_proxy_for_deterministic_models():
     assert metrics["MLPD"] is None
     assert metrics["PredictiveLogLikelihood"] is None
     assert metrics["MLPD_source"] == "disabled"
+
+
+def test_regression_predictive_density_uses_exact_gaussian_loglik_from_posterior_draws():
+    X_train = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float)
+    X_test = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float)
+    y_train = np.array([1.0, 2.0], dtype=float)
+    y_test = np.array([1.1, 1.9], dtype=float)
+    coef_samples = np.array([[1.0, 2.0], [1.2, 1.8]], dtype=float)
+    sigma_samples = np.array([0.5, 0.25], dtype=float)
+    model = _PosteriorDummyModel(coef_samples, sigma_samples)
+
+    metrics = evaluate_model_metrics(
+        model=model,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        task="regression",
+        predictive_density_mode="strict",
+    )
+
+    mean_draws = np.array(
+        [
+            [1.0, 2.0],
+            [1.2, 1.8],
+        ],
+        dtype=float,
+    )
+    sigma = sigma_samples[:, np.newaxis]
+    residual = y_test[np.newaxis, :] - mean_draws
+    expected_loglik = -0.5 * ((residual**2) / (sigma**2)) - np.log(np.sqrt(2 * np.pi)) - np.log(sigma)
+    expected_mlpd = float(np.mean(logsumexp(expected_loglik, axis=0) - np.log(expected_loglik.shape[0])))
+
+    assert np.isclose(metrics["PredictiveLogLikelihood"], float(expected_loglik.mean()))
+    assert np.isclose(metrics["MLPD"], expected_mlpd)
+    assert metrics["MLPD_source"] == "posterior_draws"
 
 
 def test_selection_metrics_use_shared_absolute_coefficient_ranking():

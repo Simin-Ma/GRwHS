@@ -41,6 +41,17 @@ def test_summarize_convergence_keys():
     assert beta_summary["diagnostic_valid"] is False
 
 
+def test_summarize_convergence_multichain_scalar_array():
+    rng = np.random.default_rng(3)
+    draws = rng.normal(size=(2, 20))
+    summary = summarize_convergence({"tau": draws})
+    tau_summary = summary["tau"]
+    assert "rhat_max" in tau_summary
+    assert tau_summary["raw_num_chains"] == 2
+    assert tau_summary["raw_num_draws"] == 20
+    assert tau_summary["diagnostic_valid"] is True
+
+
 def test_run_experiment_outputs_convergence(tmp_path):
     config = {
         "seed": 123,
