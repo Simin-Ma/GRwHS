@@ -290,14 +290,24 @@ def _build_lasso(cfg: Dict[str, Any]) -> Any:
     alpha = float(_get(cfg, "model.alpha", 1.0))
     fit_intercept = bool(_get(cfg, "model.fit_intercept", False))
     max_iter = int(_get(cfg, "model.max_iter", 10_000))
+    max_epochs = int(_get(cfg, "model.max_epochs", 50_000))
+    p0 = int(_get(cfg, "model.p0", 10))
     tol = float(_get(cfg, "model.tol", 1e-6))
     warm_start = bool(_get(cfg, "model.warm_start", True))
+    ws_strategy = str(_get(cfg, "model.ws_strategy", "subdiff"))
+    verbose = int(_get(cfg, "model.verbose", 0))
+    positive = bool(_get(cfg, "model.positive", False))
     return Lasso(
         alpha=alpha,
         fit_intercept=fit_intercept,
         max_iter=max_iter,
+        max_epochs=max_epochs,
+        p0=p0,
         tol=tol,
         warm_start=warm_start,
+        ws_strategy=ws_strategy,
+        verbose=verbose,
+        positive=positive,
     )
 
 

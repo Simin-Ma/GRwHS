@@ -79,6 +79,43 @@ def _make_basic_config(tmp_path: Path) -> dict:
     }
 
 
+def _write_fake_run_summary(
+    run_dir: Path,
+    *,
+    model: str,
+    status: str,
+    valid_fold_count: int,
+    invalid_fold_count: int,
+    folds: list[dict],
+) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": status,
+        "model": model,
+        "metrics": {"RMSE": 999.0},
+        "valid_fold_count": valid_fold_count,
+        "invalid_fold_count": invalid_fold_count,
+        "repeat_summaries": [
+            {
+                "repeat_index": 1,
+                "folds": folds,
+            }
+        ],
+    }
+    (run_dir / "metrics.json").write_text(json.dumps(payload), encoding="utf-8")
+    resolved_config = {
+        "task": "regression",
+        "experiments": {
+            "reporting": {
+                "comparison_metrics": {
+                    "regression": ["RMSE"],
+                }
+            }
+        },
+    }
+    (run_dir / "resolved_config.yaml").write_text(yaml.safe_dump(resolved_config), encoding="utf-8")
+
+
 def test_group_weight_mode_size():
     cfg = {
         "model": {
@@ -91,6 +128,33 @@ def test_group_weight_mode_size():
     }
     model = registry_module._build_group_lasso(cfg)
     assert np.allclose(model._group_weights, np.array([2.0, 3.0]))
+
+
+def test_lasso_builder_preserves_solver_budget():
+    cfg = {
+        "model": {
+            "name": "lasso",
+            "alpha": 0.1,
+            "fit_intercept": False,
+            "max_iter": 200,
+            "max_epochs": 100000,
+            "p0": 7,
+            "tol": 1e-6,
+            "warm_start": True,
+            "ws_strategy": "subdiff",
+            "verbose": 2,
+            "positive": True,
+        }
+    }
+
+    model = registry_module._build_lasso(cfg)
+
+    assert model.max_iter == 200
+    assert model.max_epochs == 100000
+    assert model.p0 == 7
+    assert model.ws_strategy == "subdiff"
+    assert model.verbose == 2
+    assert model.positive is True
 
 
 def test_ridge_reports_pseudo_mlpd(tmp_path):
@@ -230,6 +294,66 @@ def test_make_report_aggregates(tmp_path):
     assert "runs" in summary_index and len(summary_index["runs"]) == 2
     assert summary_index.get("aggregates")
     assert (reports_dir / "aggregates_summary.json").exists()
+
+
+def test_make_report_benchmark_safe_uses_common_valid_fold_intersection(tmp_path):
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir()
+
+    run_dir_a = runs_root / "run_a"
+    _write_fake_run_summary(
+        run_dir_a,
+        model="grrhs_gibbs",
+        status="PARTIAL",
+        valid_fold_count=1,
+        invalid_fold_count=1,
+        folds=[
+            {"hash": "fold_a", "status": "OK", "metrics": {"RMSE": 1.0}},
+            {"hash": "fold_b", "status": "INVALID_CONVERGENCE", "metrics": {"RMSE": 9.0}},
+        ],
+    )
+
+    run_dir_b = runs_root / "run_b"
+    _write_fake_run_summary(
+        run_dir_b,
+        model="ridge",
+        status="OK",
+        valid_fold_count=2,
+        invalid_fold_count=0,
+        folds=[
+            {"hash": "fold_a", "status": "OK", "metrics": {"RMSE": 2.0}},
+            {"hash": "fold_b", "status": "OK", "metrics": {"RMSE": 6.0}},
+        ],
+    )
+
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+
+    _invoke_cli(
+        make_report_cli.main,
+        [
+            "--run",
+            str(run_dir_a),
+            "--run",
+            str(run_dir_b),
+            "--dest",
+            str(reports_dir),
+            "--comparison-mode",
+            "benchmark-safe",
+        ],
+    )
+
+    summary_index = json.loads((reports_dir / "summary_index.json").read_text(encoding="utf-8"))
+    comparisons = summary_index.get("benchmark_comparisons")
+    assert comparisons and len(comparisons) == 1
+    comparison_artifacts = comparisons[0]["artifacts"]
+    comparison_payload = json.loads(Path(comparison_artifacts["json"]).read_text(encoding="utf-8"))
+    assert comparison_payload["comparison"]["comparison_basis"] == "common_valid_folds"
+    assert comparison_payload["comparison"]["common_valid_fold_count"] == 1
+    row_map = {row["variation"]: row for row in comparison_payload["rows"]}
+    assert row_map["run_a"]["metrics"]["RMSE"] == 1.0
+    assert row_map["run_b"]["metrics"]["RMSE"] == 2.0
+    assert (reports_dir / "benchmark_comparisons_summary.json").exists()
 
 
 def test_run_experiment_classification(tmp_path):

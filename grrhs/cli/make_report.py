@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List
 
 import yaml
 
 from grrhs.experiments.aggregator import aggregate_runs
+from grrhs.cli.run_sweep import (
+    _build_comparison_payload,
+    _compute_metric_extrema,
+    _format_metric,
+    _resolve_comparison_metrics,
+)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Summarize GRRHS experiment runs")
@@ -36,10 +43,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Placeholder flag for plot generation (not implemented yet)",
     )
+    parser.add_argument(
+        "--comparison-mode",
+        choices=("aggregate", "benchmark-safe", "both"),
+        default="aggregate",
+        help="How to summarize multiple runs for cross-run comparison outputs.",
+    )
     return parser.parse_args()
 
 
-def _select_runs(runs_arg: List[Path] | None, runs_dir: Path) -> Iterable[Path]:
+def _select_runs(runs_arg: List[Path] | None, runs_dir: Path, *, all_runs: bool = False) -> Iterable[Path]:
     if runs_arg:
         for run in runs_arg:
             run_path = run if run.is_absolute() else Path.cwd() / run
@@ -54,8 +67,14 @@ def _select_runs(runs_arg: List[Path] | None, runs_dir: Path) -> Iterable[Path]:
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
-    if run_dirs:
-        yield run_dirs[0]
+    if not run_dirs:
+        return
+
+    if all_runs:
+        yield from run_dirs
+        return
+
+    yield run_dirs[0]
 
 
 def _load_json(path: Path) -> dict:
@@ -156,11 +175,131 @@ def _summarize_run(run_dir: Path) -> dict:
     return summary
 
 
+def _sanitize_label(label: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in label.strip())
+    return safe.strip("_") or "runs"
+
+
+def _make_benchmark_safe_record(summary: Dict[str, Any]) -> Dict[str, Any]:
+    metrics_payload = summary.get("metrics", {})
+    resolved_config = summary.get("resolved_config", {})
+    status = "UNKNOWN"
+    model = None
+    if isinstance(metrics_payload, dict):
+        status = str(metrics_payload.get("status", "UNKNOWN"))
+        payload_model = metrics_payload.get("model")
+        if isinstance(payload_model, str):
+            model = payload_model
+
+    comparison_metrics: List[str] = []
+    if isinstance(resolved_config, dict):
+        comparison_metrics = _resolve_comparison_metrics(resolved_config)
+
+    return {
+        "name": summary.get("run_name"),
+        "model": model,
+        "status": status,
+        "run_dir": summary.get("run_dir"),
+        "comparison_metrics": comparison_metrics,
+        "metrics": metrics_payload,
+    }
+
+
+def _write_benchmark_safe_artifacts(
+    summaries: List[Dict[str, Any]],
+    *,
+    dest: Path,
+    label: str,
+) -> Dict[str, Any]:
+    records = [_make_benchmark_safe_record(summary) for summary in summaries]
+    rows, metric_keys, comparison_meta = _build_comparison_payload(records)
+    safe_label = _sanitize_label(label)
+    base_name = f"benchmark_safe_comparison_{safe_label}"
+
+    csv_path = dest / f"{base_name}.csv"
+    json_path = dest / f"{base_name}.json"
+    md_path = dest / f"{base_name}.md"
+
+    header = ["variation", "model", "status", "run_dir", *metric_keys]
+    with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(header)
+        for row in rows:
+            formatted_metrics = [_format_metric(row["metrics"].get(metric)) for metric in metric_keys]
+            writer.writerow([
+                row["variation"],
+                row["model"] or "",
+                row["status"],
+                row["run_dir"],
+                *formatted_metrics,
+            ])
+
+    extrema = _compute_metric_extrema(rows, metric_keys)
+    json_payload = {
+        "label": label,
+        "mode": "benchmark-safe",
+        "metrics": metric_keys,
+        "comparison": comparison_meta,
+        "rows": rows,
+        "metric_extrema": extrema,
+    }
+    json_path.write_text(json.dumps(json_payload, indent=2), encoding="utf-8")
+
+    lines: List[str] = []
+    lines.append(f"# {label} benchmark-safe comparison")
+    lines.append("")
+    if comparison_meta.get("comparison_basis") == "common_valid_folds":
+        lines.append(
+            f"Comparison basis: common valid outer folds across comparable runs "
+            f"(`n={comparison_meta.get('common_valid_fold_count', 0)}`)."
+        )
+        lines.append("")
+    header_cells = ["Variation", "Model", "Status", *metric_keys]
+    lines.append("| " + " | ".join(header_cells) + " |")
+    lines.append("| " + " | ".join(["---"] * len(header_cells)) + " |")
+    for row in rows:
+        cells = [
+            str(row["variation"]),
+            row["model"] or "",
+            str(row["status"]),
+        ]
+        for metric in metric_keys:
+            cells.append(_format_metric(row["metrics"].get(metric)))
+        lines.append("| " + " | ".join(cells) + " |")
+
+    if extrema:
+        lines.append("")
+        lines.append("## Metric extrema")
+        for metric in metric_keys:
+            if metric not in extrema:
+                continue
+            info = extrema[metric]
+            min_info = info["min"]
+            max_info = info["max"]
+            lines.append(
+                f"- `{metric}` min: {min_info['value']:.6g} ({min_info['variation']}) | "
+                f"max: {max_info['value']:.6g} ({max_info['variation']})"
+            )
+
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    return {
+        "label": label,
+        "run_count": len(summaries),
+        "comparison": comparison_meta,
+        "artifacts": {
+            "csv": str(csv_path),
+            "json": str(json_path),
+            "md": str(md_path),
+        },
+    }
+
+
 def main() -> None:
     args = parse_args()
     args.dest.mkdir(parents=True, exist_ok=True)
 
-    runs = list(_select_runs(args.run, args.runs_dir))
+    select_all_runs = args.comparison_mode in {"benchmark-safe", "both"} and not args.run
+    runs = list(_select_runs(args.run, args.runs_dir, all_runs=select_all_runs))
     if not runs:
         raise SystemExit("No runs found to summarize. Provide --run or populate outputs/runs.")
 
@@ -168,7 +307,7 @@ def main() -> None:
         print("[WARN] --plots flag acknowledged but plot generation is not implemented yet.")
 
     collected = []
-    parents: Dict[Path, List[Path]] = {}
+    parents: Dict[Path, List[Dict[str, Any]]] = {}
     for run_dir in runs:
         summary = _summarize_run(run_dir)
         collected.append(summary)
@@ -176,20 +315,36 @@ def main() -> None:
         out_file.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         print(f"[OK] Summary written to {out_file}")
         parent = run_dir.parent.resolve()
-        parents.setdefault(parent, []).append(run_dir)
+        parents.setdefault(parent, []).append(summary)
 
     aggregates = []
-    for parent, run_list in parents.items():
-        try:
-            agg_summary = aggregate_runs(parent, write=True)
-        except Exception as exc:  # pragma: no cover - aggregation best-effort
-            print(f"[WARN] Failed to aggregate runs under {parent}: {exc}")
-            continue
-        aggregates.append(_to_json(agg_summary))
+    if args.comparison_mode in {"aggregate", "both"}:
+        for parent, run_summaries in parents.items():
+            try:
+                agg_summary = aggregate_runs(parent, write=True)
+            except Exception as exc:  # pragma: no cover - aggregation best-effort
+                print(f"[WARN] Failed to aggregate runs under {parent}: {exc}")
+                continue
+            aggregates.append(_to_json(agg_summary))
+
+    benchmark_comparisons = []
+    if args.comparison_mode in {"benchmark-safe", "both"}:
+        for parent, run_summaries in parents.items():
+            try:
+                comparison = _write_benchmark_safe_artifacts(
+                    run_summaries,
+                    dest=args.dest,
+                    label=parent.name,
+                )
+            except Exception as exc:  # pragma: no cover - comparison best-effort
+                print(f"[WARN] Failed to build benchmark-safe comparison for {parent}: {exc}")
+                continue
+            benchmark_comparisons.append(_to_json(comparison))
 
     combined_payload = {
         "runs": collected,
         "aggregates": aggregates,
+        "benchmark_comparisons": benchmark_comparisons,
     }
     combined_path = args.dest / "summary_index.json"
     combined_path.write_text(json.dumps(combined_payload, indent=2), encoding="utf-8")
@@ -199,6 +354,11 @@ def main() -> None:
         agg_path = args.dest / "aggregates_summary.json"
         agg_path.write_text(json.dumps(aggregates, indent=2), encoding="utf-8")
         print(f"[OK] Aggregate summaries saved to {agg_path}")
+
+    if benchmark_comparisons:
+        comparison_path = args.dest / "benchmark_comparisons_summary.json"
+        comparison_path.write_text(json.dumps(benchmark_comparisons, indent=2), encoding="utf-8")
+        print(f"[OK] Benchmark-safe comparisons saved to {comparison_path}")
 
 
 if __name__ == "__main__":
