@@ -1,0 +1,64 @@
+name: "real_covid19_trust_experts_methods"
+output_dir: "outputs/sweeps/real_covid19_trust_experts"
+
+common_config_files:
+  - "../experiments/real_covid19_trust_experts.yaml"
+
+variations:
+  - name: "trust_experts_grrhs"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    override_cli:
+      - "model.iters=4000"
+      - "inference.gibbs.burn_in=2000"
+      - "inference.gibbs.thin=2"
+      - "inference.gibbs.num_chains=2"
+      - "experiments.convergence.max_retries=0"
+
+  - name: "trust_experts_rhs"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+    override_cli:
+      - "model.num_warmup=600"
+      - "model.num_samples=600"
+      - "model.num_chains=2"
+      - "model.thinning=1"
+      - "model.target_accept_prob=0.9"
+      - "experiments.convergence.max_retries=0"
+
+  - name: "trust_experts_group_horseshoe"
+    config_files:
+      - "../methods/group_horseshoe.yaml"
+    override_cli:
+      - "model.num_warmup=600"
+      - "model.num_samples=600"
+      - "model.num_chains=2"
+      - "model.thinning=1"
+      - "model.target_accept_prob=0.9"
+      - "experiments.convergence.max_retries=0"
+
+  - name: "trust_experts_gigg"
+    config_files:
+      - "../methods/gigg.yaml"
+    override_cli:
+      - "model.iters=4000"
+      - "inference.gibbs.burn_in=2000"
+      - "inference.gibbs.thin=2"
+      - "inference.gibbs.num_chains=2"
+      - "experiments.convergence.max_retries=0"
+
+  - name: "trust_experts_group_lasso"
+    config_files:
+      - "../methods/group_lasso.yaml"
+
+  - name: "trust_experts_sgl"
+    config_files:
+      - "../methods/sparse_group_lasso.yaml"
+
+  - name: "trust_experts_lasso"
+    config_files:
+      - "../methods/lasso.yaml"
+
+  - name: "trust_experts_ridge"
+    config_files:
+      - "../methods/ridge.yaml"

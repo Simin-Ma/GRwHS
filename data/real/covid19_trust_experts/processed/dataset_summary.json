@@ -1,0 +1,58 @@
+{
+  "source": "CRAN sparsegl::trust_experts",
+  "sparsegl_version": "1.1.1",
+  "source_tarball": "https://cran.r-project.org/src/contrib/sparsegl_1.1.1.tar.gz",
+  "n_rows": 9759,
+  "n_features": 101,
+  "target": "trust_experts",
+  "categorical_columns": [
+    "period",
+    "region",
+    "age",
+    "gender",
+    "raceethnicity"
+  ],
+  "spline_columns": [
+    "cli",
+    "hh_cmnty_cli"
+  ],
+  "group_order": [
+    "period",
+    "region",
+    "age",
+    "gender",
+    "raceethnicity",
+    "cli_spline",
+    "hh_cmnty_cli_spline"
+  ],
+  "group_sizes": {
+    "period": 13,
+    "region": 51,
+    "age": 5,
+    "gender": 4,
+    "raceethnicity": 8,
+    "cli_spline": 10,
+    "hh_cmnty_cli_spline": 10
+  },
+  "categorical_level_counts": {
+    "period": 13,
+    "region": 51,
+    "age": 5,
+    "gender": 4,
+    "raceethnicity": 8
+  },
+  "target_summary": {
+    "mean": 52.0468864440918,
+    "std": 9.801218032836914,
+    "min": 13.095237731933594,
+    "max": 85.58246612548828
+  },
+  "files": {
+    "runner_X": "D:\\FilesP\\GR-RHS\\data\\real\\covid19_trust_experts\\processed\\runner_ready\\X.npy",
+    "runner_y": "D:\\FilesP\\GR-RHS\\data\\real\\covid19_trust_experts\\processed\\runner_ready\\y.npy",
+    "runner_feature_names": "D:\\FilesP\\GR-RHS\\data\\real\\covid19_trust_experts\\processed\\runner_ready\\feature_names.txt",
+    "runner_group_map": "D:\\FilesP\\GR-RHS\\data\\real\\covid19_trust_experts\\processed\\runner_ready\\group_map.json",
+    "analysis_csv": "D:\\FilesP\\GR-RHS\\data\\real\\covid19_trust_experts\\processed\\analysis_bundle\\trust_experts_raw.csv",
+    "analysis_npz": "D:\\FilesP\\GR-RHS\\data\\real\\covid19_trust_experts\\processed\\analysis_bundle\\trust_experts_analysis.npz"
+  }
+}

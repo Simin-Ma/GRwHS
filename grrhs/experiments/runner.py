@@ -1345,6 +1345,29 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
         arr = np.asarray(value)
         if arr.size == 0:
             continue
+        scalar_keys = {"sigma", "sigma2", "tau", "tau2", "c", "beta0", "intercept"}
+        if key not in scalar_keys and arr.ndim == 2:
+            ref_map = {
+                "beta": ("coef_mean_", "coef_"),
+                "lambda": ("lambda_mean_",),
+                "group_lambda": ("group_lambda_mean_", "lambda_group_mean_", "phi_mean_"),
+                "phi": ("phi_mean_",),
+                "gamma": ("gamma_mean_",),
+                "b": ("b_mean_",),
+            }
+            param_len = None
+            for attr_name in ref_map.get(key, ()):
+                ref = getattr(model, attr_name, None)
+                if ref is None:
+                    continue
+                ref_arr = np.asarray(ref).reshape(-1)
+                if ref_arr.size > 0:
+                    param_len = int(ref_arr.size)
+                    break
+            if param_len is not None:
+                # Normalize common (params, draws) layout to (draws, params).
+                if arr.shape[0] == param_len and arr.shape[1] != param_len:
+                    arr = arr.T
         arrays[key] = arr
     return arrays
 
@@ -1535,8 +1558,30 @@ def _estimate_covariate_effects(
     pred_draws: Optional[np.ndarray] = None
     if beta_draws is not None:
         coef_draws = np.asarray(beta_draws, dtype=float)
+        p = beta_vec.shape[0]
         if coef_draws.ndim == 1:
-            coef_draws = coef_draws.reshape(1, -1)
+            if coef_draws.shape[0] != p:
+                raise ExperimentError(
+                    f"Posterior coefficient draw length {coef_draws.shape[0]} does not match feature count {p}."
+                )
+            coef_draws = coef_draws.reshape(1, p)
+        elif coef_draws.ndim == 2:
+            if coef_draws.shape[1] == p:
+                pass
+            elif coef_draws.shape[0] == p:
+                coef_draws = coef_draws.T
+            else:
+                raise ExperimentError(
+                    f"Posterior coefficient draws shape {coef_draws.shape} is incompatible with feature count {p}."
+                )
+        else:
+            feature_axes = [axis for axis, size in enumerate(coef_draws.shape) if size == p]
+            if not feature_axes:
+                raise ExperimentError(
+                    f"Posterior coefficient draws shape {coef_draws.shape} has no axis matching feature count {p}."
+                )
+            coef_draws = np.moveaxis(coef_draws, feature_axes[-1], -1).reshape(-1, p)
+
         alpha_draws = np.zeros((coef_draws.shape[0], C_train_aug.shape[1]), dtype=float)
         pred_draws = np.zeros((coef_draws.shape[0], X_test.shape[0]), dtype=float)
         y_train_arr = np.asarray(y_train, dtype=float)
@@ -1985,11 +2030,28 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
     aggregated_metrics, aggregated_summary = _aggregate_metrics(all_fold_records)
 
     if posterior_accumulator:
-        combined = {
-            key: np.concatenate(arrs, axis=0)
-            for key, arrs in posterior_accumulator.items()
-            if arrs and arrs[0].size > 0
-        }
+        combined: Dict[str, np.ndarray] = {}
+        for key, arrs in posterior_accumulator.items():
+            if not arrs or np.asarray(arrs[0]).size == 0:
+                continue
+            target = np.asarray(arrs[0])
+            kept: List[np.ndarray] = [target]
+            skipped = 0
+            for arr in arrs[1:]:
+                candidate = np.asarray(arr)
+                if candidate.ndim != target.ndim:
+                    skipped += 1
+                    continue
+                if candidate.shape[1:] != target.shape[1:]:
+                    if candidate.ndim == 2 and candidate.T.shape[1:] == target.shape[1:]:
+                        candidate = candidate.T
+                    else:
+                        skipped += 1
+                        continue
+                kept.append(candidate)
+            if skipped:
+                print(f"[WARN] Skipped {skipped} posterior chunks for '{key}' due to shape mismatch.")
+            combined[key] = np.concatenate(kept, axis=0)
         if combined:
             _save_posterior_bundle(
                 output_path,
