@@ -18,5 +18,6 @@ inference:
   gibbs:
     burn_in: 4000
     thin: 2
+    num_chains: 2
     jitter: 1.0e-08
     seed: 321

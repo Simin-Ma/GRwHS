@@ -41,6 +41,8 @@ class GRRHS_Gibbs_Logistic(GRRHS_Gibbs):
         if np.any((y < -1e-8) | (y > 1 + 1e-8)):
             raise ValueError("Logistic GRRHS requires binary labels in {0, 1}.")
         y = np.clip(y, 0.0, 1.0)
+        if self.num_chains > 1:
+            return self._fit_multichain(X, y, groups)
 
         n, p = X.shape
         if groups is None:
@@ -208,9 +210,10 @@ class GRRHS_Gibbs_Logistic(GRRHS_Gibbs):
                 raise RuntimeError("Model not fitted.")
             coef_vec = self.coef_mean_
         else:
-            if self.coef_samples_ is None or self.coef_samples_.shape[0] == 0:
+            coef_draws = self._flatten_param_draws(self.coef_samples_)
+            if coef_draws is None or coef_draws.shape[0] == 0:
                 raise RuntimeError("No posterior samples available.")
-            coef_vec = self.coef_samples_[-1]
+            coef_vec = coef_draws[-1]
         return X @ coef_vec + self.intercept_
 
     def predict_proba(self, X: np.ndarray, use_posterior_mean: bool = True) -> np.ndarray:

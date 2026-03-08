@@ -442,6 +442,7 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
     iters = int(_get(cfg, "model.iters", 3000))
     burnin = int(_get(cfg, "inference.gibbs.burn_in", _get(cfg, "model.burnin", 1500)))
     thin = max(1, int(_get(cfg, "inference.gibbs.thin", _get(cfg, "model.thin", 1))))
+    num_chains = max(1, int(_get(cfg, "inference.gibbs.num_chains", _get(cfg, "model.num_chains", 1))))
     jitter = float(_get(cfg, "model.jitter", 1e-8))
     seed = _get(
         cfg,
@@ -465,6 +466,7 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
         thin=thin,
         jitter=jitter,
         seed=int(seed) if seed is not None else 0,
+        num_chains=num_chains,
         b_init=b_init,
         b_floor=b_floor,
         b_max=b_max,
@@ -557,6 +559,9 @@ def _gibbs_runtime_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
     jitter = _get(cfg, "inference.gibbs.jitter", None)
     if jitter is not None:
         overrides["jitter"] = float(jitter)
+    num_chains = _get(cfg, "inference.gibbs.num_chains", _get(cfg, "model.num_chains", None))
+    if num_chains is not None:
+        overrides["num_chains"] = max(1, int(num_chains))
     return overrides
 
 

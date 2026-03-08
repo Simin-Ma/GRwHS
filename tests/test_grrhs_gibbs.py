@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import numpy.testing as npt
 
+from grrhs.diagnostics.convergence import summarize_convergence
 from grrhs.models.grrhs_gibbs import GRRHS_Gibbs
 
 
@@ -65,3 +66,41 @@ def test_grrhs_gibbs_runs_and_returns_posterior_draws():
     strong_mean = np.mean(np.abs(beta_mean[strong_idx]))
     weak_mean = np.mean(np.abs(beta_mean[weak_idx]))
     assert strong_mean >= weak_mean
+
+
+def test_grrhs_gibbs_preserves_multichain_draws_for_convergence():
+    X, y, groups, _ = _synthetic_grouped_regression(seed=11)
+
+    model = GRRHS_Gibbs(
+        c=1.5,
+        tau0=0.2,
+        eta=0.6,
+        s0=1.0,
+        iters=120,
+        burnin=60,
+        thin=6,
+        seed=2026,
+        num_chains=2,
+        slice_w=0.5,
+        slice_m=50,
+    )
+    fitted = model.fit(X, y, groups)
+
+    assert fitted.coef_samples_ is not None and fitted.coef_samples_.ndim == 3
+    assert fitted.tau_samples_ is not None and fitted.tau_samples_.ndim == 2
+    assert fitted.phi_samples_ is not None and fitted.phi_samples_.ndim == 3
+    assert fitted.lambda_samples_ is not None and fitted.lambda_samples_.ndim == 3
+    assert fitted.sigma2_samples_ is not None and fitted.sigma2_samples_.ndim == 2
+
+    convergence = summarize_convergence(
+        {
+            "beta": fitted.coef_samples_,
+            "tau": fitted.tau_samples_,
+            "phi": fitted.phi_samples_,
+            "lambda": fitted.lambda_samples_,
+        }
+    )
+    assert convergence["beta"]["raw_num_chains"] == 2
+    assert convergence["beta"]["diagnostic_valid"] is True
+    assert convergence["tau"]["raw_num_chains"] == 2
+    assert convergence["tau"]["diagnostic_valid"] is True

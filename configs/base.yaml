@@ -56,7 +56,7 @@ experiments:
       horseshoe: ["beta", "tau", "lambda"]
       hs: ["beta", "tau", "lambda"]
     missing_policy: "warn"
-    require_valid_diagnostics: false
+    require_valid_diagnostics: true
     min_chains_for_rhat: 2
   metrics:
     regression:

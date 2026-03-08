@@ -62,10 +62,10 @@ Current canonical grids:
 ### Diagnostic validity
 - `convergence.json` now records `raw_num_chains`, `raw_num_draws`, and `diagnostic_valid`.
 - `diagnostic_valid=false` means the summary was computed from a chain layout that is weaker than the requested multi-chain standard.
-- Current defaults keep `require_valid_diagnostics: false`, so single-chain Gibbs runs are retained but explicitly flagged as heuristic diagnostics rather than full multi-chain evidence.
+- Current defaults require `require_valid_diagnostics: true`, so single-chain Gibbs runs no longer enter the headline benchmark unless that guardrail is explicitly relaxed.
 - Multi-chain NUTS baselines now retain their chain axis in saved posterior arrays, so `raw_num_chains` reflects the configured chain count for models such as Group Horseshoe and RHS.
 
-Paper guidance: report convergence with model-specific shrinkage blocks, and separately disclose whether diagnostics were multi-chain-valid or split-chain heuristics.
+Paper guidance: report convergence with model-specific shrinkage blocks, and keep headline comparisons restricted to runs with multi-chain-valid diagnostics.
 
 ## 4. Seed robustness and runtime robustness
 

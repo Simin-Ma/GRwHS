@@ -109,6 +109,7 @@ class GRRHS_Gibbs:
     burnin: Optional[int] = None
     thin: int = 1
     seed: int = 42
+    num_chains: int = 1
 
     # Numerical settings
     slice_w: float = 1.0
@@ -117,11 +118,11 @@ class GRRHS_Gibbs:
 
     # Runtime state (accessible after fit)
     rng: Generator = field(init=False)
-    coef_samples_: Optional[np.ndarray] = field(default=None, init=False)   # [S, p]
-    sigma2_samples_: Optional[np.ndarray] = field(default=None, init=False) # [S]
-    tau_samples_: Optional[np.ndarray] = field(default=None, init=False)    # [S]
-    phi_samples_: Optional[np.ndarray] = field(default=None, init=False)    # [S, G]
-    lambda_samples_: Optional[np.ndarray] = field(default=None, init=False) # [S, p]
+    coef_samples_: Optional[np.ndarray] = field(default=None, init=False)   # [S, p] or [C, S, p]
+    sigma2_samples_: Optional[np.ndarray] = field(default=None, init=False) # [S] or [C, S]
+    tau_samples_: Optional[np.ndarray] = field(default=None, init=False)    # [S] or [C, S]
+    phi_samples_: Optional[np.ndarray] = field(default=None, init=False)    # [S, G] or [C, S, G]
+    lambda_samples_: Optional[np.ndarray] = field(default=None, init=False) # [S, p] or [C, S, p]
 
     coef_mean_: Optional[np.ndarray] = field(default=None, init=False)      # Posterior mean
     intercept_: float = field(default=0.0, init=False)
@@ -137,6 +138,77 @@ class GRRHS_Gibbs:
             self.burnin = self.iters // 2
         if self.c <= 0:
             raise ValueError("c must be > 0")
+        if self.num_chains <= 0:
+            raise ValueError("num_chains must be a positive integer.")
+
+    @staticmethod
+    def _flatten_scalar_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        if arr is None:
+            return None
+        data = np.asarray(arr, dtype=float)
+        return data.reshape(-1)
+
+    @staticmethod
+    def _flatten_param_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        if arr is None:
+            return None
+        data = np.asarray(arr, dtype=float)
+        if data.ndim == 0:
+            return data.reshape(1, 1)
+        if data.ndim == 1:
+            return data.reshape(1, -1)
+        if data.ndim == 2:
+            return data
+        return data.reshape(-1, *data.shape[2:])
+
+    @staticmethod
+    def _stack_chain_draws(arrays: List[Optional[np.ndarray]]) -> Optional[np.ndarray]:
+        if not arrays or arrays[0] is None:
+            return None
+        return np.stack([np.asarray(arr) for arr in arrays], axis=0)
+
+    def _spawn_single_chain(self, *, seed: int) -> "GRRHS_Gibbs":
+        return type(self)(
+            c=self.c,
+            tau0=self.tau0,
+            eta=self.eta,
+            s0=self.s0,
+            use_groups=self.use_groups,
+            iters=self.iters,
+            burnin=self.burnin,
+            thin=self.thin,
+            seed=seed,
+            num_chains=1,
+            slice_w=self.slice_w,
+            slice_m=self.slice_m,
+            jitter=self.jitter,
+        )
+
+    def _fit_multichain(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        groups: Optional[List[List[int]]] = None,
+    ) -> "GRRHS_Gibbs":
+        chain_models: List[GRRHS_Gibbs] = []
+        for chain_idx in range(int(self.num_chains)):
+            chain_model = self._spawn_single_chain(seed=int(self.seed) + chain_idx)
+            chain_model.fit(X, y, groups=groups)
+            chain_models.append(chain_model)
+
+        lead = chain_models[0]
+        self.groups_ = lead.groups_
+        self.group_id_ = None if lead.group_id_ is None else np.asarray(lead.group_id_, dtype=int).copy()
+        self.group_sizes_ = None if lead.group_sizes_ is None else np.asarray(lead.group_sizes_, dtype=int).copy()
+        self.coef_samples_ = self._stack_chain_draws([model.coef_samples_ for model in chain_models])
+        self.sigma2_samples_ = self._stack_chain_draws([model.sigma2_samples_ for model in chain_models])
+        self.tau_samples_ = self._stack_chain_draws([model.tau_samples_ for model in chain_models])
+        self.phi_samples_ = self._stack_chain_draws([model.phi_samples_ for model in chain_models])
+        self.lambda_samples_ = self._stack_chain_draws([model.lambda_samples_ for model in chain_models])
+        coef_draws = self._flatten_param_draws(self.coef_samples_)
+        self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
+        self.intercept_ = float(lead.intercept_)
+        return self
 
     # ----------
     # API
@@ -153,6 +225,8 @@ class GRRHS_Gibbs:
         """
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
+        if self.num_chains > 1:
+            return self._fit_multichain(X, y, groups)
         n, p = X.shape
 
         y_var = float(np.var(y)) if y.size else 1.0
@@ -396,11 +470,10 @@ class GRRHS_Gibbs:
             if self.coef_mean_ is None:
                 raise RuntimeError("Model not fitted.")
             return X @ self.coef_mean_ + self.intercept_
-        else:
-            # Use the most recent draw
-            if self.coef_samples_ is None or self.coef_samples_.shape[0] == 0:
-                raise RuntimeError("No posterior samples available.")
-            return X @ self.coef_samples_[-1] + self.intercept_
+        coef_draws = self._flatten_param_draws(self.coef_samples_)
+        if coef_draws is None or coef_draws.shape[0] == 0:
+            raise RuntimeError("No posterior samples available.")
+        return X @ coef_draws[-1] + self.intercept_
 
     # ----------
     # Internal: conditional Gaussian sampler for β (Bhattacharya et al.)
@@ -447,12 +520,18 @@ class GRRHS_Gibbs:
     def get_posterior_summaries(self) -> Dict[str, Any]:
         if self.coef_samples_ is None:
             raise RuntimeError("Not fitted.")
+        beta_draws = self._flatten_param_draws(self.coef_samples_)
+        sigma2_draws = self._flatten_scalar_draws(self.sigma2_samples_)
+        tau_draws = self._flatten_scalar_draws(self.tau_samples_)
+        phi_draws = self._flatten_param_draws(self.phi_samples_)
+        if beta_draws is None:
+            raise RuntimeError("Posterior coefficient draws are unavailable.")
         out = {
-            "beta_mean": self.coef_samples_.mean(axis=0),
-            "beta_median": np.median(self.coef_samples_, axis=0),
-            "beta_ci95": np.quantile(self.coef_samples_, [0.025, 0.975], axis=0),
-            "sigma2_mean": float(self.sigma2_samples_.mean()) if self.sigma2_samples_ is not None else None,
-            "tau_mean": float(self.tau_samples_.mean()) if self.tau_samples_ is not None else None,
-            "phi_mean": self.phi_samples_.mean(axis=0) if self.phi_samples_ is not None else None,
+            "beta_mean": beta_draws.mean(axis=0),
+            "beta_median": np.median(beta_draws, axis=0),
+            "beta_ci95": np.quantile(beta_draws, [0.025, 0.975], axis=0),
+            "sigma2_mean": float(sigma2_draws.mean()) if sigma2_draws is not None else None,
+            "tau_mean": float(tau_draws.mean()) if tau_draws is not None else None,
+            "phi_mean": phi_draws.mean(axis=0) if phi_draws is not None else None,
         }
         return out

@@ -184,8 +184,8 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
         return DummyModel()
 
     summaries = [
-        {"beta": {"rhat_max": 1.20, "ess_min": 20.0}},
-        {"beta": {"rhat_max": 1.01, "ess_min": 120.0}},
+        {"beta": {"rhat_max": 1.20, "ess_min": 20.0, "diagnostic_valid": True}},
+        {"beta": {"rhat_max": 1.01, "ess_min": 120.0, "diagnostic_valid": True}},
     ]
 
     monkeypatch.setattr(runner, "_instantiate_model", fake_instantiate_model)
@@ -232,6 +232,78 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
     assert len(result["convergence_attempts"]) == 2
     assert result["convergence_attempts"][0]["converged"] is False
     assert result["convergence_attempts"][1]["converged"] is True
+
+
+def test_run_fold_rejects_invalid_diagnostics_when_required(monkeypatch, tmp_path):
+    class DummyModel:
+        def __init__(self):
+            self.coef_mean_ = np.zeros(2, dtype=np.float32)
+            self.coef_samples_ = np.zeros((8, 2), dtype=np.float32)
+
+        def fit(self, X, y, groups=None):
+            return self
+
+        def predict(self, X):
+            return np.zeros(X.shape[0], dtype=np.float32)
+
+    monkeypatch.setattr(runner, "_instantiate_model", lambda *args, **kwargs: DummyModel())
+    monkeypatch.setattr(runner, "_perform_inner_cv", lambda *args, **kwargs: ({}, None))
+    monkeypatch.setattr(runner, "evaluate_model_metrics", lambda **kwargs: {"RMSE": 1.0})
+    monkeypatch.setattr(
+        runner,
+        "summarize_convergence",
+        lambda arrays: {
+            "beta": {
+                "rhat_max": 1.01,
+                "ess_min": 120.0,
+                "diagnostic_valid": False,
+            }
+        },
+    )
+
+    base_config = {
+        "task": "regression",
+        "model": {"name": "grrhs_gibbs", "c": 1.0, "eta": 0.5, "tau0": 0.1, "iters": 20},
+        "inference": {"gibbs": {"burn_in": 10, "thin": 1, "seed": 0}},
+        "experiments": {
+            "save_posterior": True,
+            "metrics": {"regression": ["RMSE"]},
+            "convergence": {
+                "enabled": True,
+                "max_rhat": 1.05,
+                "max_retries": 0,
+                "require_valid_diagnostics": True,
+            },
+        },
+        "splits": {"inner": {"n_splits": 2, "shuffle": True, "seed": 0}},
+    }
+    dataset = {
+        "X": np.array([[0.0, 1.0], [1.0, 0.0], [2.0, -1.0], [3.0, -2.0]], dtype=np.float32),
+        "y": np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+        "groups": [[0], [1]],
+    }
+    fold = OuterFold(
+        repeat=1,
+        fold=1,
+        train=np.array([0, 1, 2], dtype=int),
+        test=np.array([3], dtype=int),
+        hash="invalid-diag-fold",
+    )
+    std_cfg = StandardizationConfig(X="unit_variance", y_center=True)
+
+    result = _run_fold_nested(
+        base_config,
+        dataset,
+        fold,
+        fold_dir=tmp_path / "fold",
+        task="regression",
+        std_cfg=std_cfg,
+    )
+
+    assert result["status"] == "INVALID_CONVERGENCE"
+    assert len(result["convergence_attempts"]) == 1
+    assert result["convergence_attempts"][0]["converged"] is False
+    assert "beta.diagnostic_valid=false" in result["convergence_attempts"][0]["failures"]
 
 
 def test_aggregate_metrics_skips_invalid_convergence():

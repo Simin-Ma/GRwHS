@@ -78,14 +78,15 @@ def test_run_experiment_outputs_convergence(tmp_path):
             "outer": {"n_splits": 2, "shuffle": True, "stratify": "auto", "seed": 555},
             "inner": {"n_splits": 2, "shuffle": True, "stratify": "auto", "seed": 666},
         },
-        "model": {"name": "grrhs_gibbs", "c": 1.5, "eta": 0.5, "tau0": 0.1},
+        "model": {"name": "grrhs_gibbs", "c": 1.5, "eta": 0.5, "tau0": 0.1, "iters": 30},
         "inference": {
-            "gibbs": {"iters": 30, "burn_in": 10, "thin": 1, "seed": 321}
+            "gibbs": {"burn_in": 10, "thin": 1, "seed": 321}
         },
         "experiments": {
             "metrics": {"regression": ["RMSE"]},
             "save_posterior": True,
             "classification_threshold": 0.5,
+            "convergence": {"enabled": False},
         },
     }
 

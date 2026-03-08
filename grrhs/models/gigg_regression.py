@@ -91,6 +91,7 @@ class GIGGRegression:
     thin: int = 1
     jitter: float = 1e-8
     seed: int = 0
+    num_chains: int = 1
     b_init: float = 1.0
     b_floor: float = 1e-3
     b_max: float = 4.0
@@ -116,6 +117,88 @@ class GIGGRegression:
     b_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
 
+    def __post_init__(self) -> None:
+        if self.num_chains <= 0:
+            raise ValueError("num_chains must be a positive integer.")
+
+    @staticmethod
+    def _flatten_scalar_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        if arr is None:
+            return None
+        data = np.asarray(arr, dtype=float)
+        return data.reshape(-1)
+
+    @staticmethod
+    def _flatten_param_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        if arr is None:
+            return None
+        data = np.asarray(arr, dtype=float)
+        if data.ndim == 0:
+            return data.reshape(1, 1)
+        if data.ndim == 1:
+            return data.reshape(1, -1)
+        if data.ndim == 2:
+            return data
+        return data.reshape(-1, *data.shape[2:])
+
+    @staticmethod
+    def _stack_chain_draws(arrays: List[Optional[np.ndarray]]) -> Optional[np.ndarray]:
+        if not arrays or arrays[0] is None:
+            return None
+        return np.stack([np.asarray(arr) for arr in arrays], axis=0)
+
+    def _spawn_single_chain(self, *, seed: int) -> "GIGGRegression":
+        return type(self)(
+            iters=self.iters,
+            burnin=self.burnin,
+            thin=self.thin,
+            jitter=self.jitter,
+            seed=seed,
+            num_chains=1,
+            b_init=self.b_init,
+            b_floor=self.b_floor,
+            b_max=self.b_max,
+            tau_scale=self.tau_scale,
+            sigma_scale=self.sigma_scale,
+            store_lambda=self.store_lambda,
+            a_value=self.a_value,
+            share_group_hyper=self.share_group_hyper,
+            mmle_enabled=self.mmle_enabled,
+            mmle_update=self.mmle_update,
+        )
+
+    def _fit_multichain(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        groups: Sequence[Sequence[int]],
+    ) -> "GIGGRegression":
+        chain_models: List[GIGGRegression] = []
+        for chain_idx in range(int(self.num_chains)):
+            chain_model = self._spawn_single_chain(seed=int(self.seed) + chain_idx)
+            chain_model.fit(X, y, groups=groups)
+            chain_models.append(chain_model)
+
+        lead = chain_models[0]
+        self.rng_ = default_rng(self.seed)
+        self.coef_samples_ = self._stack_chain_draws([model.coef_samples_ for model in chain_models])
+        self.tau_samples_ = self._stack_chain_draws([model.tau_samples_ for model in chain_models])
+        self.sigma_samples_ = self._stack_chain_draws([model.sigma_samples_ for model in chain_models])
+        self.gamma_samples_ = self._stack_chain_draws([model.gamma_samples_ for model in chain_models])
+        self.tau2_samples_ = self._stack_chain_draws([model.tau2_samples_ for model in chain_models])
+        self.sigma2_samples_ = self._stack_chain_draws([model.sigma2_samples_ for model in chain_models])
+        self.gamma2_samples_ = self._stack_chain_draws([model.gamma2_samples_ for model in chain_models])
+        self.lambda_samples_ = self._stack_chain_draws([model.lambda_samples_ for model in chain_models])
+        self.b_samples_ = self._stack_chain_draws([model.b_samples_ for model in chain_models])
+
+        coef_draws = self._flatten_param_draws(self.coef_samples_)
+        b_draws = self._flatten_param_draws(self.b_samples_)
+        self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
+        self.b_mean_ = None if b_draws is None else b_draws.mean(axis=0)
+        self.intercept_ = float(lead.intercept_)
+        return self
+
     def fit(self, X: np.ndarray, y: np.ndarray, *, groups: Sequence[Sequence[int]]) -> "GIGGRegression":
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float).reshape(-1)
@@ -124,6 +207,8 @@ class GIGGRegression:
             raise ValueError("X and y must have compatible shapes.")
         if not groups:
             raise ValueError("GIGGRegression requires a non-empty group specification.")
+        if self.num_chains > 1:
+            return self._fit_multichain(X, y, groups=groups)
 
         normalised_groups = _normalise_groups(groups, p)
         group_id = np.empty(p, dtype=int)

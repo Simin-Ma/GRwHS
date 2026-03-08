@@ -91,7 +91,7 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
         "hs": ["beta", "tau", "lambda"],
     },
     "missing_policy": "warn",
-    "require_valid_diagnostics": False,
+    "require_valid_diagnostics": True,
     "min_chains_for_rhat": 2,
 }
 
@@ -273,7 +273,7 @@ def _convergence_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     resolved["max_retries"] = max(0, int(resolved.get("max_retries", 1)))
     resolved["retry_scale"] = max(1.0, float(resolved.get("retry_scale", 2.0)))
     resolved["missing_policy"] = str(resolved.get("missing_policy", "warn")).strip().lower()
-    resolved["require_valid_diagnostics"] = bool(resolved.get("require_valid_diagnostics", False))
+    resolved["require_valid_diagnostics"] = bool(resolved.get("require_valid_diagnostics", True))
     resolved["min_chains_for_rhat"] = max(1, int(resolved.get("min_chains_for_rhat", 2)))
     parameters = resolved.get("parameters", ["beta", "tau", "phi", "lambda"])
     if isinstance(parameters, str):
@@ -320,7 +320,7 @@ def _check_convergence(
     max_rhat = float(cfg.get("max_rhat", 1.05))
     expected_blocks = _expected_convergence_blocks(model_name, cfg)
     missing_policy = str(cfg.get("missing_policy", "warn")).strip().lower()
-    require_valid_diagnostics = bool(cfg.get("require_valid_diagnostics", False))
+    require_valid_diagnostics = bool(cfg.get("require_valid_diagnostics", True))
     failures: List[str] = []
     for name in expected_blocks:
         block = summary.get(name)
