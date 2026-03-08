@@ -152,7 +152,7 @@ def test_run_experiment_honours_repeats(tmp_path):
     svi_seeds = [entry.get("seeds", {}).get("inference", {}).get("svi") for entry in repeat_summaries]
     assert svi_seeds == [600, 601, 602]
     data_seeds = [entry.get("seeds", {}).get("data_generation") for entry in repeat_summaries]
-    assert data_seeds == [4040, 4040, 4040]
+    assert data_seeds == [4040, 4041, 4042]
 
     repeat_dirs = result.get("artifacts", {}).get("repeat_dirs", [])
     assert len(repeat_dirs) == 3

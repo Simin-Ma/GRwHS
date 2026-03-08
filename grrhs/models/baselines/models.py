@@ -510,6 +510,7 @@ class _BaseHorseshoeRegression:
     nu_local: float = 1.0
     sigma_scale: float = 1.0
     slab_scale: Optional[float] = None
+    slab_df: Optional[float] = None
     likelihood: str = "gaussian"
     num_warmup: int = 1000
     num_samples: int = 1000
@@ -524,6 +525,7 @@ class _BaseHorseshoeRegression:
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    c_samples_: Optional[np.ndarray] = field(default=None, init=False)
     coef_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: Optional[float] = field(default=None, init=False)
     _rng_key: Optional[random.PRNGKeyArray] = field(default=None, init=False, repr=False)
@@ -539,6 +541,8 @@ class _BaseHorseshoeRegression:
             raise ValueError("sigma_scale must be positive.")
         if self.slab_scale is not None and self.slab_scale <= 0:
             raise ValueError("slab_scale must be positive when provided.")
+        if self.slab_df is not None and self.slab_df <= 0:
+            raise ValueError("slab_df must be positive when provided.")
         lik = str(self.likelihood).lower()
         if lik in {"classification", "logistic"}:
             self.likelihood = "logistic"
@@ -583,9 +587,10 @@ class _BaseHorseshoeRegression:
             inv_gamma_local.expand((p,)).to_event(1),
         )
         lambda_raw = r1_local * jnp.sqrt(r2_local)
+        slab = self._draw_slab_scale()
         lambda_effective = numpyro.deterministic(
             "lambda",
-            self._regularize_lambda(lambda_raw, tau),
+            self._regularize_lambda(lambda_raw, tau, slab),
         )
 
         z = numpyro.sample("z", dist.Normal(jnp.zeros((p,)), 1.0).to_event(1))
@@ -596,15 +601,34 @@ class _BaseHorseshoeRegression:
         else:
             numpyro.sample("y", dist.Bernoulli(logits=mean), obs=y)
 
-    def _regularize_lambda(self, lambda_raw: jnp.ndarray, tau: jnp.ndarray) -> jnp.ndarray:
+    def _draw_slab_scale(self) -> Optional[jnp.ndarray]:
         if self.slab_scale is None:
+            return None
+        if self.slab_df is None:
+            return jnp.asarray(float(self.slab_scale))
+        caux = numpyro.sample(
+            "caux",
+            dist.InverseGamma(0.5 * float(self.slab_df), 0.5 * float(self.slab_df)),
+        )
+        return numpyro.deterministic("c", float(self.slab_scale) * jnp.sqrt(caux))
+
+    def _regularize_lambda(
+        self,
+        lambda_raw: jnp.ndarray,
+        tau: jnp.ndarray,
+        slab: Optional[jnp.ndarray],
+    ) -> jnp.ndarray:
+        if slab is None:
             return lambda_raw
-        c2 = float(self.slab_scale) ** 2
+        c2 = slab ** 2
         lam2 = lambda_raw ** 2
         tau2 = tau ** 2
         denom = c2 + tau2 * lam2 + 1e-18
         lambda_tilde_sq = (c2 * lam2) / denom
         return jnp.sqrt(lambda_tilde_sq)
+
+    def _use_gibbs_backend(self) -> bool:
+        return self.likelihood == "gaussian"
 
     def fit(
         self,
@@ -618,7 +642,7 @@ class _BaseHorseshoeRegression:
         if X_arr.shape[0] != y_arr.shape[0]:
             raise ValueError("X and y must have matching number of rows.")
 
-        if self.likelihood == "gaussian":
+        if self._use_gibbs_backend():
             self._fit_with_gibbs(X_arr, y_arr, groups=groups)
             return self
 
@@ -705,6 +729,7 @@ class _BaseHorseshoeRegression:
         self.sigma_samples_ = _convert("sigma")
         self.tau_samples_ = _convert("tau")
         self.lambda_samples_ = _convert("lambda")
+        self.c_samples_ = _convert("c")
 
         self.coef_ = self.coef_samples_.mean(axis=0)
         if self.intercept_samples_ is not None:
@@ -742,6 +767,8 @@ class _BaseHorseshoeRegression:
             summaries["tau_mean"] = float(self.tau_samples_.mean())
         if self.lambda_samples_ is not None:
             summaries["lambda_mean"] = self.lambda_samples_.mean(axis=0)
+        if self.c_samples_ is not None:
+            summaries["c_mean"] = float(self.c_samples_.mean())
         return summaries
 
 
@@ -756,7 +783,11 @@ class HorseshoeRegression(_BaseHorseshoeRegression):
 class RegularizedHorseshoeRegression(_BaseHorseshoeRegression):
     """Regularized horseshoe regression baseline (Piironen & Vehtari, 2017)."""
 
-    slab_scale: float = 1.0
+    slab_scale: float = 2.0
+    slab_df: float = 4.0
+
+    def _use_gibbs_backend(self) -> bool:
+        return False
 
 
 @dataclass
@@ -863,9 +894,10 @@ class GroupHorseshoeRegression(_BaseHorseshoeRegression):
             r1_group * jnp.sqrt(r2_group),
         )
         lambda_full = lambda_group[self._group_index]
+        slab = self._draw_slab_scale()
         lambda_effective = numpyro.deterministic(
             "lambda",
-            self._regularize_lambda(lambda_full, tau),
+            self._regularize_lambda(lambda_full, tau, slab),
         )
 
         p = X.shape[1]

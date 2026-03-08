@@ -69,6 +69,15 @@ class ExperimentError(RuntimeError):
     """Raised when a configuration-driven experiment cannot be executed."""
 
 
+DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
+    "enabled": True,
+    "max_rhat": 1.05,
+    "max_retries": 1,
+    "retry_scale": 2.0,
+    "parameters": ["beta", "tau", "phi", "lambda"],
+}
+
+
 class _ConstantClassificationModel:
     """Fallback classifier emitting constant probabilities when training data is degenerate."""
 
@@ -235,6 +244,143 @@ def _resolve_seed(*candidates: Any) -> Optional[int]:
     return None
 
 
+def _convergence_config(config: Mapping[str, Any]) -> Dict[str, Any]:
+    experiments_cfg = config.get("experiments", {}) or {}
+    raw = experiments_cfg.get("convergence", {}) or {}
+    resolved = dict(DEFAULT_CONVERGENCE_CONFIG)
+    if isinstance(raw, Mapping):
+        resolved.update(raw)
+    resolved["enabled"] = bool(resolved.get("enabled", True))
+    resolved["max_rhat"] = float(resolved.get("max_rhat", 1.05))
+    resolved["max_retries"] = max(0, int(resolved.get("max_retries", 1)))
+    resolved["retry_scale"] = max(1.0, float(resolved.get("retry_scale", 2.0)))
+    parameters = resolved.get("parameters", ["beta", "tau", "phi", "lambda"])
+    if isinstance(parameters, str):
+        parameters = [parameters]
+    resolved["parameters"] = [str(name) for name in parameters]
+    return resolved
+
+
+def _classify_fold_status(status: str) -> bool:
+    return not str(status).upper().startswith("INVALID")
+
+
+def _check_convergence(
+    summary: Mapping[str, Mapping[str, Any]] | None,
+    cfg: Mapping[str, Any],
+) -> Tuple[bool, List[str]]:
+    if not summary:
+        return True, []
+    if not bool(cfg.get("enabled", True)):
+        return True, []
+
+    max_rhat = float(cfg.get("max_rhat", 1.05))
+    failures: List[str] = []
+    for name in cfg.get("parameters", []):
+        block = summary.get(name)
+        if not isinstance(block, Mapping):
+            continue
+        try:
+            rhat_max = float(block.get("rhat_max"))
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(rhat_max) or rhat_max > max_rhat:
+            failures.append(f"{name}.rhat_max={rhat_max:.3f}>{max_rhat:.3f}")
+    return len(failures) == 0, failures
+
+
+def _scale_bayesian_runtime(
+    model_config: MutableMapping[str, Any],
+    inference_cfg: MutableMapping[str, Any],
+    scale: float,
+) -> None:
+    model_name = str(model_config.get("name", "")).lower()
+
+    if model_name in {"grrhs_gibbs", "grrhs_gibbs_logistic", "grrhs_logistic", "grrhs_gibbs_cls", "gigg", "gigg_regression"}:
+        if "iters" in model_config:
+            model_config["iters"] = max(4, int(math.ceil(float(model_config["iters"]) * scale)))
+        gibbs_cfg = inference_cfg.get("gibbs")
+        if isinstance(gibbs_cfg, MutableMapping) and "burn_in" in gibbs_cfg:
+            gibbs_cfg["burn_in"] = max(2, int(math.ceil(float(gibbs_cfg["burn_in"]) * scale)))
+        return
+
+    if model_name in {"group_horseshoe", "horseshoe", "hs", "regularized_horseshoe", "rhs", "regularised_horseshoe"}:
+        for key in ("num_warmup", "num_samples"):
+            if key in model_config:
+                model_config[key] = max(100, int(math.ceil(float(model_config[key]) * scale)))
+        return
+
+
+def _fit_model_with_retry(
+    model_config: Mapping[str, Any],
+    groups: Sequence[Sequence[int]],
+    p: int,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    task: str,
+    std_cfg: StandardizationConfig,
+    convergence_cfg: Mapping[str, Any],
+) -> Tuple[Any, Dict[str, np.ndarray], Optional[Dict[str, Dict[str, float]]], List[Dict[str, Any]], Mapping[str, Any]]:
+    attempts: List[Dict[str, Any]] = []
+    last_model = None
+    last_arrays: Dict[str, np.ndarray] = {}
+    last_summary: Optional[Dict[str, Dict[str, float]]] = None
+    last_effective_config: Mapping[str, Any] = model_config
+
+    total_attempts = 1 + int(convergence_cfg.get("max_retries", 1))
+    scale = float(convergence_cfg.get("retry_scale", 2.0))
+
+    for attempt in range(total_attempts):
+        attempt_config = deepcopy(model_config)
+        attempt_model_cfg = attempt_config.setdefault("model", {})
+        attempt_inference_cfg = attempt_config.setdefault("inference", {})
+        if attempt > 0:
+            _scale_bayesian_runtime(attempt_model_cfg, attempt_inference_cfg, scale ** attempt)
+
+        _maybe_calibrate_tau(attempt_model_cfg, std_cfg, X_train, y_train, groups, task)
+        model = _instantiate_model(attempt_config, groups, p)
+        try:
+            model.fit(X_train, y_train, groups=groups)
+        except TypeError:
+            model.fit(X_train, y_train)
+
+        arrays = _collect_posterior_arrays(model)
+        summary: Optional[Dict[str, Dict[str, float]]] = None
+        ok = True
+        failures: List[str] = []
+        if arrays:
+            try:
+                summary = summarize_convergence(arrays)
+            except Exception as exc:  # pragma: no cover - defensive guard for short/invalid chains
+                ok = False
+                failures = [f"convergence_error={type(exc).__name__}"]
+            else:
+                ok, failures = _check_convergence(summary, convergence_cfg)
+
+        attempts.append(
+            {
+                "attempt": attempt + 1,
+                "iters": attempt_model_cfg.get("iters"),
+                "burn_in": ((attempt_inference_cfg.get("gibbs") or {}).get("burn_in") if isinstance(attempt_inference_cfg.get("gibbs"), Mapping) else None),
+                "num_warmup": attempt_model_cfg.get("num_warmup"),
+                "num_samples": attempt_model_cfg.get("num_samples"),
+                "converged": ok,
+                "failures": failures,
+            }
+        )
+
+        last_model = model
+        last_arrays = arrays
+        last_summary = summary
+        last_effective_config = attempt_config
+        if ok:
+            break
+
+    if last_model is None:
+        raise ExperimentError("Model fitting did not produce a fitted model.")
+    return last_model, last_arrays, last_summary, attempts, last_effective_config
+
+
 def _resolve_groups(config: Mapping[str, Any], groups: Optional[Sequence[Sequence[int]]], p: int) -> List[List[int]]:
     """Return explicit group structure for models that require it."""
     if groups:
@@ -350,10 +496,13 @@ def _prepare_dataset_bundle(
             seeds_cfg.get("experiment"),
         )
     )
-    if base_seed is not None:
-        dataset_seed = base_seed
+    if data_type == "synthetic":
+        if base_seed is not None:
+            dataset_seed = int(base_seed) + int(repeat_index)
+        else:
+            dataset_seed = repeat_index if repeat_index > 0 else None
     else:
-        dataset_seed = repeat_index if repeat_index > 0 else None
+        dataset_seed = base_seed
 
     if data_type == "synthetic":
         response_override: Optional[Mapping[str, Any]] = None
@@ -1111,6 +1260,7 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
         "tau_samples_": "tau",
         "phi_samples_": "phi",
         "lambda_samples_": "lambda",
+        "c_samples_": "c",
         "loglik_samples_": "loglik",
     }
     for attr, key in attr_map.items():
@@ -1158,7 +1308,11 @@ def _summarise_posterior(arrays: Mapping[str, np.ndarray]) -> Optional["pd.DataF
 
 
 def _save_posterior_bundle(
-    output_dir: Path, arrays: Mapping[str, np.ndarray], *, include_convergence: bool = True
+    output_dir: Path,
+    arrays: Mapping[str, np.ndarray],
+    *,
+    include_convergence: bool = True,
+    convergence_summary: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Optional[str]]:
     """Persist posterior arrays and diagnostics if available."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1170,7 +1324,7 @@ def _save_posterior_bundle(
 
     convergence_path: Optional[Path] = None
     if include_convergence:
-        convergence = summarize_convergence(arrays)
+        convergence = convergence_summary if convergence_summary is not None else summarize_convergence(arrays)
         convergence_path = output_dir / "convergence.json"
         convergence_path.write_text(json.dumps(_to_serializable(convergence), indent=2), encoding="utf-8")
 
@@ -1406,6 +1560,10 @@ def _run_fold_nested(
     model_config.setdefault("model", {})
     model_config["model"].pop("search", None)
 
+    convergence_cfg = _convergence_config(base_config)
+    convergence_summary: Optional[Dict[str, Dict[str, float]]] = None
+    convergence_attempts: List[Dict[str, Any]] = []
+
     if degenerate_model is None:
         inner_params, tuning_history = _perform_inner_cv(
             base_config,
@@ -1421,16 +1579,24 @@ def _run_fold_nested(
                 _set_nested_config_value(model_config["model"], str(key), value)
             else:
                 model_config["model"][key] = value
-        _maybe_calibrate_tau(model_config["model"], std_cfg, X_train_model, y_train, model_groups, task)
-        model = _instantiate_model(model_config, model_groups, X_train_model.shape[1])
-        try:
-            model.fit(X_train_model, y_train, groups=model_groups)
-        except TypeError:
-            model.fit(X_train_model, y_train)
-        fold_status = "OK"
+        model, posterior_arrays_prefit, convergence_summary, convergence_attempts, effective_model_config = _fit_model_with_retry(
+            model_config,
+            model_groups,
+            X_train_model.shape[1],
+            X_train_model,
+            y_train,
+            task,
+            std_cfg,
+            convergence_cfg,
+        )
+        model_config = deepcopy(effective_model_config)
+        posterior_arrays = posterior_arrays_prefit
+        converged, convergence_failures = _check_convergence(convergence_summary, convergence_cfg)
+        fold_status = "OK" if converged else "INVALID_CONVERGENCE"
     else:
         model = degenerate_model
         fold_status = "DEGENERATE_LABELS"
+        posterior_arrays = {}
 
     tuning_history = tuning_history or []
 
@@ -1491,10 +1657,17 @@ def _run_fold_nested(
     )
 
     save_posterior = bool(experiments_cfg.get("save_posterior", True))
-    posterior_arrays = _collect_posterior_arrays(model) if save_posterior else {}
+    if degenerate_model is None and posterior_arrays:
+        posterior_arrays = posterior_arrays if save_posterior else {}
+    else:
+        posterior_arrays = _collect_posterior_arrays(model) if save_posterior else {}
     posterior_paths = None
     if posterior_arrays:
-        posterior_paths = _save_posterior_bundle(fold_dir, posterior_arrays)
+        posterior_paths = _save_posterior_bundle(
+            fold_dir,
+            posterior_arrays,
+            convergence_summary=convergence_summary,
+        )
     if covariate_alpha_hat is not None:
         alpha_payload: Dict[str, Any] = {"alpha_hat": covariate_alpha_hat}
         if covariate_alpha_draws is not None:
@@ -1511,6 +1684,10 @@ def _run_fold_nested(
         "tuning_history": tuning_history,
         "posterior_files": posterior_paths,
     }
+    if convergence_summary is not None:
+        fold_summary["convergence"] = convergence_summary
+    if convergence_attempts:
+        fold_summary["convergence_attempts"] = convergence_attempts
     if covariate_alpha_hat is not None:
         fold_summary["covariate_adjustment_file"] = str(fold_dir / "covariate_adjustment.npz")
     if degenerate_label_value is not None:
@@ -1526,6 +1703,8 @@ def _aggregate_metrics(records: Sequence[Mapping[str, Any]]) -> Tuple[Dict[str, 
 
     collector: Dict[str, List[float]] = defaultdict(list)
     for entry in records:
+        if not _classify_fold_status(str(entry.get("status", "OK"))):
+            continue
         metrics = entry.get("metrics", {})
         for key, value in metrics.items():
             try:
@@ -1591,6 +1770,7 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
         metrics_jsonl.unlink()
 
     all_fold_records: List[Dict[str, Any]] = []
+    all_valid_fold_records: List[Dict[str, Any]] = []
     posterior_accumulator: Dict[str, List[np.ndarray]] = defaultdict(list)
     repeat_summaries: List[Dict[str, Any]] = []
     repeat_dir_paths: List[str] = []
@@ -1645,12 +1825,14 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             _append_metrics_record(metrics_jsonl, record)
 
             posterior_arrays = fold_result.pop("posterior_arrays", {})
-            if posterior_arrays:
+            if posterior_arrays and _classify_fold_status(record["status"]):
                 for key, arr in posterior_arrays.items():
                     posterior_accumulator[key].append(np.asarray(arr))
 
             repeat_records.append(fold_result)
             all_fold_records.append({**record, "tuning_history": fold_result.get("tuning_history")})
+            if _classify_fold_status(record["status"]):
+                all_valid_fold_records.append({**record, "tuning_history": fold_result.get("tuning_history")})
 
         repeat_mean, repeat_summary = _aggregate_metrics(repeat_records)
         repeat_seeds = {}
@@ -1669,6 +1851,7 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             "metrics_summary": repeat_summary,
             "folds": [
                 {
+                    "status": entry.get("status"),
                     "repeat": entry.get("repeat"),
                     "fold": entry.get("fold"),
                     "hash": entry.get("hash"),
@@ -1678,6 +1861,8 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
                 }
                 for entry in repeat_records
             ],
+            "valid_folds": int(sum(1 for entry in repeat_records if _classify_fold_status(str(entry.get("status", "OK"))))),
+            "invalid_folds": int(sum(1 for entry in repeat_records if not _classify_fold_status(str(entry.get("status", "OK"))))),
         }
         if repeat_seeds:
             repeat_payload["seeds"] = repeat_seeds
@@ -1696,13 +1881,15 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             _save_posterior_bundle(output_path, combined, include_convergence=False)
 
     summary_payload = {
-        "status": "OK",
+        "status": "OK" if len(all_valid_fold_records) == len(all_fold_records) else "PARTIAL",
         "model": model_name,
         "task": task,
         "repeats": repeats,
         "outer_folds_per_repeat": len(repeat_summaries[0]["folds"]) if repeat_summaries else 0,
         "metrics": aggregated_metrics,
         "metrics_summary": aggregated_summary,
+        "valid_fold_count": int(len(all_valid_fold_records)),
+        "invalid_fold_count": int(len(all_fold_records) - len(all_valid_fold_records)),
         "repeat_summaries": repeat_summaries,
         "artifacts": {
             "repeat_dirs": repeat_dir_paths,

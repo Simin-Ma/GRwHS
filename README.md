@@ -118,12 +118,14 @@ Dataset files adjust only the `data` (and occasionally `standardization` or `spl
 Method presets collect model-specific defaults and, for convex baselines only, tuning instructions:
 
 - `grrhs_regression.yaml` – GRRHS Gibbs sampler with fixed default prior shape (`c=1.0`, `eta=0.5`) and calibrated global shrinkage from `tau.p0.value = 20`.
-- `regularized_horseshoe.yaml` – RHS baseline sharing the same calibrated `tau` heuristic and slab width as GRRHS, with the group layer disabled (`use_groups=false`).
-- `gigg.yaml` – GIGG Gibbs sampler with fixed default group-dependence settings (`b_init=1.0`, `b_floor=0.25`, `tau_scale=1.0`) and Woodbury accelerations baked into the model class.
+- `regularized_horseshoe.yaml` – RHS baseline aligned to the Piironen–Vehtari path: global shrinkage is calibrated from an expected nonzero count `p0` via the `tau0 ≈ (p0 / (D - p0)) * sigma / sqrt(n)` heuristic, and the slab uses the paper-style regularized horseshoe prior with `c^2 ~ Inv-Gamma(ν/2, ν s^2 / 2)` implemented through `slab_scale = 2.0` and `slab_df = 4.0`.
+- `gigg.yaml` – GIGG Gibbs sampler using the paper-preferred hyperparameter path: `a_g = 1/n` fixed implicitly (`a_value: null`) and group-specific `b_g` estimated by MMLE via the paper's `paper_lambda_only` update, with `b_g` clipped to `[0.001, 4.0]` for numerical stability.
 - `sparse_group_lasso.yaml` – skglm SGL with log-spaced α grid × {0.2,0.5,0.8} ℓ₁ ratios.
 - `lasso.yaml` – classic L1 path using auto-computed λ_max → 10⁻³ λ_max.
 - `ridge.yaml` – eight-point L2 grid spanning 1e-4…1e3.
-- `group_lasso.yaml` / `group_horseshoe.yaml` – still available for auxiliary ablations; the horseshoe presets now reuse the same Gibbs kernel as GRRHS (with `use_groups=true/false`) so numerical behavior is aligned.
+- `group_lasso.yaml` / `group_horseshoe.yaml` – still available for auxiliary ablations; `group_horseshoe.yaml` remains a separate grouped Bayesian baseline and `group_lasso.yaml` remains the convex grouped penalty baseline.
+
+For the paper-facing justification of the Bayesian defaults, including a model-by-model provenance table for `RHS`, `GIGG`, `Group Horseshoe`, and `GRRHS`, see [docs/fair_benchmark_protocol.md](/d:/FilesP/GR-RHS/docs/fair_benchmark_protocol.md).
 
 *(Retired)* Logistic presets (`*_logistic.yaml`) remain in git history if binary tasks return later.
 
@@ -133,7 +135,7 @@ These files can be stacked (dataset + method + ablation override) by passing mul
 
 Sweeps combine datasets and methods into experiment suites:
 
-- `sim_s1.yaml`, `sim_s2.yaml`, `sim_s3.yaml` – final benchmark sweeps; each variation pairs one of the three SNR overrides (`configs/overrides/snr_{0p5,1p0,3p0}.yaml`) with the six locked baselines (GRRHS, RHS, GIGG, SGL, Lasso, Ridge). Every sweep now repeats data generation 3× and standardises the 300/1000 hold-out split to trade minor variance for faster turnarounds.
+- `sim_s1.yaml`, `sim_s2.yaml`, `sim_s3.yaml` – final benchmark sweeps; each variation pairs one of the three SNR overrides (`configs/overrides/snr_{0p5,1p0,3p0}.yaml`) with the full eight-model roster (`GRRHS`, `RHS`, `GIGG`, `Group Horseshoe`, `Group Lasso`, `SGL`, `Lasso`, `Ridge`). Every sweep now redraws the synthetic dataset 3× across repeats and standardises the 300/1000 hold-out split to trade minor variance for faster turnarounds.
 - `exp4_ablation.yaml` / `exp4_group_misspec.yaml` – optional add-ons for interpretability sections (structure removal or shuffled groups).
 - `real_<dataset>_methods.yaml` – create one per real dataset once you configure loaders; follow the synthetic sweeps as a template (same six methods, identical preprocessing, repeated 70/30 shuffles).
 
@@ -186,7 +188,7 @@ python -m grrhs.cli.run_sweep ^
 Follow this checklist to reproduce the final regression study (three synthetic suites + real data + ablations):
 
 1. **Synthetic Scenarios (S1–S3)**
-   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.1, 0.5, 1, 3} via the override files, repeats the data draw 3 times, and evaluates the six locked baselines (GRRHS, RHS, GIGG, SGL, Lasso, Ridge) under identical preprocessing and nested-CV settings.
+   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.1, 0.5, 1, 3} via the override files, redraws the dataset on each repeat, and evaluates the full eight-model roster (`GRRHS`, `RHS`, `GIGG`, `Group Horseshoe`, `Group Lasso`, `SGL`, `Lasso`, `Ridge`) under identical preprocessing and nested-CV settings.
    - Outputs live under `outputs/sweeps/sim_s*/` with per-variant resolved configs that document the chosen SNR, seeds, and fixed prior settings.
 
 2. **Real Data Benchmarks**
@@ -207,7 +209,7 @@ Each run directory records fold-level metrics (`fold_*` subdirectories), resolve
 
 > Need a quick reference for the fairness contract (identical preprocessing, nested CV grids, τ heuristics, R-hat checks)? See `docs/fair_benchmark_protocol.md`.
 >
-> **Implementation details.** `grrhs.experiments.runner` draws the outer folds once per dataset repeat and hands the exact same `OuterFold` objects to every model (no per-model shuffling). The nested inner CV routine is only invoked for convex baselines that explicitly define a `model.search` grid (ridge/Lasso/SGL); Bayesian baselines (GRRHS, RHS, GIGG, etc.) use fixed defaults plus optional sensitivity sweeps and never read `splits.inner`.
+> **Implementation details.** `grrhs.experiments.runner` draws the outer folds once per dataset repeat and hands the exact same `OuterFold` objects to every model (no per-model shuffling). The nested inner CV routine is only invoked for convex baselines that explicitly define a `model.search` grid (ridge/Lasso/SGL); Bayesian baselines (GRRHS, RHS, GIGG, etc.) use fixed defaults plus optional sensitivity sweeps and never read `splits.inner`. Bayesian folds are required to meet the configured convergence threshold (`experiments.convergence.max_rhat`, default `1.05`); the runner retries once with a larger budget and excludes folds that remain invalid from aggregate benchmark summaries.
 
 ### 4.0 Recommended Metric Systems
 

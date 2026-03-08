@@ -409,6 +409,9 @@ def _build_horseshoe(cfg: Dict[str, Any]) -> Any:
 def _build_regularized_horseshoe(cfg: Dict[str, Any]) -> Any:
     kwargs = _horseshoe_common_kwargs(cfg)
     kwargs["slab_scale"] = float(_get(cfg, "model.slab_scale", 1.0))
+    slab_df = _get(cfg, "model.slab_df", None)
+    if slab_df is not None:
+        kwargs["slab_df"] = float(slab_df)
     return RegularizedHorseshoeRegression(**kwargs)
 
 

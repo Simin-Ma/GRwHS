@@ -637,7 +637,7 @@ def synthetic_config_from_dict(
     correlation = data_cfg.get("correlation", {})
     signal = data_cfg.get("signal", {})
     noise_sigma = data_cfg.get("noise_sigma", 1.0)
-    cfg_seed = data_cfg.get("seed", seed)
+    cfg_seed = seed if seed is not None else data_cfg.get("seed")
     G = data_cfg.get("G")
     response_cfg_raw = data_cfg.get("response", {})
     if isinstance(response_cfg_raw, Mapping):

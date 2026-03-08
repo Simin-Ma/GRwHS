@@ -17,6 +17,14 @@ variations:
     config_files:
       - "../overrides/snr_0p1.yaml"
       - "../methods/gigg.yaml"
+  - name: "snr0p1_group_horseshoe"
+    config_files:
+      - "../overrides/snr_0p1.yaml"
+      - "../methods/group_horseshoe.yaml"
+  - name: "snr0p1_group_lasso"
+    config_files:
+      - "../overrides/snr_0p1.yaml"
+      - "../methods/group_lasso.yaml"
   - name: "snr0p1_sgl"
     config_files:
       - "../overrides/snr_0p1.yaml"
@@ -42,6 +50,14 @@ variations:
     config_files:
       - "../overrides/snr_0p5.yaml"
       - "../methods/gigg.yaml"
+  - name: "snr0p5_group_horseshoe"
+    config_files:
+      - "../overrides/snr_0p5.yaml"
+      - "../methods/group_horseshoe.yaml"
+  - name: "snr0p5_group_lasso"
+    config_files:
+      - "../overrides/snr_0p5.yaml"
+      - "../methods/group_lasso.yaml"
   - name: "snr0p5_sgl"
     config_files:
       - "../overrides/snr_0p5.yaml"
@@ -67,6 +83,14 @@ variations:
     config_files:
       - "../overrides/snr_1p0.yaml"
       - "../methods/gigg.yaml"
+  - name: "snr1p0_group_horseshoe"
+    config_files:
+      - "../overrides/snr_1p0.yaml"
+      - "../methods/group_horseshoe.yaml"
+  - name: "snr1p0_group_lasso"
+    config_files:
+      - "../overrides/snr_1p0.yaml"
+      - "../methods/group_lasso.yaml"
   - name: "snr1p0_sgl"
     config_files:
       - "../overrides/snr_1p0.yaml"
@@ -92,7 +116,14 @@ variations:
     config_files:
       - "../overrides/snr_3p0.yaml"
       - "../methods/gigg.yaml"
-      - "../overrides/gigg_snr3_boost.yaml"
+  - name: "snr3p0_group_horseshoe"
+    config_files:
+      - "../overrides/snr_3p0.yaml"
+      - "../methods/group_horseshoe.yaml"
+  - name: "snr3p0_group_lasso"
+    config_files:
+      - "../overrides/snr_3p0.yaml"
+      - "../methods/group_lasso.yaml"
   - name: "snr3p0_sgl"
     config_files:
       - "../overrides/snr_3p0.yaml"

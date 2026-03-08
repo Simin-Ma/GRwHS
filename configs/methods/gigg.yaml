@@ -2,16 +2,21 @@ name: "gigg"
 
 model:
   name: "gigg"
-  iters: 10000
+  iters: 8000
+  a_value: null
   b_init: 1.0
-  b_floor: 0.25
+  b_floor: 0.001
+  b_max: 4.0
+  share_group_hyper: false
+  mmle_enabled: true
+  mmle_update: "paper_lambda_only"
   tau_scale: 1.0
   sigma_scale: 1.0
   store_lambda: false
 
 inference:
   gibbs:
-    burn_in: 5000
-    thin: 1
+    burn_in: 4000
+    thin: 2
     jitter: 1.0e-08
     seed: 2025

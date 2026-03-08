@@ -67,8 +67,9 @@ def test_regularized_horseshoe_reports_posterior_summaries():
     X, y, _ = _synthetic_regression(seed=321)
     model = RegularizedHorseshoeRegression(
         slab_scale=0.5,
-        num_warmup=150,
-        num_samples=150,
+        slab_df=4.0,
+        num_warmup=120,
+        num_samples=120,
         num_chains=1,
         target_accept_prob=0.9,
         progress_bar=False,
@@ -77,10 +78,13 @@ def test_regularized_horseshoe_reports_posterior_summaries():
     fitted = model.fit(X, y)
 
     assert fitted.lambda_samples_ is not None
+    assert fitted.c_samples_ is not None
     summaries = fitted.get_posterior_summaries()
     assert "tau_mean" in summaries
     assert "lambda_mean" in summaries
+    assert "c_mean" in summaries
     assert summaries["lambda_mean"].shape == (X.shape[1],)
+    assert summaries["c_mean"] > 0.0
 
     preds = fitted.predict(X)
     mse = float(np.mean((preds - y) ** 2))
