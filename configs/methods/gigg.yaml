@@ -12,7 +12,7 @@ model:
   mmle_update: "paper_lambda_only"
   tau_scale: 1.0
   sigma_scale: 1.0
-  store_lambda: false
+  store_lambda: true
 
 inference:
   gibbs:

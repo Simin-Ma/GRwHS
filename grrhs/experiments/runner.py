@@ -74,7 +74,25 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
     "max_rhat": 1.05,
     "max_retries": 1,
     "retry_scale": 2.0,
-    "parameters": ["beta", "tau", "phi", "lambda"],
+    "parameters": ["beta", "tau"],
+    "expected_blocks": {
+        "default": ["beta", "tau"],
+        "grrhs_gibbs": ["beta", "tau", "phi", "lambda"],
+        "grrhs_gibbs_logistic": ["beta", "tau", "phi", "lambda"],
+        "grrhs_logistic": ["beta", "tau", "phi", "lambda"],
+        "grrhs_gibbs_cls": ["beta", "tau", "phi", "lambda"],
+        "gigg": ["beta", "tau", "gamma", "lambda"],
+        "gigg_regression": ["beta", "tau", "gamma", "lambda"],
+        "regularized_horseshoe": ["beta", "tau", "lambda"],
+        "rhs": ["beta", "tau", "lambda"],
+        "regularised_horseshoe": ["beta", "tau", "lambda"],
+        "group_horseshoe": ["beta", "tau", "group_lambda"],
+        "horseshoe": ["beta", "tau", "lambda"],
+        "hs": ["beta", "tau", "lambda"],
+    },
+    "missing_policy": "warn",
+    "require_valid_diagnostics": False,
+    "min_chains_for_rhat": 2,
 }
 
 
@@ -254,10 +272,21 @@ def _convergence_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     resolved["max_rhat"] = float(resolved.get("max_rhat", 1.05))
     resolved["max_retries"] = max(0, int(resolved.get("max_retries", 1)))
     resolved["retry_scale"] = max(1.0, float(resolved.get("retry_scale", 2.0)))
+    resolved["missing_policy"] = str(resolved.get("missing_policy", "warn")).strip().lower()
+    resolved["require_valid_diagnostics"] = bool(resolved.get("require_valid_diagnostics", False))
+    resolved["min_chains_for_rhat"] = max(1, int(resolved.get("min_chains_for_rhat", 2)))
     parameters = resolved.get("parameters", ["beta", "tau", "phi", "lambda"])
     if isinstance(parameters, str):
         parameters = [parameters]
     resolved["parameters"] = [str(name) for name in parameters]
+    expected_blocks = resolved.get("expected_blocks", {}) or {}
+    if not isinstance(expected_blocks, Mapping):
+        expected_blocks = {}
+    resolved["expected_blocks"] = {
+        str(name).lower(): [str(param) for param in value]
+        for name, value in expected_blocks.items()
+        if isinstance(value, (list, tuple))
+    }
     return resolved
 
 
@@ -265,9 +294,23 @@ def _classify_fold_status(status: str) -> bool:
     return not str(status).upper().startswith("INVALID")
 
 
+def _expected_convergence_blocks(model_name: str, cfg: Mapping[str, Any]) -> List[str]:
+    expected = cfg.get("expected_blocks", {}) or {}
+    if isinstance(expected, Mapping):
+        name_key = str(model_name).lower()
+        if isinstance(expected.get(name_key), Sequence):
+            return [str(item) for item in expected[name_key]]
+        if isinstance(expected.get("default"), Sequence):
+            return [str(item) for item in expected["default"]]
+    parameters = cfg.get("parameters", []) or []
+    return [str(item) for item in parameters]
+
+
 def _check_convergence(
     summary: Mapping[str, Mapping[str, Any]] | None,
     cfg: Mapping[str, Any],
+    *,
+    model_name: str,
 ) -> Tuple[bool, List[str]]:
     if not summary:
         return True, []
@@ -275,14 +318,23 @@ def _check_convergence(
         return True, []
 
     max_rhat = float(cfg.get("max_rhat", 1.05))
+    expected_blocks = _expected_convergence_blocks(model_name, cfg)
+    missing_policy = str(cfg.get("missing_policy", "warn")).strip().lower()
+    require_valid_diagnostics = bool(cfg.get("require_valid_diagnostics", False))
     failures: List[str] = []
-    for name in cfg.get("parameters", []):
+    for name in expected_blocks:
         block = summary.get(name)
         if not isinstance(block, Mapping):
+            if missing_policy == "fail":
+                failures.append(f"missing.{name}")
             continue
+        if require_valid_diagnostics and not bool(block.get("diagnostic_valid", False)):
+            failures.append(f"{name}.diagnostic_valid=false")
         try:
             rhat_max = float(block.get("rhat_max"))
         except (TypeError, ValueError):
+            if "error" in block:
+                failures.append(f"{name}.error={block['error']}")
             continue
         if not np.isfinite(rhat_max) or rhat_max > max_rhat:
             failures.append(f"{name}.rhat_max={rhat_max:.3f}>{max_rhat:.3f}")
@@ -311,6 +363,19 @@ def _scale_bayesian_runtime(
         return
 
 
+def _summarize_convergence_compat(
+    arrays: Mapping[str, np.ndarray],
+    *,
+    min_chains_for_rhat: int,
+) -> Dict[str, Dict[str, Any]]:
+    try:
+        return summarize_convergence(arrays, min_chains_for_rhat=min_chains_for_rhat)
+    except TypeError:
+        # Backward-compatible path for tests or local monkeypatches that still
+        # expose the older signature.
+        return summarize_convergence(arrays)  # type: ignore[misc]
+
+
 def _fit_model_with_retry(
     model_config: Mapping[str, Any],
     groups: Sequence[Sequence[int]],
@@ -320,7 +385,7 @@ def _fit_model_with_retry(
     task: str,
     std_cfg: StandardizationConfig,
     convergence_cfg: Mapping[str, Any],
-) -> Tuple[Any, Dict[str, np.ndarray], Optional[Dict[str, Dict[str, float]]], List[Dict[str, Any]], Mapping[str, Any]]:
+) -> Tuple[Any, Dict[str, np.ndarray], Optional[Dict[str, Dict[str, Any]]], List[Dict[str, Any]], Mapping[str, Any]]:
     attempts: List[Dict[str, Any]] = []
     last_model = None
     last_arrays: Dict[str, np.ndarray] = {}
@@ -345,17 +410,24 @@ def _fit_model_with_retry(
             model.fit(X_train, y_train)
 
         arrays = _collect_posterior_arrays(model)
-        summary: Optional[Dict[str, Dict[str, float]]] = None
+        summary: Optional[Dict[str, Dict[str, Any]]] = None
         ok = True
         failures: List[str] = []
         if arrays:
             try:
-                summary = summarize_convergence(arrays)
+                summary = _summarize_convergence_compat(
+                    arrays,
+                    min_chains_for_rhat=int(convergence_cfg.get("min_chains_for_rhat", 2)),
+                )
             except Exception as exc:  # pragma: no cover - defensive guard for short/invalid chains
                 ok = False
                 failures = [f"convergence_error={type(exc).__name__}"]
             else:
-                ok, failures = _check_convergence(summary, convergence_cfg)
+                ok, failures = _check_convergence(
+                    summary,
+                    convergence_cfg,
+                    model_name=str(attempt_model_cfg.get("name", "")),
+                )
 
         attempts.append(
             {
@@ -1259,7 +1331,10 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
         "sigma2_samples_": "sigma2",
         "tau_samples_": "tau",
         "phi_samples_": "phi",
+        "gamma_samples_": "gamma",
         "lambda_samples_": "lambda",
+        "lambda_group_samples_": "group_lambda",
+        "b_samples_": "b",
         "c_samples_": "c",
         "loglik_samples_": "loglik",
     }
@@ -1279,13 +1354,16 @@ def _summarise_posterior(arrays: Mapping[str, np.ndarray]) -> Optional["pd.DataF
     if not arrays or not _HAS_PANDAS:
         return None
 
+    scalar_parameters = {"sigma", "sigma2", "tau", "tau2", "c"}
     records: List[Dict[str, Any]] = []
     for name, arr in arrays.items():
         data = np.asarray(arr)
         if data.ndim == 1:
             data = data[:, None]
+        elif data.ndim == 2 and name in scalar_parameters:
+            data = data.reshape(-1, 1)
         elif data.ndim > 2:
-            data = data.reshape(data.shape[0], -1)
+            data = data.reshape(data.shape[0] * data.shape[1], -1)
         for idx in range(data.shape[1]):
             col = data[:, idx]
             if col.size == 0:
@@ -1313,6 +1391,7 @@ def _save_posterior_bundle(
     *,
     include_convergence: bool = True,
     convergence_summary: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    min_chains_for_rhat: int = 2,
 ) -> Dict[str, Optional[str]]:
     """Persist posterior arrays and diagnostics if available."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1324,7 +1403,11 @@ def _save_posterior_bundle(
 
     convergence_path: Optional[Path] = None
     if include_convergence:
-        convergence = convergence_summary if convergence_summary is not None else summarize_convergence(arrays)
+        convergence = (
+            convergence_summary
+            if convergence_summary is not None
+            else _summarize_convergence_compat(arrays, min_chains_for_rhat=min_chains_for_rhat)
+        )
         convergence_path = output_dir / "convergence.json"
         convergence_path.write_text(json.dumps(_to_serializable(convergence), indent=2), encoding="utf-8")
 
@@ -1561,7 +1644,7 @@ def _run_fold_nested(
     model_config["model"].pop("search", None)
 
     convergence_cfg = _convergence_config(base_config)
-    convergence_summary: Optional[Dict[str, Dict[str, float]]] = None
+    convergence_summary: Optional[Dict[str, Dict[str, Any]]] = None
     convergence_attempts: List[Dict[str, Any]] = []
 
     if degenerate_model is None:
@@ -1591,7 +1674,11 @@ def _run_fold_nested(
         )
         model_config = deepcopy(effective_model_config)
         posterior_arrays = posterior_arrays_prefit
-        converged, convergence_failures = _check_convergence(convergence_summary, convergence_cfg)
+        converged, convergence_failures = _check_convergence(
+            convergence_summary,
+            convergence_cfg,
+            model_name=str(model_config["model"].get("name", "")),
+        )
         fold_status = "OK" if converged else "INVALID_CONVERGENCE"
     else:
         model = degenerate_model
@@ -1603,6 +1690,8 @@ def _run_fold_nested(
     experiments_cfg = base_config.get("experiments", {}) or {}
     coverage_level = float(experiments_cfg.get("coverage_level", 0.9))
     classification_threshold = float(experiments_cfg.get("classification_threshold", 0.5))
+    evaluation_cfg = experiments_cfg.get("evaluation", {}) or {}
+    predictive_density_mode = str(evaluation_cfg.get("predictive_density_mode", "mixed"))
 
     if C_train is not None and task != "classification":
         beta_point = getattr(model, "coef_mean_", None)
@@ -1637,6 +1726,7 @@ def _run_fold_nested(
         slab_width=model_config["model"].get("c"),
         task=task,
         classification_threshold=classification_threshold,
+        predictive_density_mode=predictive_density_mode,
         y_pred_override=y_pred_override,
         pred_draws_override=pred_draws_override,
     )
@@ -1667,6 +1757,7 @@ def _run_fold_nested(
             fold_dir,
             posterior_arrays,
             convergence_summary=convergence_summary,
+            min_chains_for_rhat=int(convergence_cfg.get("min_chains_for_rhat", 2)),
         )
     if covariate_alpha_hat is not None:
         alpha_payload: Dict[str, Any] = {"alpha_hat": covariate_alpha_hat}
@@ -1686,6 +1777,11 @@ def _run_fold_nested(
     }
     if convergence_summary is not None:
         fold_summary["convergence"] = convergence_summary
+    if degenerate_model is None and convergence_summary is not None:
+        fold_summary["expected_convergence_blocks"] = _expected_convergence_blocks(
+            str(model_config["model"].get("name", "")),
+            convergence_cfg,
+        )
     if convergence_attempts:
         fold_summary["convergence_attempts"] = convergence_attempts
     if covariate_alpha_hat is not None:
@@ -1726,6 +1822,22 @@ def _aggregate_metrics(records: Sequence[Mapping[str, Any]]) -> Tuple[Dict[str, 
             "count": float(arr.size),
         }
     return mean_metrics, summary
+
+
+def _aggregate_metric_sources(records: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, int]]:
+    counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for entry in records:
+        if not _classify_fold_status(str(entry.get("status", "OK"))):
+            continue
+        metrics = entry.get("metrics", {})
+        if not isinstance(metrics, Mapping):
+            continue
+        for key, value in metrics.items():
+            if not str(key).endswith("_source"):
+                continue
+            metric_name = str(key)[: -len("_source")]
+            counts[metric_name][str(value)] += 1
+    return {metric: dict(source_counts) for metric, source_counts in counts.items()}
 
 
 def _extract_inference_seeds(cfg: Mapping[str, Any]) -> Dict[str, int]:
@@ -1849,6 +1961,7 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             "repeat_index": repeat_idx + 1,
             "metrics": repeat_mean,
             "metrics_summary": repeat_summary,
+            "metric_sources": _aggregate_metric_sources(repeat_records),
             "folds": [
                 {
                     "status": entry.get("status"),
@@ -1878,7 +1991,12 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             if arrs and arrs[0].size > 0
         }
         if combined:
-            _save_posterior_bundle(output_path, combined, include_convergence=False)
+            _save_posterior_bundle(
+                output_path,
+                combined,
+                include_convergence=False,
+                min_chains_for_rhat=int(_convergence_config(effective_config).get("min_chains_for_rhat", 2)),
+            )
 
     summary_payload = {
         "status": "OK" if len(all_valid_fold_records) == len(all_fold_records) else "PARTIAL",
@@ -1888,6 +2006,7 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
         "outer_folds_per_repeat": len(repeat_summaries[0]["folds"]) if repeat_summaries else 0,
         "metrics": aggregated_metrics,
         "metrics_summary": aggregated_summary,
+        "metric_sources": _aggregate_metric_sources(all_fold_records),
         "valid_fold_count": int(len(all_valid_fold_records)),
         "invalid_fold_count": int(len(all_fold_records) - len(all_valid_fold_records)),
         "repeat_summaries": repeat_summaries,

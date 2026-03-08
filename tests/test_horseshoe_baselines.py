@@ -14,6 +14,7 @@ from grrhs.models.baselines import (
     HorseshoeRegression,
     RegularizedHorseshoeRegression,
 )
+from grrhs.diagnostics.convergence import summarize_convergence
 
 
 def _synthetic_regression(seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -157,3 +158,38 @@ def test_group_horseshoe_logistic_predicts_probabilities():
     probs = fitted.predict_proba(X[:10])
     assert probs.shape == (10, 2)
     np.testing.assert_allclose(probs.sum(axis=1), np.ones(10), atol=1e-6)
+
+
+def test_group_horseshoe_preserves_multichain_draws_for_convergence():
+    X, y, _ = _synthetic_regression(seed=2026)
+    groups = [[0, 3, 5], [1, 2, 4]]
+    model = GroupHorseshoeRegression(
+        groups=groups,
+        num_warmup=20,
+        num_samples=20,
+        num_chains=2,
+        target_accept_prob=0.8,
+        progress_bar=False,
+        seed=91,
+    )
+    fitted = model.fit(X, y, groups=groups)
+
+    assert fitted.coef_samples_ is not None
+    assert fitted.coef_samples_.ndim == 3
+    assert fitted.coef_samples_.shape[:2] == (2, 20)
+    assert fitted.lambda_group_samples_ is not None
+    assert fitted.lambda_group_samples_.ndim == 3
+
+    summaries = fitted.get_posterior_summaries()
+    assert summaries["coef_mean"].shape == (X.shape[1],)
+    assert summaries["lambda_group_mean"].shape == (len(groups),)
+
+    convergence = summarize_convergence(
+        {
+            "beta": fitted.coef_samples_,
+            "group_lambda": fitted.lambda_group_samples_,
+        }
+    )
+    assert convergence["beta"]["raw_num_chains"] == 2
+    assert convergence["beta"]["diagnostic_valid"] is True
+    assert convergence["group_lambda"]["raw_num_chains"] == 2

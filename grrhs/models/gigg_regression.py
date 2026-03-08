@@ -107,6 +107,9 @@ class GIGGRegression:
     tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     gamma_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    tau2_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    sigma2_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    gamma2_samples_: Optional[np.ndarray] = field(default=None, init=False)
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
     b_samples_: Optional[np.ndarray] = field(default=None, init=False)
     coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
@@ -148,9 +151,9 @@ class GIGGRegression:
 
         kept = max(0, (self.iters - self.burnin) // max(self.thin, 1))
         coef_draws = np.zeros((kept, p), dtype=float)
-        tau_draws = np.zeros(kept, dtype=float)
-        sigma_draws = np.zeros(kept, dtype=float)
-        gamma_draws = np.zeros((kept, G), dtype=float)
+        tau2_draws = np.zeros(kept, dtype=float)
+        sigma2_draws = np.zeros(kept, dtype=float)
+        gamma2_draws = np.zeros((kept, G), dtype=float)
         lambda_draws = np.zeros((kept, p), dtype=float) if self.store_lambda else None
         b_draws = np.zeros((kept, G), dtype=float)
 
@@ -244,18 +247,21 @@ class GIGGRegression:
 
             if it >= self.burnin and ((it - self.burnin) % max(self.thin, 1) == 0):
                 coef_draws[keep_idx] = beta
-                tau_draws[keep_idx] = tau_sq
-                sigma_draws[keep_idx] = sigma_sq
-                gamma_draws[keep_idx] = gamma_sq
+                tau2_draws[keep_idx] = tau_sq
+                sigma2_draws[keep_idx] = sigma_sq
+                gamma2_draws[keep_idx] = gamma_sq
                 if lambda_draws is not None:
                     lambda_draws[keep_idx] = lambda_sq
                 b_draws[keep_idx] = b_vec
                 keep_idx += 1
 
         self.coef_samples_ = coef_draws if kept else None
-        self.tau_samples_ = tau_draws if kept else None
-        self.sigma_samples_ = sigma_draws if kept else None
-        self.gamma_samples_ = gamma_draws if kept else None
+        self.tau2_samples_ = tau2_draws if kept else None
+        self.sigma2_samples_ = sigma2_draws if kept else None
+        self.gamma2_samples_ = gamma2_draws if kept else None
+        self.tau_samples_ = None if self.tau2_samples_ is None else np.sqrt(np.maximum(self.tau2_samples_, self.jitter))
+        self.sigma_samples_ = None if self.sigma2_samples_ is None else np.sqrt(np.maximum(self.sigma2_samples_, self.jitter))
+        self.gamma_samples_ = None if self.gamma2_samples_ is None else np.sqrt(np.maximum(self.gamma2_samples_, self.jitter))
         self.lambda_samples_ = lambda_draws if lambda_draws is not None else None
         self.b_samples_ = b_draws if kept else None
         self.coef_mean_ = coef_draws.mean(axis=0) if kept else beta

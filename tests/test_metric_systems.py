@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from grrhs.cli.run_sweep import _build_comparison_rows
+from grrhs.diagnostics.postprocess import compute_diagnostics_from_samples
 from grrhs.metrics.evaluation import evaluate_model_metrics
 
 
@@ -24,6 +25,23 @@ class _PosteriorDummyModel:
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         return X @ self.coef_
+
+
+class _GroupedPosteriorDummyModel(_PosteriorDummyModel):
+    def __init__(
+        self,
+        coef_samples: np.ndarray,
+        sigma_samples: np.ndarray,
+        tau_samples: np.ndarray,
+        lambda_samples: np.ndarray,
+        group_scale_samples: np.ndarray,
+        *,
+        attr_name: str,
+    ) -> None:
+        super().__init__(coef_samples, sigma_samples)
+        self.tau_samples_ = tau_samples
+        self.lambda_samples_ = lambda_samples
+        setattr(self, attr_name, group_scale_samples)
 
 
 def test_synthetic_recovery_metrics_are_reported():
@@ -80,3 +98,135 @@ def test_sweep_comparison_prefers_configured_metric_order():
 
     _rows, metric_keys = _build_comparison_rows(summary)
     assert metric_keys == ["RMSE", "BetaRMSE", "AUC-PR"]
+
+
+def test_strict_predictive_density_disables_proxy_for_deterministic_models():
+    rng = np.random.default_rng(1)
+    X_train = rng.normal(size=(20, 3))
+    X_test = rng.normal(size=(8, 3))
+    beta_true = np.array([0.8, -0.3, 0.0])
+    y_train = X_train @ beta_true + rng.normal(scale=0.2, size=20)
+    y_test = X_test @ beta_true + rng.normal(scale=0.2, size=8)
+
+    class _PointOnlyModel:
+        def __init__(self, coef: np.ndarray) -> None:
+            self.coef_ = coef
+            self.intercept_ = 0.0
+
+        def predict(self, X: np.ndarray) -> np.ndarray:
+            return X @ self.coef_
+
+    model = _PointOnlyModel(beta_true)
+    metrics = evaluate_model_metrics(
+        model=model,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        task="regression",
+        predictive_density_mode="strict",
+    )
+
+    assert metrics["MLPD"] is None
+    assert metrics["PredictiveLogLikelihood"] is None
+    assert metrics["MLPD_source"] == "disabled"
+
+
+def test_gigg_gamma_samples_feed_group_shrinkage_diagnostics():
+    rng = np.random.default_rng(2)
+    X_train = rng.normal(size=(18, 4))
+    X_test = rng.normal(size=(8, 4))
+    beta_true = np.array([1.1, 0.0, -0.7, 0.0])
+    y_train = X_train @ beta_true + rng.normal(scale=0.2, size=18)
+    y_test = X_test @ beta_true + rng.normal(scale=0.2, size=8)
+
+    coef_samples = np.stack([beta_true + rng.normal(scale=0.05, size=4) for _ in range(32)], axis=0)
+    sigma_samples = np.full(32, 0.2, dtype=float)
+    tau_samples = np.linspace(0.3, 0.6, 32)
+    lambda_samples = np.abs(rng.normal(loc=0.9, scale=0.1, size=(32, 4))) + 0.1
+    gamma_samples = np.tile(np.array([[0.4, 1.6]], dtype=float), (32, 1))
+    group_index = np.array([0, 0, 1, 1], dtype=int)
+    model = _GroupedPosteriorDummyModel(
+        coef_samples,
+        sigma_samples,
+        tau_samples,
+        lambda_samples,
+        gamma_samples,
+        attr_name="gamma_samples_",
+    )
+
+    metrics = evaluate_model_metrics(
+        model=model,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        beta_truth=beta_true,
+        group_index=group_index,
+        slab_width=2.0,
+        task="regression",
+    )
+    diag = compute_diagnostics_from_samples(
+        X=X_train,
+        group_index=group_index,
+        c=2.0,
+        eps=1e-8,
+        lambda_=lambda_samples,
+        tau=tau_samples,
+        phi=gamma_samples,
+        sigma=sigma_samples,
+    )
+
+    assert np.isclose(metrics["MeanKappa"], float(np.mean(diag.per_coeff["kappa"])))
+    assert np.isclose(metrics["EffectiveDoF"], float(np.sum(diag.per_group["edf"])))
+    assert np.isclose(metrics["MeanEffectiveNonzeros"], float(diag.meta["effective_nonzeros_mean"]))
+
+
+def test_group_horseshoe_group_lambda_feeds_group_shrinkage_diagnostics():
+    rng = np.random.default_rng(3)
+    X_train = rng.normal(size=(18, 4))
+    X_test = rng.normal(size=(8, 4))
+    beta_true = np.array([0.9, 0.0, -0.5, 0.0])
+    y_train = X_train @ beta_true + rng.normal(scale=0.25, size=18)
+    y_test = X_test @ beta_true + rng.normal(scale=0.25, size=8)
+
+    coef_samples = np.stack([beta_true + rng.normal(scale=0.06, size=4) for _ in range(28)], axis=0)
+    sigma_samples = np.full(28, 0.25, dtype=float)
+    tau_samples = np.linspace(0.25, 0.55, 28)
+    lambda_samples = np.abs(rng.normal(loc=0.8, scale=0.1, size=(28, 4))) + 0.1
+    group_lambda_samples = np.tile(np.array([[0.5, 1.4]], dtype=float), (28, 1))
+    group_index = np.array([0, 0, 1, 1], dtype=int)
+    model = _GroupedPosteriorDummyModel(
+        coef_samples,
+        sigma_samples,
+        tau_samples,
+        lambda_samples,
+        group_lambda_samples,
+        attr_name="lambda_group_samples_",
+    )
+
+    metrics = evaluate_model_metrics(
+        model=model,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        beta_truth=beta_true,
+        group_index=group_index,
+        slab_width=2.0,
+        task="regression",
+    )
+    diag = compute_diagnostics_from_samples(
+        X=X_train,
+        group_index=group_index,
+        c=2.0,
+        eps=1e-8,
+        lambda_=lambda_samples,
+        tau=tau_samples,
+        phi=group_lambda_samples,
+        sigma=sigma_samples,
+    )
+
+    assert np.isclose(metrics["MeanKappa"], float(np.mean(diag.per_coeff["kappa"])))
+    assert np.isclose(metrics["EffectiveDoF"], float(np.sum(diag.per_group["edf"])))
+    assert np.isclose(metrics["MeanEffectiveNonzeros"], float(diag.meta["effective_nonzeros_mean"]))

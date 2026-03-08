@@ -1,7 +1,7 @@
 """Posterior convergence diagnostics (R-hat, ESS)."""
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 import numpy as np
 
@@ -132,10 +132,35 @@ def effective_sample_size(samples: Array) -> Array:
     return np.squeeze(ess)
 
 
-def summarize_convergence(samples: Dict[str, Array]) -> Dict[str, Dict[str, float]]:
-    summary: Dict[str, Dict[str, float]] = {}
+def _diagnostic_metadata(samples: Array, *, min_chains_for_rhat: int = 2) -> Dict[str, Any]:
+    arr = np.asarray(samples, dtype=float)
+    if arr.ndim == 0:
+        raise ValueError("samples must have at least one dimension (draws)")
+    if arr.ndim == 1:
+        raw_num_chains = 1
+        raw_num_draws = int(arr.shape[0])
+    elif arr.ndim == 2:
+        raw_num_chains = 1
+        raw_num_draws = int(arr.shape[0])
+    else:
+        raw_num_chains = int(arr.shape[0])
+        raw_num_draws = int(arr.shape[1])
+    return {
+        "raw_num_chains": raw_num_chains,
+        "raw_num_draws": raw_num_draws,
+        "diagnostic_valid": bool(raw_num_chains >= int(min_chains_for_rhat)),
+    }
+
+
+def summarize_convergence(
+    samples: Dict[str, Array],
+    *,
+    min_chains_for_rhat: int = 2,
+) -> Dict[str, Dict[str, Any]]:
+    summary: Dict[str, Dict[str, Any]] = {}
     for name, arr in samples.items():
         try:
+            meta = _diagnostic_metadata(arr, min_chains_for_rhat=min_chains_for_rhat)
             rhat = split_rhat(arr)
             ess = effective_sample_size(arr)
             flat_rhat = np.asarray(rhat).ravel()
@@ -145,7 +170,11 @@ def summarize_convergence(samples: Dict[str, Array]) -> Dict[str, Dict[str, floa
                 "rhat_median": float(np.median(flat_rhat)),
                 "ess_min": float(np.min(flat_ess)),
                 "ess_median": float(np.median(flat_ess)),
+                **meta,
             }
         except ValueError as exc:
-            summary[name] = {"error": str(exc)}
+            summary[name] = {
+                "error": str(exc),
+                **_diagnostic_metadata(arr, min_chains_for_rhat=min_chains_for_rhat),
+            }
     return summary

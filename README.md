@@ -207,9 +207,9 @@ Follow this checklist to reproduce the final regression study (three synthetic s
 
 Each run directory records fold-level metrics (`fold_*` subdirectories), resolved configuration, and full metadata so reports can cross-reference calibration statistics (`tau_summary.json`) and posterior diagnostics.
 
-> Need a quick reference for the fairness contract (identical preprocessing, nested CV grids, τ heuristics, R-hat checks)? See `docs/fair_benchmark_protocol.md`.
+> Need a quick reference for the fairness contract (identical preprocessing, nested CV grids, tau heuristics, metric-source rules, convergence checks)? See `docs/fair_benchmark_protocol.md`.
 >
-> **Implementation details.** `grrhs.experiments.runner` draws the outer folds once per dataset repeat and hands the exact same `OuterFold` objects to every model (no per-model shuffling). The nested inner CV routine is only invoked for convex baselines that explicitly define a `model.search` grid (ridge/Lasso/SGL); Bayesian baselines (GRRHS, RHS, GIGG, etc.) use fixed defaults plus optional sensitivity sweeps and never read `splits.inner`. Bayesian folds are required to meet the configured convergence threshold (`experiments.convergence.max_rhat`, default `1.05`); the runner retries once with a larger budget and excludes folds that remain invalid from aggregate benchmark summaries.
+> **Implementation details.** `grrhs.experiments.runner` draws the outer folds once per dataset repeat and hands the exact same `OuterFold` objects to every model (no per-model shuffling). The nested inner CV routine is only invoked for methods that explicitly define a `model.search` space. Bayesian baselines (GRRHS, RHS, GIGG, etc.) use fixed defaults plus optional sensitivity sweeps and never read `splits.inner` in the main benchmark. Convergence is checked against model-specific shrinkage blocks and each `convergence.json` now records `raw_num_chains`, `raw_num_draws`, and `diagnostic_valid`.
 
 ### 4.0 Recommended Metric Systems
 
@@ -528,9 +528,9 @@ If the summary CSV is empty, the script exits with a clear message telling you t
 - Every `run_sweep` invocation now emits `sweep_comparison_<timestamp>.json/.csv/.md` alongside `sweep_summary_<timestamp>.json` in the sweep output directory.
 - The CSV/Markdown tables list each variation (model) with its aggregated metrics so you can paste them straight into spreadsheets or docs.
 - The JSON payload also includes `metric_extrema`, recording which variation achieved the min/max value for every metric; use it to programmatically pick winners or trigger alerts.
-- Metrics that a model cannot provide (e.g., MLPD for deterministic baselines) are rendered as `N/A`, so “missing” can’t be confused with “zero”.
+- Metrics that a model cannot provide (for example strict-mode `MLPD` for deterministic baselines) are rendered as `N/A`, so missing output is not confused with zero.
 - Re-run `run_sweep` with `--dry-run` to preview planned jobs without executing; comparison files are written only for completed sweeps.
-- Convex baselines now populate the `MLPD` column via a Gaussian-residual proxy (residual variance measured on the inner training folds, then applied to the outer test residuals). Each fold’s `metrics.json` flags this with `MLPD_source: "gaussian_residual_proxy"` so you can disclose the approximation in the paper.
+- `MLPD` / `PredictiveLogLikelihood` now carry explicit source tags in each fold metric payload. In the default `strict` mode, deterministic baselines report `MLPD_source: "disabled"`. If you opt into `experiments.evaluation.predictive_density_mode: "mixed"`, Gaussian proxies are labelled `MLPD_source: "gaussian_proxy"`.
 
 ---
 
@@ -542,11 +542,25 @@ If the summary CSV is empty, the script exits with a clear message telling you t
 Fold-level `convergence.json` example:
 ```json
 {
-  "beta": {"rhat_max": 1.03, "rhat_median": 1.01, "ess_min": 150.4, "ess_median": 210.7},
-  "tau": {"rhat_max": 1.02, "ess_min": 180.5}
+  "beta": {
+    "rhat_max": 1.03,
+    "rhat_median": 1.01,
+    "ess_min": 150.4,
+    "ess_median": 210.7,
+    "raw_num_chains": 4,
+    "raw_num_draws": 2000,
+    "diagnostic_valid": true
+  },
+  "tau": {
+    "rhat_max": 1.02,
+    "ess_min": 180.5,
+    "raw_num_chains": 4,
+    "raw_num_draws": 2000,
+    "diagnostic_valid": true
+  }
 }
 ```
-Use these to monitor mixing; consider raising iterations or modifying hyperparameters if R-hat exceeds ~1.1 or ESS is low.
+Use these to monitor mixing. If `diagnostic_valid` is `false`, treat the reported R-hat/ESS as heuristic split-chain summaries rather than full multi-chain confirmation.
 
 ### 8.1 Diagnostics Plots CLI
 
@@ -771,6 +785,8 @@ The checklist scenarios each generate a small synthetic dataset tailored to the 
 | Prepare NHANES runner-ready arrays (`X`, `C`, `y`) | `python scripts/prepare_nhanes_2003_2004.py` |
 | NHANES EDA | `python scripts/eda_nhanes_2003_2004.py` |
 | Run NHANES real-data sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/real_nhanes_2003_2004_ggt_methods.yaml --jobs 2` |
+| Audit Bayesian seed stability | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/audit_seed_stability_bayesian_methods.yaml --jobs 2` |
+| Audit Bayesian budget sensitivity | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/audit_budget_sensitivity_bayesian_methods.yaml --jobs 2` |
 | Summarize NHANES `% change in GGT` effects | `python scripts/summarize_nhanes_effects.py --sweep-dir outputs/sweeps/real_nhanes_2003_2004_ggt --out-dir outputs/reports/nhanes_effects --reference-model RHS` |
 | Plot NHANES mean CI length by group | `python scripts/plot_nhanes_group_ci.py` |
 | Plot synthetic main metric panel | `python scripts/plot_synthetic_main_metrics.py --comparison-csv <sweep_comparison.csv>` |

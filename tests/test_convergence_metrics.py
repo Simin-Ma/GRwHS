@@ -36,6 +36,9 @@ def test_summarize_convergence_keys():
     beta_summary = summary["beta"]
     assert "rhat_max" in beta_summary
     assert "ess_min" in beta_summary
+    assert beta_summary["raw_num_chains"] == 1
+    assert beta_summary["raw_num_draws"] == 200
+    assert beta_summary["diagnostic_valid"] is False
 
 
 def test_run_experiment_outputs_convergence(tmp_path):
@@ -89,3 +92,4 @@ def test_run_experiment_outputs_convergence(tmp_path):
     convergence = json.loads(fold_convergence_files[0].read_text())
     assert "beta" in convergence
     assert "rhat_max" in convergence["beta"]
+    assert "diagnostic_valid" in convergence["beta"]

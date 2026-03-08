@@ -15,7 +15,7 @@ model:
     sigma_classification: 2.0
   num_warmup: 2000
   num_samples: 2000
-  num_chains: 1
+  num_chains: 4
   thinning: 1
   target_accept_prob: 0.9
   progress_bar: false

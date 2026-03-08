@@ -48,6 +48,24 @@ def _as_numpy(x: Optional[ArrayLike]) -> Optional[np.ndarray]:
     return arr
 
 
+def _flatten_sample_axes(arr: np.ndarray, *, scalar_param: bool) -> np.ndarray:
+    """Flatten optional chain/draw sample axes into a metric-friendly layout."""
+
+    data = np.asarray(arr, dtype=float)
+    if scalar_param:
+        if data.ndim == 0:
+            return data.reshape(1)
+        return data.reshape(-1)
+
+    if data.ndim == 0:
+        return data.reshape(1, 1)
+    if data.ndim == 1:
+        return data.reshape(1, -1)
+    if data.ndim == 2:
+        return data
+    return data.reshape(-1, *data.shape[2:])
+
+
 def _mlpd_from_loglik_samples(loglik_samples: np.ndarray) -> Optional[float]:
     """
     Compute mean log predictive density via log-sum-exp across posterior draws.
@@ -75,6 +93,7 @@ def predictive_metrics(
     loglik_samples: Optional[np.ndarray] = None,
     *,
     pseudo_sigma2: Optional[float] = None,
+    predictive_density_mode: str = "mixed",
 ) -> Dict[str, Optional[float]]:
     """Compute predictive metrics (RMSE, predictive log-likelihood)."""
 
@@ -93,6 +112,8 @@ def predictive_metrics(
     metrics["RMSE"] = float(np.sqrt(mean_squared_error(y, pred)))
     metrics["MAE"] = float(mean_absolute_error(y, pred))
 
+    mode = str(predictive_density_mode).strip().lower()
+
     if loglik_samples is not None:
         ll = np.asarray(loglik_samples, dtype=float)
         if ll.ndim == 1:
@@ -103,7 +124,10 @@ def predictive_metrics(
         metrics["MLPD"] = None if mlpd_val is None else float(mlpd_val)
         if metrics["MLPD"] is not None:
             metrics["MLPD_source"] = "posterior_draws"
+            metrics["PredictiveLogLikelihood_source"] = "posterior_draws"
     elif (
+        mode != "strict"
+        and
         pseudo_sigma2 is not None
         and pseudo_sigma2 > 0
         and y is not None
@@ -116,7 +140,11 @@ def predictive_metrics(
         pseudo_loglik = float(np.mean(log_terms))
         metrics["PredictiveLogLikelihood"] = pseudo_loglik
         metrics["MLPD"] = pseudo_loglik
-        metrics["MLPD_source"] = "gaussian_residual_proxy"
+        metrics["MLPD_source"] = "gaussian_proxy"
+        metrics["PredictiveLogLikelihood_source"] = "gaussian_proxy"
+    else:
+        metrics["MLPD_source"] = "disabled"
+        metrics["PredictiveLogLikelihood_source"] = "disabled"
     return metrics
 
 
@@ -208,6 +236,8 @@ def classification_metrics(
         metrics["MLPD"] = None if mlpd_val is None else float(mlpd_val)
         if metrics["MLPD"] is not None:
             metrics["ClassLogLoss"] = float(-metrics["MLPD"])
+            metrics["MLPD_source"] = "posterior_draws"
+            metrics["ClassLogLoss_source"] = "posterior_draws"
     return metrics
 
 
@@ -487,28 +517,32 @@ class PosteriorSamples:
 
 def _prepare_posterior_samples(model: Any) -> PosteriorSamples:
     coef = _as_numpy(getattr(model, "coef_samples_", None))
-    if coef is not None and coef.ndim == 1:
-        coef = coef.reshape(1, -1)
+    if coef is not None:
+        coef = _flatten_sample_axes(coef, scalar_param=False)
 
     sigma = _as_numpy(getattr(model, "sigma_samples_", None))
     if sigma is None:
         sigma2 = _as_numpy(getattr(model, "sigma2_samples_", None))
         if sigma2 is not None:
             sigma = np.sqrt(np.maximum(sigma2, 1e-12))
-    if sigma is not None and sigma.ndim > 1:
-        sigma = sigma.reshape(sigma.shape[0], -1).mean(axis=1)
+    if sigma is not None:
+        sigma = _flatten_sample_axes(sigma, scalar_param=True)
 
     lambda_samples = _as_numpy(getattr(model, "lambda_samples_", None))
-    if lambda_samples is not None and lambda_samples.ndim == 1:
-        lambda_samples = lambda_samples.reshape(-1, 1)
+    if lambda_samples is not None:
+        lambda_samples = _flatten_sample_axes(lambda_samples, scalar_param=False)
 
     tau_samples = _as_numpy(getattr(model, "tau_samples_", None))
-    if tau_samples is not None and tau_samples.ndim > 1:
-        tau_samples = tau_samples.reshape(tau_samples.shape[0], -1).mean(axis=1)
+    if tau_samples is not None:
+        tau_samples = _flatten_sample_axes(tau_samples, scalar_param=True)
 
     phi_samples = _as_numpy(getattr(model, "phi_samples_", None))
-    if phi_samples is not None and phi_samples.ndim == 1:
-        phi_samples = phi_samples.reshape(-1, 1)
+    if phi_samples is None:
+        phi_samples = _as_numpy(getattr(model, "lambda_group_samples_", None))
+    if phi_samples is None:
+        phi_samples = _as_numpy(getattr(model, "gamma_samples_", None))
+    if phi_samples is not None:
+        phi_samples = _flatten_sample_axes(phi_samples, scalar_param=False)
 
     return PosteriorSamples(coef=coef, sigma=sigma, lambda_=lambda_samples, tau=tau_samples, phi=phi_samples)
 
@@ -577,6 +611,7 @@ def evaluate_model_metrics(
     slab_width: Optional[float] = None,
     task: str = "regression",
     classification_threshold: float = 0.5,
+    predictive_density_mode: str = "mixed",
     y_pred_override: Optional[np.ndarray] = None,
     pred_draws_override: Optional[np.ndarray] = None,
 ) -> Dict[str, Optional[float]]:
@@ -699,6 +734,7 @@ def evaluate_model_metrics(
                 pred_mean,
                 loglik_samples,
                 pseudo_sigma2=pseudo_sigma2,
+                predictive_density_mode=predictive_density_mode,
             )
         )
     else:

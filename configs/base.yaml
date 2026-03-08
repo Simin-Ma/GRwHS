@@ -33,12 +33,31 @@ experiments:
   repeats: 1
   coverage_level: 0.9
   classification_threshold: 0.5
+  evaluation:
+    predictive_density_mode: "strict"
   convergence:
     enabled: true
     max_rhat: 1.05
     max_retries: 1
     retry_scale: 2.0
-    parameters: ["beta", "tau", "phi", "lambda"]
+    parameters: ["beta", "tau"]
+    expected_blocks:
+      default: ["beta", "tau"]
+      grrhs_gibbs: ["beta", "tau", "phi", "lambda"]
+      grrhs_gibbs_logistic: ["beta", "tau", "phi", "lambda"]
+      grrhs_logistic: ["beta", "tau", "phi", "lambda"]
+      grrhs_gibbs_cls: ["beta", "tau", "phi", "lambda"]
+      gigg: ["beta", "tau", "gamma", "lambda"]
+      gigg_regression: ["beta", "tau", "gamma", "lambda"]
+      regularized_horseshoe: ["beta", "tau", "lambda"]
+      rhs: ["beta", "tau", "lambda"]
+      regularised_horseshoe: ["beta", "tau", "lambda"]
+      group_horseshoe: ["beta", "tau", "group_lambda"]
+      horseshoe: ["beta", "tau", "lambda"]
+      hs: ["beta", "tau", "lambda"]
+    missing_policy: "warn"
+    require_valid_diagnostics: false
+    min_chains_for_rhat: 2
   metrics:
     regression:
       - MLPD

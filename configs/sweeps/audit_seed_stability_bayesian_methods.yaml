@@ -1,0 +1,92 @@
+name: "audit_seed_stability_bayesian_methods"
+output_dir: "outputs/sweeps/audit_seed_stability_bayesian_methods"
+
+common_config_files:
+  - "../experiments/exp1_group_regression.yaml"
+
+common_overrides:
+  experiments:
+    repeats: 1
+
+variations:
+  - name: "grrhs_seed_321"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    overrides:
+      inference:
+        gibbs:
+          seed: 321
+  - name: "grrhs_seed_322"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    overrides:
+      inference:
+        gibbs:
+          seed: 322
+  - name: "grrhs_seed_323"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    overrides:
+      inference:
+        gibbs:
+          seed: 323
+
+  - name: "gigg_seed_2025"
+    config_files:
+      - "../methods/gigg.yaml"
+    overrides:
+      inference:
+        gibbs:
+          seed: 2025
+  - name: "gigg_seed_2026"
+    config_files:
+      - "../methods/gigg.yaml"
+    overrides:
+      inference:
+        gibbs:
+          seed: 2026
+  - name: "gigg_seed_2027"
+    config_files:
+      - "../methods/gigg.yaml"
+    overrides:
+      inference:
+        gibbs:
+          seed: 2027
+
+  - name: "group_horseshoe_seed_2025"
+    config_files:
+      - "../methods/group_horseshoe.yaml"
+    overrides:
+      model:
+        seed: 2025
+  - name: "group_horseshoe_seed_2026"
+    config_files:
+      - "../methods/group_horseshoe.yaml"
+    overrides:
+      model:
+        seed: 2026
+  - name: "group_horseshoe_seed_2027"
+    config_files:
+      - "../methods/group_horseshoe.yaml"
+    overrides:
+      model:
+        seed: 2027
+
+  - name: "rhs_seed_151"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+    overrides:
+      model:
+        seed: 151
+  - name: "rhs_seed_152"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+    overrides:
+      model:
+        seed: 152
+  - name: "rhs_seed_153"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+    overrides:
+      model:
+        seed: 153

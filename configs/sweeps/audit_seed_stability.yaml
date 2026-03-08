@@ -1,0 +1,37 @@
+name: "audit_seed_stability_grrhs"
+output_dir: "outputs/sweeps/audit_seed_stability_grrhs"
+
+common_config_files:
+  - "../experiments/exp1_group_regression.yaml"
+  - "../methods/grrhs_regression.yaml"
+
+common_overrides:
+  experiments:
+    repeats: 1
+
+variations:
+  - name: "grrhs_seed_321"
+    overrides:
+      inference:
+        gibbs:
+          seed: 321
+  - name: "grrhs_seed_322"
+    overrides:
+      inference:
+        gibbs:
+          seed: 322
+  - name: "grrhs_seed_323"
+    overrides:
+      inference:
+        gibbs:
+          seed: 323
+  - name: "grrhs_seed_324"
+    overrides:
+      inference:
+        gibbs:
+          seed: 324
+  - name: "grrhs_seed_325"
+    overrides:
+      inference:
+        gibbs:
+          seed: 325

@@ -494,10 +494,42 @@ def _ensure_1d(array: ArrayLike, name: str) -> np.ndarray:
     return arr
 
 
-def _thin(arr: Optional[np.ndarray], step: int) -> Optional[np.ndarray]:
-    if arr is None or step <= 1:
+def _thin_posterior_samples(arr: Optional[np.ndarray], step: int) -> Optional[np.ndarray]:
+    """Thin posterior draws while preserving an optional leading chain axis."""
+
+    if arr is None:
         return arr
-    return arr[::step]
+    if arr.ndim == 0:
+        return arr
+    if arr.ndim == 1:
+        if step <= 1:
+            return arr
+        return arr[::step]
+
+    thinned = arr if step <= 1 else arr[:, ::step, ...]
+    if thinned.shape[0] == 1:
+        return thinned[0]
+    return thinned
+
+
+def _flatten_scalar_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    if arr is None:
+        return None
+    data = np.asarray(arr, dtype=np.float64)
+    return data.reshape(-1)
+
+
+def _flatten_param_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    if arr is None:
+        return None
+    data = np.asarray(arr, dtype=np.float64)
+    if data.ndim == 0:
+        return data.reshape(1, 1)
+    if data.ndim == 1:
+        return data.reshape(1, -1)
+    if data.ndim == 2:
+        return data
+    return data.reshape(-1, *data.shape[2:])
 
 
 @dataclass
@@ -662,7 +694,7 @@ class _BaseHorseshoeRegression:
             chain_method="sequential",
         )
         mcmc.run(self._rng_key, jnp.asarray(X_arr), jnp.asarray(y_arr))
-        samples = mcmc.get_samples(group_by_chain=False)
+        samples = mcmc.get_samples(group_by_chain=True)
         self._store_samples(samples)
         return self
 
@@ -716,24 +748,30 @@ class _BaseHorseshoeRegression:
         self.intercept_samples_ = None
 
     def _store_samples(self, samples: Dict[str, jnp.ndarray]) -> None:
-        def _convert(name: str) -> Optional[np.ndarray]:
+        def _convert(name: str, *, scalar: bool = False) -> Optional[np.ndarray]:
             if name not in samples:
                 return None
             arr = np.asarray(samples[name], dtype=np.float64)
-            return _thin(arr, self.thinning)
+            thinned = _thin_posterior_samples(arr, self.thinning)
+            if scalar and thinned is not None and thinned.ndim == 2:
+                return thinned[..., None]
+            return thinned
 
         self.coef_samples_ = _convert("beta")
         if self.coef_samples_ is None:
             raise RuntimeError("NumPyro model did not produce beta samples.")
-        self.intercept_samples_ = _convert("beta0")
-        self.sigma_samples_ = _convert("sigma")
-        self.tau_samples_ = _convert("tau")
+        self.intercept_samples_ = _convert("beta0", scalar=True)
+        self.sigma_samples_ = _convert("sigma", scalar=True)
+        self.tau_samples_ = _convert("tau", scalar=True)
         self.lambda_samples_ = _convert("lambda")
-        self.c_samples_ = _convert("c")
+        self.c_samples_ = _convert("c", scalar=True)
 
-        self.coef_ = self.coef_samples_.mean(axis=0)
-        if self.intercept_samples_ is not None:
-            self.intercept_ = float(self.intercept_samples_.mean())
+        coef_draws = _flatten_param_draws(self.coef_samples_)
+        intercept_draws = _flatten_scalar_draws(self.intercept_samples_)
+
+        self.coef_ = None if coef_draws is None else coef_draws.mean(axis=0)
+        if intercept_draws is not None:
+            self.intercept_ = float(intercept_draws.mean())
         else:
             self.intercept_ = 0.0
 
@@ -756,19 +794,30 @@ class _BaseHorseshoeRegression:
     def get_posterior_summaries(self) -> Dict[str, Any]:
         if self.coef_samples_ is None:
             raise RuntimeError("Model must be fitted before requesting summaries.")
+        coef_draws = _flatten_param_draws(self.coef_samples_)
+        if coef_draws is None:
+            raise RuntimeError("Posterior coefficient draws are unavailable.")
         summaries: Dict[str, Any] = {
-            "coef_mean": self.coef_samples_.mean(axis=0),
-            "coef_median": np.median(self.coef_samples_, axis=0),
-            "coef_ci95": np.quantile(self.coef_samples_, [0.025, 0.975], axis=0),
+            "coef_mean": coef_draws.mean(axis=0),
+            "coef_median": np.median(coef_draws, axis=0),
+            "coef_ci95": np.quantile(coef_draws, [0.025, 0.975], axis=0),
         }
         if self.sigma_samples_ is not None:
-            summaries["sigma_mean"] = float(self.sigma_samples_.mean())
+            sigma_draws = _flatten_scalar_draws(self.sigma_samples_)
+            if sigma_draws is not None:
+                summaries["sigma_mean"] = float(sigma_draws.mean())
         if self.tau_samples_ is not None:
-            summaries["tau_mean"] = float(self.tau_samples_.mean())
+            tau_draws = _flatten_scalar_draws(self.tau_samples_)
+            if tau_draws is not None:
+                summaries["tau_mean"] = float(tau_draws.mean())
         if self.lambda_samples_ is not None:
-            summaries["lambda_mean"] = self.lambda_samples_.mean(axis=0)
+            lambda_draws = _flatten_param_draws(self.lambda_samples_)
+            if lambda_draws is not None:
+                summaries["lambda_mean"] = lambda_draws.mean(axis=0)
         if self.c_samples_ is not None:
-            summaries["c_mean"] = float(self.c_samples_.mean())
+            c_draws = _flatten_scalar_draws(self.c_samples_)
+            if c_draws is not None:
+                summaries["c_mean"] = float(c_draws.mean())
         return summaries
 
 
@@ -807,6 +856,9 @@ class GroupHorseshoeRegression(_BaseHorseshoeRegression):
         super().__post_init__()
         if self.group_scale <= 0:
             raise ValueError("group_scale must be positive.")
+
+    def _use_gibbs_backend(self) -> bool:
+        return False
 
     def fit(
         self,
@@ -913,12 +965,14 @@ class GroupHorseshoeRegression(_BaseHorseshoeRegression):
         super()._store_samples(samples)
         if "lambda_group" in samples:
             arr = np.asarray(samples["lambda_group"], dtype=np.float64)
-            self.lambda_group_samples_ = _thin(arr, self.thinning)
+            self.lambda_group_samples_ = _thin_posterior_samples(arr, self.thinning)
         else:
             self.lambda_group_samples_ = None
 
     def get_posterior_summaries(self) -> Dict[str, Any]:
         summaries = super().get_posterior_summaries()
         if self.lambda_group_samples_ is not None:
-            summaries["lambda_group_mean"] = self.lambda_group_samples_.mean(axis=0)
+            lambda_group_draws = _flatten_param_draws(self.lambda_group_samples_)
+            if lambda_group_draws is not None:
+                summaries["lambda_group_mean"] = lambda_group_draws.mean(axis=0)
         return summaries
