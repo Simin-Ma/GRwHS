@@ -68,14 +68,13 @@ GROUP_ORDER = list(GROUP_DISPLAY_NAMES.values())
 MODEL_COLORS: Dict[str, str] = {
     "GR-RHS": "#153B50",
     "RHS": "#3C6E71",
-    "Group horseshoe": "#7B2D26",
     "GIGG": "#3A7D44",
     "Sparse Group Lasso": "#D17A22",
     "Lasso": "#8E5572",
     "Ridge": "#7A7A7A",
 }
 
-MAIN_STRUCTURE_MODELS = ["RHS", "GR-RHS", "Group horseshoe"]
+MAIN_STRUCTURE_MODELS = ["RHS", "GR-RHS"]
 
 
 @dataclass
@@ -111,7 +110,6 @@ def _model_label(run_dir: Path) -> str:
     name = str(model_cfg.get("name", run_dir.name))
     aliases = {
         "grrhs_gibbs": "GR-RHS",
-        "group_horseshoe": "Group horseshoe",
         "gigg": "GIGG",
         "ridge": "Ridge",
         "lasso": "Lasso",

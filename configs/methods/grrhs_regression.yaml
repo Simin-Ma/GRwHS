@@ -5,7 +5,7 @@ model:
   c: 1.0
   eta: 0.5
   s0: 1.0
-  iters: 8000
+  iters: 2000
   tau:
     mode: "calibrated"
     target: "coefficients"
@@ -16,8 +16,8 @@ model:
 
 inference:
   gibbs:
-    burn_in: 4000
-    thin: 2
-    num_chains: 2
+    burn_in: 1000
+    thin: 1
+    num_chains: 1
     jitter: 1.0e-08
     seed: 321

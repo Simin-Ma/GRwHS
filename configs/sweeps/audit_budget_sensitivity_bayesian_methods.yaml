@@ -53,24 +53,6 @@ variations:
         gibbs:
           burn_in: 16000
 
-  - name: "group_horseshoe_budget_1x"
-    config_files:
-      - "../methods/group_horseshoe.yaml"
-  - name: "group_horseshoe_budget_2x"
-    config_files:
-      - "../methods/group_horseshoe.yaml"
-    overrides:
-      model:
-        num_warmup: 4000
-        num_samples: 4000
-  - name: "group_horseshoe_budget_4x"
-    config_files:
-      - "../methods/group_horseshoe.yaml"
-    overrides:
-      model:
-        num_warmup: 8000
-        num_samples: 8000
-
   - name: "rhs_budget_1x"
     config_files:
       - "../methods/regularized_horseshoe.yaml"

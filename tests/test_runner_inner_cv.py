@@ -201,6 +201,7 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
             "save_posterior": True,
             "metrics": {"regression": ["RMSE"]},
             "convergence": {"enabled": True, "max_rhat": 1.05, "max_retries": 1, "retry_scale": 2.0},
+            "bayesian_fairness": {"disable_budget_retry": False},
         },
         "splits": {"inner": {"n_splits": 2, "shuffle": True, "seed": 0}},
     }
@@ -232,6 +233,56 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
     assert len(result["convergence_attempts"]) == 2
     assert result["convergence_attempts"][0]["converged"] is False
     assert result["convergence_attempts"][1]["converged"] is True
+
+
+def test_inner_cv_is_disabled_for_bayesian_models():
+    base_config = {
+        "task": "regression",
+        "model": {
+            "name": "grrhs_gibbs",
+            "search": {"strategy": "grid", "space": {"tau0": [0.1, 0.2]}},
+        },
+        "experiments": {
+            "bayesian_fairness": {
+                "enabled": True,
+                "disable_inner_cv": True,
+            }
+        },
+        "splits": {
+            "inner": {
+                "n_splits": 3,
+                "shuffle": True,
+                "seed": 11,
+            }
+        },
+    }
+
+    X = np.array(
+        [
+            [0.0, 1.0],
+            [1.0, 2.0],
+            [2.0, 1.0],
+            [3.0, 0.0],
+            [4.0, -1.0],
+            [5.0, -2.0],
+        ],
+        dtype=np.float32,
+    )
+    y = np.array([0.2, 1.1, 1.8, 2.9, 4.2, 5.1], dtype=np.float32)
+    groups = [[0], [1]]
+    std_cfg = StandardizationConfig(X="unit_variance", y_center=True)
+
+    params, history = _perform_inner_cv(
+        base_config,
+        X,
+        y,
+        groups,
+        task="regression",
+        std_cfg=std_cfg,
+    )
+
+    assert params == {}
+    assert history == [{"reason": "disabled_for_bayesian_fairness"}]
 
 
 def test_run_fold_rejects_invalid_diagnostics_when_required(monkeypatch, tmp_path):

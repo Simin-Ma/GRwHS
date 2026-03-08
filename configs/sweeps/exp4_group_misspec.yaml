@@ -8,6 +8,3 @@ variations:
   - name: "grrhs"
     config_files:
       - "../methods/grrhs_regression.yaml"
-  - name: "group_horseshoe"
-    config_files:
-      - "../methods/group_horseshoe.yaml"

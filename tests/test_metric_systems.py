@@ -28,6 +28,11 @@ class _PosteriorDummyModel:
         return X @ self.coef_
 
 
+class _PosteriorWrongPredictModel(_PosteriorDummyModel):
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return np.full(X.shape[0], 99.0, dtype=float)
+
+
 class _GroupedPosteriorDummyModel(_PosteriorDummyModel):
     def __init__(
         self,
@@ -269,6 +274,28 @@ def test_selection_metrics_use_shared_absolute_coefficient_ranking():
     assert np.isclose(posterior_metrics["F1"], point_metrics["F1"])
 
 
+def test_bayesian_regression_predictions_use_posterior_mean_not_model_predict():
+    X_train = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float)
+    X_test = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float)
+    y_train = np.array([1.0, 2.0], dtype=float)
+    y_test = np.array([1.0, 2.0], dtype=float)
+    coef_samples = np.array([[1.0, 2.0], [1.0, 2.0]], dtype=float)
+    sigma_samples = np.array([0.1, 0.1], dtype=float)
+    model = _PosteriorWrongPredictModel(coef_samples, sigma_samples)
+
+    metrics = evaluate_model_metrics(
+        model=model,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        task="regression",
+        predictive_density_mode="strict",
+    )
+
+    assert np.isclose(metrics["RMSE"], 0.0)
+
+
 def test_gigg_gamma_samples_feed_group_shrinkage_diagnostics():
     rng = np.random.default_rng(2)
     X_train = rng.normal(size=(18, 4))
@@ -318,52 +345,3 @@ def test_gigg_gamma_samples_feed_group_shrinkage_diagnostics():
     assert np.isclose(metrics["EffectiveDoF"], float(np.sum(diag.per_group["edf"])))
     assert np.isclose(metrics["MeanEffectiveNonzeros"], float(diag.meta["effective_nonzeros_mean"]))
 
-
-def test_group_horseshoe_group_lambda_feeds_group_shrinkage_diagnostics():
-    rng = np.random.default_rng(3)
-    X_train = rng.normal(size=(18, 4))
-    X_test = rng.normal(size=(8, 4))
-    beta_true = np.array([0.9, 0.0, -0.5, 0.0])
-    y_train = X_train @ beta_true + rng.normal(scale=0.25, size=18)
-    y_test = X_test @ beta_true + rng.normal(scale=0.25, size=8)
-
-    coef_samples = np.stack([beta_true + rng.normal(scale=0.06, size=4) for _ in range(28)], axis=0)
-    sigma_samples = np.full(28, 0.25, dtype=float)
-    tau_samples = np.linspace(0.25, 0.55, 28)
-    lambda_samples = np.abs(rng.normal(loc=0.8, scale=0.1, size=(28, 4))) + 0.1
-    group_lambda_samples = np.tile(np.array([[0.5, 1.4]], dtype=float), (28, 1))
-    group_index = np.array([0, 0, 1, 1], dtype=int)
-    model = _GroupedPosteriorDummyModel(
-        coef_samples,
-        sigma_samples,
-        tau_samples,
-        lambda_samples,
-        group_lambda_samples,
-        attr_name="lambda_group_samples_",
-    )
-
-    metrics = evaluate_model_metrics(
-        model=model,
-        X_train=X_train,
-        X_test=X_test,
-        y_train=y_train,
-        y_test=y_test,
-        beta_truth=beta_true,
-        group_index=group_index,
-        slab_width=2.0,
-        task="regression",
-    )
-    diag = compute_diagnostics_from_samples(
-        X=X_train,
-        group_index=group_index,
-        c=2.0,
-        eps=1e-8,
-        lambda_=lambda_samples,
-        tau=tau_samples,
-        phi=group_lambda_samples,
-        sigma=sigma_samples,
-    )
-
-    assert np.isclose(metrics["MeanKappa"], float(np.mean(diag.per_coeff["kappa"])))
-    assert np.isclose(metrics["EffectiveDoF"], float(np.sum(diag.per_group["edf"])))
-    assert np.isclose(metrics["MeanEffectiveNonzeros"], float(diag.meta["effective_nonzeros_mean"]))

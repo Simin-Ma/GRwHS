@@ -86,13 +86,75 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
         "regularized_horseshoe": ["beta", "tau", "lambda"],
         "rhs": ["beta", "tau", "lambda"],
         "regularised_horseshoe": ["beta", "tau", "lambda"],
-        "group_horseshoe": ["beta", "tau", "group_lambda"],
         "horseshoe": ["beta", "tau", "lambda"],
         "hs": ["beta", "tau", "lambda"],
     },
     "missing_policy": "warn",
     "require_valid_diagnostics": True,
     "min_chains_for_rhat": 2,
+}
+
+DEFAULT_BAYESIAN_FAIRNESS_CONFIG: Dict[str, Any] = {
+    "enabled": True,
+    "disable_inner_cv": True,
+    "enforce_shared_sampling_budget": True,
+    "require_posterior_mean_summary": True,
+    "disable_budget_retry": True,
+    "sampling_budget": {
+        "burn_in": 1000,
+        "kept_draws": 1000,
+        "thinning": 1,
+        "num_chains": 1,
+    },
+}
+
+_BAYESIAN_MODEL_NAMES = {
+    "grrhs_gibbs",
+    "grrhs_gibbs_logistic",
+    "grrhs_logistic",
+    "grrhs_gibbs_cls",
+    "gigg",
+    "gigg_regression",
+    "regularized_horseshoe",
+    "rhs",
+    "regularised_horseshoe",
+}
+
+_BAYESIAN_HYPERPRIOR_LABELS: Dict[str, Dict[str, str]] = {
+    "grrhs_gibbs": {
+        "tau": "tau ~ C+(0, 1) via calibrated tau0 heuristic",
+        "group": "group scales use HalfNormal/Cauchy-style grouped shrinkage defaults",
+    },
+    "grrhs_gibbs_logistic": {
+        "tau": "tau ~ C+(0, 1) via calibrated tau0 heuristic",
+        "group": "group scales use HalfNormal/Cauchy-style grouped shrinkage defaults",
+    },
+    "gigg": {
+        "group": "a_g = 1/n when a_value is null",
+        "mmle": "b_g updated by paper_lambda_only MMLE path",
+    },
+    "gigg_regression": {
+        "group": "a_g = 1/n when a_value is null",
+        "mmle": "b_g updated by paper_lambda_only MMLE path",
+    },
+    "regularized_horseshoe": {
+        "tau": "tau ~ C+(0, 1)",
+        "slab": "c^2 ~ Inv-Gamma(nu/2, nu s^2 / 2)",
+    },
+    "rhs": {
+        "tau": "tau ~ C+(0, 1)",
+        "slab": "c^2 ~ Inv-Gamma(nu/2, nu s^2 / 2)",
+    },
+    "regularised_horseshoe": {
+        "tau": "tau ~ C+(0, 1)",
+        "slab": "c^2 ~ Inv-Gamma(nu/2, nu s^2 / 2)",
+    },
+    "horseshoe": {
+        "tau": "tau ~ C+(0, 1)",
+    },
+    "hs": {
+        "tau": "tau ~ C+(0, 1)",
+    },
 }
 
 
@@ -152,6 +214,129 @@ def _resolve_task(config: Mapping[str, Any]) -> str:
     ).lower()
     aliases = {"binary": "classification", "binary_classification": "classification", "cls": "classification"}
     return aliases.get(task, task)
+
+
+def _resolve_model_name(config: Mapping[str, Any]) -> str:
+    model_cfg = config.get("model", {}) or {}
+    name = model_cfg.get("name", model_cfg.get("type", ""))
+    return str(name).strip().lower()
+
+
+def _is_bayesian_model_name(name: str) -> bool:
+    return str(name).strip().lower() in _BAYESIAN_MODEL_NAMES
+
+
+def _is_bayesian_config(config: Mapping[str, Any]) -> bool:
+    return _is_bayesian_model_name(_resolve_model_name(config))
+
+
+def _bayesian_fairness_config(config: Mapping[str, Any]) -> Dict[str, Any]:
+    experiments_cfg = config.get("experiments", {}) or {}
+    raw = experiments_cfg.get("bayesian_fairness", {}) or {}
+    resolved = deepcopy(DEFAULT_BAYESIAN_FAIRNESS_CONFIG)
+    if isinstance(raw, Mapping):
+        for key, value in raw.items():
+            if key == "sampling_budget" and isinstance(value, Mapping):
+                resolved["sampling_budget"].update(dict(value))
+            else:
+                resolved[key] = value
+    return resolved
+
+
+def _sampling_budget_from_config(config: Mapping[str, Any]) -> Dict[str, int]:
+    fairness_cfg = _bayesian_fairness_config(config)
+    raw = fairness_cfg.get("sampling_budget", {}) or {}
+    burn_in = max(0, int(raw.get("burn_in", 4000)))
+    kept_draws = max(1, int(raw.get("kept_draws", 2000)))
+    thinning = max(1, int(raw.get("thinning", 2)))
+    num_chains = max(1, int(raw.get("num_chains", 2)))
+    return {
+        "burn_in": burn_in,
+        "kept_draws": kept_draws,
+        "thinning": thinning,
+        "num_chains": num_chains,
+    }
+
+
+def _apply_bayesian_sampling_budget(config: MutableMapping[str, Any]) -> None:
+    if not _is_bayesian_config(config):
+        return
+    fairness_cfg = _bayesian_fairness_config(config)
+    if not bool(fairness_cfg.get("enabled", True)):
+        return
+    if not bool(fairness_cfg.get("enforce_shared_sampling_budget", True)):
+        return
+
+    budget = _sampling_budget_from_config(config)
+    model_cfg = config.setdefault("model", {})
+    inference_cfg = config.setdefault("inference", {})
+    model_name = _resolve_model_name(config)
+
+    if model_name in {"grrhs_gibbs", "grrhs_gibbs_logistic", "grrhs_logistic", "grrhs_gibbs_cls", "gigg", "gigg_regression"}:
+        gibbs_cfg = inference_cfg.setdefault("gibbs", {})
+        gibbs_cfg["burn_in"] = int(budget["burn_in"])
+        gibbs_cfg["thin"] = int(budget["thinning"])
+        gibbs_cfg["num_chains"] = int(budget["num_chains"])
+        model_cfg["iters"] = int(budget["burn_in"] + budget["kept_draws"] * budget["thinning"])
+        return
+
+    if model_name in {"horseshoe", "hs", "regularized_horseshoe", "rhs", "regularised_horseshoe"}:
+        nuts_cfg = inference_cfg.setdefault("nuts", {})
+        nuts_cfg["num_warmup"] = int(budget["burn_in"])
+        nuts_cfg["num_samples"] = int(budget["kept_draws"] * budget["thinning"])
+        nuts_cfg["num_chains"] = int(budget["num_chains"])
+        nuts_cfg["thinning"] = int(budget["thinning"])
+        model_cfg["num_warmup"] = int(budget["burn_in"])
+        model_cfg["num_samples"] = int(budget["kept_draws"] * budget["thinning"])
+        model_cfg["num_chains"] = int(budget["num_chains"])
+        model_cfg["thinning"] = int(budget["thinning"])
+
+
+def _bayesian_protocol_summary(
+    config: Mapping[str, Any],
+    *,
+    std_cfg: StandardizationConfig,
+    groups: Sequence[Sequence[int]],
+    p: int,
+) -> Optional[Dict[str, Any]]:
+    if not _is_bayesian_config(config):
+        return None
+    fairness_cfg = _bayesian_fairness_config(config)
+    if not bool(fairness_cfg.get("enabled", True)):
+        return None
+
+    model_name = _resolve_model_name(config)
+    budget = _sampling_budget_from_config(config)
+    experiments_cfg = config.get("experiments", {}) or {}
+    metrics_cfg = experiments_cfg.get("metrics", {}) or {}
+    reporting_cfg = experiments_cfg.get("reporting", {}) or {}
+    comparison_cfg = reporting_cfg.get("comparison_metrics", {}) or {}
+    regression_metrics = comparison_cfg.get("regression", []) if isinstance(comparison_cfg, Mapping) else []
+    primary_metric = regression_metrics[0] if isinstance(regression_metrics, Sequence) and regression_metrics else "RMSE"
+    return {
+        "same_likelihood": "gaussian_regression",
+        "shared_data_representation": {
+            "X_standardization": std_cfg.X,
+            "y_center": bool(std_cfg.y_center),
+            "group_count": int(len(groups)),
+            "feature_count": int(p),
+        },
+        "posterior_sampling_budget": {
+            "burn_in": int(budget["burn_in"]),
+            "kept_draws": int(budget["kept_draws"]),
+            "thinning": int(budget["thinning"]),
+            "num_chains": int(budget["num_chains"]),
+            "retry_disabled_for_fairness": bool(fairness_cfg.get("disable_budget_retry", True)),
+        },
+        "hyperprior_policy": {
+            "mode": "paper_default_hyperpriors",
+            "details": deepcopy(_BAYESIAN_HYPERPRIOR_LABELS.get(model_name, {})),
+        },
+        "posterior_summary_rule": "posterior_mean",
+        "primary_evaluation_metric": str(primary_metric),
+        "evaluation_metrics": deepcopy(metrics_cfg),
+        "convergence_required": True,
+    }
 
 
 def _parse_stratify_option(value: Any, *, default: StratifyOption) -> StratifyOption:
@@ -356,7 +541,7 @@ def _scale_bayesian_runtime(
             gibbs_cfg["burn_in"] = max(2, int(math.ceil(float(gibbs_cfg["burn_in"]) * scale)))
         return
 
-    if model_name in {"group_horseshoe", "horseshoe", "hs", "regularized_horseshoe", "rhs", "regularised_horseshoe"}:
+    if model_name in {"horseshoe", "hs", "regularized_horseshoe", "rhs", "regularised_horseshoe"}:
         for key in ("num_warmup", "num_samples"):
             if key in model_config:
                 model_config[key] = max(100, int(math.ceil(float(model_config[key]) * scale)))
@@ -392,13 +577,20 @@ def _fit_model_with_retry(
     last_summary: Optional[Dict[str, Dict[str, float]]] = None
     last_effective_config: Mapping[str, Any] = model_config
 
-    total_attempts = 1 + int(convergence_cfg.get("max_retries", 1))
+    fairness_cfg = _bayesian_fairness_config(model_config)
+    max_retries = int(convergence_cfg.get("max_retries", 1))
+    if _is_bayesian_config(model_config) and bool(fairness_cfg.get("enabled", True)) and bool(
+        fairness_cfg.get("disable_budget_retry", True)
+    ):
+        max_retries = 0
+    total_attempts = 1 + max_retries
     scale = float(convergence_cfg.get("retry_scale", 2.0))
 
     for attempt in range(total_attempts):
         attempt_config = deepcopy(model_config)
         attempt_model_cfg = attempt_config.setdefault("model", {})
         attempt_inference_cfg = attempt_config.setdefault("inference", {})
+        _apply_bayesian_sampling_budget(attempt_config)
         if attempt > 0:
             _scale_bayesian_runtime(attempt_model_cfg, attempt_inference_cfg, scale ** attempt)
 
@@ -734,6 +926,7 @@ def _prepare_outer_folds(
 
 def _instantiate_model(config: Mapping[str, Any], groups: Sequence[Sequence[int]], p: int) -> Any:
     cfg = deepcopy(config)
+    _apply_bayesian_sampling_budget(cfg)
     cfg.setdefault("data", {})
     cfg["data"]["groups"] = [list(map(int, g)) for g in groups]
     cfg["data"]["p"] = int(p)
@@ -1231,6 +1424,10 @@ def _perform_inner_cv(
     """Select inner-CV hyper-parameters via grid search or low-dimensional BO."""
 
     search_cfg = deepcopy(base_config.get("model", {}).get("search"))
+    if search_cfg and _is_bayesian_config(base_config):
+        fairness_cfg = _bayesian_fairness_config(base_config)
+        if bool(fairness_cfg.get("enabled", True)) and bool(fairness_cfg.get("disable_inner_cv", True)):
+            return {}, [{"reason": "disabled_for_bayesian_fairness"}]
     if not isinstance(search_cfg, Mapping) or not search_cfg:
         return {}, None
 
@@ -1687,10 +1884,17 @@ def _run_fold_nested(
     model_config = deepcopy(base_config)
     model_config.setdefault("model", {})
     model_config["model"].pop("search", None)
+    _apply_bayesian_sampling_budget(model_config)
 
     convergence_cfg = _convergence_config(base_config)
     convergence_summary: Optional[Dict[str, Dict[str, Any]]] = None
     convergence_attempts: List[Dict[str, Any]] = []
+    bayesian_protocol = _bayesian_protocol_summary(
+        model_config,
+        std_cfg=std_cfg,
+        groups=model_groups,
+        p=int(X_train_model.shape[1]),
+    )
 
     if degenerate_model is None:
         inner_params, tuning_history = _perform_inner_cv(
@@ -1829,6 +2033,8 @@ def _run_fold_nested(
         )
     if convergence_attempts:
         fold_summary["convergence_attempts"] = convergence_attempts
+    if bayesian_protocol is not None:
+        fold_summary["bayesian_fairness"] = bayesian_protocol
     if covariate_alpha_hat is not None:
         fold_summary["covariate_adjustment_file"] = str(fold_dir / "covariate_adjustment.npz")
     if degenerate_label_value is not None:
@@ -1933,6 +2139,15 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
     repeat_dir_paths: List[str] = []
 
     model_name = get_model_name_from_config(effective_config)
+    _apply_bayesian_sampling_budget(effective_config)
+    run_bayesian_protocol = _bayesian_protocol_summary(
+        effective_config,
+        std_cfg=std_cfg,
+        groups=_resolve_groups(effective_config, effective_config.get("data", {}).get("groups"), 0)
+        if effective_config.get("data", {}).get("groups")
+        else [],
+        p=int((effective_config.get("data", {}) or {}).get("p", 0) or 0),
+    )
 
     for repeat_idx in range(repeats):
         repeat_config = deepcopy(effective_config)
@@ -2076,6 +2291,8 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             "repeat_dirs": repeat_dir_paths,
         },
     }
+    if run_bayesian_protocol is not None:
+        summary_payload["bayesian_fairness"] = run_bayesian_protocol
 
     (output_path / "summary.json").write_text(json.dumps(_to_serializable(summary_payload), indent=2), encoding="utf-8")
     (output_path / "metrics.json").write_text(json.dumps(_to_serializable(aggregated_metrics), indent=2), encoding="utf-8")

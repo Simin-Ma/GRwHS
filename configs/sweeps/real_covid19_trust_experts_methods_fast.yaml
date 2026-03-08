@@ -1,0 +1,50 @@
+name: "real_covid19_trust_experts_methods_fast"
+output_dir: "outputs/sweeps/real_covid19_trust_experts_fast"
+
+common_config_files:
+  - "../experiments/real_covid19_trust_experts.yaml"
+  - "../overrides/trust_experts_fast_protocol.yaml"
+
+variations:
+  - name: "trust_experts_grrhs_fast"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    override_cli:
+      - "model.iters=2500"
+      - "inference.gibbs.burn_in=1250"
+      - "inference.gibbs.thin=2"
+      - "inference.gibbs.num_chains=2"
+
+  - name: "trust_experts_rhs_fast"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+    override_cli:
+      - "model.num_warmup=400"
+      - "model.num_samples=400"
+      - "model.num_chains=2"
+      - "model.thinning=1"
+      - "model.target_accept_prob=0.9"
+
+  - name: "trust_experts_gigg_fast"
+    config_files:
+      - "../methods/gigg.yaml"
+    override_cli:
+      - "model.iters=2500"
+      - "inference.gibbs.burn_in=1250"
+      - "inference.gibbs.thin=2"
+      - "inference.gibbs.num_chains=2"
+
+  - name: "trust_experts_sgl_fast"
+    config_files:
+      - "../methods/sparse_group_lasso.yaml"
+      - "../overrides/trust_experts_sgl_fast.yaml"
+
+  - name: "trust_experts_lasso_fast"
+    config_files:
+      - "../methods/lasso.yaml"
+      - "../overrides/trust_experts_lasso_fast.yaml"
+
+  - name: "trust_experts_ridge_fast"
+    config_files:
+      - "../methods/ridge.yaml"
+      - "../overrides/trust_experts_ridge_fast.yaml"

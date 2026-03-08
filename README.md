@@ -56,7 +56,7 @@ pip install -e .[dev]
   - `registry.py` exposes the `@register` decorator used by every model/baseline so the runner can request them by name.
   - `sweeps.py` loads sweep templates and materializes per-run configurations; `aggregator.py` consolidates fold-level results.
 - `grrhs/models/`
-  - Contains the Gibbs (`grrhs_gibbs.py`), SVI (`grrhs_svi_numpyro.py`), and convex baselines (ridge/Group Lasso/SGL) implementations.
+  - Contains the Gibbs (`grrhs_gibbs.py`), SVI (`grrhs_svi_numpyro.py`), and convex baselines (ridge/lasso/SGL) implementations.
   - Models rely on inference helpers (sampling routines, Woodbury solvers) and populate posterior buffers used downstream.
 - `grrhs/inference/`
   - Linear algebra kernels, proximal updates, and Generalized Inverse Gaussian samplers shared by multiple models.
@@ -124,9 +124,7 @@ Method presets collect model-specific defaults and, for convex baselines only, t
 - `sparse_group_lasso.yaml` – skglm SGL with log-spaced α grid × {0.2,0.5,0.8} ℓ₁ ratios.
 - `lasso.yaml` – classic L1 path using auto-computed λ_max → 10⁻³ λ_max.
 - `ridge.yaml` – eight-point L2 grid spanning 1e-4…1e3.
-- `group_lasso.yaml` / `group_horseshoe.yaml` – still available for auxiliary ablations; `group_horseshoe.yaml` remains a separate grouped Bayesian baseline and `group_lasso.yaml` remains the convex grouped penalty baseline.
-
-For the paper-facing justification of the Bayesian defaults, including a model-by-model provenance table for `RHS`, `GIGG`, `Group Horseshoe`, and `GRRHS`, see [docs/fair_benchmark_protocol.md](/d:/FilesP/GR-RHS/docs/fair_benchmark_protocol.md).
+For the paper-facing justification of the Bayesian defaults, including a model-by-model provenance table for `RHS`, `GIGG`, and `GRRHS`, see [docs/fair_benchmark_protocol.md](/d:/FilesP/GR-RHS/docs/fair_benchmark_protocol.md).
 
 *(Retired)* Logistic presets (`*_logistic.yaml`) remain in git history if binary tasks return later.
 
@@ -136,7 +134,7 @@ These files can be stacked (dataset + method + ablation override) by passing mul
 
 Sweeps combine datasets and methods into experiment suites:
 
-- `sim_s1.yaml`, `sim_s2.yaml`, `sim_s3.yaml` – final benchmark sweeps; each variation pairs one of the three SNR overrides (`configs/overrides/snr_{0p5,1p0,3p0}.yaml`) with the full eight-model roster (`GRRHS`, `RHS`, `GIGG`, `Group Horseshoe`, `Group Lasso`, `SGL`, `Lasso`, `Ridge`). Every sweep now redraws the synthetic dataset 3× across repeats and standardises the 300/1000 hold-out split to trade minor variance for faster turnarounds.
+- `sim_s1.yaml`, `sim_s2.yaml`, `sim_s3.yaml` – final benchmark sweeps; each variation pairs one of the three SNR overrides (`configs/overrides/snr_{0p5,1p0,3p0}.yaml`) with the active six-model roster (`GRRHS`, `RHS`, `GIGG`, `SGL`, `Lasso`, `Ridge`). Every sweep now redraws the synthetic dataset 3× across repeats and standardises the 300/1000 hold-out split to trade minor variance for faster turnarounds.
 - `exp4_ablation.yaml` / `exp4_group_misspec.yaml` – optional add-ons for interpretability sections (structure removal or shuffled groups).
 - `real_<dataset>_methods.yaml` – create one per real dataset once you configure loaders; follow the synthetic sweeps as a template (same six methods, identical preprocessing, repeated 70/30 shuffles).
 
@@ -189,7 +187,7 @@ python -m grrhs.cli.run_sweep ^
 Follow this checklist to reproduce the final regression study (three synthetic suites + real data + ablations):
 
 1. **Synthetic Scenarios (S1–S3)**
-   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.1, 0.5, 1, 3} via the override files, redraws the dataset on each repeat, and evaluates the full eight-model roster (`GRRHS`, `RHS`, `GIGG`, `Group Horseshoe`, `Group Lasso`, `SGL`, `Lasso`, `Ridge`) under identical preprocessing and nested-CV settings.
+   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.1, 0.5, 1, 3} via the override files, redraws the dataset on each repeat, and evaluates the active six-model roster (`GRRHS`, `RHS`, `GIGG`, `SGL`, `Lasso`, `Ridge`) under identical preprocessing and nested-CV settings.
    - Outputs live under `outputs/sweeps/sim_s*/` with per-variant resolved configs that document the chosen SNR, seeds, and fixed prior settings.
 
 2. **Real Data Benchmarks**

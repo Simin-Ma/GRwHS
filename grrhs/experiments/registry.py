@@ -37,11 +37,9 @@ from grrhs.models.baselines import (
     Ridge,
     Lasso,
     ElasticNet,
-    GroupLasso,
     SparseGroupLasso,
     HorseshoeRegression,
     RegularizedHorseshoeRegression,
-    GroupHorseshoeRegression,
 )
 
 # ------------------------------
@@ -330,42 +328,6 @@ def _build_enet(cfg: Dict[str, Any]) -> Any:
     )
 
 
-@register("group_lasso")
-@register("grouplasso")  # alias
-def _build_group_lasso(cfg: Dict[str, Any]) -> Any:
-    # groups: List[List[int]] required
-    groups = _infer_groups(cfg)
-    if groups is None:
-        raise ValueError("GroupLasso requires 'data.groups' in config (list of index lists).")
-    alpha = float(_get(cfg, "model.alpha", 1.0))
-    fit_intercept = bool(_get(cfg, "model.fit_intercept", False))
-    max_iter = int(_get(cfg, "model.max_iter", 2_000))
-    max_epochs = int(_get(cfg, "model.max_epochs", 50_000))
-    p0 = int(_get(cfg, "model.p0", 10))
-    tol = float(_get(cfg, "model.tol", 1e-6))
-    warm_start = bool(_get(cfg, "model.warm_start", True))
-    ws_strategy = str(_get(cfg, "model.ws_strategy", "fixpoint"))
-    verbose = int(_get(cfg, "model.verbose", 0))
-    positive = bool(_get(cfg, "model.positive", False))
-
-    # group_weights (optional), defaults to sqrt(|G_g|)
-    gw = _resolve_group_weight_mode(cfg, groups)
-    return GroupLasso(
-        groups=groups,
-        alpha=alpha,
-        group_weights=gw,
-        fit_intercept=fit_intercept,
-        max_iter=max_iter,
-        max_epochs=max_epochs,
-        p0=p0,
-        tol=tol,
-        warm_start=warm_start,
-        ws_strategy=ws_strategy,
-        verbose=verbose,
-        positive=positive,
-    )
-
-
 @register("sparse_group_lasso")
 @register("sparsegrouplasso")
 @register("sgl")
@@ -423,22 +385,6 @@ def _build_regularized_horseshoe(cfg: Dict[str, Any]) -> Any:
     if slab_df is not None:
         kwargs["slab_df"] = float(slab_df)
     return RegularizedHorseshoeRegression(**kwargs)
-
-
-@register("group_horseshoe")
-@register("ghs")
-@register("group_hs")
-def _build_group_horseshoe(cfg: Dict[str, Any]) -> Any:
-    groups = _infer_groups(cfg)
-    if groups is None:
-        raise ValueError("GroupHorseshoe requires 'data.groups' in config (list of index lists).")
-    kwargs = _horseshoe_common_kwargs(cfg)
-    slab_scale = _get(cfg, "model.slab_scale", None)
-    if slab_scale is not None:
-        kwargs["slab_scale"] = float(slab_scale)
-    kwargs["groups"] = groups
-    kwargs["group_scale"] = float(_get(cfg, "model.group_scale", 1.0))
-    return GroupHorseshoeRegression(**kwargs)
 
 
 @register("gigg")
@@ -653,7 +599,7 @@ def get_builder(name: str) -> Callable[[Dict[str, Any]], Any]:
 
 def get_model_name_from_config(cfg: Dict[str, Any]) -> str:
     """Support both 'model.name' and 'model.type' keys.
-    Examples: ridge / lasso / elastic_net / group_lasso / sparse_group_lasso / grrhs_svi / grrhs_gibbs
+    Examples: ridge / lasso / elastic_net / sparse_group_lasso / grrhs_svi / grrhs_gibbs
     """
     name = _get(cfg, "model.name", None)
     if name is None:

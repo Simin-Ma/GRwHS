@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from grrhs.models.baselines import ElasticNet, GroupLasso, Lasso, Ridge, SparseGroupLasso
+from grrhs.models.baselines import ElasticNet, Lasso, Ridge, SparseGroupLasso
 
 
 def _make_regression(n: int, p: int, seed: int = 0):
@@ -43,23 +43,6 @@ def test_quick_elastic_net_runs():
     fitted = model.fit(X, y)
     preds = fitted.predict(X)
     assert preds.shape == (16,)
-
-
-def test_quick_group_lasso_runs():
-    X, y = _make_regression(20, 4, seed=3)
-    groups = [[0, 1], [2, 3]]
-    model = GroupLasso(
-        groups=groups,
-        alpha=0.2,
-        max_iter=20,
-        max_epochs=80,
-        p0=2,
-        tol=5e-3,
-        warm_start=False,
-    )
-    fitted = model.fit(X, y)
-    preds = fitted.predict(X)
-    assert preds.shape == (20,)
 
 
 def test_quick_sparse_group_lasso_runs():

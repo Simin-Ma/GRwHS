@@ -10,11 +10,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from grrhs.models.baselines import (
-    GroupHorseshoeRegression,
     HorseshoeRegression,
     RegularizedHorseshoeRegression,
 )
-from grrhs.diagnostics.convergence import summarize_convergence
 
 
 def _synthetic_regression(seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -93,33 +91,6 @@ def test_regularized_horseshoe_reports_posterior_summaries():
     assert mse < baseline
 
 
-def test_group_horseshoe_produces_group_level_shrinkage():
-    X, y, _ = _synthetic_regression(seed=4321)
-    groups = [[0, 3, 5], [1, 2, 4]]
-    model = GroupHorseshoeRegression(
-        num_warmup=150,
-        num_samples=150,
-        num_chains=1,
-        target_accept_prob=0.9,
-        progress_bar=False,
-        seed=10,
-        group_scale=1.0,
-    )
-    fitted = model.fit(X, y, groups=groups)
-
-    assert fitted.lambda_group_samples_ is not None
-    assert fitted.lambda_group_samples_.shape == (150, len(groups))
-    summaries = fitted.get_posterior_summaries()
-    assert "lambda_group_mean" in summaries
-    group_means = summaries["lambda_group_mean"]
-    assert group_means.shape == (len(groups),)
-
-    assert fitted.lambda_samples_ is not None
-    assert fitted.lambda_samples_.shape[1] == X.shape[1]
-
-    assert float(group_means[0]) > float(group_means[1])
-
-
 def test_horseshoe_logistic_handles_binary_targets():
     X, y = _synthetic_classification(seed=7)
     model = HorseshoeRegression(
@@ -140,56 +111,3 @@ def test_horseshoe_logistic_handles_binary_targets():
     np.testing.assert_allclose(probs.sum(axis=1), np.ones(5), atol=1e-6)
 
 
-def test_group_horseshoe_logistic_predicts_probabilities():
-    X, y = _synthetic_classification(seed=11)
-    groups = [[0, 1, 2], [3, 4]]
-    model = GroupHorseshoeRegression(
-        groups=groups,
-        likelihood="logistic",
-        num_warmup=120,
-        num_samples=120,
-        num_chains=1,
-        target_accept_prob=0.9,
-        progress_bar=False,
-        seed=88,
-    )
-    fitted = model.fit(X, y, groups=groups)
-
-    probs = fitted.predict_proba(X[:10])
-    assert probs.shape == (10, 2)
-    np.testing.assert_allclose(probs.sum(axis=1), np.ones(10), atol=1e-6)
-
-
-def test_group_horseshoe_preserves_multichain_draws_for_convergence():
-    X, y, _ = _synthetic_regression(seed=2026)
-    groups = [[0, 3, 5], [1, 2, 4]]
-    model = GroupHorseshoeRegression(
-        groups=groups,
-        num_warmup=20,
-        num_samples=20,
-        num_chains=2,
-        target_accept_prob=0.8,
-        progress_bar=False,
-        seed=91,
-    )
-    fitted = model.fit(X, y, groups=groups)
-
-    assert fitted.coef_samples_ is not None
-    assert fitted.coef_samples_.ndim == 3
-    assert fitted.coef_samples_.shape[:2] == (2, 20)
-    assert fitted.lambda_group_samples_ is not None
-    assert fitted.lambda_group_samples_.ndim == 3
-
-    summaries = fitted.get_posterior_summaries()
-    assert summaries["coef_mean"].shape == (X.shape[1],)
-    assert summaries["lambda_group_mean"].shape == (len(groups),)
-
-    convergence = summarize_convergence(
-        {
-            "beta": fitted.coef_samples_,
-            "group_lambda": fitted.lambda_group_samples_,
-        }
-    )
-    assert convergence["beta"]["raw_num_chains"] == 2
-    assert convergence["beta"]["diagnostic_valid"] is True
-    assert convergence["group_lambda"]["raw_num_chains"] == 2

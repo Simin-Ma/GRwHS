@@ -116,20 +116,6 @@ def _write_fake_run_summary(
     (run_dir / "resolved_config.yaml").write_text(yaml.safe_dump(resolved_config), encoding="utf-8")
 
 
-def test_group_weight_mode_size():
-    cfg = {
-        "model": {
-            "name": "group_lasso",
-            "group_weight_mode": "size",
-        },
-        "data": {
-            "groups": [[0, 1], [2, 3, 4]],
-        },
-    }
-    model = registry_module._build_group_lasso(cfg)
-    assert np.allclose(model._group_weights, np.array([2.0, 3.0]))
-
-
 def test_lasso_builder_preserves_solver_budget():
     cfg = {
         "model": {

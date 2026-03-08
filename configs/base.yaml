@@ -33,6 +33,17 @@ experiments:
   repeats: 1
   coverage_level: 0.9
   classification_threshold: 0.5
+  bayesian_fairness:
+    enabled: true
+    disable_inner_cv: true
+    enforce_shared_sampling_budget: true
+    require_posterior_mean_summary: true
+    disable_budget_retry: true
+    sampling_budget:
+      burn_in: 1000
+      kept_draws: 1000
+      thinning: 1
+      num_chains: 1
   evaluation:
     predictive_density_mode: "strict"
   convergence:
@@ -52,7 +63,6 @@ experiments:
       regularized_horseshoe: ["beta", "tau", "lambda"]
       rhs: ["beta", "tau", "lambda"]
       regularised_horseshoe: ["beta", "tau", "lambda"]
-      group_horseshoe: ["beta", "tau", "group_lambda"]
       horseshoe: ["beta", "tau", "lambda"]
       hs: ["beta", "tau", "lambda"]
     missing_policy: "warn"
@@ -88,8 +98,4 @@ experiments:
     comparison_metrics:
       regression:
         - RMSE
-        - MLPD
-        - PredictiveLogLikelihood
-        - EffectiveDoF
-        - MeanEffectiveNonzeros
   runtime_profile: false

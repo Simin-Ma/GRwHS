@@ -1,0 +1,11 @@
+model:
+  verbose: 0
+  max_iter: 80
+  max_epochs: 10000
+  search:
+    alpha:
+      mode: "logspace"
+      start: 1.0
+      stop: 0.01
+      num: 6
+    l1_ratio: [0.4, 0.7]

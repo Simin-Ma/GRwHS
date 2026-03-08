@@ -26,17 +26,6 @@ variations:
       - "model.target_accept_prob=0.9"
       - "experiments.convergence.max_retries=0"
 
-  - name: "trust_experts_group_horseshoe"
-    config_files:
-      - "../methods/group_horseshoe.yaml"
-    override_cli:
-      - "model.num_warmup=600"
-      - "model.num_samples=600"
-      - "model.num_chains=2"
-      - "model.thinning=1"
-      - "model.target_accept_prob=0.9"
-      - "experiments.convergence.max_retries=0"
-
   - name: "trust_experts_gigg"
     config_files:
       - "../methods/gigg.yaml"
@@ -46,10 +35,6 @@ variations:
       - "inference.gibbs.thin=2"
       - "inference.gibbs.num_chains=2"
       - "experiments.convergence.max_retries=0"
-
-  - name: "trust_experts_group_lasso"
-    config_files:
-      - "../methods/group_lasso.yaml"
 
   - name: "trust_experts_sgl"
     config_files:

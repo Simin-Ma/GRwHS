@@ -14,7 +14,6 @@ from sklearn.linear_model import LogisticRegression as _SklearnLogisticRegressio
 from grrhs.models.grrhs_gibbs import GRRHS_Gibbs
 
 try:
-    from skglm import GroupLasso as _SkglmGroupLasso
     from skglm import GeneralizedLinearEstimator as _SkglmGeneralizedLinearEstimator
     from skglm.datafits import QuadraticGroup as _SkglmQuadraticGroup
     from skglm.penalties.block_separable import WeightedL1GroupL2 as _SkglmWeightedL1GroupL2
@@ -22,7 +21,6 @@ try:
     from skglm.utils.data import grp_converter as _skglm_grp_converter
 except ImportError as exc:  # pragma: no cover - handled at runtime
     _SKGLM_IMPORT_ERROR = exc
-    _SkglmGroupLasso = None
     _SkglmGeneralizedLinearEstimator = None
     _SkglmQuadraticGroup = None
     _SkglmWeightedL1GroupL2 = None
@@ -36,11 +34,9 @@ __all__ = [
     "Ridge",
     "Lasso",
     "ElasticNet",
-    "GroupLasso",
     "SparseGroupLasso",
     "HorseshoeRegression",
     "RegularizedHorseshoeRegression",
-    "GroupHorseshoeRegression",
 ]
 
 GroupsLike = Sequence[Sequence[int]]
@@ -365,53 +361,6 @@ class ElasticNet(_SkglmRegressorBase):
 
 
 @dataclass
-class GroupLasso(_SkglmRegressorBase):
-    groups: GroupsLike
-    alpha: float = 1.0
-    group_weights: WeightsLike = None
-    fit_intercept: bool = False
-    max_iter: int = 2_000
-    max_epochs: int = 50_000
-    p0: int = 10
-    tol: float = 1e-6
-    warm_start: bool = True
-    ws_strategy: str = "fixpoint"
-    verbose: int = 0
-    positive: bool = False
-
-    def __post_init__(self) -> None:
-        super().__init__()
-        self.groups = _normalize_groups(self.groups)
-        self._group_weights = _coerce_group_weights(self.groups, self.group_weights)
-
-    def fit(self, X: Any, y: Any, **fit_kwargs: Any) -> "GroupLasso":
-        _require_skglm()
-        try:
-            n_features = int(X.shape[1])
-        except Exception:  # pragma: no cover - X without shape[1]
-            n_features = None
-        if n_features is not None:
-            _ensure_groups_cover_features(self.groups, n_features)
-        estimator = _SkglmGroupLasso(
-            groups=self.groups,
-            alpha=float(self.alpha),
-            weights=self._group_weights,
-            max_iter=int(self.max_iter),
-            max_epochs=int(self.max_epochs),
-            p0=int(self.p0),
-            tol=float(self.tol),
-            fit_intercept=bool(self.fit_intercept),
-            warm_start=bool(self.warm_start),
-            ws_strategy=str(self.ws_strategy),
-            verbose=self.verbose,
-            positive=bool(self.positive),
-        )
-        fitted = estimator.fit(X, y, **fit_kwargs)
-        self._store_fitted_estimator(fitted)
-        return self
-
-
-@dataclass
 class SparseGroupLasso(_SkglmRegressorBase):
     groups: GroupsLike
     alpha: float = 1.0
@@ -705,16 +654,9 @@ class _BaseHorseshoeRegression:
         *,
         groups: Optional[list[list[int]]] = None,
     ) -> None:
-        use_groups = isinstance(self, GroupHorseshoeRegression)
-        if use_groups:
-            group_scale = float(getattr(self, "group_scale", 1.0))
-            if groups is None:
-                raise ValueError("GroupHorseshoeRegression requires 'groups'.")
-            gibbs_groups = groups
-        else:
-            group_scale = 1.0
-            gibbs_groups = None
-
+        use_groups = False
+        group_scale = 1.0
+        gibbs_groups = None
         total_iters = int(self.num_warmup + self.num_samples)
         sampler = GRRHS_Gibbs(
             c=float(self.slab_scale if self.slab_scale is not None else 1.0),
@@ -741,10 +683,6 @@ class _BaseHorseshoeRegression:
             self.sigma_samples_ = None
         self.tau_samples_ = None if fitted.tau_samples_ is None else fitted.tau_samples_.copy()
         self.lambda_samples_ = None if fitted.lambda_samples_ is None else fitted.lambda_samples_.copy()
-        if use_groups and fitted.phi_samples_ is not None:
-            self.lambda_group_samples_ = fitted.phi_samples_.copy()
-        else:
-            self.lambda_group_samples_ = None
         self.intercept_samples_ = None
 
     def _store_samples(self, samples: Dict[str, jnp.ndarray]) -> None:
@@ -839,140 +777,3 @@ class RegularizedHorseshoeRegression(_BaseHorseshoeRegression):
         return False
 
 
-@dataclass
-class GroupHorseshoeRegression(_BaseHorseshoeRegression):
-    """Group Horseshoe regression baseline (Xu et al., 2016)."""
-
-    groups: Optional[GroupsLike] = None
-    group_scale: float = 1.0
-
-    groups_: Optional[list[list[int]]] = field(default=None, init=False)
-    group_ids_: Optional[np.ndarray] = field(default=None, init=False)
-    group_sizes_: Optional[np.ndarray] = field(default=None, init=False)
-    lambda_group_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    _group_index: Optional[jnp.ndarray] = field(default=None, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.group_scale <= 0:
-            raise ValueError("group_scale must be positive.")
-
-    def _use_gibbs_backend(self) -> bool:
-        return False
-
-    def fit(
-        self,
-        X: ArrayLike,
-        y: ArrayLike,
-        groups: Optional[GroupsLike] = None,
-    ) -> "GroupHorseshoeRegression":
-        X_arr = _ensure_2d(X, "X")
-        y_arr = _ensure_1d(y, "y")
-        if X_arr.shape[0] != y_arr.shape[0]:
-            raise ValueError("X and y must have matching number of rows.")
-
-        group_spec = groups if groups is not None else self.groups
-        if group_spec is None:
-            raise ValueError(
-                "GroupHorseshoeRegression requires 'groups' either at init or fit()."
-            )
-
-        normalized, group_ids = self._prepare_groups(X_arr.shape[1], group_spec)
-        self.groups_ = normalized
-        self.group_ids_ = group_ids
-        self.group_sizes_ = np.array([len(block) for block in normalized], dtype=int)
-        self._group_index = jnp.asarray(group_ids, dtype=jnp.int32)
-        return super().fit(X_arr, y_arr, groups=normalized)
-
-    @staticmethod
-    def _prepare_groups(
-        n_features: int, groups: GroupsLike
-    ) -> tuple[list[list[int]], np.ndarray]:
-        normalized = _normalize_groups(groups)
-        _ensure_groups_cover_features(normalized, n_features)
-
-        group_ids = np.full(n_features, -1, dtype=int)
-        for gid, block in enumerate(normalized):
-            idx = np.asarray(block, dtype=int)
-            if np.any(idx < 0) or np.any(idx >= n_features):
-                raise ValueError(
-                    f"Group {gid} has indices outside the valid range [0, {n_features})."
-                )
-            duplicates = idx[group_ids[idx] != -1]
-            if duplicates.size > 0:
-                dup_list = duplicates.tolist()
-                raise ValueError(
-                    f"Features {dup_list} appear in multiple groups; "
-                    "Group Horseshoe requires a partition of features."
-                )
-            group_ids[idx] = gid
-
-        missing = np.nonzero(group_ids < 0)[0]
-        if missing.size > 0:
-            raise ValueError(
-                f"Some features are not assigned to any group: {missing.tolist()}."
-            )
-        return normalized, group_ids
-
-    def _numpyro_model(self, X: jnp.ndarray, y: jnp.ndarray) -> None:
-        if self._group_index is None or self.group_sizes_ is None:
-            raise RuntimeError("Group metadata must be set before calling fit().")
-
-        sigma = None
-        if self.likelihood == "gaussian":
-            sigma = numpyro.sample("sigma", dist.HalfCauchy(self.sigma_scale))
-            global_scale = self.scale_global * sigma
-        else:
-            global_scale = self.scale_global
-        beta0 = numpyro.sample("beta0", dist.Normal(0.0, self.scale_intercept))
-
-        r1_global = numpyro.sample("r1_global", dist.HalfNormal(global_scale))
-        r2_global = numpyro.sample(
-            "r2_global",
-            dist.InverseGamma(0.5 * self.nu_global, 0.5 * self.nu_global),
-        )
-        tau = numpyro.deterministic("tau", r1_global * jnp.sqrt(r2_global))
-
-        G = int(self.group_sizes_.shape[0])
-        group_scale = self.group_scale * jnp.ones((G,))
-        r1_group = numpyro.sample("r1_group", dist.HalfNormal(group_scale).to_event(1))
-        inv_gamma_local = dist.InverseGamma(0.5 * self.nu_local, 0.5 * self.nu_local)
-        r2_group = numpyro.sample(
-            "r2_group",
-            inv_gamma_local.expand((G,)).to_event(1),
-        )
-        lambda_group = numpyro.deterministic(
-            "lambda_group",
-            r1_group * jnp.sqrt(r2_group),
-        )
-        lambda_full = lambda_group[self._group_index]
-        slab = self._draw_slab_scale()
-        lambda_effective = numpyro.deterministic(
-            "lambda",
-            self._regularize_lambda(lambda_full, tau, slab),
-        )
-
-        p = X.shape[1]
-        z = numpyro.sample("z", dist.Normal(jnp.zeros((p,)), 1.0).to_event(1))
-        beta = numpyro.deterministic("beta", z * lambda_effective * tau)
-        mean = beta0 + X @ beta
-        if self.likelihood == "gaussian":
-            numpyro.sample("y", dist.Normal(mean, sigma), obs=y)
-        else:
-            numpyro.sample("y", dist.Bernoulli(logits=mean), obs=y)
-
-    def _store_samples(self, samples: Dict[str, jnp.ndarray]) -> None:
-        super()._store_samples(samples)
-        if "lambda_group" in samples:
-            arr = np.asarray(samples["lambda_group"], dtype=np.float64)
-            self.lambda_group_samples_ = _thin_posterior_samples(arr, self.thinning)
-        else:
-            self.lambda_group_samples_ = None
-
-    def get_posterior_summaries(self) -> Dict[str, Any]:
-        summaries = super().get_posterior_summaries()
-        if self.lambda_group_samples_ is not None:
-            lambda_group_draws = _flatten_param_draws(self.lambda_group_samples_)
-            if lambda_group_draws is not None:
-                summaries["lambda_group_mean"] = lambda_group_draws.mean(axis=0)
-        return summaries

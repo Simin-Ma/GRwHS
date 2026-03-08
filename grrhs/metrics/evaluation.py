@@ -637,13 +637,6 @@ def evaluate_model_metrics(
     Xte = _as_numpy(X_test)
     yte = _as_numpy(y_test)
 
-    pred_mean = None if y_pred_override is None else np.asarray(y_pred_override, dtype=float).reshape(-1)
-    if pred_mean is None:
-        try:
-            pred_mean = None if Xte is None else np.asarray(model.predict(Xte))
-        except Exception:  # Some deterministic baselines might not implement predict
-            pred_mean = None
-
     posterior = _prepare_posterior_samples(model)
     explicit_loglik_samples = _as_numpy(getattr(model, "loglik_samples_", None))
     if explicit_loglik_samples is not None:
@@ -662,6 +655,16 @@ def evaluate_model_metrics(
         intercept_val = float(intercept)
     else:
         intercept_val = np.asarray(intercept)
+
+    pred_mean = None if y_pred_override is None else np.asarray(y_pred_override, dtype=float).reshape(-1)
+    if pred_mean is None and task_label == "regression" and Xte is not None and posterior.coef is not None:
+        posterior_mean_coef = np.mean(posterior.coef, axis=0)
+        pred_mean = np.asarray(Xte, dtype=float) @ posterior_mean_coef + float(intercept_val)
+    if pred_mean is None:
+        try:
+            pred_mean = None if Xte is None else np.asarray(model.predict(Xte))
+        except Exception:  # Some deterministic baselines might not implement predict
+            pred_mean = None
 
     prob_positive = None
     prob_draw_mean: Optional[np.ndarray] = None
@@ -778,9 +781,11 @@ def evaluate_model_metrics(
         beta_truth_bin = (np.abs(beta_truth) > 1e-8).astype(int)
 
     prob_scores = None
-    selection_point = coef_hat
-    if selection_point is None and posterior.coef is not None:
+    selection_point = None
+    if posterior.coef is not None:
         selection_point = np.mean(posterior.coef, axis=0)
+    elif coef_hat is not None:
+        selection_point = coef_hat
     if selection_point is not None:
         scaled = np.abs(np.asarray(selection_point, dtype=float)).reshape(-1)
         if scaled.size > 0 and scaled.max() > 0:

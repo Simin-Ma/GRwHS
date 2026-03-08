@@ -1,0 +1,11 @@
+splits:
+  outer:
+    n_splits: 3
+    n_repeats: 1
+  inner:
+    n_splits: 3
+
+experiments:
+  repeats: 1
+  convergence:
+    max_retries: 0
