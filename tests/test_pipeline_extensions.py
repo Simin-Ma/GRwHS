@@ -106,7 +106,7 @@ def test_ridge_reports_pseudo_mlpd(tmp_path):
     fold_metrics_path = run_dir / "repeat_001" / "fold_01" / "metrics.json"
     metrics_payload = json.loads(fold_metrics_path.read_text(encoding="utf-8"))
     assert metrics_payload["MLPD"] is not None
-    assert metrics_payload.get("MLPD_source") == "gaussian_residual_proxy"
+    assert metrics_payload.get("MLPD_source") == "gaussian_proxy"
 
 
 def test_load_real_dataset_and_runner(tmp_path):

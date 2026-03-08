@@ -100,6 +100,61 @@ def test_sweep_comparison_prefers_configured_metric_order():
     assert metric_keys == ["RMSE", "BetaRMSE", "AUC-PR"]
 
 
+def test_sweep_comparison_uses_common_valid_fold_intersection():
+    summary = [
+        {
+            "name": "var_a",
+            "model": "grrhs_gibbs",
+            "status": "PARTIAL",
+            "run_dir": "run_a",
+            "comparison_metrics": ["RMSE"],
+            "metrics": {
+                "metrics": {"RMSE": 5.0},
+                "valid_fold_count": 1,
+                "invalid_fold_count": 1,
+                "repeat_summaries": [
+                    {
+                        "repeat_index": 1,
+                        "folds": [
+                            {"hash": "fold_a", "status": "OK", "metrics": {"RMSE": 1.0}},
+                            {"hash": "fold_b", "status": "INVALID_CONVERGENCE", "metrics": {"RMSE": 9.0}},
+                        ],
+                    }
+                ],
+            },
+        },
+        {
+            "name": "var_b",
+            "model": "ridge",
+            "status": "OK",
+            "run_dir": "run_b",
+            "comparison_metrics": ["RMSE"],
+            "metrics": {
+                "metrics": {"RMSE": 4.0},
+                "valid_fold_count": 2,
+                "invalid_fold_count": 0,
+                "repeat_summaries": [
+                    {
+                        "repeat_index": 1,
+                        "folds": [
+                            {"hash": "fold_a", "status": "OK", "metrics": {"RMSE": 2.0}},
+                            {"hash": "fold_b", "status": "OK", "metrics": {"RMSE": 6.0}},
+                        ],
+                    }
+                ],
+            },
+        },
+    ]
+
+    rows, metric_keys = _build_comparison_rows(summary)
+    assert metric_keys == ["RMSE"]
+    row_map = {row["variation"]: row for row in rows}
+    assert row_map["var_a"]["metrics"]["RMSE"] == 1.0
+    assert row_map["var_b"]["metrics"]["RMSE"] == 2.0
+    assert row_map["var_a"]["comparison_basis"] == "common_valid_folds"
+    assert row_map["var_b"]["comparison_fold_count"] == 1
+
+
 def test_strict_predictive_density_disables_proxy_for_deterministic_models():
     rng = np.random.default_rng(1)
     X_train = rng.normal(size=(20, 3))
@@ -130,6 +185,51 @@ def test_strict_predictive_density_disables_proxy_for_deterministic_models():
     assert metrics["MLPD"] is None
     assert metrics["PredictiveLogLikelihood"] is None
     assert metrics["MLPD_source"] == "disabled"
+
+
+def test_selection_metrics_use_shared_absolute_coefficient_ranking():
+    rng = np.random.default_rng(11)
+    X_train = rng.normal(size=(20, 4))
+    X_test = rng.normal(size=(10, 4))
+    beta_true = np.array([1.0, 0.0, -0.7, 0.0], dtype=float)
+    y_train = X_train @ beta_true + rng.normal(scale=0.15, size=20)
+    y_test = X_test @ beta_true + rng.normal(scale=0.15, size=10)
+
+    coef_samples = np.stack([beta_true + rng.normal(scale=0.05, size=4) for _ in range(40)], axis=0)
+    sigma_samples = np.full(40, 0.15, dtype=float)
+    posterior_model = _PosteriorDummyModel(coef_samples, sigma_samples)
+
+    class _PointOnlyModel:
+        def __init__(self, coef: np.ndarray) -> None:
+            self.coef_ = coef
+            self.intercept_ = 0.0
+
+        def predict(self, X: np.ndarray) -> np.ndarray:
+            return X @ self.coef_
+
+    point_model = _PointOnlyModel(np.mean(coef_samples, axis=0))
+
+    posterior_metrics = evaluate_model_metrics(
+        model=posterior_model,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        beta_truth=beta_true,
+        task="regression",
+    )
+    point_metrics = evaluate_model_metrics(
+        model=point_model,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        beta_truth=beta_true,
+        task="regression",
+    )
+
+    assert np.isclose(posterior_metrics["AUC-PR"], point_metrics["AUC-PR"])
+    assert np.isclose(posterior_metrics["F1"], point_metrics["F1"])
 
 
 def test_gigg_gamma_samples_feed_group_shrinkage_diagnostics():

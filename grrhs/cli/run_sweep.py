@@ -148,6 +148,75 @@ def _extract_numeric_metrics(payload: Any) -> Dict[str, float]:
     return metrics
 
 
+def _coerce_int(value: Any) -> int | None:
+    try:
+        return None if value is None else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_valid_fold_status(status: Any) -> bool:
+    return not str(status or "OK").upper().startswith("INVALID")
+
+
+def _extract_fold_metric_records(payload: Any) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return {}
+
+    repeat_summaries = payload.get("repeat_summaries")
+    if not isinstance(repeat_summaries, list):
+        return {}
+
+    records: Dict[str, Dict[str, Any]] = {}
+    for repeat_summary in repeat_summaries:
+        if not isinstance(repeat_summary, dict):
+            continue
+        repeat_index = _coerce_int(repeat_summary.get("repeat_index"))
+        repeat_label = 0 if repeat_index is None else repeat_index
+        folds = repeat_summary.get("folds")
+        if not isinstance(folds, list):
+            continue
+        for fold in folds:
+            if not isinstance(fold, dict):
+                continue
+            fold_hash = fold.get("hash")
+            if not isinstance(fold_hash, str) or not fold_hash:
+                continue
+            key = f"{repeat_label}:{fold_hash}"
+            records[key] = {
+                "status": fold.get("status", "UNKNOWN"),
+                "metrics": fold.get("metrics", {}),
+            }
+    return records
+
+
+def _aggregate_numeric_metrics_from_folds(
+    fold_records: Dict[str, Dict[str, Any]],
+    selected_keys: List[str],
+) -> Dict[str, float]:
+    collector: Dict[str, List[float]] = {}
+    for key in selected_keys:
+        fold = fold_records.get(key)
+        if not isinstance(fold, dict):
+            continue
+        if not _is_valid_fold_status(fold.get("status")):
+            continue
+        metrics = fold.get("metrics")
+        if not isinstance(metrics, dict):
+            continue
+        for metric_name, raw_value in metrics.items():
+            value = _safe_float(raw_value)
+            if value is None:
+                continue
+            collector.setdefault(str(metric_name), []).append(value)
+
+    aggregated: Dict[str, float] = {}
+    for metric_name, values in collector.items():
+        if values:
+            aggregated[metric_name] = sum(values) / float(len(values))
+    return aggregated
+
+
 def _determine_model_label(record: Dict[str, Any], payload: Any) -> str | None:
     model = record.get("model")
     if isinstance(model, str):
@@ -208,33 +277,105 @@ def _compute_metric_extrema(rows: List[Dict[str, Any]], metric_keys: List[str]) 
     return extrema
 
 
-def _build_comparison_rows(summary: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
-    rows: List[Dict[str, Any]] = []
+def _build_comparison_payload(summary: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Any]]:
+    row_inputs: List[Dict[str, Any]] = []
     metric_keys: set[str] = set()
     preferred_metric_order: List[str] = []
     for record in summary:
         payload = record.get("metrics")
-        metrics = _extract_numeric_metrics(payload)
-        metric_keys.update(metrics.keys())
+        summary_metrics = _extract_numeric_metrics(payload)
+        fold_records = _extract_fold_metric_records(payload)
+        valid_fold_keys = sorted(
+            key
+            for key, fold in fold_records.items()
+            if _is_valid_fold_status(fold.get("status"))
+        )
         preferred = record.get("comparison_metrics")
         if not preferred_metric_order and isinstance(preferred, list) and preferred:
             preferred_metric_order = [str(item) for item in preferred]
-        rows.append({
+        row_inputs.append({
             "variation": record.get("name"),
             "model": _determine_model_label(record, payload),
             "status": record.get("status") or "UNKNOWN",
             "run_dir": record.get("run_dir"),
-            "metrics": metrics,
+            "summary_metrics": summary_metrics,
+            "fold_records": fold_records,
+            "valid_fold_keys": valid_fold_keys,
+            "valid_fold_count": _coerce_int((payload or {}).get("valid_fold_count")) if isinstance(payload, dict) else None,
+            "invalid_fold_count": _coerce_int((payload or {}).get("invalid_fold_count")) if isinstance(payload, dict) else None,
         })
+
+    comparable_rows = [row for row in row_inputs if row["valid_fold_keys"]]
+    common_valid_fold_keys: List[str] = []
+    if comparable_rows:
+        common_valid_fold_keys = sorted(
+            set.intersection(*(set(row["valid_fold_keys"]) for row in comparable_rows))
+        )
+
+    rows: List[Dict[str, Any]] = []
+    for row_input in row_inputs:
+        valid_fold_count = (
+            row_input["valid_fold_count"]
+            if row_input["valid_fold_count"] is not None
+            else len(row_input["valid_fold_keys"])
+        )
+        invalid_fold_count = row_input["invalid_fold_count"]
+        if invalid_fold_count is None and row_input["fold_records"]:
+            invalid_fold_count = max(0, len(row_input["fold_records"]) - len(row_input["valid_fold_keys"]))
+
+        if common_valid_fold_keys and row_input["valid_fold_keys"]:
+            metrics = _aggregate_numeric_metrics_from_folds(
+                row_input["fold_records"],
+                common_valid_fold_keys,
+            )
+            comparison_basis = "common_valid_folds"
+            comparison_fold_count = len(common_valid_fold_keys)
+        elif row_input["fold_records"] and not row_input["valid_fold_keys"]:
+            metrics = {}
+            comparison_basis = "no_valid_folds"
+            comparison_fold_count = 0
+        elif row_input["fold_records"] and comparable_rows and not common_valid_fold_keys:
+            metrics = {}
+            comparison_basis = "no_common_valid_folds"
+            comparison_fold_count = 0
+        else:
+            metrics = row_input["summary_metrics"]
+            comparison_basis = "run_summary"
+            comparison_fold_count = valid_fold_count
+
+        metric_keys.update(metrics.keys())
+        rows.append({
+            "variation": row_input["variation"],
+            "model": row_input["model"],
+            "status": row_input["status"],
+            "run_dir": row_input["run_dir"],
+            "metrics": metrics,
+            "comparison_basis": comparison_basis,
+            "comparison_fold_count": comparison_fold_count,
+            "valid_fold_count": valid_fold_count,
+            "invalid_fold_count": invalid_fold_count,
+        })
+
+    metadata = {
+        "comparison_basis": "common_valid_folds" if common_valid_fold_keys else "run_summary",
+        "common_valid_fold_count": len(common_valid_fold_keys),
+        "common_valid_fold_keys": common_valid_fold_keys,
+        "comparable_variations": [row["variation"] for row in comparable_rows],
+    }
     if preferred_metric_order:
         ordered = [key for key in preferred_metric_order if key in metric_keys]
         if ordered:
-            return rows, ordered
-    return rows, sorted(metric_keys)
+            return rows, ordered, metadata
+    return rows, sorted(metric_keys), metadata
+
+
+def _build_comparison_rows(summary: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
+    rows, metric_keys, _metadata = _build_comparison_payload(summary)
+    return rows, metric_keys
 
 
 def _write_comparison_artifacts(outdir_path: Path, sweep_name: str, timestamp: str, summary: List[Dict[str, Any]]) -> None:
-    rows, metric_keys = _build_comparison_rows(summary)
+    rows, metric_keys, comparison_meta = _build_comparison_payload(summary)
     if not rows:
         return
 
@@ -259,6 +400,7 @@ def _write_comparison_artifacts(outdir_path: Path, sweep_name: str, timestamp: s
         "sweep_name": sweep_name,
         "generated_at": timestamp,
         "metrics": metric_keys,
+        "comparison": comparison_meta,
         "rows": rows,
         "metric_extrema": extrema,
     }
@@ -269,6 +411,12 @@ def _write_comparison_artifacts(outdir_path: Path, sweep_name: str, timestamp: s
     lines: List[str] = []
     lines.append(f"# {sweep_name} sweep comparison ({timestamp})")
     lines.append("")
+    if comparison_meta.get("comparison_basis") == "common_valid_folds":
+        lines.append(
+            f"Comparison basis: common valid outer folds across comparable runs "
+            f"(`n={comparison_meta.get('common_valid_fold_count', 0)}`)."
+        )
+        lines.append("")
     if metric_keys:
         header_cells = ["Variation", "Model", "Status", *metric_keys]
     else:

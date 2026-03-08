@@ -754,11 +754,12 @@ def evaluate_model_metrics(
         beta_truth_bin = (np.abs(beta_truth) > 1e-8).astype(int)
 
     prob_scores = None
-    if posterior.coef is not None:
-        prob_scores = np.mean(np.abs(posterior.coef) > 1e-6, axis=0)
-    elif coef_hat is not None:
-        scaled = np.abs(coef_hat)
-        if scaled.max() > 0:
+    selection_point = coef_hat
+    if selection_point is None and posterior.coef is not None:
+        selection_point = np.mean(posterior.coef, axis=0)
+    if selection_point is not None:
+        scaled = np.abs(np.asarray(selection_point, dtype=float)).reshape(-1)
+        if scaled.size > 0 and scaled.max() > 0:
             prob_scores = scaled / scaled.max()
         else:
             prob_scores = scaled

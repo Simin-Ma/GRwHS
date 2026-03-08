@@ -229,6 +229,8 @@ Synthetic scenarios should not be judged only by prediction. Because the true co
 - **Selection**
   - `AUC-PR`
   - `F1`
+  - These synthetic selection metrics are computed from one shared ranking signal across methods:
+    absolute fitted coefficient magnitude (posterior mean for Bayesian models, point estimate for deterministic models).
 - **Uncertainty efficiency**
   - `BetaCoverage90`
   - `ActiveBetaIntervalWidth90`
@@ -530,6 +532,7 @@ If the summary CSV is empty, the script exits with a clear message telling you t
 - The JSON payload also includes `metric_extrema`, recording which variation achieved the min/max value for every metric; use it to programmatically pick winners or trigger alerts.
 - Metrics that a model cannot provide (for example strict-mode `MLPD` for deterministic baselines) are rendered as `N/A`, so missing output is not confused with zero.
 - Re-run `run_sweep` with `--dry-run` to preview planned jobs without executing; comparison files are written only for completed sweeps.
+- Sweep comparison artifacts are now re-aggregated on the common set of valid outer folds across runs, so table values are computed on the same realized fold subset when some models fail convergence.
 - `MLPD` / `PredictiveLogLikelihood` now carry explicit source tags in each fold metric payload. In the default `strict` mode, deterministic baselines report `MLPD_source: "disabled"`. If you opt into `experiments.evaluation.predictive_density_mode: "mixed"`, Gaussian proxies are labelled `MLPD_source: "gaussian_proxy"`.
 
 ---

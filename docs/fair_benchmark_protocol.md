@@ -14,6 +14,8 @@ This note documents the fairness contract implemented by the current regression 
 ### Point-prediction metrics
 - `RMSE` and `MAE` are directly comparable across all methods.
 - Selection and coefficient-recovery metrics are comparable whenever synthetic truth is available.
+- Synthetic selection metrics use one shared ranking signal across methods: absolute fitted coefficient magnitude
+  (posterior mean for Bayesian models, point estimate for deterministic models).
 
 ### Predictive density metrics
 - The default benchmark mode is now `experiments.evaluation.predictive_density_mode: "strict"`.
@@ -35,6 +37,8 @@ Current canonical grids:
 
 ### Bayesian grouped-sparsity models
 - Main-benchmark sweeps do not run outer-loop hyper-parameter search.
+- For the main leaderboard, fairness is grounded in the shared task definition, shared splits, shared evaluation rules,
+  and declared compute budget for each method family rather than forcing Bayesian and frequentist methods through one identical tuning loop.
 - Fairness is defined as **paper-faithful defaults under a shared data/split/evaluation protocol**, not “force every Bayesian method into the same search routine”.
 - GRRHS prior sensitivity remains separated from the main leaderboard.
 
@@ -50,6 +54,8 @@ Current canonical grids:
 - The runner retries once with a larger budget when the configured `max_rhat` threshold is missed.
 - Folds that still fail are marked `INVALID_CONVERGENCE` and excluded from aggregate metric summaries.
 - Missing monitored blocks are recorded in `convergence_attempts`. The default policy is `missing_policy: "warn"` rather than immediate failure.
+- Sweep comparison artifacts re-aggregate metrics on the intersection of valid outer folds across compared runs so
+  models are ranked on the same realized fold set.
 
 ### Diagnostic validity
 - `convergence.json` now records `raw_num_chains`, `raw_num_draws`, and `diagnostic_valid`.
