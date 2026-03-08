@@ -23,6 +23,7 @@ from sklearn.metrics import (
     average_precision_score,
     log_loss,
     brier_score_loss,
+    mean_absolute_error,
 )
 
 try:  # Optional plotting libraries (not used in automated metrics)
@@ -79,6 +80,7 @@ def predictive_metrics(
 
     metrics: Dict[str, Optional[float]] = {
         "RMSE": None,
+        "MAE": None,
         "PredictiveLogLikelihood": None,
         "MLPD": None,
     }
@@ -89,6 +91,7 @@ def predictive_metrics(
         return metrics
 
     metrics["RMSE"] = float(np.sqrt(mean_squared_error(y, pred)))
+    metrics["MAE"] = float(mean_absolute_error(y, pred))
 
     if loglik_samples is not None:
         ll = np.asarray(loglik_samples, dtype=float)
@@ -274,7 +277,12 @@ def interval_metrics(
 ) -> Dict[str, Optional[float]]:
     """Empirical coverage and average width for predictive intervals."""
 
-    metrics: Dict[str, Optional[float]] = {"Coverage90": None, "IntervalWidth90": None}
+    metrics: Dict[str, Optional[float]] = {
+        "Coverage90": None,
+        "IntervalWidth90": None,
+        "PredictiveCoverage90": None,
+        "PredictiveIntervalWidth90": None,
+    }
 
     y = _as_numpy(y_true)
     if intervals is None or y is None or y.size == 0:
@@ -286,8 +294,12 @@ def interval_metrics(
 
     lower, upper = arr[:, 0], arr[:, 1]
     covered = (y >= lower) & (y <= upper)
-    metrics["Coverage90"] = float(np.mean(covered))
-    metrics["IntervalWidth90"] = float(np.mean(upper - lower))
+    coverage = float(np.mean(covered))
+    width = float(np.mean(upper - lower))
+    metrics["Coverage90"] = coverage
+    metrics["IntervalWidth90"] = width
+    metrics["PredictiveCoverage90"] = coverage
+    metrics["PredictiveIntervalWidth90"] = width
     return metrics
 
 
@@ -307,6 +319,103 @@ def shrinkage_metrics(
         "EffectiveDoF": edf_val,
         "MeanEffectiveNonzeros": eff_nz_val,
     }
+
+
+def _safe_corr(x: np.ndarray, y: np.ndarray) -> Optional[float]:
+    if x.size == 0 or y.size == 0 or x.shape != y.shape:
+        return None
+    x_std = float(np.std(x))
+    y_std = float(np.std(y))
+    if x_std <= 0.0 or y_std <= 0.0:
+        return None
+    corr = np.corrcoef(x, y)[0, 1]
+    if not np.isfinite(corr):
+        return None
+    return float(corr)
+
+
+def _group_norms(beta: np.ndarray, group_index: np.ndarray) -> np.ndarray:
+    unique_groups = np.unique(group_index.astype(int))
+    norms = []
+    for gid in unique_groups:
+        members = group_index == gid
+        norms.append(float(np.linalg.norm(beta[members])))
+    return np.asarray(norms, dtype=float)
+
+
+def coefficient_recovery_metrics(
+    beta_truth: Optional[ArrayLike],
+    coef_draws: Optional[np.ndarray],
+    coef_point: Optional[np.ndarray],
+    group_index: Optional[np.ndarray],
+    *,
+    coverage_level: float = 0.9,
+) -> Dict[str, Optional[float]]:
+    """Metrics that are only meaningful when synthetic ground truth is available."""
+
+    metrics: Dict[str, Optional[float]] = {
+        "BetaRMSE": None,
+        "BetaPearson": None,
+        "GroupNormRMSE": None,
+        "GroupNormPearson": None,
+        "BetaCoverage90": None,
+        "BetaIntervalWidth90": None,
+        "ActiveBetaCoverage90": None,
+        "InactiveBetaCoverage90": None,
+        "ActiveBetaIntervalWidth90": None,
+        "InactiveBetaIntervalWidth90": None,
+    }
+
+    beta_true = _as_numpy(beta_truth)
+    if beta_true is None:
+        return metrics
+    beta_true = np.asarray(beta_true, dtype=float).reshape(-1)
+
+    beta_est: Optional[np.ndarray] = None
+    if coef_draws is not None:
+        draws = np.asarray(coef_draws, dtype=float)
+        if draws.ndim == 1:
+            beta_est = draws.reshape(-1)
+            coef_draws = draws.reshape(1, -1)
+        elif draws.ndim >= 2:
+            coef_draws = draws.reshape(draws.shape[0], -1)
+            beta_est = np.mean(coef_draws, axis=0)
+    elif coef_point is not None:
+        beta_est = np.asarray(coef_point, dtype=float).reshape(-1)
+
+    if beta_est is None or beta_est.shape[0] != beta_true.shape[0]:
+        return metrics
+
+    metrics["BetaRMSE"] = float(np.sqrt(np.mean((beta_est - beta_true) ** 2)))
+    metrics["BetaPearson"] = _safe_corr(beta_est, beta_true)
+
+    if group_index is not None:
+        groups = np.asarray(group_index)
+        if groups.shape[0] == beta_true.shape[0]:
+            true_group_norms = _group_norms(beta_true, groups)
+            est_group_norms = _group_norms(beta_est, groups)
+            metrics["GroupNormRMSE"] = float(np.sqrt(np.mean((est_group_norms - true_group_norms) ** 2)))
+            metrics["GroupNormPearson"] = _safe_corr(est_group_norms, true_group_norms)
+
+    if coef_draws is not None and coef_draws.shape[1] == beta_true.shape[0] and coef_draws.shape[0] > 1:
+        alpha = (1.0 - coverage_level) / 2.0
+        lower = np.quantile(coef_draws, alpha, axis=0)
+        upper = np.quantile(coef_draws, 1.0 - alpha, axis=0)
+        widths = upper - lower
+        covered = (beta_true >= lower) & (beta_true <= upper)
+        active_mask = np.abs(beta_true) > 1e-8
+        inactive_mask = ~active_mask
+
+        metrics["BetaCoverage90"] = float(np.mean(covered))
+        metrics["BetaIntervalWidth90"] = float(np.mean(widths))
+        if np.any(active_mask):
+            metrics["ActiveBetaCoverage90"] = float(np.mean(covered[active_mask]))
+            metrics["ActiveBetaIntervalWidth90"] = float(np.mean(widths[active_mask]))
+        if np.any(inactive_mask):
+            metrics["InactiveBetaCoverage90"] = float(np.mean(covered[inactive_mask]))
+            metrics["InactiveBetaIntervalWidth90"] = float(np.mean(widths[inactive_mask]))
+
+    return metrics
 
 
 def _proxy_effective_counts(
@@ -468,6 +577,8 @@ def evaluate_model_metrics(
     slab_width: Optional[float] = None,
     task: str = "regression",
     classification_threshold: float = 0.5,
+    y_pred_override: Optional[np.ndarray] = None,
+    pred_draws_override: Optional[np.ndarray] = None,
 ) -> Dict[str, Optional[float]]:
     """Evaluate a fitted model across predictive, classification, selection, and calibration metrics."""
 
@@ -482,10 +593,12 @@ def evaluate_model_metrics(
     Xte = _as_numpy(X_test)
     yte = _as_numpy(y_test)
 
-    try:
-        pred_mean = None if Xte is None else np.asarray(model.predict(Xte))
-    except Exception:  # Some deterministic baselines might not implement predict
-        pred_mean = None
+    pred_mean = None if y_pred_override is None else np.asarray(y_pred_override, dtype=float).reshape(-1)
+    if pred_mean is None:
+        try:
+            pred_mean = None if Xte is None else np.asarray(model.predict(Xte))
+        except Exception:  # Some deterministic baselines might not implement predict
+            pred_mean = None
 
     posterior = _prepare_posterior_samples(model)
 
@@ -569,7 +682,9 @@ def evaluate_model_metrics(
     pred_draws = None
     loglik_samples = None
     if task_label == "regression":
-        if Xte is not None and posterior.coef is not None:
+        if pred_draws_override is not None:
+            pred_draws = np.asarray(pred_draws_override, dtype=float)
+        elif Xte is not None and posterior.coef is not None:
             pred_draws = _predictive_draws(
                 Xte,
                 posterior.coef,
@@ -613,6 +728,15 @@ def evaluate_model_metrics(
             prob_scores = scaled
 
     metrics.update(selection_metrics(beta_truth_bin, prob_scores))
+    metrics.update(
+        coefficient_recovery_metrics(
+            beta_truth,
+            posterior.coef,
+            coef_hat,
+            group_index,
+            coverage_level=coverage_level,
+        )
+    )
 
     if task_label == "regression":
         interval_array = None

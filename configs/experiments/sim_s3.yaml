@@ -51,6 +51,19 @@ data:
 experiments:
   repeats: 3
   coverage_level: 0.9
+  reporting:
+    comparison_metrics:
+      regression:
+        - RMSE
+        - MLPD
+        - BetaRMSE
+        - BetaPearson
+        - GroupNormRMSE
+        - AUC-PR
+        - F1
+        - BetaCoverage90
+        - ActiveBetaIntervalWidth90
+        - EffectiveDoF
 
 splits:
   outer:

@@ -1,0 +1,67 @@
+{
+  "files": [
+    {
+      "name": "DEMO_C.xpt",
+      "url": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2003/DataFiles/DEMO_C.xpt",
+      "path": "D:\\FilesP\\GR-RHS\\data\\real\\nhanes_2003_2004\\raw\\DEMO_C.xpt",
+      "status": "skipped",
+      "bytes": 3569840
+    },
+    {
+      "name": "L40_C.xpt",
+      "url": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2003/DataFiles/L40_C.xpt",
+      "path": "D:\\FilesP\\GR-RHS\\data\\real\\nhanes_2003_2004\\raw\\L40_C.xpt",
+      "status": "skipped",
+      "bytes": 2074960
+    },
+    {
+      "name": "L16_C.xpt",
+      "url": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2003/DataFiles/L16_C.xpt",
+      "path": "D:\\FilesP\\GR-RHS\\data\\real\\nhanes_2003_2004\\raw\\L16_C.xpt",
+      "status": "skipped",
+      "bytes": 320720
+    },
+    {
+      "name": "BMX_C.xpt",
+      "url": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2003/DataFiles/BMX_C.xpt",
+      "path": "D:\\FilesP\\GR-RHS\\data\\real\\nhanes_2003_2004\\raw\\BMX_C.xpt",
+      "status": "skipped",
+      "bytes": 2551120
+    },
+    {
+      "name": "L06BMT_C.xpt",
+      "url": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2003/DataFiles/L06BMT_C.xpt",
+      "path": "D:\\FilesP\\GR-RHS\\data\\real\\nhanes_2003_2004\\raw\\L06BMT_C.xpt",
+      "status": "skipped",
+      "bytes": 662960
+    },
+    {
+      "name": "L24PH_C.xpt",
+      "url": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2003/DataFiles/L24PH_C.xpt",
+      "path": "D:\\FilesP\\GR-RHS\\data\\real\\nhanes_2003_2004\\raw\\L24PH_C.xpt",
+      "status": "skipped",
+      "bytes": 630560
+    },
+    {
+      "name": "L28OCP_C.xpt",
+      "url": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2003/DataFiles/L28OCP_C.xpt",
+      "path": "D:\\FilesP\\GR-RHS\\data\\real\\nhanes_2003_2004\\raw\\L28OCP_C.xpt",
+      "status": "skipped",
+      "bytes": 773040
+    },
+    {
+      "name": "L28PBE_C.xpt",
+      "url": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2003/DataFiles/L28PBE_C.xpt",
+      "path": "D:\\FilesP\\GR-RHS\\data\\real\\nhanes_2003_2004\\raw\\L28PBE_C.xpt",
+      "status": "skipped",
+      "bytes": 660080
+    },
+    {
+      "name": "L31PAH_C.xpt",
+      "url": "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2003/DataFiles/L31PAH_C.xpt",
+      "path": "D:\\FilesP\\GR-RHS\\data\\real\\nhanes_2003_2004\\raw\\L31PAH_C.xpt",
+      "status": "skipped",
+      "bytes": 500320
+    }
+  ]
+}

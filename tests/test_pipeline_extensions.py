@@ -113,30 +113,40 @@ def test_load_real_dataset_and_runner(tmp_path):
     n, p = 12, 4
     rng = np.random.default_rng(0)
     X = rng.normal(size=(n, p)).astype(np.float32)
+    C = rng.normal(size=(n, 2)).astype(np.float32)
     beta = np.array([1.0, -1.0, 0.5, 0.0], dtype=np.float32)
-    y = (X @ beta).astype(np.float32)
+    alpha = np.array([0.75, -0.25], dtype=np.float32)
+    y = (X @ beta + C @ alpha).astype(np.float32)
 
     path_X = tmp_path / "X.npy"
+    path_C = tmp_path / "C.npy"
     path_y = tmp_path / "y.npy"
     np.save(path_X, X)
+    np.save(path_C, C)
     np.save(path_y, y)
 
     feature_names_path = tmp_path / "features.txt"
     feature_names_path.write_text("f0\nf1\nf2\nf3\n", encoding="utf-8")
+    covariate_names_path = tmp_path / "covariates.txt"
+    covariate_names_path.write_text("age\nbmi\n", encoding="utf-8")
     group_map_path = tmp_path / "groups.json"
     group_map_path.write_text(json.dumps({"f0": 0, "f1": 0, "f2": 1, "f3": 1}), encoding="utf-8")
 
     loader_cfg = {
         "path_X": str(path_X),
+        "path_C": str(path_C),
         "path_y": str(path_y),
         "path_feature_names": str(feature_names_path),
+        "path_covariate_feature_names": str(covariate_names_path),
         "path_group_map": str(group_map_path),
     }
 
     dataset = load_real_dataset(loader_cfg, base_dir=tmp_path)
     assert dataset.X.shape == (n, p)
+    assert dataset.C is not None and dataset.C.shape == (n, 2)
     assert dataset.y is not None and dataset.y.shape[0] == n
     assert dataset.groups == [[0, 1], [2, 3]]
+    assert dataset.covariate_feature_names == ["age", "bmi"]
 
     config = {
         "seed": 123,
@@ -163,6 +173,10 @@ def test_load_real_dataset_and_runner(tmp_path):
     assert result["status"] == "OK"
     metrics_payload = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
     assert "RMSE" in metrics_payload
+    repeat_meta = json.loads((out_dir / "repeat_001" / "dataset_meta.json").read_text(encoding="utf-8"))
+    assert repeat_meta["covariate_p"] == 2
+    fold_adjustment = out_dir / "repeat_001" / "fold_01" / "covariate_adjustment.npz"
+    assert fold_adjustment.exists()
 
     run_root = tmp_path / "multi_runs"
     run_root.mkdir()

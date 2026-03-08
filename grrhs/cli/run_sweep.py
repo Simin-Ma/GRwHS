@@ -71,6 +71,7 @@ def _execute_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         "run_dir": str(run_dir),
         "index": idx,
         "model": resolved_model_name,
+        "comparison_metrics": _resolve_comparison_metrics(resolved_cfg),
     }
 
     if dry_run:
@@ -158,6 +159,27 @@ def _determine_model_label(record: Dict[str, Any], payload: Any) -> str | None:
     return None
 
 
+def _resolve_comparison_metrics(cfg: Dict[str, Any]) -> List[str]:
+    experiments_cfg = cfg.get("experiments", {})
+    if not isinstance(experiments_cfg, dict):
+        return []
+    reporting_cfg = experiments_cfg.get("reporting", {})
+    if not isinstance(reporting_cfg, dict):
+        return []
+    comparison_cfg = reporting_cfg.get("comparison_metrics")
+    task = str(cfg.get("task") or experiments_cfg.get("task") or "regression").lower()
+    if isinstance(comparison_cfg, list):
+        return [str(item) for item in comparison_cfg]
+    if isinstance(comparison_cfg, dict):
+        selected = comparison_cfg.get(task)
+        if isinstance(selected, list):
+            return [str(item) for item in selected]
+        default_selected = comparison_cfg.get("default")
+        if isinstance(default_selected, list):
+            return [str(item) for item in default_selected]
+    return []
+
+
 def _format_metric(value: float | None) -> str:
     if value is None:
         return "N/A"
@@ -189,10 +211,14 @@ def _compute_metric_extrema(rows: List[Dict[str, Any]], metric_keys: List[str]) 
 def _build_comparison_rows(summary: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
     rows: List[Dict[str, Any]] = []
     metric_keys: set[str] = set()
+    preferred_metric_order: List[str] = []
     for record in summary:
         payload = record.get("metrics")
         metrics = _extract_numeric_metrics(payload)
         metric_keys.update(metrics.keys())
+        preferred = record.get("comparison_metrics")
+        if not preferred_metric_order and isinstance(preferred, list) and preferred:
+            preferred_metric_order = [str(item) for item in preferred]
         rows.append({
             "variation": record.get("name"),
             "model": _determine_model_label(record, payload),
@@ -200,6 +226,10 @@ def _build_comparison_rows(summary: List[Dict[str, Any]]) -> Tuple[List[Dict[str
             "run_dir": record.get("run_dir"),
             "metrics": metrics,
         })
+    if preferred_metric_order:
+        ordered = [key for key in preferred_metric_order if key in metric_keys]
+        if ordered:
+            return rows, ordered
     return rows, sorted(metric_keys)
 
 

@@ -374,11 +374,13 @@ def _prepare_dataset_bundle(
             model_groups = groups
         bundle = {
             "X": X,
+            "C": None,
             "y": y,
             "beta": None if generated.beta is None else np.asarray(generated.beta, dtype=np.float32),
             "groups": groups,
             "model_groups": model_groups,
             "feature_names": None,
+            "covariate_feature_names": None,
             "metadata": {
                 "type": "synthetic",
                 "seed": synth_cfg.seed,
@@ -410,11 +412,13 @@ def _prepare_dataset_bundle(
             model_groups = groups
         bundle = {
             "X": X,
+            "C": None if loaded.C is None else np.asarray(loaded.C, dtype=np.float32, copy=False),
             "y": y,
             "beta": None if loaded.beta is None else np.asarray(loaded.beta, dtype=np.float32),
             "groups": groups,
             "model_groups": model_groups,
             "feature_names": loaded.feature_names,
+            "covariate_feature_names": loaded.covariate_feature_names,
             "metadata": {
                 "type": "loader",
                 "seed": dataset_seed,
@@ -632,6 +636,7 @@ def _perform_inner_cv(
     y: np.ndarray,
     groups: Sequence[Sequence[int]],
     *,
+    C: Optional[np.ndarray] = None,
     task: str,
     std_cfg: StandardizationConfig,
 ) -> Tuple[Dict[str, float], Optional[List[Dict[str, Any]]]]:
@@ -698,6 +703,13 @@ def _perform_inner_cv(
                 y_val = apply_y_mean(y[val_idx], mean=std_train.y_mean)
             else:
                 y_val = np.asarray(y[val_idx], dtype=np.float32)
+
+            if C is not None:
+                C_train_raw = np.asarray(C[train_idx], dtype=np.float32)
+                C_val_raw = np.asarray(C[val_idx], dtype=np.float32)
+                C_train, C_val, _, _, _ = _standardize_covariates_train_test(C_train_raw, C_val_raw)
+                X_train, X_val, _ = _residualize_against_covariates(X_train, X_val, C_train, C_val)
+                y_train, y_val, _ = _residualize_against_covariates(y_train, y_val, C_train, C_val)
 
             candidate_cfg = deepcopy(base_config)
             candidate_cfg.setdefault("model", {})
@@ -849,6 +861,118 @@ def _append_metrics_record(path: Path, record: Mapping[str, Any]) -> None:
         fh.write(json.dumps(_to_serializable(record)) + "\n")
 
 
+def _standardize_covariates_train_test(
+    C_train: np.ndarray,
+    C_test: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Standardize continuous covariates while leaving dummy columns untouched."""
+
+    train = np.asarray(C_train, dtype=float)
+    test = np.asarray(C_test, dtype=float)
+    if train.ndim != 2 or test.ndim != 2:
+        raise ExperimentError("Covariate matrices must be two-dimensional.")
+    if train.shape[1] != test.shape[1]:
+        raise ExperimentError("Train/test covariate matrices must share the same number of columns.")
+    if train.shape[1] == 0:
+        empty = np.zeros(0, dtype=np.float32)
+        mask = np.zeros(0, dtype=bool)
+        return train.astype(np.float32), test.astype(np.float32), empty, empty, mask
+
+    means = train.mean(axis=0)
+    scales = train.std(axis=0, ddof=0)
+    binary_mask = np.zeros(train.shape[1], dtype=bool)
+    for idx in range(train.shape[1]):
+        values = np.unique(train[:, idx])
+        binary_mask[idx] = values.size <= 2 and np.all(np.isin(values, [0.0, 1.0]))
+
+    C_train_std = train.copy()
+    C_test_std = test.copy()
+    continuous_mask = ~binary_mask
+    if np.any(continuous_mask):
+        safe_scales = np.maximum(scales[continuous_mask], 1e-8)
+        C_train_std[:, continuous_mask] = (train[:, continuous_mask] - means[continuous_mask]) / safe_scales
+        C_test_std[:, continuous_mask] = (test[:, continuous_mask] - means[continuous_mask]) / safe_scales
+        scales = np.where(continuous_mask, np.maximum(scales, 1e-8), 1.0)
+    else:
+        scales = np.ones_like(scales)
+
+    return (
+        C_train_std.astype(np.float32, copy=False),
+        C_test_std.astype(np.float32, copy=False),
+        means.astype(np.float32, copy=False),
+        scales.astype(np.float32, copy=False),
+        binary_mask,
+    )
+
+
+def _augment_with_intercept(C: np.ndarray) -> np.ndarray:
+    arr = np.asarray(C, dtype=float)
+    if arr.ndim != 2:
+        raise ExperimentError("Covariate matrix must be two-dimensional.")
+    intercept = np.ones((arr.shape[0], 1), dtype=float)
+    return np.hstack([intercept, arr])
+
+
+def _residualize_against_covariates(
+    target_train: np.ndarray,
+    target_test: np.ndarray,
+    C_train: np.ndarray,
+    C_test: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Project targets onto covariates on the training fold and return residuals."""
+
+    C_train_aug = _augment_with_intercept(C_train)
+    C_test_aug = _augment_with_intercept(C_test)
+    train_arr = np.asarray(target_train, dtype=float)
+    test_arr = np.asarray(target_test, dtype=float)
+
+    coef, _, _, _ = np.linalg.lstsq(C_train_aug, train_arr, rcond=None)
+    resid_train = train_arr - C_train_aug @ coef
+    resid_test = test_arr - C_test_aug @ coef
+    return resid_train.astype(np.float32, copy=False), resid_test.astype(np.float32, copy=False), coef
+
+
+def _estimate_covariate_effects(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    C_train: np.ndarray,
+    C_test: np.ndarray,
+    beta_point: np.ndarray,
+    beta_draws: Optional[np.ndarray],
+) -> Tuple[np.ndarray, Optional[np.ndarray], np.ndarray, Optional[np.ndarray]]:
+    """Estimate nuisance covariate coefficients conditional on exposure effects."""
+
+    C_train_aug = _augment_with_intercept(C_train)
+    C_test_aug = _augment_with_intercept(C_test)
+    beta_vec = np.asarray(beta_point, dtype=float).reshape(-1)
+    alpha_hat, _, _, _ = np.linalg.lstsq(C_train_aug, np.asarray(y_train, dtype=float) - np.asarray(X_train, dtype=float) @ beta_vec, rcond=None)
+    y_pred = (np.asarray(X_test, dtype=float) @ beta_vec) + (C_test_aug @ alpha_hat)
+
+    alpha_draws: Optional[np.ndarray] = None
+    pred_draws: Optional[np.ndarray] = None
+    if beta_draws is not None:
+        coef_draws = np.asarray(beta_draws, dtype=float)
+        if coef_draws.ndim == 1:
+            coef_draws = coef_draws.reshape(1, -1)
+        alpha_draws = np.zeros((coef_draws.shape[0], C_train_aug.shape[1]), dtype=float)
+        pred_draws = np.zeros((coef_draws.shape[0], X_test.shape[0]), dtype=float)
+        y_train_arr = np.asarray(y_train, dtype=float)
+        X_train_arr = np.asarray(X_train, dtype=float)
+        X_test_arr = np.asarray(X_test, dtype=float)
+        for idx, beta_draw in enumerate(coef_draws):
+            alpha_draw, _, _, _ = np.linalg.lstsq(C_train_aug, y_train_arr - X_train_arr @ beta_draw, rcond=None)
+            alpha_draws[idx] = alpha_draw
+            pred_draws[idx] = X_test_arr @ beta_draw + C_test_aug @ alpha_draw
+
+    return (
+        y_pred.astype(np.float32, copy=False),
+        None if pred_draws is None else pred_draws.astype(np.float32, copy=False),
+        alpha_hat.astype(np.float32, copy=False),
+        None if alpha_draws is None else alpha_draws.astype(np.float32, copy=False),
+    )
+
+
 def _run_fold_nested(
     base_config: Mapping[str, Any],
     dataset: Mapping[str, Any],
@@ -862,6 +986,7 @@ def _run_fold_nested(
 
     fold_dir.mkdir(parents=True, exist_ok=True)
     X = dataset["X"]
+    C = dataset.get("C")
     y = dataset["y"]
     groups_true = dataset["groups"]
     model_groups = dataset.get("model_groups", groups_true)
@@ -878,6 +1003,34 @@ def _run_fold_nested(
         y_test = apply_y_mean(y[test_idx], mean=std_train.y_mean)
     else:
         y_test = np.asarray(y[test_idx], dtype=np.float32)
+    y_train_eval = np.asarray(y_train, dtype=np.float32).copy()
+    y_test_eval = np.asarray(y_test, dtype=np.float32).copy()
+
+    C_train = None
+    C_test = None
+    C_train_raw = None
+    C_test_raw = None
+    covariate_mean = None
+    covariate_scale = None
+    covariate_binary_mask = None
+    X_train_model = X_train
+    X_test_model = X_test
+    X_train_prediction = X_train
+    X_test_prediction = X_test
+    covariate_alpha_hat = None
+    covariate_alpha_draws = None
+    y_pred_override = None
+    pred_draws_override = None
+
+    if C is not None:
+        C_train_raw = np.asarray(C[train_idx], dtype=np.float32)
+        C_test_raw = np.asarray(C[test_idx], dtype=np.float32)
+        C_train, C_test, covariate_mean, covariate_scale, covariate_binary_mask = _standardize_covariates_train_test(
+            C_train_raw,
+            C_test_raw,
+        )
+        X_train_model, X_test_model, _ = _residualize_against_covariates(X_train, X_test, C_train, C_test)
+        y_train, y_test, _ = _residualize_against_covariates(y_train, y_test, C_train, C_test)
 
     degenerate_model: Optional[_ConstantClassificationModel] = None
     degenerate_label_value: Optional[float] = None
@@ -892,9 +1045,9 @@ def _run_fold_nested(
             degenerate_label_value = float(train_classes[0]) if train_classes.size else 0.0
             degenerate_model = _ConstantClassificationModel(
                 prob_positive=degenerate_label_value,
-                n_features=X_train.shape[1],
+                n_features=X_train_model.shape[1],
             )
-            degenerate_model.fit(X_train, y_train)
+            degenerate_model.fit(X_train_model, y_train)
             tuning_history = [
                 {
                     "params": {},
@@ -911,20 +1064,21 @@ def _run_fold_nested(
     if degenerate_model is None:
         inner_params, tuning_history = _perform_inner_cv(
             base_config,
-            X_train,
-            y_train,
+            X_train if C_train_raw is not None else X_train_model,
+            y_train_eval if C_train_raw is not None else y_train,
             model_groups,
+            C=C_train_raw,
             task=task,
             std_cfg=std_cfg,
         )
         for key, value in inner_params.items():
             model_config["model"][key] = value
-        _maybe_calibrate_tau(model_config["model"], std_cfg, X_train, y_train, model_groups, task)
-        model = _instantiate_model(model_config, model_groups, X_train.shape[1])
+        _maybe_calibrate_tau(model_config["model"], std_cfg, X_train_model, y_train, model_groups, task)
+        model = _instantiate_model(model_config, model_groups, X_train_model.shape[1])
         try:
-            model.fit(X_train, y_train, groups=model_groups)
+            model.fit(X_train_model, y_train, groups=model_groups)
         except TypeError:
-            model.fit(X_train, y_train)
+            model.fit(X_train_model, y_train)
         fold_status = "OK"
     else:
         model = degenerate_model
@@ -936,18 +1090,41 @@ def _run_fold_nested(
     coverage_level = float(experiments_cfg.get("coverage_level", 0.9))
     classification_threshold = float(experiments_cfg.get("classification_threshold", 0.5))
 
+    if C_train is not None and task != "classification":
+        beta_point = getattr(model, "coef_mean_", None)
+        if beta_point is None:
+            beta_point = getattr(model, "coef_", None)
+        if beta_point is None:
+            raise ExperimentError("Covariate-adjusted regression requires fitted exposure coefficients.")
+        y_pred_override, pred_draws_override, covariate_alpha_hat, covariate_alpha_draws = _estimate_covariate_effects(
+            X_train,
+            y_train_eval,
+            X_test,
+            C_train,
+            C_test,
+            np.asarray(beta_point, dtype=np.float32),
+            getattr(model, "coef_samples_", None),
+        )
+        X_train_prediction = X_train
+        X_test_prediction = X_test
+    else:
+        X_train_prediction = X_train_model
+        X_test_prediction = X_test_model
+
     metrics = evaluate_model_metrics(
         model=model,
-        X_train=X_train,
-        X_test=X_test,
+        X_train=X_train_model,
+        X_test=X_test_prediction,
         y_train=y_train,
-        y_test=y_test,
+        y_test=y_test_eval,
         beta_truth=beta,
         group_index=_group_index(groups_true, X.shape[1]),
         coverage_level=coverage_level,
         slab_width=model_config["model"].get("c"),
         task=task,
         classification_threshold=classification_threshold,
+        y_pred_override=y_pred_override,
+        pred_draws_override=pred_draws_override,
     )
 
     metrics_path = fold_dir / "metrics.json"
@@ -960,6 +1137,9 @@ def _run_fold_nested(
         x_mean=np.asarray([]) if std_train.x_mean is None else std_train.x_mean,
         x_scale=np.asarray([]) if std_train.x_scale is None else std_train.x_scale,
         y_mean=np.asarray([]) if std_train.y_mean is None else np.array([std_train.y_mean], dtype=np.float32),
+        covariate_mean=np.asarray([]) if covariate_mean is None else covariate_mean,
+        covariate_scale=np.asarray([]) if covariate_scale is None else covariate_scale,
+        covariate_binary_mask=np.asarray([]) if covariate_binary_mask is None else covariate_binary_mask.astype(np.int8),
     )
 
     save_posterior = bool(experiments_cfg.get("save_posterior", True))
@@ -967,6 +1147,11 @@ def _run_fold_nested(
     posterior_paths = None
     if posterior_arrays:
         posterior_paths = _save_posterior_bundle(fold_dir, posterior_arrays)
+    if covariate_alpha_hat is not None:
+        alpha_payload: Dict[str, Any] = {"alpha_hat": covariate_alpha_hat}
+        if covariate_alpha_draws is not None:
+            alpha_payload["alpha_draws"] = covariate_alpha_draws
+        np.savez_compressed(fold_dir / "covariate_adjustment.npz", **alpha_payload)
 
     fold_summary = {
         "status": fold_status,
@@ -978,6 +1163,8 @@ def _run_fold_nested(
         "tuning_history": tuning_history,
         "posterior_files": posterior_paths,
     }
+    if covariate_alpha_hat is not None:
+        fold_summary["covariate_adjustment_file"] = str(fold_dir / "covariate_adjustment.npz")
     if degenerate_label_value is not None:
         fold_summary["degenerate_label"] = degenerate_label_value
     (fold_dir / "fold_summary.json").write_text(json.dumps(_to_serializable(fold_summary), indent=2), encoding="utf-8")
@@ -1075,9 +1262,11 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             "task": task,
             "n": int(dataset["X"].shape[0]),
             "p": int(dataset["X"].shape[1]),
+            "covariate_p": 0 if dataset.get("C") is None else int(dataset["C"].shape[1]),
             "groups": dataset["groups"],
             "model_groups": dataset.get("model_groups"),
             "feature_names": dataset.get("feature_names"),
+            "covariate_feature_names": dataset.get("covariate_feature_names"),
             "metadata": dataset.get("metadata"),
         }
         (repeat_dir / "dataset_meta.json").write_text(json.dumps(_to_serializable(dataset_meta), indent=2), encoding="utf-8")

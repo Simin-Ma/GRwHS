@@ -1,0 +1,26 @@
+task: regression
+
+data:
+  type: loader
+  loader:
+    path_X: data/real/nhanes_2003_2004/processed/runner_ready/X.npy
+    path_C: data/real/nhanes_2003_2004/processed/runner_ready/C.npy
+    path_y: data/real/nhanes_2003_2004/processed/runner_ready/y.npy
+    path_feature_names: data/real/nhanes_2003_2004/processed/runner_ready/feature_names.txt
+    path_covariate_feature_names: data/real/nhanes_2003_2004/processed/runner_ready/covariate_feature_names.txt
+    path_group_map: data/real/nhanes_2003_2004/processed/runner_ready/group_map.json
+
+standardization:
+  X: unit_variance
+  y_center: true
+
+experiments:
+  task: regression
+  reporting:
+    comparison_metrics:
+      regression:
+        - RMSE
+        - MLPD
+        - PredictiveLogLikelihood
+        - EffectiveDoF
+        - MeanEffectiveNonzeros

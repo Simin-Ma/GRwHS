@@ -208,6 +208,183 @@ Each run directory records fold-level metrics (`fold_*` subdirectories), resolve
 >
 > **Implementation details.** `grrhs.experiments.runner` draws the outer folds once per dataset repeat and hands the exact same `OuterFold` objects to every model (no per-model shuffling). The nested inner CV routine is only invoked when a method config supplies a `model.search` grid (ridge/Lasso/SGL); Bayesian baselines (GRRHS, RHS, GIGG, etc.) never read `splits.inner`, so they do not indirectly peek at outer-test data.
 
+### 4.0 Recommended Metric Systems
+
+The repository now distinguishes between the metric system used for synthetic truth-known benchmarks and the metric system used for the NHANES real-data application.
+
+#### Synthetic benchmark metrics
+
+Synthetic scenarios should not be judged only by prediction. Because the true coefficients and group structure are known, the recommended synthetic benchmark suite is:
+
+- **Prediction**
+  - `RMSE`
+  - `MLPD`
+- **Coefficient recovery**
+  - `BetaRMSE`
+  - `BetaPearson`
+  - `GroupNormRMSE`
+- **Selection**
+  - `AUC-PR`
+  - `F1`
+- **Uncertainty efficiency**
+  - `BetaCoverage90`
+  - `ActiveBetaIntervalWidth90`
+- **Model complexity**
+  - `EffectiveDoF`
+
+The sweep comparison tables for `sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml` now default to that synthetic-oriented metric order.
+
+#### NHANES real-data metrics
+
+For NHANES, the main paper-facing results should not be built around synthetic-style support recovery metrics. The recommended NHANES reporting split is:
+
+- **Auxiliary predictive summary from the sweep table**
+  - `RMSE`
+  - `MLPD`
+  - `PredictiveLogLikelihood`
+  - `EffectiveDoF`
+  - `MeanEffectiveNonzeros`
+- **Primary application results**
+  - percent change in GGT for a two-fold increase in exposure
+  - exposure-level 95% credible intervals
+  - group-level mean CI length
+  - CI-length reduction versus a reference method such as `RHS`
+
+This mirrors the grouped-mixture application style of the GIGG paper while preserving the cleaner `C` / `X` separation used by this repository.
+
+### 4.1 NHANES 2003-2004 Real-Data Workflow
+
+The repository now includes a complete real-data path for the NHANES 2003-2004 GGT benchmark. This path mirrors the grouped environmental-mixtures setup used in the GIGG-style application literature, while using the GR-RHS experiment framework and a cleaner separation between grouped exposures and confounders.
+
+#### Study variables
+
+- **Outcome (`y`)**
+  - `LBXSGTSI` (Gamma-glutamyl transferase, GGT)
+  - modeled on the log scale
+- **Exposure matrix (`X`)**
+  - 35 pollutants partitioned into 5 chemistry groups
+  - Metals: 3
+  - Phthalates: 7
+  - Organochlorine pesticides: 8
+  - PBDEs: 7
+  - PAHs: 10
+- **Covariate matrix (`C`)**
+  - age
+  - sex
+  - BMI
+  - poverty-to-income ratio
+  - ethnicity
+  - urinary creatinine
+
+#### Official NHANES files used
+
+- `DEMO_C.xpt`
+- `L40_C.xpt`
+- `L16_C.xpt`
+- `BMX_C.xpt`
+- `L06BMT_C.xpt`
+- `L24PH_C.xpt`
+- `L28OCP_C.xpt`
+- `L28PBE_C.xpt`
+- `L31PAH_C.xpt`
+
+#### Processing path
+
+`scripts/prepare_nhanes_2003_2004.py` performs:
+
+1. merge all modules on `SEQN`
+2. adult restriction (`RIDAGEYR >= 18`)
+3. variable selection (`GGT`, 35 exposures, confounders)
+4. complete-case filtering
+5. `log(x)` transformation for GGT, urinary creatinine, and all exposures
+6. export of runner-ready arrays and analysis bundles
+
+The preprocessing path is intentionally close to the GIGG application setup:
+
+- same outcome family (`GGT`)
+- same grouped environmental-mixtures structure
+- same `log` transform on the outcome and pollutant concentrations
+- same grouped regression target
+
+The main difference is in the runner interface: this repository now treats confounders as a separate design matrix `C`, rather than concatenating them into the penalized exposure matrix.
+
+The runner-ready NHANES outputs are:
+
+- `data/real/nhanes_2003_2004/processed/runner_ready/X.npy`
+- `data/real/nhanes_2003_2004/processed/runner_ready/C.npy`
+- `data/real/nhanes_2003_2004/processed/runner_ready/y.npy`
+- `data/real/nhanes_2003_2004/processed/runner_ready/feature_names.txt`
+- `data/real/nhanes_2003_2004/processed/runner_ready/covariate_feature_names.txt`
+- `data/real/nhanes_2003_2004/processed/runner_ready/group_map.json`
+- `data/real/nhanes_2003_2004/processed/dataset_summary.json`
+
+At the current defaults the processed benchmark contains:
+
+- `adult_n = 5620`
+- `complete_case_n = 1099`
+- `exposure_count = 35`
+- `covariate_count_runner = 9`
+
+The sample-size drop from `5620` adults to `1099` complete cases is expected for NHANES chemistry analyses because several laboratory modules are measured on different subsamples.
+
+#### Formal regression path in the runner
+
+The runner now supports a separate covariate matrix for loader datasets:
+
+- `X` contains grouped exposure variables only
+- `C` contains nuisance covariates only
+- `groups` apply only to `X`
+- `C` is standardized separately inside each fold
+- `X` and `y` are residualized against `C` on the training split
+- the shrinkage model is fit on the residualized exposure problem
+- final predictions add the estimated `C alpha` contribution back in
+
+This corresponds to the intended model:
+
+```text
+y = C alpha + sum_g X_g beta_g + epsilon
+```
+
+This is the recommended formal path for the paper because it preserves a clean interpretation:
+
+- `alpha` captures adjustment for age, sex, BMI, PIR, ethnicity, and urinary creatinine
+- `beta` captures pollutant associations after confounder adjustment
+- group shrinkage applies only to the 35 exposure coefficients
+- posterior summaries can be reported directly in the same real-data language used by grouped-mixture papers
+
+#### Configs and sweep entry points
+
+- Experiment config: `configs/experiments/real_nhanes_2003_2004_ggt.yaml`
+- Sweep config: `configs/sweeps/real_nhanes_2003_2004_ggt_methods.yaml`
+
+#### Commands
+
+```bash
+# Download raw NHANES files
+python scripts/download_nhanes_2003_2004.py
+
+# Build X / C / y arrays
+python scripts/prepare_nhanes_2003_2004.py
+
+# Generate EDA artifacts
+python scripts/eda_nhanes_2003_2004.py
+
+# Run the real-data sweep
+python -m grrhs.cli.run_sweep \
+  --base-config configs/base.yaml \
+  --sweep-config configs/sweeps/real_nhanes_2003_2004_ggt_methods.yaml \
+  --jobs 2
+
+# Convert posterior coefficients to percent change in GGT for 2x exposure
+python scripts/summarize_nhanes_effects.py \
+  --sweep-dir outputs/sweeps/real_nhanes_2003_2004_ggt \
+  --out-dir outputs/reports/nhanes_effects \
+  --reference-model RHS
+
+# Plot group-wise mean CI lengths
+python scripts/plot_nhanes_group_ci.py
+```
+
 ## 5. Outputs & Artifacts
 
 Each run directory (`outputs/runs/<name-timestamp>/`) contains:
@@ -216,8 +393,20 @@ Each run directory (`outputs/runs/<name-timestamp>/`) contains:
 - `metrics.json`: metrics (`mse`, `r2`, `tpr`, `fpr`, `auc`, etc.) serialized to JSON-friendly types.
 - `posterior_samples.npz`: posterior arrays (coefficients, tau, phi, lambda, sigma) if available.
 - `repeat_*/fold_*/convergence.json`: fold-level R-hat & ESS summaries computed from posterior arrays (no aggregate file).
+- `repeat_*/fold_*/covariate_adjustment.npz`: for loader datasets with a separate `C`, stores `alpha_hat` and optional `alpha_draws`.
 - `plots_check/`: generated plots (prediction scatter/histograms & posterior traces).
 - `resolved_config.yaml`: final merged configuration for reproducibility.
+
+For NHANES-style real-data runs, fold-level `fold_arrays.npz` also stores:
+
+- `covariate_mean`
+- `covariate_scale`
+- `covariate_binary_mask`
+
+and repeat-level `dataset_meta.json` records:
+
+- `covariate_p`
+- `covariate_feature_names`
 
 ---
 
@@ -239,6 +428,32 @@ Outputs include:
 ### 6.2 Custom Plots
 Import `grrhs.viz.plots` directly for advanced plotting (e.g., multiple coefficients, overlay comparisons).
 
+### 6.3 NHANES EDA
+
+Use `scripts/eda_nhanes_2003_2004.py` to generate exploratory diagnostics for the NHANES benchmark:
+
+```bash
+python scripts/eda_nhanes_2003_2004.py
+```
+
+Outputs under `outputs/reports/nhanes_2003_2004_eda/` include:
+
+- `missing_rate_table.csv`
+- `ggt_distribution_raw.png`
+- `ggt_distribution_log.png`
+- `{group}_distributions_raw.png`
+- `{group}_distributions_log.png`
+- `{group}_correlation_heatmap.png`
+- `all_exposures_correlation_heatmap.png`
+- `eda_summary.json`
+
+The all-exposure heatmap now uses:
+
+- paper-style pollutant labels (`Cadmium`, `Lead`, `p,p'-DDE`, `1-hydroxynaphthalene`, etc.)
+- chemistry-group separators
+- group headers (`Metals`, `Phthalates`, `OCPs`, `PBDEs`, `PAHs`)
+- an enlarged publication-oriented label layout
+
 ---
 
 ## 7. Reporting & Aggregation
@@ -257,8 +472,56 @@ Integrate into scripts/notebooks to compare models across the four benchmark sui
 ### 7.2 Tables & Plots
 - Format metrics for publication via `grrhs.viz.tables` (extend as needed).
 - Combine with `grrhs.viz.plots` or custom plotting to build comparative figures.
+- For synthetic sweeps, `scripts/plot_synthetic_main_metrics.py` produces a compact panel figure from a sweep comparison CSV using the recommended benchmark metrics (`RMSE`, `BetaRMSE`, `AUC-PR`, `BetaCoverage90`).
 
-### 7.3 Sweep comparison summaries
+### 7.3 NHANES effect-size reporting
+
+For the NHANES GGT application, the repository now provides a GIGG-style reporting path based on posterior effect sizes rather than only predictive metrics.
+
+`scripts/summarize_nhanes_effects.py` converts posterior exposure coefficients into:
+
+- percent change in GGT for a two-fold increase in exposure
+- exposure-level 95% credible intervals
+- exposure-level CI lengths
+- group-level mean CI lengths
+- optional CI-length reduction summaries relative to a reference model
+
+The conversion uses the fold-specific exposure standardization stored during training:
+
+- if `x_std = (x_log - mu) / sigma`, then a doubling in exposure corresponds to `log(2) / sigma`
+- posterior effects are reported as `100 * (exp(beta * log(2) / sigma) - 1)`
+
+Command:
+
+```bash
+python scripts/summarize_nhanes_effects.py \
+  --sweep-dir outputs/sweeps/real_nhanes_2003_2004_ggt \
+  --out-dir outputs/reports/nhanes_effects \
+  --reference-model RHS
+```
+
+Outputs:
+
+- `nhanes_exposure_effects.csv`
+- `nhanes_group_ci_summary.csv`
+- `nhanes_effect_summary.json`
+- `nhanes_effect_summary.md`
+
+### 7.4 NHANES mean CI-length bar plot
+
+To build the publication-style bar chart comparing methods across the five chemistry groups, run:
+
+```bash
+python scripts/plot_nhanes_group_ci.py
+```
+
+This reads `outputs/reports/nhanes_effects/nhanes_group_ci_summary.csv` and writes:
+
+- `outputs/reports/nhanes_effects/nhanes_group_ci_barplot.png`
+
+If the summary CSV is empty, the script exits with a clear message telling you to finish the NHANES sweep and regenerate the effect summary first.
+
+### 7.5 Sweep comparison summaries
 - Every `run_sweep` invocation now emits `sweep_comparison_<timestamp>.json/.csv/.md` alongside `sweep_summary_<timestamp>.json` in the sweep output directory.
 - The CSV/Markdown tables list each variation (model) with its aggregated metrics so you can paste them straight into spreadsheets or docs.
 - The JSON payload also includes `metric_extrema`, recording which variation achieved the min/max value for every metric; use it to programmatically pick winners or trigger alerts.
@@ -501,6 +764,13 @@ The checklist scenarios each generate a small synthetic dataset tailored to the 
 | Task | Command |
 |------|---------|
 | Install deps | `pip install -e .[dev]` |
+| Download NHANES 2003-2004 raw files | `python scripts/download_nhanes_2003_2004.py` |
+| Prepare NHANES runner-ready arrays (`X`, `C`, `y`) | `python scripts/prepare_nhanes_2003_2004.py` |
+| NHANES EDA | `python scripts/eda_nhanes_2003_2004.py` |
+| Run NHANES real-data sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/real_nhanes_2003_2004_ggt_methods.yaml --jobs 2` |
+| Summarize NHANES `% change in GGT` effects | `python scripts/summarize_nhanes_effects.py --sweep-dir outputs/sweeps/real_nhanes_2003_2004_ggt --out-dir outputs/reports/nhanes_effects --reference-model RHS` |
+| Plot NHANES mean CI length by group | `python scripts/plot_nhanes_group_ci.py` |
+| Plot synthetic main metric panel | `python scripts/plot_synthetic_main_metrics.py --comparison-csv <sweep_comparison.csv>` |
 | Run S1 @ SNR=1 (GRRHS) | `python -m grrhs.cli.run_experiment --config configs/base.yaml configs/experiments/sim_s1.yaml configs/overrides/snr_1p0.yaml configs/methods/grrhs_regression.yaml --name sim_s1_snr1_grrhs` |
 | Run S2 sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s2.yaml --jobs 6` |
 | Run Exp4 misspec sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/exp4_group_misspec.yaml --jobs 2` |

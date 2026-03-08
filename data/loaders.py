@@ -31,9 +31,11 @@ class LoadedDataset:
     """Container for externally provided datasets."""
 
     X: np.ndarray
+    C: Optional[np.ndarray] = None
     y: Optional[np.ndarray] = None
     groups: Optional[List[List[int]]] = None
     feature_names: Optional[List[str]] = None
+    covariate_feature_names: Optional[List[str]] = None
     beta: Optional[np.ndarray] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -143,9 +145,12 @@ def load_real_dataset(
     Supported fields in ``loader_cfg``:
         path_X (str): location of features (.npy, .npz, .csv, .tsv).
         X_key (str, optional): key inside .npz when path_X points to npz.
+        path_C (str, optional): covariate matrix location (.npy, .npz, .csv, .tsv).
+        C_key (str, optional): key inside .npz when path_C points to npz.
         path_y (str, optional): target array location. Required for supervised tasks.
         y_key (str, optional): key inside .npz when path_y points to npz.
         path_feature_names (str, optional): text/JSON/YAML file listing feature names in order.
+        path_covariate_feature_names (str, optional): text/JSON/YAML file listing covariate names in order.
         path_group_map (str, optional): JSON/YAML/CSV mapping feature name to group id.
         beta_path (str, optional): ground-truth coefficients (for simulations based on real design matrices).
         beta_key (str, optional): companion key when ``beta_path`` is .npz.
@@ -169,12 +174,29 @@ def load_real_dataset(
     else:
         y = None
 
+    C: Optional[np.ndarray] = None
+    path_C = loader_cfg.get('path_C')
+    if path_C:
+        C = _load_array(_ensure_path(path_C, root), key=loader_cfg.get('C_key'), dtype='float32')
+        if C.ndim == 1:
+            C = C.reshape(-1, 1)
+        if C.shape[0] != X.shape[0]:
+            raise ValueError(f"Covariate rows {C.shape[0]} do not match number of samples {X.shape[0]}.")
+
     feature_names: Optional[List[str]] = None
     if loader_cfg.get('path_feature_names'):
         feature_names = _load_feature_names(_ensure_path(loader_cfg['path_feature_names'], root))
         if len(feature_names) != X.shape[1]:
             raise ValueError(
                 "Number of feature names does not match columns in X."            )
+
+    covariate_feature_names: Optional[List[str]] = None
+    if loader_cfg.get('path_covariate_feature_names'):
+        covariate_feature_names = _load_feature_names(_ensure_path(loader_cfg['path_covariate_feature_names'], root))
+        if C is None:
+            raise ValueError("path_covariate_feature_names requires path_C to be provided.")
+        if len(covariate_feature_names) != C.shape[1]:
+            raise ValueError("Number of covariate feature names does not match columns in C.")
 
     group_map: Optional[GroupMap] = None
     if loader_cfg.get('path_group_map'):
@@ -203,17 +225,33 @@ def load_real_dataset(
     metadata: Dict[str, Any] = {
         key: value
         for key, value in loader_cfg.items()
-        if key not in {"path_X", "X_key", "path_y", "y_key", "path_feature_names", "path_group_map", "beta_path", "beta_key"}
+        if key not in {
+            "path_X",
+            "X_key",
+            "path_C",
+            "C_key",
+            "path_y",
+            "y_key",
+            "path_feature_names",
+            "path_covariate_feature_names",
+            "path_group_map",
+            "beta_path",
+            "beta_key",
+        }
     }
     metadata.setdefault('source_path', str(_ensure_path(path_X, root)))
+    if path_C:
+        metadata.setdefault('covariate_path', str(_ensure_path(path_C, root)))
     if path_y:
         metadata.setdefault('target_path', str(_ensure_path(path_y, root)))
 
     return LoadedDataset(
         X=X,
+        C=C,
         y=y,
         groups=groups,
         feature_names=feature_names,
+        covariate_feature_names=covariate_feature_names,
         beta=beta,
         metadata=metadata,
     )
