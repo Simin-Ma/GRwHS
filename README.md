@@ -25,6 +25,7 @@ pip install -e .[dev]
 ### 1.3 Optional Tools
 - `pre-commit install` for formatting/lint hooks
 - Jupyter (already included) for interactive analysis (`notebooks/`)
+- `python -m pip install pyreadr` if you want to prepare the CRAN `sparsegl::trust_experts` dataset from its bundled `.rda` file
 
 ---
 
@@ -192,6 +193,8 @@ Follow this checklist to reproduce the final regression study (three synthetic s
    - Outputs live under `outputs/sweeps/sim_s*/` with per-variant resolved configs that document the chosen SNR, seeds, and fixed prior settings.
 
 2. **Real Data Benchmarks**
+    - Ready-to-run real-data experiment descriptors now include `configs/experiments/real_nhanes_2003_2004_ggt.yaml` and `configs/experiments/real_covid19_trust_experts.yaml`.
+    - Match each real dataset with its `configs/sweeps/real_<dataset>_methods.yaml` sweep so all methods share identical preprocessing and folds.
     - Create `configs/experiments/real_<dataset>.yaml` for each dataset (specify loader module + split policy, or furnish `path_X`, `path_y`, and `path_group_map`). Keep the same preprocessing as synthetic runs (train-only standardisation, shared splits across methods).
     - Mirror the synthetic sweeps by adding `configs/sweeps/real_<dataset>_methods.yaml`: six methods, no hyperparameter fiddling beyond what is already codified in `configs/methods/`, and repeated 70/30 (or 5× CV) splits for standard errors.
     - For GRRHS-specific prior robustness, use a dedicated sensitivity sweep such as `configs/sweeps/real_nhanes_2003_2004_grrhs_sensitivity.yaml` instead of tuned overrides.
@@ -388,6 +391,86 @@ python scripts/summarize_nhanes_effects.py \
 
 # Plot group-wise mean CI lengths
 python scripts/plot_nhanes_group_ci.py
+```
+
+### 4.2 COVID-19 Trust in Experts Real-Data Workflow
+
+The repository also includes the `trust_experts` dataset distributed inside the CRAN `sparsegl` package. This is the same real dataset used in Section 6.1 of the GRASP paper and gives GR-RHS a mixed-group setting with one large weak categorical block plus two compact spline groups.
+
+#### Study variables
+
+- **Outcome (`y`)**
+  - `trust_experts`
+- **Grouped design matrix (`X`)**
+  - one-hot block for `period`
+  - one-hot block for `region`
+  - one-hot block for `age`
+  - one-hot block for `gender`
+  - one-hot block for `raceethnicity`
+  - 10-dimensional cubic B-spline basis for `cli`
+  - 10-dimensional cubic B-spline basis for `hh_cmnty_cli`
+- **Covariates (`C`)**
+  - none in the current runner-ready export
+
+#### Processing path
+
+[`scripts/prepare_covid19_trust_experts.py`](/d:/FilesP/GR-RHS/scripts/prepare_covid19_trust_experts.py) performs:
+
+1. download the `sparsegl` source tarball from CRAN
+2. extract `sparsegl/data/trust_experts.rda`
+3. read the `trust_experts` data frame with `pyreadr`
+4. one-hot encode all categorical variables
+5. build 10-dimensional cubic B-spline bases for `cli` and `hh_cmnty_cli`
+6. export runner-ready arrays, feature names, group map, and a dataset summary
+
+With the current `sparsegl` release used by the script, the prepared dataset has:
+
+- `n = 9759`
+- `p = 101`
+- group sizes:
+  - `period = 13`
+  - `region = 51`
+  - `age = 5`
+  - `gender = 4`
+  - `raceethnicity = 8`
+  - `cli_spline = 10`
+  - `hh_cmnty_cli_spline = 10`
+
+The runner-ready outputs are:
+
+- `data/real/covid19_trust_experts/processed/runner_ready/X.npy`
+- `data/real/covid19_trust_experts/processed/runner_ready/y.npy`
+- `data/real/covid19_trust_experts/processed/runner_ready/feature_names.txt`
+- `data/real/covid19_trust_experts/processed/runner_ready/group_map.json`
+- `data/real/covid19_trust_experts/processed/dataset_summary.json`
+
+The corresponding config entry points are:
+
+- `configs/experiments/real_covid19_trust_experts.yaml`
+- `configs/sweeps/real_covid19_trust_experts_methods.yaml`
+
+#### Commands
+
+```bash
+# Install the extra dependency used by the prep script
+python -m pip install pyreadr
+
+# Build X / y arrays and group metadata
+python scripts/prepare_covid19_trust_experts.py
+
+# Fast smoke test
+python -m grrhs.cli.run_experiment \
+  --config configs/base.yaml \
+           configs/experiments/real_covid19_trust_experts.yaml \
+           configs/methods/ridge.yaml \
+  --name trust_experts_ridge_smoke \
+  --override splits.outer.n_splits=2 splits.inner.n_splits=2 experiments.repeats=1
+
+# Full all-model real-data sweep
+python -m grrhs.cli.run_sweep \
+  --base-config configs/base.yaml \
+  --sweep-config configs/sweeps/real_covid19_trust_experts_methods.yaml \
+  --jobs 2
 ```
 
 ## 5. Outputs & Artifacts
@@ -693,6 +776,10 @@ If you need manual inspection beyond the harness: run `scripts/plot_check.py` on
 ### 10.2 Additional Datasets
 - Add YAML configs (synthetic) or loader adapters (real data).
 - Modify CLI or scripts to include new benchmark scenarios or real datasets in loops/sweeps.
+- Use the existing real-data integrations as templates:
+  - `scripts/prepare_nhanes_2003_2004.py` + `configs/experiments/real_nhanes_2003_2004_ggt.yaml`
+  - `scripts/prepare_covid19_trust_experts.py` + `configs/experiments/real_covid19_trust_experts.yaml`
+- For loader-backed real data, prefer exporting `runner_ready/X.npy`, `runner_ready/y.npy`, `feature_names.txt`, and `group_map.json` so `data/loaders.py` can ingest the dataset without runner changes.
 
 ### 10.3 Diagnostics/Visualization Extensions
 - Add new diagnostics to `grrhs/diagnostics/` (e.g., running means, autocorrelation plots).
@@ -788,6 +875,10 @@ The checklist scenarios each generate a small synthetic dataset tailored to the 
 | Prepare NHANES runner-ready arrays (`X`, `C`, `y`) | `python scripts/prepare_nhanes_2003_2004.py` |
 | NHANES EDA | `python scripts/eda_nhanes_2003_2004.py` |
 | Run NHANES real-data sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/real_nhanes_2003_2004_ggt_methods.yaml --jobs 2` |
+| Install Trust-in-Experts prep dependency | `python -m pip install pyreadr` |
+| Prepare Trust-in-Experts runner-ready arrays (`X`, `y`) | `python scripts/prepare_covid19_trust_experts.py` |
+| Run Trust-in-Experts smoke test | `python -m grrhs.cli.run_experiment --config configs/base.yaml configs/experiments/real_covid19_trust_experts.yaml configs/methods/ridge.yaml --name trust_experts_ridge_smoke --override splits.outer.n_splits=2 splits.inner.n_splits=2 experiments.repeats=1` |
+| Run Trust-in-Experts real-data sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/real_covid19_trust_experts_methods.yaml --jobs 2` |
 | Audit Bayesian seed stability | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/audit_seed_stability_bayesian_methods.yaml --jobs 2` |
 | Audit Bayesian budget sensitivity | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/audit_budget_sensitivity_bayesian_methods.yaml --jobs 2` |
 | Summarize NHANES `% change in GGT` effects | `python scripts/summarize_nhanes_effects.py --sweep-dir outputs/sweeps/real_nhanes_2003_2004_ggt --out-dir outputs/reports/nhanes_effects --reference-model RHS` |
