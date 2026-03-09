@@ -21,6 +21,7 @@ dependencies = [
   "torch>=2.1",
   "matplotlib>=3.7",
   "pandas>=1.5",
+  "patsy>=1.0",
   "PyYAML>=6.0",
   "skglm>=0.5",
   "scikit-learn>=1.3",

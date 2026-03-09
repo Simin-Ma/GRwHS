@@ -13,6 +13,10 @@ from scipy.stats import invgamma
 
 from grrhs.inference.gig import sample_gig
 
+_POS_FLOOR = 1e-8
+_POS_CAP = 1e3
+_BETA_CAP = 1e3
+
 
 def _digamma_inv(y: float, tol: float = 1e-8, max_iter: int = 50) -> float:
     """Invert the digamma function via Newton iterations (Minka, 2000)."""
@@ -81,6 +85,19 @@ def _slice_sample_1d(
             R = x1
         step += 1
     return x0
+
+
+def _clip_positive_scalar(value: float, *, floor: float = _POS_FLOOR, cap: float = _POS_CAP) -> float:
+    val = float(value)
+    if not np.isfinite(val):
+        return float(floor)
+    return float(min(max(val, floor), cap))
+
+
+def _clip_positive_array(values: np.ndarray, *, floor: float = _POS_FLOOR, cap: float = _POS_CAP) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    arr = np.where(np.isfinite(arr), arr, floor)
+    return np.clip(arr, floor, cap)
 
 
 def _fit_gigg_chain_task(payload: dict) -> dict:
@@ -293,8 +310,8 @@ class GIGGRegression:
 
         lambda_sq = np.ones(p, dtype=float)
         gamma_sq = np.ones(G, dtype=float)
-        tau_sq = float(self.tau_scale)
-        sigma_sq = float(self.sigma_scale)
+        tau_sq = _clip_positive_scalar(self.tau_scale)
+        sigma_sq = _clip_positive_scalar(self.sigma_scale)
         xi_tau = 1.0
         xi_sigma = 1.0
 
@@ -314,7 +331,8 @@ class GIGGRegression:
         keep_idx = 0
         for it in range(self.iters):
             # ---- β | rest
-            prior_prec = 1.0 / np.maximum(tau_sq * gamma_sq[group_id] * lambda_sq, self.jitter)
+            local_scale = _clip_positive_array(tau_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
+            prior_prec = 1.0 / local_scale
             precision = XtX + np.diag(prior_prec)
             if self.jitter > 0.0:
                 precision = precision + np.eye(p) * self.jitter
@@ -322,50 +340,74 @@ class GIGGRegression:
             mean = cho_solve(chol, Xty, check_finite=False)
             noise = cho_solve(chol, rng.normal(size=p), check_finite=False)
             beta = mean + math.sqrt(sigma_sq) * noise
+            beta = np.clip(np.nan_to_num(beta, nan=0.0, posinf=_BETA_CAP, neginf=-_BETA_CAP), -_BETA_CAP, _BETA_CAP)
 
             # ---- λ^2 | β, γ
             for gid, idxs in enumerate(normalised_groups):
-                denom = 2.0 * max(tau_sq * gamma_sq[gid], self.jitter)
+                denom = _clip_positive_scalar(2.0 * tau_sq * gamma_sq[gid], floor=self.jitter)
                 b_shape = max(b_vec[gid] + 0.5, 1e-6)
                 for j in idxs:
-                    scale = 1.0 + (beta[j] ** 2) / denom
-                    lambda_sq[j] = invgamma.rvs(a=b_shape, scale=scale, random_state=rng)
+                    numer = min(float(beta[j] ** 2), _POS_CAP)
+                    scale = _clip_positive_scalar(1.0 + numer / denom)
+                    try:
+                        draw = invgamma.rvs(a=b_shape, scale=scale, random_state=rng)
+                    except Exception:
+                        draw = lambda_sq[j]
+                    lambda_sq[j] = _clip_positive_scalar(draw)
 
             # ---- γ_g^2 | β, λ
             for gid, idxs in enumerate(normalised_groups):
                 lam_param = float(a_vec[gid] - 0.5 * group_sizes[gid])
-                chi = np.sum(beta[idxs] ** 2 / np.maximum(lambda_sq[idxs], self.jitter))
+                denom = _clip_positive_array(lambda_sq[idxs], floor=self.jitter)
+                chi = _clip_positive_scalar(np.sum(np.minimum(beta[idxs] ** 2, _POS_CAP) / denom), floor=self.jitter)
                 psi = 2.0
-                theta = sample_gig(
-                    lambda_param=lam_param,
-                    chi=max(chi, self.jitter),
-                    psi=max(psi, self.jitter),
-                    size=1,
-                    rng=rng,
-                )[0]
-                gamma_sq[gid] = max(theta, self.jitter)
+                try:
+                    theta = sample_gig(
+                        lambda_param=lam_param,
+                        chi=chi,
+                        psi=max(psi, self.jitter),
+                        size=1,
+                        rng=rng,
+                    )[0]
+                except Exception:
+                    theta = gamma_sq[gid]
+                gamma_sq[gid] = _clip_positive_scalar(theta, floor=self.jitter)
 
             # ---- τ^2 | β, λ, γ  (log-space slice sampling for stability)
-            beta_quad = np.sum(beta ** 2 / np.maximum(gamma_sq[group_id] * lambda_sq, self.jitter))
+            denom_tau = _clip_positive_array(gamma_sq[group_id] * lambda_sq, floor=self.jitter)
+            beta_quad = float(np.sum(np.minimum(beta ** 2, _POS_CAP) / denom_tau))
             alpha_tau = 0.5 * (p + 1)
-            beta_tau = 0.5 * beta_quad + 1.0 / max(xi_tau, self.jitter)
+            beta_tau = 0.5 * beta_quad + 1.0 / _clip_positive_scalar(xi_tau, floor=self.jitter)
 
             def _logp_tau(v: float) -> float:
                 return -alpha_tau * v - beta_tau * math.exp(-v)
 
             log_tau = math.log(max(tau_sq, self.jitter))
             log_tau_new = _slice_sample_1d(_logp_tau, log_tau, rng, w=0.5, m=100, max_steps=500)
-            tau_sq = math.exp(log_tau_new)
-            xi_tau = invgamma.rvs(a=1.0, scale=1.0 + 1.0 / max(tau_sq, self.jitter), random_state=rng)
+            tau_sq = _clip_positive_scalar(math.exp(log_tau_new), floor=self.jitter)
+            try:
+                xi_tau = invgamma.rvs(a=1.0, scale=1.0 + 1.0 / tau_sq, random_state=rng)
+            except Exception:
+                xi_tau = 1.0
+            xi_tau = _clip_positive_scalar(xi_tau)
 
             # ---- σ^2 | β
             resid = y - X @ beta
             rss = float(resid @ resid)
-            prior_quad = np.sum(beta ** 2 / np.maximum(tau_sq * gamma_sq[group_id] * lambda_sq, self.jitter))
+            denom_sigma = _clip_positive_array(tau_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
+            prior_quad = float(np.sum(np.minimum(beta ** 2, _POS_CAP) / denom_sigma))
             shape_sigma = 0.5 * (n + p)
-            scale_sigma = 0.5 * (rss + prior_quad) + 1.0 / max(xi_sigma, self.jitter)
-            sigma_sq = invgamma.rvs(a=shape_sigma, scale=scale_sigma, random_state=rng)
-            xi_sigma = invgamma.rvs(a=1.0, scale=1.0 + 1.0 / max(sigma_sq, self.jitter), random_state=rng)
+            scale_sigma = _clip_positive_scalar(0.5 * (rss + prior_quad) + 1.0 / _clip_positive_scalar(xi_sigma, floor=self.jitter))
+            try:
+                sigma_sq = invgamma.rvs(a=shape_sigma, scale=scale_sigma, random_state=rng)
+            except Exception:
+                sigma_sq = scale_sigma / max(shape_sigma + 1.0, 1.0)
+            sigma_sq = _clip_positive_scalar(sigma_sq, floor=self.jitter)
+            try:
+                xi_sigma = invgamma.rvs(a=1.0, scale=1.0 + 1.0 / sigma_sq, random_state=rng)
+            except Exception:
+                xi_sigma = 1.0
+            xi_sigma = _clip_positive_scalar(xi_sigma)
 
             # Empirical Bayes update for b_g following the paper's b-only MMLE path:
             #   b_g^{l+1} = psi_0^{-1}( - E[ mean_j log(lambda_gj^2) | y ] )
@@ -396,6 +438,10 @@ class GIGGRegression:
                         except Exception:
                             b_update = b_vec[gid]
                         b_vec[gid] = min(max(float(b_update), self.b_floor), self.b_max)
+
+            lambda_sq = _clip_positive_array(lambda_sq, floor=self.jitter)
+            gamma_sq = _clip_positive_array(gamma_sq, floor=self.jitter)
+            b_vec = _clip_positive_array(b_vec, floor=self.b_floor, cap=self.b_max)
 
             if it >= self.burnin and ((it - self.burnin) % max(self.thin, 1) == 0):
                 coef_draws[keep_idx] = beta

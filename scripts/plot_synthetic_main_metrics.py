@@ -20,6 +20,7 @@ DEFAULT_METRICS = [
 
 MODEL_COLORS: Dict[str, str] = {
     "grrhs_gibbs": "#153B50",
+    "regularized_horseshoe": "#5B4B8A",
     "gigg": "#3A7D44",
     "ridge": "#7A7A7A",
     "lasso": "#8E5572",

@@ -10,7 +10,7 @@ from typing import Dict, Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import SplineTransformer
+from patsy import dmatrix
 
 try:
     import pyreadr
@@ -86,27 +86,44 @@ def _build_categorical_block(frame: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[st
     return pd.concat(blocks, axis=1), group_columns, level_counts
 
 
-def _build_spline_block(frame: pd.DataFrame, *, degree: int = 3, n_basis: int = 10) -> Tuple[pd.DataFrame, Dict[str, List[str]]]:
+def _build_spline_block(
+    frame: pd.DataFrame,
+    *,
+    degree: int = 3,
+    df_spline: int = 10,
+) -> Tuple[pd.DataFrame, Dict[str, List[str]], Dict[str, Dict[str, object]]]:
     blocks: List[pd.DataFrame] = []
     group_columns: Dict[str, List[str]] = {}
-    n_knots = n_basis - degree + 1
-    if n_knots < 2:
-        raise ValueError("Requested spline basis is too small for the selected degree.")
+    spline_metadata: Dict[str, Dict[str, object]] = {}
 
     for column in SPLINE_COLUMNS:
-        transformer = SplineTransformer(
-            n_knots=n_knots,
-            degree=degree,
-            include_bias=True,
+        design = dmatrix(
+            f"bs(x, df={int(df_spline)}, degree={int(degree)}, include_intercept=False) - 1",
+            {"x": frame[column].to_numpy(dtype=np.float64)},
+            return_type="dataframe",
         )
-        values = frame[[column]].to_numpy(dtype=np.float32)
-        transformed = transformer.fit_transform(values).astype(np.float32)
+        transformed = design.to_numpy(dtype=np.float32, copy=True)
         names = [f"{column}_bs_{idx:02d}" for idx in range(1, transformed.shape[1] + 1)]
         block = pd.DataFrame(transformed, columns=names, index=frame.index)
         blocks.append(block)
         group_columns[f"{column}_spline"] = names
+        factor_info = next(iter(design.design_info.factor_infos.values()))
+        bs_transform = next(iter(factor_info.state["transforms"].values()))
+        all_knots = np.asarray(bs_transform._all_knots, dtype=np.float64)
+        boundary_repeat = int(degree + 1)
+        spline_metadata[column] = {
+            "basis": "patsy_bs",
+            "df": int(df_spline),
+            "degree": int(degree),
+            "include_intercept": False,
+            "all_knots": all_knots.tolist(),
+            "inner_knots": all_knots[boundary_repeat:-boundary_repeat].tolist(),
+            "lower_bound": float(all_knots[0]),
+            "upper_bound": float(all_knots[-1]),
+            "n_basis": int(transformed.shape[1]),
+        }
 
-    return pd.concat(blocks, axis=1), group_columns
+    return pd.concat(blocks, axis=1), group_columns, spline_metadata
 
 
 def build_dataset(*, url: str = SPARSEGL_TARBALL_URL, out_dir: Path) -> Dict[str, object]:
@@ -117,7 +134,7 @@ def build_dataset(*, url: str = SPARSEGL_TARBALL_URL, out_dir: Path) -> Dict[str
     y = frame[TARGET_COLUMN].to_numpy(dtype=np.float32)
 
     categorical_block, categorical_groups, level_counts = _build_categorical_block(frame)
-    spline_block, spline_groups = _build_spline_block(frame)
+    spline_block, spline_groups, spline_metadata = _build_spline_block(frame)
     X_frame = pd.concat([categorical_block, spline_block], axis=1)
 
     feature_names = list(X_frame.columns)
@@ -150,6 +167,7 @@ def build_dataset(*, url: str = SPARSEGL_TARBALL_URL, out_dir: Path) -> Dict[str
         feature_names=np.asarray(feature_names, dtype=object),
         group_order=np.asarray(GROUP_ORDER, dtype=object),
     )
+    (analysis_dir / "spline_metadata.json").write_text(json.dumps(spline_metadata, indent=2), encoding="utf-8")
 
     metadata = {
         "source": "CRAN sparsegl::trust_experts",
@@ -160,6 +178,7 @@ def build_dataset(*, url: str = SPARSEGL_TARBALL_URL, out_dir: Path) -> Dict[str
         "target": TARGET_COLUMN,
         "categorical_columns": CATEGORICAL_COLUMNS,
         "spline_columns": SPLINE_COLUMNS,
+        "spline_metadata": spline_metadata,
         "group_order": GROUP_ORDER,
         "group_sizes": group_sizes,
         "categorical_level_counts": level_counts,
@@ -176,6 +195,7 @@ def build_dataset(*, url: str = SPARSEGL_TARBALL_URL, out_dir: Path) -> Dict[str
             "runner_group_map": str((runner_dir / "group_map.json").resolve()),
             "analysis_csv": str((analysis_dir / "trust_experts_raw.csv").resolve()),
             "analysis_npz": str((analysis_dir / "trust_experts_analysis.npz").resolve()),
+            "analysis_spline_metadata": str((analysis_dir / "spline_metadata.json").resolve()),
         },
     }
     (out_dir / "dataset_summary.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")

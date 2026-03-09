@@ -1,0 +1,10 @@
+splits:
+  outer:
+    n_splits: 5
+  inner:
+    n_splits: 5
+
+experiments:
+  save_posterior: true
+  convergence:
+    enabled: true
