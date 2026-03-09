@@ -3,6 +3,7 @@ output_dir: "outputs/sweeps/real_nhanes_2003_2004_ggt"
 
 common_config_files:
   - "../experiments/real_nhanes_2003_2004_ggt.yaml"
+  - "../overrides/real_data_fast_fair.yaml"
 
 variations:
   - name: "nhanes_grrhs"
@@ -17,9 +18,11 @@ variations:
   - name: "nhanes_sgl"
     config_files:
       - "../methods/sparse_group_lasso.yaml"
+      - "../overrides/sgl_real_fast.yaml"
   - name: "nhanes_lasso"
     config_files:
       - "../methods/lasso.yaml"
+      - "../overrides/lasso_real_fast.yaml"
   - name: "nhanes_ridge"
     config_files:
       - "../methods/ridge.yaml"

@@ -104,3 +104,32 @@ def test_grrhs_gibbs_preserves_multichain_draws_for_convergence():
     assert convergence["beta"]["diagnostic_valid"] is True
     assert convergence["tau"]["raw_num_chains"] == 2
     assert convergence["tau"]["diagnostic_valid"] is True
+
+
+def test_grrhs_gibbs_runs_in_p_small_n_large_regime():
+    rng = np.random.default_rng(7)
+    n, p = 256, 8
+    X = rng.normal(size=(n, p))
+    X -= X.mean(axis=0, keepdims=True)
+    X /= X.std(axis=0, keepdims=True)
+    beta_true = np.array([1.0, -0.8, 0.6, 0.0, 0.0, 0.2, 0.0, 0.0])
+    y = X @ beta_true + 0.2 * rng.normal(size=n)
+    groups = [[0, 1], [2, 3], [4, 5], [6, 7]]
+
+    model = GRRHS_Gibbs(
+        c=1.0,
+        tau0=0.15,
+        eta=0.5,
+        s0=1.0,
+        iters=80,
+        burnin=40,
+        thin=4,
+        seed=77,
+    )
+    fitted = model.fit(X, y, groups)
+
+    assert fitted.coef_samples_ is not None
+    assert fitted.coef_samples_.shape == (10, p)
+    assert np.all(np.isfinite(fitted.coef_samples_))
+    assert fitted.sigma2_samples_ is not None
+    assert np.all(fitted.sigma2_samples_ > 0.0)

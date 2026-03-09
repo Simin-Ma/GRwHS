@@ -1,0 +1,8 @@
+model:
+  max_iter: 100
+  max_epochs: 20000
+  search:
+    alpha:
+      mode: "lasso_path"
+      min_ratio: 0.01
+      num: 16

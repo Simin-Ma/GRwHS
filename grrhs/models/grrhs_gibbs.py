@@ -1,5 +1,6 @@
 # grrhs/models/grrhs_gibbs.py
 from __future__ import annotations
+from concurrent.futures import ProcessPoolExecutor
 import logging
 import math
 from dataclasses import dataclass, field
@@ -7,7 +8,7 @@ from typing import Optional, Dict, Any, List, Tuple
 
 import numpy as np
 from numpy.random import Generator, default_rng
-from scipy.linalg import cho_factor, cho_solve
+from scipy.linalg import cho_factor, cho_solve, solve_triangular
 
 from grrhs.utils.logging_utils import progress
 
@@ -90,6 +91,41 @@ def _slice_sample_1d(logpdf, x0: float, rng: Generator, w: float = 1.0, m: int =
         it += 1
     # Fallback
     return x0
+
+
+def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+    model = GRRHS_Gibbs(
+        c=float(payload["c"]),
+        tau0=float(payload["tau0"]),
+        eta=float(payload["eta"]),
+        s0=float(payload["s0"]),
+        use_groups=bool(payload["use_groups"]),
+        iters=int(payload["iters"]),
+        burnin=int(payload["burnin"]),
+        thin=int(payload["thin"]),
+        seed=int(payload["seed"]),
+        num_chains=1,
+        slice_w=float(payload["slice_w"]),
+        slice_m=int(payload["slice_m"]),
+        jitter=float(payload["jitter"]),
+    )
+    fitted = model.fit(
+        np.asarray(payload["X"], dtype=float),
+        np.asarray(payload["y"], dtype=float),
+        groups=payload["groups"],
+    )
+    return {
+        "groups": fitted.groups_,
+        "group_id": None if fitted.group_id_ is None else np.asarray(fitted.group_id_, dtype=int),
+        "group_sizes": None if fitted.group_sizes_ is None else np.asarray(fitted.group_sizes_, dtype=int),
+        "coef_samples": None if fitted.coef_samples_ is None else np.asarray(fitted.coef_samples_),
+        "sigma2_samples": None if fitted.sigma2_samples_ is None else np.asarray(fitted.sigma2_samples_),
+        "tau_samples": None if fitted.tau_samples_ is None else np.asarray(fitted.tau_samples_),
+        "phi_samples": None if fitted.phi_samples_ is None else np.asarray(fitted.phi_samples_),
+        "lambda_samples": None if fitted.lambda_samples_ is None else np.asarray(fitted.lambda_samples_),
+        "coef_mean": None if fitted.coef_mean_ is None else np.asarray(fitted.coef_mean_),
+        "intercept": float(fitted.intercept_),
+    }
 
 
 # ------------------------------
@@ -190,24 +226,47 @@ class GRRHS_Gibbs:
         y: np.ndarray,
         groups: Optional[List[List[int]]] = None,
     ) -> "GRRHS_Gibbs":
-        chain_models: List[GRRHS_Gibbs] = []
+        payloads: List[Dict[str, Any]] = []
+        groups_payload = None if groups is None else [list(group) for group in groups]
         for chain_idx in range(int(self.num_chains)):
-            chain_model = self._spawn_single_chain(seed=int(self.seed) + chain_idx)
-            chain_model.fit(X, y, groups=groups)
-            chain_models.append(chain_model)
+            payloads.append(
+                {
+                    "c": self.c,
+                    "tau0": self.tau0,
+                    "eta": self.eta,
+                    "s0": self.s0,
+                    "use_groups": self.use_groups,
+                    "iters": self.iters,
+                    "burnin": self.burnin,
+                    "thin": self.thin,
+                    "seed": int(self.seed) + chain_idx,
+                    "slice_w": self.slice_w,
+                    "slice_m": self.slice_m,
+                    "jitter": self.jitter,
+                    "X": np.asarray(X, dtype=float),
+                    "y": np.asarray(y, dtype=float),
+                    "groups": groups_payload,
+                }
+            )
 
-        lead = chain_models[0]
-        self.groups_ = lead.groups_
-        self.group_id_ = None if lead.group_id_ is None else np.asarray(lead.group_id_, dtype=int).copy()
-        self.group_sizes_ = None if lead.group_sizes_ is None else np.asarray(lead.group_sizes_, dtype=int).copy()
-        self.coef_samples_ = self._stack_chain_draws([model.coef_samples_ for model in chain_models])
-        self.sigma2_samples_ = self._stack_chain_draws([model.sigma2_samples_ for model in chain_models])
-        self.tau_samples_ = self._stack_chain_draws([model.tau_samples_ for model in chain_models])
-        self.phi_samples_ = self._stack_chain_draws([model.phi_samples_ for model in chain_models])
-        self.lambda_samples_ = self._stack_chain_draws([model.lambda_samples_ for model in chain_models])
+        try:
+            with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
+                chain_results = list(executor.map(_fit_grrhs_chain_task, payloads))
+        except Exception:
+            chain_results = [_fit_grrhs_chain_task(payload) for payload in payloads]
+
+        lead = chain_results[0]
+        self.groups_ = lead["groups"]
+        self.group_id_ = None if lead["group_id"] is None else np.asarray(lead["group_id"], dtype=int).copy()
+        self.group_sizes_ = None if lead["group_sizes"] is None else np.asarray(lead["group_sizes"], dtype=int).copy()
+        self.coef_samples_ = self._stack_chain_draws([item["coef_samples"] for item in chain_results])
+        self.sigma2_samples_ = self._stack_chain_draws([item["sigma2_samples"] for item in chain_results])
+        self.tau_samples_ = self._stack_chain_draws([item["tau_samples"] for item in chain_results])
+        self.phi_samples_ = self._stack_chain_draws([item["phi_samples"] for item in chain_results])
+        self.lambda_samples_ = self._stack_chain_draws([item["lambda_samples"] for item in chain_results])
         coef_draws = self._flatten_param_draws(self.coef_samples_)
         self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
-        self.intercept_ = float(lead.intercept_)
+        self.intercept_ = float(lead["intercept"])
         return self
 
     # ----------
@@ -291,6 +350,8 @@ class GRRHS_Gibbs:
         # Precompute matrices
         # Note: the algorithm repeatedly uses C0 = D_beta^{-1} = diag(φ_g^2 τ^2 \tildeλ_j^2 σ^2)
         #       and the Cholesky of M = X C0 X^T + σ^2 I_n
+        XtX = X.T @ X
+        Xty = X.T @ y
         xtx_diag = np.einsum("ij,ij->j", X, X)
         tau_trace: List[float] = []
         sigma_trace: List[float] = []
@@ -313,7 +374,7 @@ class GRRHS_Gibbs:
             d_prior = 1.0 / v_prior
 
             # ---- 2) Conditional Gaussian block: sample β | rest
-            beta = self._sample_beta_conditional(X, y, sigma2, v_prior, rng=self.rng)
+            beta = self._sample_beta_conditional(XtX, Xty, sigma2, v_prior, rng=self.rng)
 
             # ---- 3) Update λ_j: slice sample u_j = log λ_j (instead of MH)
             # log-target: -log(tildeλ_j) - β_j^2/(2 φ_g^2 τ^2 tildeλ_j^2 σ^2) - log(1+λ_j^2) + u_j
@@ -476,43 +537,41 @@ class GRRHS_Gibbs:
         return X @ coef_draws[-1] + self.intercept_
 
     # ----------
-    # Internal: conditional Gaussian sampler for β (Bhattacharya et al.)
+    # Internal: conditional Gaussian sampler for β using the p x p
+    # posterior precision. This is preferable for the p << n regime.
     # ----------
-    def _sample_beta_conditional(self, X: np.ndarray, y: np.ndarray, sigma2: float, v_prior: np.ndarray,
-                                 rng: Generator) -> np.ndarray:
+    def _sample_beta_conditional(
+        self,
+        XtX: np.ndarray,
+        Xty: np.ndarray,
+        sigma2: float,
+        v_prior: np.ndarray,
+        rng: Generator,
+    ) -> np.ndarray:
         """
         Sample β | rest ~ N(μ, Σ).
         Prior: β ~ N(0, C0) with C0 = diag(v_prior) (diagonal).
         Likelihood: y | β ~ N(Xβ, σ² I).
-        Posterior: Σ = (C0^{-1} + XᵀX / σ²)^{-1}, μ = Σ Xᵀ y / σ².
-
-        Sampling recipe (Rue/Bhattacharya):
-          1) Sample u ~ N(0, C0)  => u = sqrt(v_prior) * z, z ~ N(0, I).
-          2) Sample δ ~ N(0, I_n).
-          3) Form M = X C0 Xᵀ + σ² I_n, then solve w = M^{-1} (y - X u + σ δ).
-          4) β = u + C0 Xᵀ w.
+        Posterior precision:
+            P = C0^{-1} + XᵀX / σ²
+        Posterior mean:
+            μ = P^{-1} Xᵀ y / σ²
         """
-        n, p = X.shape
-        sqrt_v = np.sqrt(np.maximum(v_prior, 1e-18))
-        u = sqrt_v * rng.standard_normal(p)
-        delta = rng.standard_normal(n)
+        p = XtX.shape[0]
+        sigma2_safe = max(float(sigma2), self.jitter)
+        prior_prec = 1.0 / np.maximum(v_prior, 1e-18)
+        precision = (XtX / sigma2_safe).copy()
+        precision.flat[:: p + 1] += prior_prec
 
-        # X C0 Xᵀ = X * diag(v_prior) * Xᵀ
-        XC = X * v_prior  # broadcasting each column scaled by v_prior_j
-        M = XC @ X.T  # (n, n)
-        # + σ² I
-        M.flat[:: n + 1] += sigma2  # add to diag
+        chol, lower = cho_factor(precision, overwrite_a=False, check_finite=False)
+        mean = cho_solve((chol, lower), Xty / sigma2_safe, check_finite=False)
 
-        # rhs = y - X u + σ δ
-        rhs = y - X @ u + math.sqrt(sigma2) * delta
-
-        # Cholesky solve
-        c, lower = cho_factor(M, overwrite_a=False, check_finite=False)
-        w = cho_solve((c, lower), rhs, check_finite=False)
-
-        # β = u + C0 Xᵀ w
-        beta = u + v_prior * (X.T @ w)
-        return beta
+        z = rng.standard_normal(p)
+        if lower:
+            noise = solve_triangular(chol.T, z, lower=False, check_finite=False)
+        else:
+            noise = solve_triangular(chol, z, lower=False, check_finite=False)
+        return mean + noise
 
     # ----------
     # Convenience exports (diagnostics/visualization)

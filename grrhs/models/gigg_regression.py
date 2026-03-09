@@ -1,4 +1,5 @@
 from __future__ import annotations
+from concurrent.futures import ProcessPoolExecutor
 
 import math
 from dataclasses import dataclass, field
@@ -80,6 +81,46 @@ def _slice_sample_1d(
             R = x1
         step += 1
     return x0
+
+
+def _fit_gigg_chain_task(payload: dict) -> dict:
+    model = GIGGRegression(
+        iters=int(payload["iters"]),
+        burnin=int(payload["burnin"]),
+        thin=int(payload["thin"]),
+        jitter=float(payload["jitter"]),
+        seed=int(payload["seed"]),
+        num_chains=1,
+        b_init=float(payload["b_init"]),
+        b_floor=float(payload["b_floor"]),
+        b_max=float(payload["b_max"]),
+        tau_scale=float(payload["tau_scale"]),
+        sigma_scale=float(payload["sigma_scale"]),
+        store_lambda=bool(payload["store_lambda"]),
+        a_value=payload["a_value"],
+        share_group_hyper=bool(payload["share_group_hyper"]),
+        mmle_enabled=bool(payload["mmle_enabled"]),
+        mmle_update=str(payload["mmle_update"]),
+    )
+    fitted = model.fit(
+        np.asarray(payload["X"], dtype=float),
+        np.asarray(payload["y"], dtype=float),
+        groups=payload["groups"],
+    )
+    return {
+        "coef_samples": None if fitted.coef_samples_ is None else np.asarray(fitted.coef_samples_),
+        "tau_samples": None if fitted.tau_samples_ is None else np.asarray(fitted.tau_samples_),
+        "sigma_samples": None if fitted.sigma_samples_ is None else np.asarray(fitted.sigma_samples_),
+        "gamma_samples": None if fitted.gamma_samples_ is None else np.asarray(fitted.gamma_samples_),
+        "tau2_samples": None if fitted.tau2_samples_ is None else np.asarray(fitted.tau2_samples_),
+        "sigma2_samples": None if fitted.sigma2_samples_ is None else np.asarray(fitted.sigma2_samples_),
+        "gamma2_samples": None if fitted.gamma2_samples_ is None else np.asarray(fitted.gamma2_samples_),
+        "lambda_samples": None if fitted.lambda_samples_ is None else np.asarray(fitted.lambda_samples_),
+        "b_samples": None if fitted.b_samples_ is None else np.asarray(fitted.b_samples_),
+        "coef_mean": None if fitted.coef_mean_ is None else np.asarray(fitted.coef_mean_),
+        "b_mean": None if fitted.b_mean_ is None else np.asarray(fitted.b_mean_),
+        "intercept": float(fitted.intercept_),
+    }
 
 
 @dataclass
@@ -174,29 +215,55 @@ class GIGGRegression:
         *,
         groups: Sequence[Sequence[int]],
     ) -> "GIGGRegression":
-        chain_models: List[GIGGRegression] = []
+        payloads: List[dict] = []
+        groups_payload = [list(group) for group in groups]
         for chain_idx in range(int(self.num_chains)):
-            chain_model = self._spawn_single_chain(seed=int(self.seed) + chain_idx)
-            chain_model.fit(X, y, groups=groups)
-            chain_models.append(chain_model)
+            payloads.append(
+                {
+                    "iters": self.iters,
+                    "burnin": self.burnin,
+                    "thin": self.thin,
+                    "jitter": self.jitter,
+                    "seed": int(self.seed) + chain_idx,
+                    "b_init": self.b_init,
+                    "b_floor": self.b_floor,
+                    "b_max": self.b_max,
+                    "tau_scale": self.tau_scale,
+                    "sigma_scale": self.sigma_scale,
+                    "store_lambda": self.store_lambda,
+                    "a_value": self.a_value,
+                    "share_group_hyper": self.share_group_hyper,
+                    "mmle_enabled": self.mmle_enabled,
+                    "mmle_update": self.mmle_update,
+                    "X": np.asarray(X, dtype=float),
+                    "y": np.asarray(y, dtype=float),
+                    "groups": groups_payload,
+                }
+            )
 
-        lead = chain_models[0]
+        try:
+            with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
+                chain_results = list(executor.map(_fit_gigg_chain_task, payloads))
+        except Exception:
+            chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
+
+        lead = chain_results[0]
         self.rng_ = default_rng(self.seed)
-        self.coef_samples_ = self._stack_chain_draws([model.coef_samples_ for model in chain_models])
-        self.tau_samples_ = self._stack_chain_draws([model.tau_samples_ for model in chain_models])
-        self.sigma_samples_ = self._stack_chain_draws([model.sigma_samples_ for model in chain_models])
-        self.gamma_samples_ = self._stack_chain_draws([model.gamma_samples_ for model in chain_models])
-        self.tau2_samples_ = self._stack_chain_draws([model.tau2_samples_ for model in chain_models])
-        self.sigma2_samples_ = self._stack_chain_draws([model.sigma2_samples_ for model in chain_models])
-        self.gamma2_samples_ = self._stack_chain_draws([model.gamma2_samples_ for model in chain_models])
-        self.lambda_samples_ = self._stack_chain_draws([model.lambda_samples_ for model in chain_models])
-        self.b_samples_ = self._stack_chain_draws([model.b_samples_ for model in chain_models])
+        self.coef_samples_ = self._stack_chain_draws([item["coef_samples"] for item in chain_results])
+        self.tau_samples_ = self._stack_chain_draws([item["tau_samples"] for item in chain_results])
+        self.sigma_samples_ = self._stack_chain_draws([item["sigma_samples"] for item in chain_results])
+        self.gamma_samples_ = self._stack_chain_draws([item["gamma_samples"] for item in chain_results])
+        self.tau2_samples_ = self._stack_chain_draws([item["tau2_samples"] for item in chain_results])
+        self.sigma2_samples_ = self._stack_chain_draws([item["sigma2_samples"] for item in chain_results])
+        self.gamma2_samples_ = self._stack_chain_draws([item["gamma2_samples"] for item in chain_results])
+        self.lambda_samples_ = self._stack_chain_draws([item["lambda_samples"] for item in chain_results])
+        self.b_samples_ = self._stack_chain_draws([item["b_samples"] for item in chain_results])
 
         coef_draws = self._flatten_param_draws(self.coef_samples_)
         b_draws = self._flatten_param_draws(self.b_samples_)
         self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
         self.b_mean_ = None if b_draws is None else b_draws.mean(axis=0)
-        self.intercept_ = float(lead.intercept_)
+        self.intercept_ = float(lead["intercept"])
         return self
 
     def fit(self, X: np.ndarray, y: np.ndarray, *, groups: Sequence[Sequence[int]]) -> "GIGGRegression":
