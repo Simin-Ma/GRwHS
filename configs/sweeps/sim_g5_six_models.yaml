@@ -1,0 +1,30 @@
+name: "sim_g5_six_models"
+output_dir: "outputs/sweeps/sim_g5_six_models"
+
+common_config_files:
+  - "../experiments/sim_g5_grouped_mixed.yaml"
+
+common_overrides:
+  experiments:
+    convergence:
+      enabled: false
+
+variations:
+  - name: "grrhs"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+  - name: "rhs"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+  - name: "gigg"
+    config_files:
+      - "../methods/gigg.yaml"
+  - name: "sgl"
+    config_files:
+      - "../methods/sparse_group_lasso.yaml"
+  - name: "lasso"
+    config_files:
+      - "../methods/lasso.yaml"
+  - name: "ridge"
+    config_files:
+      - "../methods/ridge.yaml"

@@ -614,6 +614,7 @@ If the summary CSV is empty, the script exits with a clear message telling you t
 - Metrics that a model cannot provide (for example strict-mode `MLPD` for deterministic baselines) are rendered as `N/A`, so missing output is not confused with zero.
 - Re-run `run_sweep` with `--dry-run` to preview planned jobs without executing; comparison files are written only for completed sweeps.
 - Sweep comparison artifacts are now re-aggregated on the common set of valid outer folds across runs, so table values are computed on the same realized fold subset when some models fail convergence.
+- Default behavior keeps single-chain Bayesian folds in the comparison tables even when R-hat is unavailable. Those diagnostics are still recorded as warnings in `convergence.json`, but they no longer blank out the Bayesian rows in sweep summaries.
 - `MLPD` / `PredictiveLogLikelihood` now carry explicit source tags in each fold metric payload. In the default `strict` mode, deterministic baselines report `MLPD_source: "disabled"`, while Bayesian models are scored from exact held-out likelihood draws under their own posterior samples. If you opt into `experiments.evaluation.predictive_density_mode: "mixed"`, Gaussian proxies are labelled `MLPD_source: "gaussian_proxy"`.
 
 ---
@@ -866,31 +867,134 @@ The checklist scenarios each generate a small synthetic dataset tailored to the 
 
 ## 12. Command Cheat-Sheet
 
+### 12.1 Setup & sanity
+
 | Task | Command |
 |------|---------|
-| Install deps | `pip install -e .[dev]` |
+| Install project + dev deps | `pip install -e .[dev]` |
+| Run full test suite | `python -m pytest` |
+| Run generator-only tests | `pytest tests/test_generators.py` |
+| Clean run artifacts (PowerShell) | `Remove-Item outputs\runs -Recurse -Force` |
+| Clean sweep artifacts (PowerShell) | `Remove-Item outputs\sweeps -Recurse -Force` |
+
+### 12.2 Single-run experiments
+
+| Task | Command |
+|------|---------|
+| GRRHS on `sim_s1` @ `SNR=1.0` | `python -m grrhs.cli.run_experiment --config configs/base.yaml configs/experiments/sim_s1.yaml configs/overrides/snr_1p0.yaml configs/methods/grrhs_regression.yaml --name sim_s1_snr1_grrhs` |
+| GIGG on `sim_s1` @ `SNR=1.0` | `python -m grrhs.cli.run_experiment --config configs/base.yaml configs/experiments/sim_s1.yaml configs/overrides/snr_1p0.yaml configs/methods/gigg.yaml --name sim_s1_snr1_gigg` |
+| Ridge on new paper-like half/sparse system | `python -m grrhs.cli.run_experiment --config configs/base.yaml configs/experiments/sim_s4_paper_half.yaml configs/methods/ridge.yaml --name sim_s4_ridge` |
+| Trust-in-Experts smoke test | `python -m grrhs.cli.run_experiment --config configs/base.yaml configs/experiments/real_covid19_trust_experts.yaml configs/methods/ridge.yaml --name trust_experts_ridge_smoke --override splits.outer.n_splits=2 splits.inner.n_splits=2 experiments.repeats=1` |
+
+### 12.3 Synthetic sweeps
+
+| Task | Command |
+|------|---------|
+| Run `sim_s1` full SNR sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s1.yaml --jobs 6` |
+| Run `sim_s2` full SNR sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s2.yaml --jobs 6` |
+| Run `sim_s3` full SNR sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s3.yaml --jobs 6` |
+| Run `sim_s4` full SNR sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s4.yaml --jobs 6` |
+| Run focused six-model comparison on `sim_s1` | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s1_six_models.yaml --jobs 2` |
+| Run focused six-model comparison on new paper-like half/sparse system | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s4_paper_half_six_models.yaml --jobs 2` |
+| Run ablation sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/exp4_ablation.yaml --jobs 2` |
+| Run group misspecification sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/exp4_group_misspec.yaml --jobs 2` |
+
+### 12.3.1 One-click full benchmark: 4 Sims x 4 SNR x 6 models
+
+This benchmark corresponds to 4 synthetic systems (`sim_s1` / `sim_s2` / `sim_s3` / `sim_s4`), each swept over 4 SNR settings (`0.1 / 0.5 / 1.0 / 3.0`). Each sweep runs the same six-model roster:
+`GRRHS`, `RHS`, `GIGG`, `Sparse Group Lasso`, `Lasso`, `Ridge`.
+
+Run the four sweeps one by one:
+
+```bash
+python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s1.yaml --jobs 6
+python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s2.yaml --jobs 6
+python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s3.yaml --jobs 6
+python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s4.yaml --jobs 6
+```
+
+PowerShell one-click loop:
+
+```powershell
+$sweeps = @("sim_s1", "sim_s2", "sim_s3", "sim_s4")
+foreach ($s in $sweeps) {
+  python -m grrhs.cli.run_sweep `
+    --base-config configs/base.yaml `
+    --sweep-config ("configs/sweeps/{0}.yaml" -f $s) `
+    --jobs 6
+}
+```
+
+If you want a lower-load version on one machine, reduce parallelism:
+
+```powershell
+$sweeps = @("sim_s1", "sim_s2", "sim_s3", "sim_s4")
+foreach ($s in $sweeps) {
+  python -m grrhs.cli.run_sweep `
+    --base-config configs/base.yaml `
+    --sweep-config ("configs/sweeps/{0}.yaml" -f $s) `
+    --jobs 2
+}
+```
+
+Result layout after completion:
+
+- `outputs/sweeps/sim_s1/`
+- `outputs/sweeps/sim_s2/`
+- `outputs/sweeps/sim_s3/`
+- `outputs/sweeps/sim_s4/`
+
+Each sweep directory will contain:
+
+- all `4 x 6 = 24` variation run folders
+- `sweep_summary_<timestamp>.json`
+- `sweep_comparison_<timestamp>.csv`
+- `sweep_comparison_<timestamp>.json`
+- `sweep_comparison_<timestamp>.md`
+
+### 12.4 Real-data preparation & sweeps
+
+| Task | Command |
+|------|---------|
 | Download NHANES 2003-2004 raw files | `python scripts/download_nhanes_2003_2004.py` |
 | Prepare NHANES runner-ready arrays (`X`, `C`, `y`) | `python scripts/prepare_nhanes_2003_2004.py` |
-| NHANES EDA | `python scripts/eda_nhanes_2003_2004.py` |
+| Run NHANES EDA | `python scripts/eda_nhanes_2003_2004.py` |
 | Run NHANES real-data sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/real_nhanes_2003_2004_ggt_methods.yaml --jobs 2` |
 | Install Trust-in-Experts prep dependency | `python -m pip install pyreadr` |
 | Prepare Trust-in-Experts runner-ready arrays (`X`, `y`) | `python scripts/prepare_covid19_trust_experts.py` |
-| Run Trust-in-Experts smoke test | `python -m grrhs.cli.run_experiment --config configs/base.yaml configs/experiments/real_covid19_trust_experts.yaml configs/methods/ridge.yaml --name trust_experts_ridge_smoke --override splits.outer.n_splits=2 splits.inner.n_splits=2 experiments.repeats=1` |
 | Run Trust-in-Experts real-data sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/real_covid19_trust_experts_methods.yaml --jobs 2` |
+
+### 12.5 Bayesian audits
+
+| Task | Command |
+|------|---------|
 | Audit Bayesian seed stability | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/audit_seed_stability_bayesian_methods.yaml --jobs 2` |
 | Audit Bayesian budget sensitivity | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/audit_budget_sensitivity_bayesian_methods.yaml --jobs 2` |
+
+### 12.6 Reporting & plotting
+
+| Task | Command |
+|------|---------|
+| Summarize runs into a report bundle | `python -m grrhs.cli.make_report --run <run_dir> --run <run_dir>` |
+| Plot diagnostics for one run | `python scripts/plot_diagnostics.py --run-dir <run_dir> --dest <out_dir>` |
+| Plot generic run outputs | `python scripts/plot_check.py <run_dir>` |
+| Plot synthetic main metrics from one sweep comparison CSV | `python scripts/plot_synthetic_main_metrics.py --comparison-csv <sweep_comparison.csv> --out outputs/reports/synthetic_main_metrics.png --metrics RMSE BetaRMSE AUC-PR F1` |
+| Plot two synthetic systems side-by-side | `python scripts/plot_dual_synthetic_systems.py --system-a-csv <sim_s1_comparison.csv> --system-b-csv <sim_s4_comparison.csv> --system-a-name "System A" --system-b-name "System B" --out outputs/reports/dual_synthetic_systems.png --metrics RMSE BetaRMSE AUC-PR F1` |
+| Plot GRRHS vs RHS per-group comparison | `python scripts/plot_group_level_comparison.py --grrhs-dir <grrhs_variant_dir> --rhs-dir <rhs_variant_dir>` |
+| Plot coefficient recovery | `python scripts/plot_coefficient_recovery.py --grrhs-dir <grrhs_variant_dir> --rhs-dir <rhs_variant_dir>` |
 | Summarize NHANES `% change in GGT` effects | `python scripts/summarize_nhanes_effects.py --sweep-dir outputs/sweeps/real_nhanes_2003_2004_ggt --out-dir outputs/reports/nhanes_effects --reference-model RHS` |
 | Plot NHANES mean CI length by group | `python scripts/plot_nhanes_group_ci.py` |
-| Plot synthetic main metric panel | `python scripts/plot_synthetic_main_metrics.py --comparison-csv <sweep_comparison.csv>` |
-| Run S1 @ SNR=1 (GRRHS) | `python -m grrhs.cli.run_experiment --config configs/base.yaml configs/experiments/sim_s1.yaml configs/overrides/snr_1p0.yaml configs/methods/grrhs_regression.yaml --name sim_s1_snr1_grrhs` |
-| Run S2 sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s2.yaml --jobs 6` |
-| Run Exp4 misspec sweep | `python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/exp4_group_misspec.yaml --jobs 2` |
-| Generate plots | `python scripts/plot_check.py <run_dir>` |
-| GRRHS vs RHS per-group plots | `python scripts/plot_group_level_comparison.py --grrhs-dir <grrhs_variant_dir> --rhs-dir <rhs_variant_dir>` |
-| Coefficient recovery plots | `python scripts/plot_coefficient_recovery.py --grrhs-dir <grrhs_variant_dir> --rhs-dir <rhs_variant_dir>` |
-| Summarize runs | `python -m grrhs.cli.make_report --run <run_dir> [--run <run_dir>]` |
-| Run tests | `python -m pytest` |
-| Clean outputs (PowerShell) | `Remove-Item outputs\runs -Recurse -Force` |
+
+### 12.7 Exact commands used for the dual synthetic benchmark added in this repo revision
+
+```bash
+python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s1_six_models.yaml --jobs 2
+python -m grrhs.cli.run_sweep --base-config configs/base.yaml --sweep-config configs/sweeps/sim_s4_paper_half_six_models.yaml --jobs 2
+
+python scripts/plot_synthetic_main_metrics.py --comparison-csv outputs/sweeps/sim_s1_six_models/sweep_comparison_<timestamp>.csv --out outputs/reports/sim_s1_six_models_main_metrics.png --title "Synthetic System A: Concentrated Group Signal" --metrics RMSE BetaRMSE AUC-PR F1
+python scripts/plot_synthetic_main_metrics.py --comparison-csv outputs/sweeps/sim_s4_paper_half_six_models/sweep_comparison_<timestamp>.csv --out outputs/reports/sim_s4_paper_half_six_models_main_metrics.png --title "Synthetic System B: Paper-like Half Dense / Half Sparse" --metrics RMSE BetaRMSE AUC-PR F1
+python scripts/plot_dual_synthetic_systems.py --system-a-csv outputs/sweeps/sim_s1_six_models/sweep_comparison_<timestamp>.csv --system-b-csv outputs/sweeps/sim_s4_paper_half_six_models/sweep_comparison_<timestamp>.csv --system-a-name "System A: Concentrated" --system-b-name "System B: Half Dense / Sparse" --out outputs/reports/dual_synthetic_systems.png --metrics RMSE BetaRMSE AUC-PR F1
+```
 
 ---
 

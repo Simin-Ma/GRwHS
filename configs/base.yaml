@@ -66,7 +66,10 @@ experiments:
       horseshoe: ["beta", "tau", "lambda"]
       hs: ["beta", "tau", "lambda"]
     missing_policy: "warn"
-    require_valid_diagnostics: true
+    # Keep single-chain Bayesian runs comparable in sweep summaries.
+    # With num_chains: 1, R-hat is not valid; treat that as a warning
+    # instead of dropping the entire fold from downstream comparisons.
+    require_valid_diagnostics: false
     min_chains_for_rhat: 2
   metrics:
     regression:

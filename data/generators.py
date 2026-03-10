@@ -224,7 +224,7 @@ def _draw_design(
     corr_type = str(corr_cfg.get("type", "independent")).lower()
     rho = float(corr_cfg.get("rho", 0.0))
 
-    if corr_type in {"independent", "none"} or abs(rho) < 1e-12:
+    if corr_type in {"independent", "none"}:
         return rng.standard_normal((n, p))
 
     if corr_type == "block":
@@ -297,6 +297,71 @@ def _draw_design(
                     raise GeneratorError(f"Primary group index {gidx} out of bounds for feature {j}.")
                 base += math.sqrt(effective_in) * group_components[:, gidx]
             scale_noise = math.sqrt(max(1.0 - rho_in, 1e-8))
+            design[:, j] = base + scale_noise * noise[:, j]
+        return design
+
+    if corr_type in {"group_block_random", "group_block_range"}:
+        if primary_group is None or group_count is None:
+            raise GeneratorError("Group-block correlation requires provided group assignments.")
+
+        def _parse_range(value: object, name: str) -> tuple[float, float]:
+            if isinstance(value, (list, tuple)) and len(value) == 2:
+                low = float(value[0])
+                high = float(value[1])
+                if high < low:
+                    low, high = high, low
+                return low, high
+            if value is None:
+                raise GeneratorError(f"{name} must be provided as a float or [low, high].")
+            val = float(value)
+            return val, val
+
+        rho_out_range = corr_cfg.get("rho_out_range", corr_cfg.get("rho_out"))
+        rho_in_range = corr_cfg.get("rho_in_range", corr_cfg.get("rho_in"))
+        out_low, out_high = _parse_range(rho_out_range, "rho_out_range")
+        in_low, in_high = _parse_range(rho_in_range, "rho_in_range")
+
+        if not (0.0 <= out_low <= out_high < 1.0):
+            raise GeneratorError("group_block_random requires rho_out_range within [0, 1).")
+        if not (0.0 <= in_low <= in_high < 1.0):
+            raise GeneratorError("group_block_random requires rho_in_range within [0, 1).")
+
+        rho_out = float(rng.uniform(out_low, out_high))
+        if in_high < rho_out:
+            raise GeneratorError("group_block_random requires rho_in_range to allow values >= rho_out.")
+
+        low = max(in_low, rho_out)
+        high = in_high
+        # Assign per-feature within-group correlation targets to create wide dispersion
+        # inside every group (some weak, some strong).
+        rho_in_by_feature = np.empty(p, dtype=float)
+        for gid in range(group_count):
+            members = np.where(primary_group == gid)[0]
+            if members.size == 0:
+                continue
+            if members.size == 1:
+                rho_vals = np.array([rng.uniform(low, high)], dtype=float)
+            else:
+                rho_vals = np.linspace(low, high, members.size, dtype=float)
+                rng.shuffle(rho_vals)
+            rho_in_by_feature[members] = rho_vals
+
+        global_component = rng.standard_normal((n, 1)) if rho_out > 0 else None
+        group_components = rng.standard_normal((n, group_count)) if group_count > 0 else None
+        noise = rng.standard_normal((n, p))
+        design = np.empty((n, p), dtype=float)
+        for j in range(p):
+            base = 0.0
+            if global_component is not None:
+                base += math.sqrt(rho_out) * global_component[:, 0]
+            gidx = int(primary_group[j])
+            if gidx < 0 or gidx >= group_count:
+                raise GeneratorError(f"Primary group index {gidx} out of bounds for feature {j}.")
+            rho_in_g = float(rho_in_by_feature[j])
+            effective_in = max(rho_in_g - rho_out, 0.0)
+            if group_components is not None and effective_in > 0:
+                base += math.sqrt(effective_in) * group_components[:, gidx]
+            scale_noise = math.sqrt(max(1.0 - rho_in_g, 1e-8))
             design[:, j] = base + scale_noise * noise[:, j]
         return design
 
@@ -557,6 +622,13 @@ def generate_synthetic(config: SyntheticConfig, *, rng: Optional[np.random.Gener
             beta[weak_idx] = _soft_sign(vals, sign_mode, local_rng)
 
         active_idx = np.sort(np.concatenate([strong_idx, weak_idx])) if (strong_idx.size or weak_idx.size) else np.zeros(0, dtype=int)
+
+    background_cfg = signal_cfg.get("background_noise") if isinstance(signal_cfg, Mapping) else None
+    if background_cfg:
+        scale = float(background_cfg.get("scale", background_cfg.get("std", 0.0)))
+        if scale > 0:
+            zero_mask = np.abs(beta) < 1e-12
+            beta[zero_mask] = local_rng.normal(0.0, scale, size=int(zero_mask.sum()))
 
     linear = X @ beta
 

@@ -2045,12 +2045,16 @@ def _run_fold_nested(
     return fold_summary
 
 
-def _aggregate_metrics(records: Sequence[Mapping[str, Any]]) -> Tuple[Dict[str, float], Dict[str, Dict[str, float]]]:
+def _aggregate_metrics(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    include_invalid: bool = False,
+) -> Tuple[Dict[str, float], Dict[str, Dict[str, float]]]:
     """Aggregate scalar metrics across folds."""
 
     collector: Dict[str, List[float]] = defaultdict(list)
     for entry in records:
-        if not _classify_fold_status(str(entry.get("status", "OK"))):
+        if not include_invalid and not _classify_fold_status(str(entry.get("status", "OK"))):
             continue
         metrics = entry.get("metrics", {})
         for key, value in metrics.items():
@@ -2075,10 +2079,14 @@ def _aggregate_metrics(records: Sequence[Mapping[str, Any]]) -> Tuple[Dict[str, 
     return mean_metrics, summary
 
 
-def _aggregate_metric_sources(records: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, int]]:
+def _aggregate_metric_sources(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    include_invalid: bool = False,
+) -> Dict[str, Dict[str, int]]:
     counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for entry in records:
-        if not _classify_fold_status(str(entry.get("status", "OK"))):
+        if not include_invalid and not _classify_fold_status(str(entry.get("status", "OK"))):
             continue
         metrics = entry.get("metrics", {})
         if not isinstance(metrics, Mapping):
@@ -2207,6 +2215,7 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
                 all_valid_fold_records.append({**record, "tuning_history": fold_result.get("tuning_history")})
 
         repeat_mean, repeat_summary = _aggregate_metrics(repeat_records)
+        repeat_mean_all, repeat_summary_all = _aggregate_metrics(repeat_records, include_invalid=True)
         repeat_seeds = {}
         inference_seeds = _extract_inference_seeds(repeat_config)
         if inference_seeds:
@@ -2222,6 +2231,9 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
             "metrics": repeat_mean,
             "metrics_summary": repeat_summary,
             "metric_sources": _aggregate_metric_sources(repeat_records),
+            "metrics_all_folds": repeat_mean_all,
+            "metrics_summary_all_folds": repeat_summary_all,
+            "metric_sources_all_folds": _aggregate_metric_sources(repeat_records, include_invalid=True),
             "folds": [
                 {
                     "status": entry.get("status"),
@@ -2243,6 +2255,7 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
         repeat_summaries.append(repeat_payload)
 
     aggregated_metrics, aggregated_summary = _aggregate_metrics(all_fold_records)
+    aggregated_metrics_all, aggregated_summary_all = _aggregate_metrics(all_fold_records, include_invalid=True)
 
     if posterior_accumulator:
         combined: Dict[str, np.ndarray] = {}
@@ -2284,6 +2297,9 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
         "metrics": aggregated_metrics,
         "metrics_summary": aggregated_summary,
         "metric_sources": _aggregate_metric_sources(all_fold_records),
+        "metrics_all_folds": aggregated_metrics_all,
+        "metrics_summary_all_folds": aggregated_summary_all,
+        "metric_sources_all_folds": _aggregate_metric_sources(all_fold_records, include_invalid=True),
         "valid_fold_count": int(len(all_valid_fold_records)),
         "invalid_fold_count": int(len(all_fold_records) - len(all_valid_fold_records)),
         "repeat_summaries": repeat_summaries,

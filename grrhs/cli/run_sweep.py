@@ -193,13 +193,15 @@ def _extract_fold_metric_records(payload: Any) -> Dict[str, Dict[str, Any]]:
 def _aggregate_numeric_metrics_from_folds(
     fold_records: Dict[str, Dict[str, Any]],
     selected_keys: List[str],
+    *,
+    include_invalid: bool = False,
 ) -> Dict[str, float]:
     collector: Dict[str, List[float]] = {}
     for key in selected_keys:
         fold = fold_records.get(key)
         if not isinstance(fold, dict):
             continue
-        if not _is_valid_fold_status(fold.get("status")):
+        if not include_invalid and not _is_valid_fold_status(fold.get("status")):
             continue
         metrics = fold.get("metrics")
         if not isinstance(metrics, dict):
@@ -311,6 +313,12 @@ def _build_comparison_payload(summary: List[Dict[str, Any]]) -> Tuple[List[Dict[
         common_valid_fold_keys = sorted(
             set.intersection(*(set(row["valid_fold_keys"]) for row in comparable_rows))
         )
+    recorded_rows = [row for row in row_inputs if row["fold_records"]]
+    common_recorded_fold_keys: List[str] = []
+    if recorded_rows:
+        common_recorded_fold_keys = sorted(
+            set.intersection(*(set(row["fold_records"].keys()) for row in recorded_rows))
+        )
 
     rows: List[Dict[str, Any]] = []
     for row_input in row_inputs:
@@ -330,14 +338,26 @@ def _build_comparison_payload(summary: List[Dict[str, Any]]) -> Tuple[List[Dict[
             )
             comparison_basis = "common_valid_folds"
             comparison_fold_count = len(common_valid_fold_keys)
+        elif common_recorded_fold_keys and row_input["fold_records"] and not comparable_rows:
+            metrics = _aggregate_numeric_metrics_from_folds(
+                row_input["fold_records"],
+                common_recorded_fold_keys,
+                include_invalid=True,
+            )
+            comparison_basis = "common_recorded_folds"
+            comparison_fold_count = len(common_recorded_fold_keys)
         elif row_input["fold_records"] and not row_input["valid_fold_keys"]:
-            metrics = {}
-            comparison_basis = "no_valid_folds"
-            comparison_fold_count = 0
+            metrics = _aggregate_numeric_metrics_from_folds(
+                row_input["fold_records"],
+                sorted(row_input["fold_records"].keys()),
+                include_invalid=True,
+            )
+            comparison_basis = "all_recorded_folds"
+            comparison_fold_count = len(row_input["fold_records"])
         elif row_input["fold_records"] and comparable_rows and not common_valid_fold_keys:
-            metrics = {}
-            comparison_basis = "no_common_valid_folds"
-            comparison_fold_count = 0
+            metrics = row_input["summary_metrics"]
+            comparison_basis = "run_summary_fallback"
+            comparison_fold_count = valid_fold_count
         else:
             metrics = row_input["summary_metrics"]
             comparison_basis = "run_summary"
@@ -357,10 +377,19 @@ def _build_comparison_payload(summary: List[Dict[str, Any]]) -> Tuple[List[Dict[
         })
 
     metadata = {
-        "comparison_basis": "common_valid_folds" if common_valid_fold_keys else "run_summary",
+        "comparison_basis": (
+            "common_valid_folds"
+            if common_valid_fold_keys
+            else "common_recorded_folds"
+            if common_recorded_fold_keys and not comparable_rows
+            else "run_summary"
+        ),
         "common_valid_fold_count": len(common_valid_fold_keys),
         "common_valid_fold_keys": common_valid_fold_keys,
+        "common_recorded_fold_count": len(common_recorded_fold_keys),
+        "common_recorded_fold_keys": common_recorded_fold_keys,
         "comparable_variations": [row["variation"] for row in comparable_rows],
+        "recorded_variations": [row["variation"] for row in recorded_rows],
     }
     if preferred_metric_order:
         ordered = [key for key in preferred_metric_order if key in metric_keys]
@@ -415,6 +444,19 @@ def _write_comparison_artifacts(outdir_path: Path, sweep_name: str, timestamp: s
         lines.append(
             f"Comparison basis: common valid outer folds across comparable runs "
             f"(`n={comparison_meta.get('common_valid_fold_count', 0)}`)."
+        )
+        lines.append("")
+    elif comparison_meta.get("comparison_basis") == "common_recorded_folds":
+        lines.append(
+            f"Comparison basis: common recorded outer folds across runs "
+            f"(including folds marked invalid by diagnostics) "
+            f"(`n={comparison_meta.get('common_recorded_fold_count', 0)}`)."
+        )
+        lines.append("")
+    elif comparison_meta.get("comparison_basis") == "run_summary":
+        lines.append(
+            "Comparison basis: per-run summary metrics "
+            "(used when no common valid outer-fold intersection exists across all runs)."
         )
         lines.append("")
     if metric_keys:
