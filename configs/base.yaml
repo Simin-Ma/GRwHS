@@ -43,12 +43,21 @@ experiments:
       burn_in: 1000
       kept_draws: 1000
       thinning: 1
-      num_chains: 1
+      num_chains: 4
   evaluation:
     predictive_density_mode: "strict"
   convergence:
     enabled: true
-    max_rhat: 1.05
+    max_rhat: 1.01
+    min_ess: 100
+    min_ess_by_block:
+      beta: 400
+      tau: 1000
+      phi: 400
+      gamma: 400
+      lambda: 200
+      b: 200
+    max_mcse_over_sd: 0.10
     max_retries: 1
     retry_scale: 2.0
     parameters: ["beta", "tau"]
@@ -66,11 +75,40 @@ experiments:
       horseshoe: ["beta", "tau", "lambda"]
       hs: ["beta", "tau", "lambda"]
     missing_policy: "warn"
-    # Keep single-chain Bayesian runs comparable in sweep summaries.
-    # With num_chains: 1, R-hat is not valid; treat that as a warning
-    # instead of dropping the entire fold from downstream comparisons.
-    require_valid_diagnostics: false
-    min_chains_for_rhat: 2
+    require_valid_diagnostics: true
+    min_chains_for_rhat: 4
+    hmc:
+      enabled: true
+      models: ["regularized_horseshoe", "rhs", "regularised_horseshoe"]
+      max_divergences: 0
+      min_ebfmi: 0.3
+      max_treedepth_hits: 0
+      require_present: true
+  posterior_validation:
+    enabled: false
+    apply_to_bayesian_only: true
+    sbc:
+      enabled: true
+      ks_pvalue_min: 0.05
+      coverage_level: 0.9
+      coverage_tolerance: 0.15
+      min_coefficients: 8
+      max_coefficients: 128
+      fail_on_missing_truth: false
+      fail_on_missing_draws: true
+    ppc:
+      enabled: true
+      tail_prob: 0.025
+      min_draws: 200
+      fail_on_missing_draws: true
+    seed_stability:
+      enabled: true
+      num_restarts: 2
+      seed_stride: 1009
+      max_beta_rel_l2: 0.15
+      min_beta_cosine: 0.98
+      max_tau_rel_sd: 0.20
+      fail_on_missing_tau: false
   metrics:
     regression:
       - MLPD

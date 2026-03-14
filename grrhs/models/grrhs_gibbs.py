@@ -107,6 +107,8 @@ def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         num_chains=1,
         slice_w=float(payload["slice_w"]),
         slice_m=int(payload["slice_m"]),
+        tau_slice_w=float(payload.get("tau_slice_w", payload["slice_w"])),
+        tau_slice_m=int(payload.get("tau_slice_m", payload["slice_m"])),
         jitter=float(payload["jitter"]),
     )
     fitted = model.fit(
@@ -150,6 +152,8 @@ class GRRHS_Gibbs:
     # Numerical settings
     slice_w: float = 1.0
     slice_m: int = 100
+    tau_slice_w: float = 0.35
+    tau_slice_m: int = 200
     jitter: float = 1e-10    # Numerical jitter to avoid degeneracy
 
     # Runtime state (accessible after fit)
@@ -176,6 +180,10 @@ class GRRHS_Gibbs:
             raise ValueError("c must be > 0")
         if self.num_chains <= 0:
             raise ValueError("num_chains must be a positive integer.")
+        if self.slice_w <= 0 or self.slice_m <= 0:
+            raise ValueError("slice_w and slice_m must be positive.")
+        if self.tau_slice_w <= 0 or self.tau_slice_m <= 0:
+            raise ValueError("tau_slice_w and tau_slice_m must be positive.")
 
     @staticmethod
     def _flatten_scalar_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
@@ -217,6 +225,8 @@ class GRRHS_Gibbs:
             num_chains=1,
             slice_w=self.slice_w,
             slice_m=self.slice_m,
+            tau_slice_w=self.tau_slice_w,
+            tau_slice_m=self.tau_slice_m,
             jitter=self.jitter,
         )
 
@@ -242,6 +252,8 @@ class GRRHS_Gibbs:
                     "seed": int(self.seed) + chain_idx,
                     "slice_w": self.slice_w,
                     "slice_m": self.slice_m,
+                    "tau_slice_w": self.tau_slice_w,
+                    "tau_slice_m": self.tau_slice_m,
                     "jitter": self.jitter,
                     "X": np.asarray(X, dtype=float),
                     "y": np.asarray(y, dtype=float),
@@ -462,7 +474,13 @@ class GRRHS_Gibbs:
                 return float(val)
 
             v0 = math.log(tau)
-            v_new = _slice_sample_1d(logp_v, v0, rng=self.rng, w=self.slice_w, m=self.slice_m)
+            v_new = _slice_sample_1d(
+                logp_v,
+                v0,
+                rng=self.rng,
+                w=self.tau_slice_w,
+                m=self.tau_slice_m,
+            )
             tau = math.exp(v_new)
             tau = min(tau, _TAU_MAX)
 

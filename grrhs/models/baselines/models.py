@@ -499,6 +499,7 @@ class _BaseHorseshoeRegression:
     thinning: int = 1
     seed: Optional[int] = None
     target_accept_prob: float = 0.99
+    max_tree_depth: int = 10
     progress_bar: bool = False
 
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -509,6 +510,7 @@ class _BaseHorseshoeRegression:
     c_samples_: Optional[np.ndarray] = field(default=None, init=False)
     coef_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: Optional[float] = field(default=None, init=False)
+    sampler_diagnostics_: Dict[str, Any] = field(default_factory=dict, init=False)
     _rng_key: Optional[random.PRNGKeyArray] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -539,6 +541,8 @@ class _BaseHorseshoeRegression:
             raise ValueError("thinning must be a positive integer.")
         if not 0.0 < self.target_accept_prob < 1.0:
             raise ValueError("target_accept_prob must lie in (0, 1).")
+        if self.max_tree_depth <= 0:
+            raise ValueError("max_tree_depth must be a positive integer.")
 
     def _numpyro_model(self, X: jnp.ndarray, y: jnp.ndarray) -> None:
         sigma = None
@@ -633,6 +637,7 @@ class _BaseHorseshoeRegression:
             self._numpyro_model,
             target_accept_prob=self.target_accept_prob,
             dense_mass=True,
+            max_tree_depth=int(self.max_tree_depth),
         )
         mcmc = MCMC(
             kernel,
@@ -642,8 +647,14 @@ class _BaseHorseshoeRegression:
             progress_bar=self.progress_bar,
             chain_method="sequential",
         )
-        mcmc.run(self._rng_key, jnp.asarray(X_arr), jnp.asarray(y_arr))
+        mcmc.run(
+            self._rng_key,
+            jnp.asarray(X_arr),
+            jnp.asarray(y_arr),
+            extra_fields=("diverging", "energy", "num_steps"),
+        )
         samples = mcmc.get_samples(group_by_chain=True)
+        self.sampler_diagnostics_ = self._extract_hmc_diagnostics(mcmc)
         self._store_samples(samples)
         return self
 
@@ -684,6 +695,73 @@ class _BaseHorseshoeRegression:
         self.tau_samples_ = None if fitted.tau_samples_ is None else fitted.tau_samples_.copy()
         self.lambda_samples_ = None if fitted.lambda_samples_ is None else fitted.lambda_samples_.copy()
         self.intercept_samples_ = None
+        self.sampler_diagnostics_ = {
+            "backend": "gibbs",
+            "hmc": None,
+        }
+
+    def _extract_hmc_diagnostics(self, mcmc: MCMC) -> Dict[str, Any]:
+        diagnostics: Dict[str, Any] = {"backend": "hmc"}
+        try:
+            extra_fields = mcmc.get_extra_fields(group_by_chain=True)
+        except Exception:
+            diagnostics["hmc"] = {}
+            return diagnostics
+
+        diverging_raw = np.asarray(extra_fields.get("diverging", []), dtype=float)
+        num_steps_raw = np.asarray(extra_fields.get("num_steps", []), dtype=float)
+        energy_raw = np.asarray(
+            extra_fields.get("energy", extra_fields.get("potential_energy", [])),
+            dtype=float,
+        )
+        if diverging_raw.ndim == 1 and diverging_raw.size:
+            diverging_raw = diverging_raw.reshape(1, -1)
+        if num_steps_raw.ndim == 1 and num_steps_raw.size:
+            num_steps_raw = num_steps_raw.reshape(1, -1)
+        if energy_raw.ndim == 1 and energy_raw.size:
+            energy_raw = energy_raw.reshape(1, -1)
+        if num_steps_raw.size == 0:
+            tree_depth_raw = np.asarray(extra_fields.get("tree_depth", []), dtype=float)
+            if tree_depth_raw.ndim == 1 and tree_depth_raw.size:
+                tree_depth_raw = tree_depth_raw.reshape(1, -1)
+            if tree_depth_raw.size:
+                num_steps_raw = np.power(2.0, tree_depth_raw)
+
+        if diverging_raw.size:
+            divergences = int(np.sum(diverging_raw > 0.5))
+        else:
+            divergences = -1
+        if num_steps_raw.size:
+            treedepth_limit = float(2 ** int(self.max_tree_depth))
+            treedepth_hits = int(np.sum(num_steps_raw >= treedepth_limit))
+            max_num_steps = int(np.max(num_steps_raw))
+        else:
+            treedepth_hits = -1
+            max_num_steps = -1
+
+        ebfmi_values: list[float] = []
+        if energy_raw.size:
+            for chain_energy in energy_raw:
+                if chain_energy.size < 3:
+                    ebfmi_values.append(float("nan"))
+                    continue
+                centered = np.asarray(chain_energy, dtype=float)
+                numer = float(np.mean(np.diff(centered) ** 2))
+                denom = float(np.var(centered))
+                if denom <= 0.0 or not np.isfinite(denom):
+                    ebfmi_values.append(float("nan"))
+                else:
+                    ebfmi_values.append(numer / denom)
+        ebfmi_min = float(np.nanmin(ebfmi_values)) if ebfmi_values else float("nan")
+
+        diagnostics["hmc"] = {
+            "divergences": divergences,
+            "treedepth_hits": treedepth_hits,
+            "max_num_steps": max_num_steps,
+            "ebfmi_per_chain": ebfmi_values,
+            "ebfmi_min": ebfmi_min,
+        }
+        return diagnostics
 
     def _store_samples(self, samples: Dict[str, jnp.ndarray]) -> None:
         def _convert(name: str, *, scalar: bool = False) -> Optional[np.ndarray]:

@@ -118,6 +118,7 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         share_group_hyper=bool(payload["share_group_hyper"]),
         mmle_enabled=bool(payload["mmle_enabled"]),
         mmle_update=str(payload["mmle_update"]),
+        mmle_burnin_only=bool(payload.get("mmle_burnin_only", True)),
     )
     fitted = model.fit(
         np.asarray(payload["X"], dtype=float),
@@ -160,6 +161,7 @@ class GIGGRegression:
     share_group_hyper: bool = False
     mmle_enabled: bool = True
     mmle_update: str = "paper_lambda_only"
+    mmle_burnin_only: bool = True
 
     rng_: Generator = field(init=False, repr=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -223,6 +225,7 @@ class GIGGRegression:
             share_group_hyper=self.share_group_hyper,
             mmle_enabled=self.mmle_enabled,
             mmle_update=self.mmle_update,
+            mmle_burnin_only=self.mmle_burnin_only,
         )
 
     def _fit_multichain(
@@ -252,6 +255,7 @@ class GIGGRegression:
                     "share_group_hyper": self.share_group_hyper,
                     "mmle_enabled": self.mmle_enabled,
                     "mmle_update": self.mmle_update,
+                    "mmle_burnin_only": self.mmle_burnin_only,
                     "X": np.asarray(X, dtype=float),
                     "y": np.asarray(y, dtype=float),
                     "groups": groups_payload,
@@ -411,7 +415,10 @@ class GIGGRegression:
 
             # Empirical Bayes update for b_g following the paper's b-only MMLE path:
             #   b_g^{l+1} = psi_0^{-1}( - E[ mean_j log(lambda_gj^2) | y ] )
-            if self.mmle_enabled:
+            do_mmle_update = bool(self.mmle_enabled) and (
+                (not bool(self.mmle_burnin_only)) or (it < int(self.burnin))
+            )
+            if do_mmle_update:
                 targets = np.empty(G, dtype=float)
                 for gid, idxs in enumerate(normalised_groups):
                     log_lambda_group = float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter))))

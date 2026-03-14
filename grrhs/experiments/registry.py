@@ -174,6 +174,13 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "inference.nuts.target_accept_prob",
         _get(cfg, "model.target_accept_prob", 0.99),
     )
+    max_tree_depth = int(
+        _get(
+            cfg,
+            "inference.nuts.max_tree_depth",
+            _get(cfg, "model.max_tree_depth", 10),
+        )
+    )
     progress_bar = bool(_get(cfg, "model.progress_bar", _get(cfg, "runtime.progress_bar", False)))
     seed_candidates = [
         "model.seed",
@@ -201,6 +208,7 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "num_chains": num_chains,
         "thinning": thinning,
         "target_accept_prob": float(0.99 if target_accept is None else target_accept),
+        "max_tree_depth": max(1, int(max_tree_depth)),
         "progress_bar": progress_bar,
     }
     if seed_val is not None:
@@ -415,6 +423,7 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
     share_group_hyper = bool(_get(cfg, "model.share_group_hyper", False))
     mmle_enabled = bool(_get(cfg, "model.mmle_enabled", True))
     mmle_update = str(_get(cfg, "model.mmle_update", "paper_lambda_only"))
+    mmle_burnin_only = bool(_get(cfg, "model.mmle_burnin_only", True))
 
     return GIGGRegression(
         iters=iters,
@@ -433,6 +442,7 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
         share_group_hyper=share_group_hyper,
         mmle_enabled=mmle_enabled,
         mmle_update=mmle_update,
+        mmle_burnin_only=mmle_burnin_only,
     )
 
 
@@ -512,6 +522,12 @@ def _gibbs_runtime_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
     slice_m = _get(cfg, "inference.gibbs.slice_m", None)
     if slice_m is not None:
         overrides["slice_m"] = max(1, int(slice_m))
+    tau_slice_w = _get(cfg, "inference.gibbs.tau_slice_w", None)
+    if tau_slice_w is not None:
+        overrides["tau_slice_w"] = float(tau_slice_w)
+    tau_slice_m = _get(cfg, "inference.gibbs.tau_slice_m", None)
+    if tau_slice_m is not None:
+        overrides["tau_slice_m"] = max(1, int(tau_slice_m))
     jitter = _get(cfg, "inference.gibbs.jitter", None)
     if jitter is not None:
         overrides["jitter"] = float(jitter)

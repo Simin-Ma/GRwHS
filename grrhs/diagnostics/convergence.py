@@ -204,11 +204,16 @@ def summarize_convergence(
             ess = effective_sample_size(arr, scalar_param=scalar_param)
             flat_rhat = np.asarray(rhat).ravel()
             flat_ess = np.asarray(ess).ravel()
+            with np.errstate(divide="ignore", invalid="ignore"):
+                # MCSE / posterior sd ~= sqrt(1 / ESS) for the posterior mean.
+                mcse_over_sd = np.where(flat_ess > 0.0, np.sqrt(1.0 / flat_ess), np.inf)
             summary[name] = {
                 "rhat_max": float(np.max(flat_rhat)),
                 "rhat_median": float(np.median(flat_rhat)),
                 "ess_min": float(np.min(flat_ess)),
                 "ess_median": float(np.median(flat_ess)),
+                "mcse_over_sd_max": float(np.max(mcse_over_sd)),
+                "mcse_over_sd_median": float(np.median(mcse_over_sd)),
                 **meta,
             }
         except ValueError as exc:

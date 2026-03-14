@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
-from scipy.stats import norm
+from scipy.stats import kstest, norm
 
 try:
     from sklearn.gaussian_process import GaussianProcessRegressor
@@ -71,7 +71,17 @@ class ExperimentError(RuntimeError):
 
 DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
     "enabled": True,
-    "max_rhat": 1.05,
+    "max_rhat": 1.01,
+    "min_ess": 100.0,
+    "min_ess_by_block": {
+        "beta": 400.0,
+        "tau": 1000.0,
+        "phi": 400.0,
+        "gamma": 400.0,
+        "lambda": 200.0,
+        "b": 200.0,
+    },
+    "max_mcse_over_sd": 0.10,
     "max_retries": 1,
     "retry_scale": 2.0,
     "parameters": ["beta", "tau"],
@@ -91,7 +101,15 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
     },
     "missing_policy": "warn",
     "require_valid_diagnostics": True,
-    "min_chains_for_rhat": 2,
+    "min_chains_for_rhat": 4,
+    "hmc": {
+        "enabled": True,
+        "models": ["regularized_horseshoe", "rhs", "regularised_horseshoe"],
+        "max_divergences": 0,
+        "min_ebfmi": 0.3,
+        "max_treedepth_hits": 0,
+        "require_present": True,
+    },
 }
 
 DEFAULT_BAYESIAN_FAIRNESS_CONFIG: Dict[str, Any] = {
@@ -104,7 +122,37 @@ DEFAULT_BAYESIAN_FAIRNESS_CONFIG: Dict[str, Any] = {
         "burn_in": 1000,
         "kept_draws": 1000,
         "thinning": 1,
-        "num_chains": 1,
+        "num_chains": 4,
+    },
+}
+
+DEFAULT_POSTERIOR_VALIDATION_CONFIG: Dict[str, Any] = {
+    "enabled": False,
+    "apply_to_bayesian_only": True,
+    "sbc": {
+        "enabled": True,
+        "ks_pvalue_min": 0.05,
+        "coverage_level": 0.9,
+        "coverage_tolerance": 0.15,
+        "min_coefficients": 8,
+        "max_coefficients": 128,
+        "fail_on_missing_truth": False,
+        "fail_on_missing_draws": True,
+    },
+    "ppc": {
+        "enabled": True,
+        "tail_prob": 0.025,
+        "min_draws": 200,
+        "fail_on_missing_draws": True,
+    },
+    "seed_stability": {
+        "enabled": True,
+        "num_restarts": 2,
+        "seed_stride": 1009,
+        "max_beta_rel_l2": 0.15,
+        "min_beta_cosine": 0.98,
+        "max_tau_rel_sd": 0.20,
+        "fail_on_missing_tau": False,
     },
 }
 
@@ -249,13 +297,56 @@ def _sampling_budget_from_config(config: Mapping[str, Any]) -> Dict[str, int]:
     burn_in = max(0, int(raw.get("burn_in", 4000)))
     kept_draws = max(1, int(raw.get("kept_draws", 2000)))
     thinning = max(1, int(raw.get("thinning", 2)))
-    num_chains = max(1, int(raw.get("num_chains", 2)))
+    num_chains = max(1, int(raw.get("num_chains", 4)))
     return {
         "burn_in": burn_in,
         "kept_draws": kept_draws,
         "thinning": thinning,
         "num_chains": num_chains,
     }
+
+
+def _posterior_validation_config(config: Mapping[str, Any]) -> Dict[str, Any]:
+    experiments_cfg = config.get("experiments", {}) or {}
+    raw = experiments_cfg.get("posterior_validation", {}) or {}
+    resolved = deepcopy(DEFAULT_POSTERIOR_VALIDATION_CONFIG)
+    if isinstance(raw, Mapping):
+        for key, value in raw.items():
+            if key in {"sbc", "ppc", "seed_stability"} and isinstance(value, Mapping):
+                resolved[key].update(dict(value))
+            else:
+                resolved[key] = value
+    resolved["enabled"] = bool(resolved.get("enabled", False))
+    resolved["apply_to_bayesian_only"] = bool(resolved.get("apply_to_bayesian_only", True))
+    sbc_cfg = resolved.get("sbc", {}) or {}
+    ppc_cfg = resolved.get("ppc", {}) or {}
+    seed_cfg = resolved.get("seed_stability", {}) or {}
+    resolved["sbc"] = {
+        "enabled": bool(sbc_cfg.get("enabled", True)),
+        "ks_pvalue_min": float(sbc_cfg.get("ks_pvalue_min", 0.05)),
+        "coverage_level": float(sbc_cfg.get("coverage_level", 0.9)),
+        "coverage_tolerance": float(sbc_cfg.get("coverage_tolerance", 0.15)),
+        "min_coefficients": max(1, int(sbc_cfg.get("min_coefficients", 8))),
+        "max_coefficients": max(1, int(sbc_cfg.get("max_coefficients", 128))),
+        "fail_on_missing_truth": bool(sbc_cfg.get("fail_on_missing_truth", False)),
+        "fail_on_missing_draws": bool(sbc_cfg.get("fail_on_missing_draws", True)),
+    }
+    resolved["ppc"] = {
+        "enabled": bool(ppc_cfg.get("enabled", True)),
+        "tail_prob": float(ppc_cfg.get("tail_prob", 0.025)),
+        "min_draws": max(20, int(ppc_cfg.get("min_draws", 200))),
+        "fail_on_missing_draws": bool(ppc_cfg.get("fail_on_missing_draws", True)),
+    }
+    resolved["seed_stability"] = {
+        "enabled": bool(seed_cfg.get("enabled", True)),
+        "num_restarts": max(1, int(seed_cfg.get("num_restarts", 2))),
+        "seed_stride": max(1, int(seed_cfg.get("seed_stride", 1009))),
+        "max_beta_rel_l2": max(0.0, float(seed_cfg.get("max_beta_rel_l2", 0.15))),
+        "min_beta_cosine": float(seed_cfg.get("min_beta_cosine", 0.98)),
+        "max_tau_rel_sd": max(0.0, float(seed_cfg.get("max_tau_rel_sd", 0.20))),
+        "fail_on_missing_tau": bool(seed_cfg.get("fail_on_missing_tau", False)),
+    }
+    return resolved
 
 
 def _apply_bayesian_sampling_budget(config: MutableMapping[str, Any]) -> None:
@@ -454,12 +545,37 @@ def _convergence_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     if isinstance(raw, Mapping):
         resolved.update(raw)
     resolved["enabled"] = bool(resolved.get("enabled", True))
-    resolved["max_rhat"] = float(resolved.get("max_rhat", 1.05))
+    resolved["max_rhat"] = float(resolved.get("max_rhat", 1.01))
+    resolved["min_ess"] = max(0.0, float(resolved.get("min_ess", 0.0)))
+    resolved["max_mcse_over_sd"] = float(resolved.get("max_mcse_over_sd", 1.0))
     resolved["max_retries"] = max(0, int(resolved.get("max_retries", 1)))
     resolved["retry_scale"] = max(1.0, float(resolved.get("retry_scale", 2.0)))
     resolved["missing_policy"] = str(resolved.get("missing_policy", "warn")).strip().lower()
     resolved["require_valid_diagnostics"] = bool(resolved.get("require_valid_diagnostics", True))
-    resolved["min_chains_for_rhat"] = max(1, int(resolved.get("min_chains_for_rhat", 2)))
+    resolved["min_chains_for_rhat"] = max(1, int(resolved.get("min_chains_for_rhat", 4)))
+    min_ess_by_block = resolved.get("min_ess_by_block", {}) or {}
+    if isinstance(min_ess_by_block, Mapping):
+        resolved["min_ess_by_block"] = {
+            str(name).lower(): max(0.0, float(value))
+            for name, value in min_ess_by_block.items()
+            if value is not None
+        }
+    else:
+        resolved["min_ess_by_block"] = {}
+    hmc_raw = resolved.get("hmc", {}) or {}
+    if not isinstance(hmc_raw, Mapping):
+        hmc_raw = {}
+    models = hmc_raw.get("models", [])
+    if isinstance(models, str):
+        models = [models]
+    resolved["hmc"] = {
+        "enabled": bool(hmc_raw.get("enabled", True)),
+        "models": [str(item).lower() for item in models if str(item).strip()],
+        "max_divergences": max(0, int(hmc_raw.get("max_divergences", 0))),
+        "min_ebfmi": float(hmc_raw.get("min_ebfmi", 0.3)),
+        "max_treedepth_hits": max(0, int(hmc_raw.get("max_treedepth_hits", 0))),
+        "require_present": bool(hmc_raw.get("require_present", True)),
+    }
     parameters = resolved.get("parameters", ["beta", "tau", "phi", "lambda"])
     if isinstance(parameters, str):
         parameters = [parameters]
@@ -496,13 +612,17 @@ def _check_convergence(
     cfg: Mapping[str, Any],
     *,
     model_name: str,
+    sampler_diagnostics: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[bool, List[str]]:
     if not summary:
         return True, []
     if not bool(cfg.get("enabled", True)):
         return True, []
 
-    max_rhat = float(cfg.get("max_rhat", 1.05))
+    max_rhat = float(cfg.get("max_rhat", 1.01))
+    min_ess_default = max(0.0, float(cfg.get("min_ess", 0.0)))
+    min_ess_by_block = cfg.get("min_ess_by_block", {}) or {}
+    max_mcse_over_sd = float(cfg.get("max_mcse_over_sd", 1.0))
     expected_blocks = _expected_convergence_blocks(model_name, cfg)
     missing_policy = str(cfg.get("missing_policy", "warn")).strip().lower()
     require_valid_diagnostics = bool(cfg.get("require_valid_diagnostics", True))
@@ -523,6 +643,61 @@ def _check_convergence(
             continue
         if not np.isfinite(rhat_max) or rhat_max > max_rhat:
             failures.append(f"{name}.rhat_max={rhat_max:.3f}>{max_rhat:.3f}")
+        try:
+            ess_min = float(block.get("ess_min"))
+        except (TypeError, ValueError):
+            ess_min = np.nan
+        min_ess = min_ess_default
+        if isinstance(min_ess_by_block, Mapping):
+            min_ess = float(min_ess_by_block.get(str(name).lower(), min_ess_default))
+        if np.isfinite(min_ess) and min_ess > 0.0:
+            if not np.isfinite(ess_min) or ess_min < min_ess:
+                failures.append(f"{name}.ess_min={ess_min:.1f}<{min_ess:.1f}")
+        try:
+            mcse_over_sd_max = float(block.get("mcse_over_sd_max"))
+        except (TypeError, ValueError):
+            mcse_over_sd_max = np.nan
+        if np.isfinite(max_mcse_over_sd) and max_mcse_over_sd > 0.0:
+            if not np.isfinite(mcse_over_sd_max) or mcse_over_sd_max > max_mcse_over_sd:
+                failures.append(
+                    f"{name}.mcse_over_sd_max={mcse_over_sd_max:.3f}>{max_mcse_over_sd:.3f}"
+                )
+
+    hmc_cfg = cfg.get("hmc", {}) or {}
+    if isinstance(hmc_cfg, Mapping) and bool(hmc_cfg.get("enabled", True)):
+        hmc_models = {
+            str(item).lower()
+            for item in (hmc_cfg.get("models", []) or [])
+        }
+        if str(model_name).lower() in hmc_models:
+            hmc_diag = (
+                sampler_diagnostics.get("hmc")
+                if isinstance(sampler_diagnostics, Mapping)
+                else None
+            )
+            require_present = bool(hmc_cfg.get("require_present", True))
+            if not isinstance(hmc_diag, Mapping):
+                if require_present:
+                    failures.append("hmc.diagnostics_missing")
+            else:
+                max_divergences = int(hmc_cfg.get("max_divergences", 0))
+                min_ebfmi = float(hmc_cfg.get("min_ebfmi", 0.3))
+                max_treedepth_hits = int(hmc_cfg.get("max_treedepth_hits", 0))
+                divergences = int(hmc_diag.get("divergences", -1))
+                ebfmi_min = float(hmc_diag.get("ebfmi_min", np.nan))
+                treedepth_hits = int(hmc_diag.get("treedepth_hits", -1))
+                if divergences < 0:
+                    failures.append("hmc.divergences_missing")
+                elif divergences > max_divergences:
+                    failures.append(f"hmc.divergences={divergences}>{max_divergences}")
+                if not np.isfinite(ebfmi_min):
+                    failures.append("hmc.ebfmi_missing")
+                elif ebfmi_min < min_ebfmi:
+                    failures.append(f"hmc.ebfmi_min={ebfmi_min:.3f}<{min_ebfmi:.3f}")
+                if treedepth_hits < 0:
+                    failures.append("hmc.treedepth_hits_missing")
+                elif treedepth_hits > max_treedepth_hits:
+                    failures.append(f"hmc.treedepth_hits={treedepth_hits}>{max_treedepth_hits}")
     return len(failures) == 0, failures
 
 
@@ -570,12 +745,20 @@ def _fit_model_with_retry(
     task: str,
     std_cfg: StandardizationConfig,
     convergence_cfg: Mapping[str, Any],
-) -> Tuple[Any, Dict[str, np.ndarray], Optional[Dict[str, Dict[str, Any]]], List[Dict[str, Any]], Mapping[str, Any]]:
+) -> Tuple[
+    Any,
+    Dict[str, np.ndarray],
+    Optional[Dict[str, Dict[str, Any]]],
+    List[Dict[str, Any]],
+    Mapping[str, Any],
+    Dict[str, Any],
+]:
     attempts: List[Dict[str, Any]] = []
     last_model = None
     last_arrays: Dict[str, np.ndarray] = {}
-    last_summary: Optional[Dict[str, Dict[str, float]]] = None
+    last_summary: Optional[Dict[str, Dict[str, Any]]] = None
     last_effective_config: Mapping[str, Any] = model_config
+    last_sampler_diagnostics: Dict[str, Any] = {}
 
     fairness_cfg = _bayesian_fairness_config(model_config)
     max_retries = int(convergence_cfg.get("max_retries", 1))
@@ -602,6 +785,7 @@ def _fit_model_with_retry(
             model.fit(X_train, y_train)
 
         arrays = _collect_posterior_arrays(model)
+        sampler_diagnostics = _collect_sampler_diagnostics(model)
         summary: Optional[Dict[str, Dict[str, Any]]] = None
         ok = True
         failures: List[str] = []
@@ -619,6 +803,7 @@ def _fit_model_with_retry(
                     summary,
                     convergence_cfg,
                     model_name=str(attempt_model_cfg.get("name", "")),
+                    sampler_diagnostics=sampler_diagnostics,
                 )
 
         attempts.append(
@@ -630,6 +815,7 @@ def _fit_model_with_retry(
                 "num_samples": attempt_model_cfg.get("num_samples"),
                 "converged": ok,
                 "failures": failures,
+                "sampler_diagnostics": sampler_diagnostics,
             }
         )
 
@@ -637,12 +823,13 @@ def _fit_model_with_retry(
         last_arrays = arrays
         last_summary = summary
         last_effective_config = attempt_config
+        last_sampler_diagnostics = sampler_diagnostics
         if ok:
             break
 
     if last_model is None:
         raise ExperimentError("Model fitting did not produce a fitted model.")
-    return last_model, last_arrays, last_summary, attempts, last_effective_config
+    return last_model, last_arrays, last_summary, attempts, last_effective_config, last_sampler_diagnostics
 
 
 def _resolve_groups(config: Mapping[str, Any], groups: Optional[Sequence[Sequence[int]]], p: int) -> List[List[int]]:
@@ -1524,6 +1711,7 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
     arrays: Dict[str, np.ndarray] = {}
     attr_map = {
         "coef_samples_": "beta",
+        "intercept_samples_": "intercept",
         "sigma_samples_": "sigma",
         "sigma2_samples_": "sigma2",
         "tau_samples_": "tau",
@@ -1567,6 +1755,415 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
                     arr = arr.T
         arrays[key] = arr
     return arrays
+
+
+def _collect_sampler_diagnostics(model: Any) -> Dict[str, Any]:
+    diagnostics = getattr(model, "sampler_diagnostics_", None)
+    if not isinstance(diagnostics, Mapping):
+        return {}
+    return {str(key): value for key, value in diagnostics.items()}
+
+
+def _flatten_scalar_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    if arr is None:
+        return None
+    data = np.asarray(arr, dtype=float)
+    return data.reshape(-1)
+
+
+def _flatten_param_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    if arr is None:
+        return None
+    data = np.asarray(arr, dtype=float)
+    if data.ndim == 0:
+        return data.reshape(1, 1)
+    if data.ndim == 1:
+        return data.reshape(1, -1)
+    if data.ndim == 2:
+        return data
+    return data.reshape(-1, *data.shape[2:])
+
+
+def _offset_all_seeds(cfg: MutableMapping[str, Any], *, offset: int) -> None:
+    if offset == 0:
+        return
+    stack: List[MutableMapping[str, Any]] = [cfg]
+    while stack:
+        node = stack.pop()
+        for key, value in node.items():
+            if isinstance(value, MutableMapping):
+                stack.append(value)
+                continue
+            if isinstance(key, str) and key.lower() == "seed":
+                try:
+                    node[key] = int(value) + int(offset)
+                except (TypeError, ValueError):
+                    continue
+
+
+def _posterior_validation_failures(
+    result: Mapping[str, Any],
+) -> List[str]:
+    failures = []
+    if not isinstance(result, Mapping):
+        return failures
+    for key in ("sbc", "ppc", "seed_stability"):
+        block = result.get(key)
+        if not isinstance(block, Mapping):
+            continue
+        if str(block.get("status", "")).lower() == "fail":
+            for reason in block.get("reasons", []) or []:
+                failures.append(f"{key}.{reason}")
+            if not block.get("reasons"):
+                failures.append(f"{key}.failed")
+    return failures
+
+
+def _run_sbc_validation(
+    *,
+    beta_truth: Optional[np.ndarray],
+    posterior_arrays: Mapping[str, np.ndarray],
+    cfg: Mapping[str, Any],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"status": "skip", "reasons": []}
+    if beta_truth is None:
+        if bool(cfg.get("fail_on_missing_truth", False)):
+            out["status"] = "fail"
+            out["reasons"] = ["missing_beta_truth"]
+        else:
+            out["reasons"] = ["missing_beta_truth"]
+        return out
+    beta_draws = _flatten_param_draws(
+        None if "beta" not in posterior_arrays else np.asarray(posterior_arrays["beta"], dtype=float)
+    )
+    if beta_draws is None or beta_draws.size == 0:
+        if bool(cfg.get("fail_on_missing_draws", True)):
+            out["status"] = "fail"
+            out["reasons"] = ["missing_beta_draws"]
+        else:
+            out["reasons"] = ["missing_beta_draws"]
+        return out
+    truth = np.asarray(beta_truth, dtype=float).reshape(-1)
+    if beta_draws.ndim != 2 or beta_draws.shape[1] != truth.shape[0]:
+        out["status"] = "fail"
+        out["reasons"] = [f"beta_shape_mismatch:{beta_draws.shape} vs {truth.shape}"]
+        return out
+
+    draws = beta_draws.shape[0]
+    if draws < 20:
+        out["status"] = "fail"
+        out["reasons"] = [f"insufficient_draws:{draws}"]
+        return out
+
+    abs_truth = np.abs(truth)
+    order = np.argsort(-abs_truth)
+    min_coeffs = int(cfg.get("min_coefficients", 8))
+    max_coeffs = int(cfg.get("max_coefficients", 128))
+    use_count = min(max(min_coeffs, min(max_coeffs, truth.shape[0])), truth.shape[0])
+    idx = order[:use_count]
+    selected_draws = beta_draws[:, idx]
+    selected_truth = truth[idx]
+
+    less_counts = np.sum(selected_draws < selected_truth[None, :], axis=0)
+    ranks = (less_counts + 1.0) / (draws + 1.0)
+    ks = kstest(ranks, "uniform")
+    level = float(cfg.get("coverage_level", 0.9))
+    lo = 0.5 * (1.0 - level)
+    hi = 1.0 - lo
+    q_lo = np.quantile(selected_draws, lo, axis=0)
+    q_hi = np.quantile(selected_draws, hi, axis=0)
+    coverage = float(np.mean((selected_truth >= q_lo) & (selected_truth <= q_hi)))
+    tol = float(cfg.get("coverage_tolerance", 0.15))
+    p_min = float(cfg.get("ks_pvalue_min", 0.05))
+
+    reasons: List[str] = []
+    if float(ks.pvalue) < p_min:
+        reasons.append(f"ks_pvalue={float(ks.pvalue):.4f}<{p_min:.4f}")
+    if abs(coverage - level) > tol:
+        reasons.append(f"coverage_gap={abs(coverage - level):.3f}>{tol:.3f}")
+
+    out.update(
+        {
+            "status": "fail" if reasons else "pass",
+            "reasons": reasons,
+            "draw_count": int(draws),
+            "coefficient_count": int(use_count),
+            "ks_statistic": float(ks.statistic),
+            "ks_pvalue": float(ks.pvalue),
+            "target_coverage": float(level),
+            "empirical_coverage": float(coverage),
+        }
+    )
+    return out
+
+
+def _run_ppc_validation(
+    *,
+    task: str,
+    model: Any,
+    posterior_arrays: Mapping[str, np.ndarray],
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    cfg: Mapping[str, Any],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"status": "skip", "reasons": []}
+    beta_draws = _flatten_param_draws(
+        None if "beta" not in posterior_arrays else np.asarray(posterior_arrays["beta"], dtype=float)
+    )
+    if beta_draws is None or beta_draws.size == 0:
+        if bool(cfg.get("fail_on_missing_draws", True)):
+            out["status"] = "fail"
+            out["reasons"] = ["missing_beta_draws"]
+        else:
+            out["reasons"] = ["missing_beta_draws"]
+        return out
+    min_draws = int(cfg.get("min_draws", 200))
+    if beta_draws.shape[0] < min_draws:
+        out["status"] = "fail"
+        out["reasons"] = [f"insufficient_draws:{beta_draws.shape[0]}<{min_draws}"]
+        return out
+    tail_prob = float(cfg.get("tail_prob", 0.025))
+    lower = tail_prob
+    upper = 1.0 - tail_prob
+
+    X_arr = np.asarray(X_test, dtype=float)
+    y_arr = np.asarray(y_test, dtype=float).reshape(-1)
+    intercept_draws = _flatten_scalar_draws(
+        None if "intercept" not in posterior_arrays else np.asarray(posterior_arrays["intercept"], dtype=float)
+    )
+    if intercept_draws is None or intercept_draws.size == 0:
+        intercept_const = getattr(model, "intercept_", 0.0)
+        intercept_draws = np.full(beta_draws.shape[0], float(intercept_const), dtype=float)
+    elif intercept_draws.shape[0] != beta_draws.shape[0]:
+        intercept_draws = np.full(beta_draws.shape[0], float(np.mean(intercept_draws)), dtype=float)
+
+    rng = np.random.default_rng(0)
+    n_draws = beta_draws.shape[0]
+    y_rep_mean = np.zeros(n_draws, dtype=float)
+    y_rep_var = np.zeros(n_draws, dtype=float)
+
+    if task == "classification":
+        logits = X_arr @ beta_draws.T + intercept_draws[None, :]
+        probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -30.0, 30.0)))
+        y_rep = rng.binomial(1, probs).astype(float)
+        y_rep_mean[:] = y_rep.mean(axis=0)
+        y_rep_var[:] = y_rep.var(axis=0)
+    else:
+        sigma_draws = _flatten_scalar_draws(
+            None if "sigma" not in posterior_arrays else np.asarray(posterior_arrays["sigma"], dtype=float)
+        )
+        if sigma_draws is None or sigma_draws.size == 0:
+            sigma2_draws = _flatten_scalar_draws(
+                None if "sigma2" not in posterior_arrays else np.asarray(posterior_arrays["sigma2"], dtype=float)
+            )
+            if sigma2_draws is not None and sigma2_draws.size > 0:
+                sigma_draws = np.sqrt(np.maximum(sigma2_draws, 0.0))
+        if sigma_draws is None or sigma_draws.size == 0:
+            sigma_draws = np.zeros(n_draws, dtype=float)
+        if sigma_draws.shape[0] != n_draws:
+            sigma_draws = np.full(n_draws, float(np.mean(sigma_draws)), dtype=float)
+
+        mu = X_arr @ beta_draws.T + intercept_draws[None, :]
+        noise = rng.normal(loc=0.0, scale=np.maximum(sigma_draws[None, :], 1e-12), size=mu.shape)
+        y_rep = mu + noise
+        y_rep_mean[:] = y_rep.mean(axis=0)
+        y_rep_var[:] = y_rep.var(axis=0)
+
+    obs_mean = float(np.mean(y_arr))
+    obs_var = float(np.var(y_arr))
+    p_mean = float(np.mean(y_rep_mean <= obs_mean))
+    p_var = float(np.mean(y_rep_var <= obs_var))
+    reasons: List[str] = []
+    if not (lower <= p_mean <= upper):
+        reasons.append(f"p_mean={p_mean:.4f} outside [{lower:.4f},{upper:.4f}]")
+    if not (lower <= p_var <= upper):
+        reasons.append(f"p_var={p_var:.4f} outside [{lower:.4f},{upper:.4f}]")
+    out.update(
+        {
+            "status": "fail" if reasons else "pass",
+            "reasons": reasons,
+            "draw_count": int(n_draws),
+            "tail_prob": float(tail_prob),
+            "p_mean": p_mean,
+            "p_var": p_var,
+            "obs_mean": obs_mean,
+            "obs_var": obs_var,
+        }
+    )
+    return out
+
+
+def _run_seed_stability_validation(
+    *,
+    base_model_config: Mapping[str, Any],
+    groups: Sequence[Sequence[int]],
+    p: int,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    task: str,
+    std_cfg: StandardizationConfig,
+    convergence_cfg: Mapping[str, Any],
+    baseline_arrays: Mapping[str, np.ndarray],
+    cfg: Mapping[str, Any],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"status": "skip", "reasons": []}
+    baseline_beta = _flatten_param_draws(
+        None if "beta" not in baseline_arrays else np.asarray(baseline_arrays["beta"], dtype=float)
+    )
+    if baseline_beta is None or baseline_beta.size == 0:
+        out["status"] = "fail"
+        out["reasons"] = ["missing_baseline_beta_draws"]
+        return out
+    baseline_beta_mean = baseline_beta.mean(axis=0)
+    baseline_tau = _flatten_scalar_draws(
+        None if "tau" not in baseline_arrays else np.asarray(baseline_arrays["tau"], dtype=float)
+    )
+    baseline_tau_mean = float(np.mean(baseline_tau)) if baseline_tau is not None and baseline_tau.size else None
+
+    num_restarts = int(cfg.get("num_restarts", 2))
+    stride = int(cfg.get("seed_stride", 1009))
+    max_beta_rel_l2 = float(cfg.get("max_beta_rel_l2", 0.15))
+    min_beta_cosine = float(cfg.get("min_beta_cosine", 0.98))
+    max_tau_rel_sd = float(cfg.get("max_tau_rel_sd", 0.20))
+    fail_on_missing_tau = bool(cfg.get("fail_on_missing_tau", False))
+
+    beta_rel_l2_values: List[float] = []
+    beta_cos_values: List[float] = []
+    tau_values: List[float] = []
+    reasons: List[str] = []
+    for ridx in range(num_restarts):
+        restart_cfg = deepcopy(base_model_config)
+        _offset_all_seeds(restart_cfg, offset=(ridx + 1) * stride)
+        try:
+            (
+                _model,
+                arrays,
+                _summary,
+                _attempts,
+                _effective,
+                _sampler_diag,
+            ) = _fit_model_with_retry(
+                restart_cfg,
+                groups,
+                p,
+                X_train,
+                y_train,
+                task,
+                std_cfg,
+                convergence_cfg,
+            )
+        except Exception as exc:
+            reasons.append(f"restart_{ridx+1}_error={type(exc).__name__}")
+            continue
+
+        beta_draws = _flatten_param_draws(
+            None if "beta" not in arrays else np.asarray(arrays["beta"], dtype=float)
+        )
+        if beta_draws is None or beta_draws.size == 0:
+            reasons.append(f"restart_{ridx+1}_missing_beta")
+            continue
+        beta_mean = beta_draws.mean(axis=0)
+        denom = float(np.linalg.norm(baseline_beta_mean))
+        numer = float(np.linalg.norm(beta_mean - baseline_beta_mean))
+        rel_l2 = numer / max(1e-12, denom)
+        beta_rel_l2_values.append(rel_l2)
+        cos_den = float(np.linalg.norm(beta_mean) * np.linalg.norm(baseline_beta_mean))
+        cosine = 1.0 if cos_den <= 1e-12 else float(np.dot(beta_mean, baseline_beta_mean) / cos_den)
+        beta_cos_values.append(cosine)
+
+        tau_draws = _flatten_scalar_draws(None if "tau" not in arrays else np.asarray(arrays["tau"], dtype=float))
+        if tau_draws is not None and tau_draws.size:
+            tau_values.append(float(np.mean(tau_draws)))
+
+    if not beta_rel_l2_values or not beta_cos_values:
+        reasons.append("no_valid_restarts")
+    else:
+        if max(beta_rel_l2_values) > max_beta_rel_l2:
+            reasons.append(f"beta_rel_l2_max={max(beta_rel_l2_values):.3f}>{max_beta_rel_l2:.3f}")
+        if min(beta_cos_values) < min_beta_cosine:
+            reasons.append(f"beta_cosine_min={min(beta_cos_values):.3f}<{min_beta_cosine:.3f}")
+
+    tau_rel_sd = None
+    if baseline_tau_mean is not None and tau_values:
+        all_tau = np.asarray([baseline_tau_mean] + tau_values, dtype=float)
+        tau_rel_sd = float(np.std(all_tau, ddof=1) / max(1e-12, abs(np.mean(all_tau))))
+        if tau_rel_sd > max_tau_rel_sd:
+            reasons.append(f"tau_rel_sd={tau_rel_sd:.3f}>{max_tau_rel_sd:.3f}")
+    elif fail_on_missing_tau:
+        reasons.append("missing_tau_for_stability")
+
+    out.update(
+        {
+            "status": "fail" if reasons else "pass",
+            "reasons": reasons,
+            "num_restarts": int(num_restarts),
+            "beta_rel_l2_max": None if not beta_rel_l2_values else float(max(beta_rel_l2_values)),
+            "beta_cosine_min": None if not beta_cos_values else float(min(beta_cos_values)),
+            "tau_rel_sd": tau_rel_sd,
+        }
+    )
+    return out
+
+
+def _run_posterior_validation(
+    *,
+    config: Mapping[str, Any],
+    model: Any,
+    posterior_arrays: Mapping[str, np.ndarray],
+    task: str,
+    beta_truth: Optional[np.ndarray],
+    X_test_prediction: np.ndarray,
+    y_test_eval: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    p: int,
+    X_train_model: np.ndarray,
+    y_train: np.ndarray,
+    std_cfg: StandardizationConfig,
+    convergence_cfg: Mapping[str, Any],
+) -> Dict[str, Any]:
+    cfg = _posterior_validation_config(config)
+    result: Dict[str, Any] = {"enabled": bool(cfg.get("enabled", False))}
+    if not bool(cfg.get("enabled", False)):
+        result["status"] = "skip"
+        return result
+    if bool(cfg.get("apply_to_bayesian_only", True)) and not _is_bayesian_config(config):
+        result["status"] = "skip"
+        result["reason"] = "not_bayesian_model"
+        return result
+
+    sbc_cfg = cfg.get("sbc", {}) or {}
+    ppc_cfg = cfg.get("ppc", {}) or {}
+    seed_cfg = cfg.get("seed_stability", {}) or {}
+
+    if bool(sbc_cfg.get("enabled", True)):
+        result["sbc"] = _run_sbc_validation(beta_truth=beta_truth, posterior_arrays=posterior_arrays, cfg=sbc_cfg)
+    if bool(ppc_cfg.get("enabled", True)):
+        result["ppc"] = _run_ppc_validation(
+            task=task,
+            model=model,
+            posterior_arrays=posterior_arrays,
+            X_test=X_test_prediction,
+            y_test=y_test_eval,
+            cfg=ppc_cfg,
+        )
+    if bool(seed_cfg.get("enabled", True)):
+        result["seed_stability"] = _run_seed_stability_validation(
+            base_model_config=config,
+            groups=groups,
+            p=p,
+            X_train=X_train_model,
+            y_train=y_train,
+            task=task,
+            std_cfg=std_cfg,
+            convergence_cfg=convergence_cfg,
+            baseline_arrays=posterior_arrays,
+            cfg=seed_cfg,
+        )
+
+    failures = _posterior_validation_failures(result)
+    result["status"] = "fail" if failures else "pass"
+    result["failures"] = failures
+    return result
 
 
 def _summarise_posterior(arrays: Mapping[str, np.ndarray]) -> Optional["pd.DataFrame"]:
@@ -1889,6 +2486,7 @@ def _run_fold_nested(
     convergence_cfg = _convergence_config(base_config)
     convergence_summary: Optional[Dict[str, Dict[str, Any]]] = None
     convergence_attempts: List[Dict[str, Any]] = []
+    sampler_diagnostics: Dict[str, Any] = {}
     bayesian_protocol = _bayesian_protocol_summary(
         model_config,
         std_cfg=std_cfg,
@@ -1911,7 +2509,14 @@ def _run_fold_nested(
                 _set_nested_config_value(model_config["model"], str(key), value)
             else:
                 model_config["model"][key] = value
-        model, posterior_arrays_prefit, convergence_summary, convergence_attempts, effective_model_config = _fit_model_with_retry(
+        (
+            model,
+            posterior_arrays_prefit,
+            convergence_summary,
+            convergence_attempts,
+            effective_model_config,
+            sampler_diagnostics,
+        ) = _fit_model_with_retry(
             model_config,
             model_groups,
             X_train_model.shape[1],
@@ -1927,6 +2532,7 @@ def _run_fold_nested(
             convergence_summary,
             convergence_cfg,
             model_name=str(model_config["model"].get("name", "")),
+            sampler_diagnostics=sampler_diagnostics,
         )
         fold_status = "OK" if converged else "INVALID_CONVERGENCE"
     else:
@@ -1996,6 +2602,29 @@ def _run_fold_nested(
     )
 
     save_posterior = bool(experiments_cfg.get("save_posterior", True))
+    posterior_arrays_for_validation: Dict[str, np.ndarray] = (
+        posterior_arrays if isinstance(posterior_arrays, Mapping) and posterior_arrays else _collect_posterior_arrays(model)
+    )
+    posterior_validation: Optional[Dict[str, Any]] = None
+    if degenerate_model is None:
+        posterior_validation = _run_posterior_validation(
+            config=model_config,
+            model=model,
+            posterior_arrays=posterior_arrays_for_validation,
+            task=task,
+            beta_truth=beta,
+            X_test_prediction=X_test_prediction,
+            y_test_eval=y_test_eval,
+            groups=model_groups,
+            p=int(X_train_model.shape[1]),
+            X_train_model=X_train_model,
+            y_train=y_train,
+            std_cfg=std_cfg,
+            convergence_cfg=convergence_cfg,
+        )
+        if str(posterior_validation.get("status", "")).lower() == "fail" and fold_status == "OK":
+            fold_status = "INVALID_POSTERIOR_VALIDATION"
+
     if degenerate_model is None and posterior_arrays:
         posterior_arrays = posterior_arrays if save_posterior else {}
     else:
@@ -2013,6 +2642,11 @@ def _run_fold_nested(
         if covariate_alpha_draws is not None:
             alpha_payload["alpha_draws"] = covariate_alpha_draws
         np.savez_compressed(fold_dir / "covariate_adjustment.npz", **alpha_payload)
+    if posterior_validation is not None:
+        (fold_dir / "posterior_validation.json").write_text(
+            json.dumps(_to_serializable(posterior_validation), indent=2),
+            encoding="utf-8",
+        )
 
     fold_summary = {
         "status": fold_status,
@@ -2033,8 +2667,12 @@ def _run_fold_nested(
         )
     if convergence_attempts:
         fold_summary["convergence_attempts"] = convergence_attempts
+    if sampler_diagnostics:
+        fold_summary["sampler_diagnostics"] = sampler_diagnostics
     if bayesian_protocol is not None:
         fold_summary["bayesian_fairness"] = bayesian_protocol
+    if posterior_validation is not None:
+        fold_summary["posterior_validation"] = posterior_validation
     if covariate_alpha_hat is not None:
         fold_summary["covariate_adjustment_file"] = str(fold_dir / "covariate_adjustment.npz")
     if degenerate_label_value is not None:

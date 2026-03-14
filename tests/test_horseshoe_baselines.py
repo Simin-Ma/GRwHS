@@ -90,6 +90,14 @@ def test_regularized_horseshoe_reports_posterior_summaries():
     baseline = float(np.var(y))
     assert mse < baseline
 
+    sampler_diag = getattr(fitted, "sampler_diagnostics_", {})
+    assert isinstance(sampler_diag, dict)
+    hmc_diag = sampler_diag.get("hmc")
+    assert isinstance(hmc_diag, dict)
+    assert "divergences" in hmc_diag
+    assert "ebfmi_min" in hmc_diag
+    assert "treedepth_hits" in hmc_diag
+
 
 def test_horseshoe_logistic_handles_binary_targets():
     X, y = _synthetic_classification(seed=7)

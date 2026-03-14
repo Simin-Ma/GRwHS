@@ -12,12 +12,13 @@ model:
   mmle_update: "paper_lambda_only"
   tau_scale: 1.0
   sigma_scale: 1.0
-  store_lambda: false
+  store_lambda: true
+  mmle_burnin_only: true
 
 inference:
   gibbs:
     burn_in: 1000
     thin: 1
-    num_chains: 1
+    num_chains: 4
     jitter: 1.0e-08
     seed: 2025

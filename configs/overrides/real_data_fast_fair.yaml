@@ -20,4 +20,4 @@ experiments:
       burn_in: 500
       kept_draws: 500
       thinning: 1
-      num_chains: 1
+      num_chains: 4
