@@ -107,6 +107,7 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
         "max_treedepth_hits": 0,
         "require_present": True,
     },
+    "fail_run_on_invalid_bayesian": True,
 }
 
 DEFAULT_BAYESIAN_FAIRNESS_CONFIG: Dict[str, Any] = {
@@ -317,7 +318,8 @@ def _sampling_budget_from_config(config: Mapping[str, Any]) -> Dict[str, int]:
     burn_in = max(0, int(raw.get("burn_in", 4000)))
     kept_draws = max(1, int(raw.get("kept_draws", 2000)))
     thinning = max(1, int(raw.get("thinning", 2)))
-    num_chains = max(1, int(raw.get("num_chains", 4)))
+    # Multi-chain diagnostics are mandatory for Bayesian convergence validity.
+    num_chains = max(4, int(raw.get("num_chains", 4)))
     return {
         "burn_in": burn_in,
         "kept_draws": kept_draws,
@@ -388,7 +390,13 @@ def _apply_bayesian_sampling_budget(config: MutableMapping[str, Any]) -> None:
         gibbs_cfg["burn_in"] = int(budget["burn_in"])
         gibbs_cfg["thin"] = int(budget["thinning"])
         gibbs_cfg["num_chains"] = int(budget["num_chains"])
-        model_cfg["iters"] = int(budget["burn_in"] + budget["kept_draws"] * budget["thinning"])
+        total_iters = int(budget["burn_in"] + budget["kept_draws"] * budget["thinning"])
+        model_cfg["iters"] = total_iters
+        # GIGG builders prioritise explicit n_samples; keep it in sync with shared budget.
+        if model_name in {"gigg", "gigg_regression"}:
+            model_cfg["n_burn_in"] = int(budget["burn_in"])
+            model_cfg["n_thin"] = int(budget["thinning"])
+            model_cfg["n_samples"] = int(budget["kept_draws"])
         return
 
     if model_name in {"horseshoe", "hs", "regularized_horseshoe", "rhs", "regularised_horseshoe"}:
@@ -608,6 +616,17 @@ def _convergence_config(config: Mapping[str, Any]) -> Dict[str, Any]:
         for name, value in expected_blocks.items()
         if isinstance(value, (list, tuple))
     }
+    resolved["fail_run_on_invalid_bayesian"] = bool(
+        resolved.get("fail_run_on_invalid_bayesian", True)
+    )
+
+    # Hard guardrail: Bayesian models must always pass convergence checks.
+    if _is_bayesian_config(config):
+        resolved["enabled"] = True
+        resolved["require_valid_diagnostics"] = True
+        resolved["min_chains_for_rhat"] = max(4, int(resolved.get("min_chains_for_rhat", 4)))
+        resolved["missing_policy"] = "fail"
+
     return resolved
 
 
@@ -635,6 +654,8 @@ def _check_convergence(
     sampler_diagnostics: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[bool, List[str]]:
     if not summary:
+        if _is_bayesian_model_name(model_name) and bool(cfg.get("enabled", True)):
+            return False, ["convergence.summary_missing"]
         return True, []
     if not bool(cfg.get("enabled", True)):
         return True, []
@@ -731,6 +752,13 @@ def _scale_bayesian_runtime(
     if model_name in {"grrhs_gibbs", "gigg", "gigg_regression"}:
         if "iters" in model_config:
             model_config["iters"] = max(4, int(math.ceil(float(model_config["iters"]) * scale)))
+        if model_name in {"gigg", "gigg_regression"}:
+            if "n_burn_in" in model_config:
+                model_config["n_burn_in"] = max(2, int(math.ceil(float(model_config["n_burn_in"]) * scale)))
+            if "n_samples" in model_config:
+                model_config["n_samples"] = max(50, int(math.ceil(float(model_config["n_samples"]) * scale)))
+            if "n_thin" in model_config:
+                model_config["n_thin"] = max(1, int(model_config["n_thin"]))
         gibbs_cfg = inference_cfg.get("gibbs")
         if isinstance(gibbs_cfg, MutableMapping) and "burn_in" in gibbs_cfg:
             gibbs_cfg["burn_in"] = max(2, int(math.ceil(float(gibbs_cfg["burn_in"]) * scale)))
@@ -799,7 +827,12 @@ def _fit_model_with_retry(
             _scale_bayesian_runtime(attempt_model_cfg, attempt_inference_cfg, scale ** attempt)
 
         _maybe_calibrate_tau(attempt_model_cfg, std_cfg, X_train, y_train, groups, task)
-        model = _instantiate_model(attempt_config, groups, p)
+        model = _instantiate_model(
+            attempt_config,
+            groups,
+            p,
+            apply_bayesian_budget=False,
+        )
         _fit_model_dispatch(model, X_train, y_train, groups=groups, C=C_train)
 
         arrays = _collect_posterior_arrays(model)
@@ -829,6 +862,14 @@ def _fit_model_with_retry(
                 "attempt": attempt + 1,
                 "iters": attempt_model_cfg.get("iters"),
                 "burn_in": ((attempt_inference_cfg.get("gibbs") or {}).get("burn_in") if isinstance(attempt_inference_cfg.get("gibbs"), Mapping) else None),
+                "model_n_burn_in": attempt_model_cfg.get("n_burn_in"),
+                "model_n_samples": attempt_model_cfg.get("n_samples"),
+                "model_n_thin": attempt_model_cfg.get("n_thin"),
+                "observed_tau_shape": (
+                    list(np.asarray(arrays.get("tau")).shape)
+                    if isinstance(arrays, Mapping) and arrays.get("tau") is not None
+                    else None
+                ),
                 "num_warmup": attempt_model_cfg.get("num_warmup"),
                 "num_samples": attempt_model_cfg.get("num_samples"),
                 "converged": ok,
@@ -1129,9 +1170,16 @@ def _prepare_outer_folds(
     return folds
 
 
-def _instantiate_model(config: Mapping[str, Any], groups: Sequence[Sequence[int]], p: int) -> Any:
+def _instantiate_model(
+    config: Mapping[str, Any],
+    groups: Sequence[Sequence[int]],
+    p: int,
+    *,
+    apply_bayesian_budget: bool = True,
+) -> Any:
     cfg = deepcopy(config)
-    _apply_bayesian_sampling_budget(cfg)
+    if apply_bayesian_budget:
+        _apply_bayesian_sampling_budget(cfg)
     cfg.setdefault("data", {})
     cfg["data"]["groups"] = [list(map(int, g)) for g in groups]
     cfg["data"]["p"] = int(p)
@@ -2968,8 +3016,15 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
                 min_chains_for_rhat=int(_convergence_config(effective_config).get("min_chains_for_rhat", 2)),
             )
 
+    invalid_fold_count = int(len(all_fold_records) - len(all_valid_fold_records))
+    is_bayesian_run = _is_bayesian_config(effective_config)
+    convergence_cfg = _convergence_config(effective_config)
+    summary_status = "OK" if invalid_fold_count == 0 else "PARTIAL"
+    if is_bayesian_run and invalid_fold_count > 0:
+        summary_status = "INVALID_CONVERGENCE"
+
     summary_payload = {
-        "status": "OK" if len(all_valid_fold_records) == len(all_fold_records) else "PARTIAL",
+        "status": summary_status,
         "model": model_name,
         "task": task,
         "repeats": repeats,
@@ -2981,7 +3036,7 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
         "metrics_summary_all_folds": aggregated_summary_all,
         "metric_sources_all_folds": _aggregate_metric_sources(all_fold_records, include_invalid=True),
         "valid_fold_count": int(len(all_valid_fold_records)),
-        "invalid_fold_count": int(len(all_fold_records) - len(all_valid_fold_records)),
+        "invalid_fold_count": invalid_fold_count,
         "repeat_summaries": repeat_summaries,
         "artifacts": {
             "repeat_dirs": repeat_dir_paths,
@@ -2992,6 +3047,15 @@ def run_experiment(config: Mapping[str, Any], output_dir: Path | str) -> Dict[st
 
     (output_path / "summary.json").write_text(json.dumps(_to_serializable(summary_payload), indent=2), encoding="utf-8")
     (output_path / "metrics.json").write_text(json.dumps(_to_serializable(aggregated_metrics), indent=2), encoding="utf-8")
+
+    if (
+        is_bayesian_run
+        and invalid_fold_count > 0
+        and bool(convergence_cfg.get("fail_run_on_invalid_bayesian", True))
+    ):
+        raise ExperimentError(
+            f"Bayesian run failed mandatory convergence gate: {invalid_fold_count} invalid fold(s)."
+        )
 
     return summary_payload
 

@@ -43,7 +43,7 @@ Current canonical grids:
   and declared compute budget for each method family rather than forcing Bayesian and frequentist methods through one identical tuning loop.
 - Fairness is defined as **paper-faithful defaults under a shared data/split/evaluation protocol**, not “force every Bayesian method into the same search routine”.
 - GRRHS prior sensitivity remains separated from the main leaderboard.
-- The default shared Bayesian sampling budget is `burn_in=1000`, `kept_draws=1000`, `thinning=1`, `num_chains=1`.
+- The default shared Bayesian sampling budget is `burn_in=1000`, `kept_draws=1000`, `thinning=1`, `num_chains=4`.
 
 ## 3. Convergence fairness
 
@@ -56,7 +56,8 @@ Current canonical grids:
 - Outside the fairness guardrail, the runner retries once with a larger budget when the configured `max_rhat` threshold is missed.
 - Inside the fairness guardrail, retries are disabled so no Bayesian method silently receives extra posterior budget.
 - Folds that still fail are marked `INVALID_CONVERGENCE` and excluded from aggregate metric summaries.
-- Missing monitored blocks are recorded in `convergence_attempts`. The default policy is `missing_policy: "warn"` rather than immediate failure.
+- Missing monitored blocks are treated as convergence failures for Bayesian models (`missing_policy: "fail"` guardrail).
+- Bayesian runs are hard-failed when any outer fold is `INVALID_CONVERGENCE`; those runs are not allowed into fair-comparison tables.
 - Sweep comparison artifacts re-aggregate metrics on the intersection of valid outer folds across compared runs so
   models are ranked on the same realized fold set.
 

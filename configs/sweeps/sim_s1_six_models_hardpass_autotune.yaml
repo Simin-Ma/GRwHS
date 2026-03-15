@@ -1,13 +1,9 @@
-name: "sim_s4_paper_half_six_models"
-output_dir: "outputs/sweeps/sim_s4_paper_half_six_models"
+name: "sim_s1_six_models_hardpass_autotune"
+output_dir: "outputs/sweeps/sim_s1_six_models_hardpass_autotune"
 
 common_config_files:
-  - "../experiments/sim_s4_paper_half.yaml"
-
-common_overrides:
-  experiments:
-    convergence:
-      enabled: true
+  - "../experiments/sim_s1.yaml"
+  - "../overrides/sim1_bayes_hardpass_autotune.yaml"
 
 variations:
   - name: "grrhs"

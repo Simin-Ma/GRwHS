@@ -14,7 +14,7 @@ experiments:
       regression:
         - RMSE
   convergence:
-    enabled: false
+    enabled: true
   bayesian_fairness:
     sampling_budget:
       burn_in: 500

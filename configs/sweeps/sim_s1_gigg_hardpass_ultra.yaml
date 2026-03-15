@@ -1,0 +1,18 @@
+name: "sim_s1_gigg_hardpass_ultra"
+output_dir: "outputs/sweeps/sim_s1_gigg_hardpass_ultra"
+
+common_config_files:
+  - "../experiments/sim_s1.yaml"
+  - "../overrides/sim1_bayes_hardpass_ultra.yaml"
+
+variations:
+  - name: "gigg"
+    config_files:
+      - "../methods/gigg.yaml"
+    overrides:
+      model:
+        method: "fixed"
+        mmle_enabled: false
+        store_lambda: true
+        stable_solve: true
+        btrick: false

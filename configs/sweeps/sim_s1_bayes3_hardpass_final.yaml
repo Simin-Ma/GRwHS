@@ -1,0 +1,27 @@
+name: "sim_s1_bayes3_hardpass_final"
+output_dir: "outputs/sweeps/sim_s1_bayes3_hardpass_final"
+
+common_config_files:
+  - "../experiments/sim_s1.yaml"
+  - "../overrides/sim1_bayes_hardpass_final.yaml"
+
+variations:
+  - name: "grrhs"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    overrides:
+      inference:
+        gibbs:
+          tau_slice_w: 0.50
+          tau_slice_m: 400
+
+  - name: "rhs"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+
+  - name: "gigg"
+    config_files:
+      - "../methods/gigg.yaml"
+    overrides:
+      model:
+        method: "fixed"

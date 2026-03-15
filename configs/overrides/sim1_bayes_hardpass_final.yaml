@@ -1,0 +1,45 @@
+experiments:
+  repeats: 1
+
+  bayesian_fairness:
+    enabled: true
+    disable_inner_cv: true
+    enforce_shared_sampling_budget: true
+    require_posterior_mean_summary: true
+    disable_budget_retry: false
+    sampling_budget:
+      burn_in: 6000
+      kept_draws: 6000
+      thinning: 1
+      num_chains: 4
+
+  convergence:
+    enabled: true
+    max_rhat: 1.01
+    min_ess: 100
+    min_ess_by_block:
+      beta: 400
+      tau: 1000
+      phi: 400
+      gamma: 400
+      lambda: 200
+      b: 200
+    max_mcse_over_sd: 0.10
+    max_retries: 2
+    retry_scale: 1.8
+    missing_policy: fail
+    require_valid_diagnostics: true
+    min_chains_for_rhat: 4
+    fail_run_on_invalid_bayesian: true
+    hmc:
+      enabled: true
+      models: ["regularized_horseshoe", "rhs", "regularised_horseshoe"]
+      max_divergences: 0
+      min_ebfmi: 0.3
+      max_treedepth_hits: 0
+      require_present: true
+
+inference:
+  nuts:
+    target_accept_prob: 0.995
+    max_tree_depth: 13

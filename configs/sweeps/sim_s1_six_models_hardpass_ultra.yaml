@@ -1,30 +1,47 @@
-name: "sim_s1_six_models"
-output_dir: "outputs/sweeps/sim_s1_six_models"
+name: "sim_s1_six_models_hardpass_ultra"
+output_dir: "outputs/sweeps/sim_s1_six_models_hardpass_ultra"
 
 common_config_files:
   - "../experiments/sim_s1.yaml"
-
-common_overrides:
-  experiments:
-    convergence:
-      enabled: true
+  - "../overrides/sim1_bayes_hardpass_ultra.yaml"
 
 variations:
   - name: "grrhs"
     config_files:
       - "../methods/grrhs_regression.yaml"
+    overrides:
+      inference:
+        gibbs:
+          tau_slice_w: 0.8
+          tau_slice_m: 1200
+
   - name: "rhs"
     config_files:
       - "../methods/regularized_horseshoe.yaml"
+    overrides:
+      model:
+        target_accept_prob: 0.999
+        max_tree_depth: 14
+
   - name: "gigg"
     config_files:
       - "../methods/gigg.yaml"
+    overrides:
+      model:
+        method: "fixed"
+        mmle_enabled: false
+        store_lambda: true
+        stable_solve: true
+        btrick: false
+
   - name: "sgl"
     config_files:
       - "../methods/sparse_group_lasso.yaml"
+
   - name: "lasso"
     config_files:
       - "../methods/lasso.yaml"
+
   - name: "ridge"
     config_files:
       - "../methods/ridge.yaml"

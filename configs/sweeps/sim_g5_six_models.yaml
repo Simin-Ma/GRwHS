@@ -7,7 +7,7 @@ common_config_files:
 common_overrides:
   experiments:
     convergence:
-      enabled: false
+      enabled: true
 
 variations:
   - name: "grrhs"

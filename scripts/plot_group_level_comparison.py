@@ -260,7 +260,13 @@ def _collect_log_phi(run_dir: Path, eps: float) -> np.ndarray:
         if "phi" not in samples:
             raise RuntimeError(f"phi samples missing in {fold_dir/'posterior_samples.npz'}")
         phi = np.asarray(samples["phi"], dtype=float)
-        phi = phi.reshape(phi.shape[0], -1)
+        # Keep group dimension as the last axis and only flatten chain/draw axes.
+        # Expected shapes include:
+        # - (draws, G)
+        # - (chains, draws, G)
+        if phi.ndim < 2:
+            raise RuntimeError(f"Unexpected phi shape {phi.shape} in {fold_dir/'posterior_samples.npz'}")
+        phi = phi.reshape(-1, phi.shape[-1])
         blocks.append(np.log(np.maximum(phi, eps)))
     if not blocks:
         raise RuntimeError("No phi samples collected.")

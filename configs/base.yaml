@@ -70,9 +70,10 @@ experiments:
       regularised_horseshoe: ["beta", "tau", "lambda"]
       horseshoe: ["beta", "tau", "lambda"]
       hs: ["beta", "tau", "lambda"]
-    missing_policy: "warn"
+    missing_policy: "fail"
     require_valid_diagnostics: true
     min_chains_for_rhat: 4
+    fail_run_on_invalid_bayesian: true
     hmc:
       enabled: true
       models: ["regularized_horseshoe", "rhs", "regularised_horseshoe"]
