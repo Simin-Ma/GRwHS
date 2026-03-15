@@ -1,6 +1,6 @@
 from __future__ import annotations
-from concurrent.futures import ProcessPoolExecutor
 
+from concurrent.futures import ProcessPoolExecutor
 import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
@@ -49,42 +49,26 @@ def _normalise_groups(groups: Sequence[Sequence[int]], p: int) -> List[List[int]
     return normalised
 
 
-def _slice_sample_1d(
-    logpdf,
-    x0: float,
-    rng: Generator,
-    *,
-    w: float = 0.5,
-    m: int = 100,
-    max_steps: int = 500,
-) -> float:
-    """Univariate slice sampler (Neal, 2003) used for log-scale updates."""
-
-    logy = logpdf(x0) - rng.exponential(1.0)
-    u = rng.uniform(0.0, 1.0)
-    L = x0 - u * w
-    R = L + w
-    j = int(rng.integers(0, m))
-    k = m - 1 - j
-
-    while j > 0 and logpdf(L) > logy:
-        L -= w
-        j -= 1
-    while k > 0 and logpdf(R) > logy:
-        R += w
-        k -= 1
-
-    step = 0
-    while step < max_steps:
-        x1 = rng.uniform(L, R)
-        if logpdf(x1) >= logy:
-            return x1
-        if x1 < x0:
-            L = x1
-        else:
-            R = x1
-        step += 1
-    return x0
+def _groups_from_grp_idx(grp_idx: Sequence[int], p: int) -> List[List[int]]:
+    grp = np.asarray(grp_idx, dtype=int).reshape(-1)
+    if grp.size != p:
+        raise ValueError("grp_idx length must equal number of columns in X.")
+    gmin = int(grp.min())
+    gmax = int(grp.max())
+    if gmin == 1:
+        grp0 = grp - 1
+    elif gmin == 0:
+        grp0 = grp
+    else:
+        raise ValueError("grp_idx must be 0-based or 1-based contiguous labels.")
+    unique = np.unique(grp0)
+    expected = np.arange(int(unique.size), dtype=int)
+    if not np.array_equal(unique, expected):
+        raise ValueError("grp_idx labels must be contiguous with no gaps.")
+    groups: List[List[int]] = []
+    for gid in expected:
+        groups.append(np.where(grp0 == gid)[0].astype(int).tolist())
+    return _normalise_groups(groups, p)
 
 
 def _clip_positive_scalar(value: float, *, floor: float = _POS_FLOOR, cap: float = _POS_CAP) -> float:
@@ -102,31 +86,40 @@ def _clip_positive_array(values: np.ndarray, *, floor: float = _POS_FLOOR, cap: 
 
 def _fit_gigg_chain_task(payload: dict) -> dict:
     model = GIGGRegression(
-        iters=int(payload["iters"]),
-        burnin=int(payload["burnin"]),
-        thin=int(payload["thin"]),
+        method=str(payload["method"]),
+        n_burn_in=int(payload["n_burn_in"]),
+        n_samples=int(payload["n_samples"]),
+        n_thin=int(payload["n_thin"]),
         jitter=float(payload["jitter"]),
         seed=int(payload["seed"]),
         num_chains=1,
+        a_value=payload["a_value"],
         b_init=float(payload["b_init"]),
         b_floor=float(payload["b_floor"]),
         b_max=float(payload["b_max"]),
-        tau_scale=float(payload["tau_scale"]),
-        sigma_scale=float(payload["sigma_scale"]),
-        store_lambda=bool(payload["store_lambda"]),
-        a_value=payload["a_value"],
-        share_group_hyper=bool(payload["share_group_hyper"]),
-        mmle_enabled=bool(payload["mmle_enabled"]),
+        tau_sq_init=float(payload["tau_sq_init"]),
+        sigma_sq_init=float(payload["sigma_sq_init"]),
         mmle_update=str(payload["mmle_update"]),
-        mmle_burnin_only=bool(payload.get("mmle_burnin_only", True)),
+        mmle_burnin_only=bool(payload["mmle_burnin_only"]),
+        share_group_hyper=bool(payload["share_group_hyper"]),
+        store_lambda=bool(payload["store_lambda"]),
+        btrick=bool(payload["btrick"]),
+        stable_solve=bool(payload["stable_solve"]),
     )
     fitted = model.fit(
         np.asarray(payload["X"], dtype=float),
         np.asarray(payload["y"], dtype=float),
         groups=payload["groups"],
+        C=np.asarray(payload["C"], dtype=float) if payload["C"] is not None else None,
+        alpha_inits=np.asarray(payload["alpha_inits"], dtype=float) if payload["alpha_inits"] is not None else None,
+        beta_inits=np.asarray(payload["beta_inits"], dtype=float) if payload["beta_inits"] is not None else None,
+        a=np.asarray(payload["a"], dtype=float) if payload["a"] is not None else None,
+        b=np.asarray(payload["b"], dtype=float) if payload["b"] is not None else None,
+        method=str(payload["method"]),
     )
     return {
         "coef_samples": None if fitted.coef_samples_ is None else np.asarray(fitted.coef_samples_),
+        "alpha_samples": None if fitted.alpha_samples_ is None else np.asarray(fitted.alpha_samples_),
         "tau_samples": None if fitted.tau_samples_ is None else np.asarray(fitted.tau_samples_),
         "sigma_samples": None if fitted.sigma_samples_ is None else np.asarray(fitted.sigma_samples_),
         "gamma_samples": None if fitted.gamma_samples_ is None else np.asarray(fitted.gamma_samples_),
@@ -136,6 +129,7 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         "lambda_samples": None if fitted.lambda_samples_ is None else np.asarray(fitted.lambda_samples_),
         "b_samples": None if fitted.b_samples_ is None else np.asarray(fitted.b_samples_),
         "coef_mean": None if fitted.coef_mean_ is None else np.asarray(fitted.coef_mean_),
+        "alpha_mean": None if fitted.alpha_mean_ is None else np.asarray(fitted.alpha_mean_),
         "b_mean": None if fitted.b_mean_ is None else np.asarray(fitted.b_mean_),
         "intercept": float(fitted.intercept_),
     }
@@ -143,28 +137,35 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
 
 @dataclass
 class GIGGRegression:
-    """GIGG Gibbs sampler following Boss et al. (2021)."""
+    """CRAN-style GIGG Gibbs sampler with backward-compatible fit interface."""
 
-    iters: int = 3000
-    burnin: int = 1500
-    thin: int = 1
+    method: str = "mmle"
+    n_burn_in: int = 500
+    n_samples: int = 1000
+    n_thin: int = 1
     jitter: float = 1e-8
     seed: int = 0
     num_chains: int = 1
-    b_init: float = 1.0
+    a_value: Optional[float] = None
+    a_fixed_default: float = 0.5
+    b_init: float = 0.5
     b_floor: float = 1e-3
     b_max: float = 4.0
-    tau_scale: float = 1.0
-    sigma_scale: float = 1.0
-    store_lambda: bool = False
-    a_value: Optional[float] = None
-    share_group_hyper: bool = False
-    mmle_enabled: bool = True
+    tau_sq_init: float = 1.0
+    sigma_sq_init: float = 1.0
+    tau_scale: Optional[float] = None
+    sigma_scale: Optional[float] = None
+    mmle_enabled: Optional[bool] = None
     mmle_update: str = "paper_lambda_only"
     mmle_burnin_only: bool = True
+    share_group_hyper: bool = False
+    store_lambda: bool = True
+    btrick: bool = False
+    stable_solve: bool = True
 
     rng_: Generator = field(init=False, repr=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    alpha_samples_: Optional[np.ndarray] = field(default=None, init=False)
     tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     gamma_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -174,19 +175,42 @@ class GIGGRegression:
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
     b_samples_: Optional[np.ndarray] = field(default=None, init=False)
     coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
+    alpha_mean_: Optional[np.ndarray] = field(default=None, init=False)
     b_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
+
+    # Backward-compatible aliases used elsewhere in the project.
+    iters: Optional[int] = None
+    burnin: Optional[int] = None
+    thin: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.num_chains <= 0:
             raise ValueError("num_chains must be a positive integer.")
-
-    @staticmethod
-    def _flatten_scalar_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
-        if arr is None:
-            return None
-        data = np.asarray(arr, dtype=float)
-        return data.reshape(-1)
+        if self.tau_scale is not None:
+            self.tau_sq_init = float(self.tau_scale)
+        if self.sigma_scale is not None:
+            self.sigma_sq_init = float(self.sigma_scale)
+        if self.mmle_enabled is not None and not bool(self.mmle_enabled):
+            self.method = "fixed"
+        self.method = str(self.method).lower()
+        if self.method not in {"fixed", "mmle"}:
+            raise ValueError("method must be one of {'fixed', 'mmle'}.")
+        if self.burnin is not None:
+            self.n_burn_in = int(max(0, self.burnin))
+        if self.thin is not None:
+            self.n_thin = int(max(1, self.thin))
+        self.n_burn_in = int(max(0, self.n_burn_in))
+        self.n_thin = int(max(1, self.n_thin))
+        if self.iters is not None:
+            total = int(max(0, self.iters))
+            kept = max(0, total - self.n_burn_in)
+            self.n_samples = max(1, kept // self.n_thin)
+        else:
+            self.n_samples = int(max(0, self.n_samples))
+        self.burnin = self.n_burn_in
+        self.iters = self.n_burn_in + (self.n_samples * self.n_thin)
+        self.thin = self.n_thin
 
     @staticmethod
     def _flatten_param_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
@@ -207,58 +231,61 @@ class GIGGRegression:
             return None
         return np.stack([np.asarray(arr) for arr in arrays], axis=0)
 
-    def _spawn_single_chain(self, *, seed: int) -> "GIGGRegression":
-        return type(self)(
-            iters=self.iters,
-            burnin=self.burnin,
-            thin=self.thin,
-            jitter=self.jitter,
-            seed=seed,
-            num_chains=1,
-            b_init=self.b_init,
-            b_floor=self.b_floor,
-            b_max=self.b_max,
-            tau_scale=self.tau_scale,
-            sigma_scale=self.sigma_scale,
-            store_lambda=self.store_lambda,
-            a_value=self.a_value,
-            share_group_hyper=self.share_group_hyper,
-            mmle_enabled=self.mmle_enabled,
-            mmle_update=self.mmle_update,
-            mmle_burnin_only=self.mmle_burnin_only,
-        )
+    @staticmethod
+    def _resolve_groups(
+        p: int,
+        groups: Optional[Sequence[Sequence[int]]],
+        grp_idx: Optional[Sequence[int]],
+    ) -> List[List[int]]:
+        if groups is not None:
+            return _normalise_groups(groups, p)
+        if grp_idx is None:
+            raise ValueError("Either groups or grp_idx must be provided for GIGG.")
+        return _groups_from_grp_idx(grp_idx, p)
 
     def _fit_multichain(
         self,
         X: np.ndarray,
         y: np.ndarray,
         *,
-        groups: Sequence[Sequence[int]],
+        groups: List[List[int]],
+        C: Optional[np.ndarray],
+        alpha_inits: Optional[np.ndarray],
+        beta_inits: Optional[np.ndarray],
+        a: Optional[np.ndarray],
+        b: Optional[np.ndarray],
+        method: str,
     ) -> "GIGGRegression":
         payloads: List[dict] = []
-        groups_payload = [list(group) for group in groups]
         for chain_idx in range(int(self.num_chains)):
             payloads.append(
                 {
-                    "iters": self.iters,
-                    "burnin": self.burnin,
-                    "thin": self.thin,
+                    "method": method,
+                    "n_burn_in": self.n_burn_in,
+                    "n_samples": self.n_samples,
+                    "n_thin": self.n_thin,
                     "jitter": self.jitter,
                     "seed": int(self.seed) + chain_idx,
+                    "a_value": self.a_value,
                     "b_init": self.b_init,
                     "b_floor": self.b_floor,
                     "b_max": self.b_max,
-                    "tau_scale": self.tau_scale,
-                    "sigma_scale": self.sigma_scale,
-                    "store_lambda": self.store_lambda,
-                    "a_value": self.a_value,
-                    "share_group_hyper": self.share_group_hyper,
-                    "mmle_enabled": self.mmle_enabled,
+                    "tau_sq_init": self.tau_sq_init,
+                    "sigma_sq_init": self.sigma_sq_init,
                     "mmle_update": self.mmle_update,
                     "mmle_burnin_only": self.mmle_burnin_only,
+                    "share_group_hyper": self.share_group_hyper,
+                    "store_lambda": self.store_lambda,
+                    "btrick": self.btrick,
+                    "stable_solve": self.stable_solve,
                     "X": np.asarray(X, dtype=float),
                     "y": np.asarray(y, dtype=float),
-                    "groups": groups_payload,
+                    "C": None if C is None else np.asarray(C, dtype=float),
+                    "groups": [list(g) for g in groups],
+                    "alpha_inits": None if alpha_inits is None else np.asarray(alpha_inits, dtype=float),
+                    "beta_inits": None if beta_inits is None else np.asarray(beta_inits, dtype=float),
+                    "a": None if a is None else np.asarray(a, dtype=float),
+                    "b": None if b is None else np.asarray(b, dtype=float),
                 }
             )
 
@@ -271,6 +298,7 @@ class GIGGRegression:
         lead = chain_results[0]
         self.rng_ = default_rng(self.seed)
         self.coef_samples_ = self._stack_chain_draws([item["coef_samples"] for item in chain_results])
+        self.alpha_samples_ = self._stack_chain_draws([item["alpha_samples"] for item in chain_results])
         self.tau_samples_ = self._stack_chain_draws([item["tau_samples"] for item in chain_results])
         self.sigma_samples_ = self._stack_chain_draws([item["sigma_samples"] for item in chain_results])
         self.gamma_samples_ = self._stack_chain_draws([item["gamma_samples"] for item in chain_results])
@@ -281,49 +309,116 @@ class GIGGRegression:
         self.b_samples_ = self._stack_chain_draws([item["b_samples"] for item in chain_results])
 
         coef_draws = self._flatten_param_draws(self.coef_samples_)
+        alpha_draws = self._flatten_param_draws(self.alpha_samples_)
         b_draws = self._flatten_param_draws(self.b_samples_)
         self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
+        self.alpha_mean_ = None if alpha_draws is None else alpha_draws.mean(axis=0)
         self.b_mean_ = None if b_draws is None else b_draws.mean(axis=0)
         self.intercept_ = float(lead["intercept"])
         return self
 
-    def fit(self, X: np.ndarray, y: np.ndarray, *, groups: Sequence[Sequence[int]]) -> "GIGGRegression":
+    def fit(
+        self,
+        X: np.ndarray,
+        y: Optional[np.ndarray] = None,
+        *,
+        groups: Optional[Sequence[Sequence[int]]] = None,
+        C: Optional[np.ndarray] = None,
+        Y: Optional[np.ndarray] = None,
+        grp_idx: Optional[Sequence[int]] = None,
+        alpha_inits: Optional[np.ndarray] = None,
+        beta_inits: Optional[np.ndarray] = None,
+        a: Optional[Sequence[float]] = None,
+        b: Optional[Sequence[float]] = None,
+        method: Optional[str] = None,
+    ) -> "GIGGRegression":
         X = np.asarray(X, dtype=float)
-        y = np.asarray(y, dtype=float).reshape(-1)
+        yy = y if y is not None else Y
+        if yy is None:
+            raise ValueError("Response y (or Y) is required.")
+        y_arr = np.asarray(yy, dtype=float).reshape(-1)
         n, p = X.shape
-        if y.shape[0] != n:
+        if y_arr.shape[0] != n:
             raise ValueError("X and y must have compatible shapes.")
-        if not groups:
-            raise ValueError("GIGGRegression requires a non-empty group specification.")
-        if self.num_chains > 1:
-            return self._fit_multichain(X, y, groups=groups)
 
-        normalised_groups = _normalise_groups(groups, p)
+        normalised_groups = self._resolve_groups(p, groups, grp_idx)
         group_id = np.empty(p, dtype=int)
         for gid, idxs in enumerate(normalised_groups):
             group_id[idxs] = gid
         group_sizes = np.array([len(g) for g in normalised_groups], dtype=int)
         G = group_sizes.size
 
+        C_arr = np.zeros((n, 0), dtype=float) if C is None else np.asarray(C, dtype=float)
+        if C_arr.ndim != 2 or C_arr.shape[0] != n:
+            raise ValueError("C must be a 2D array with n rows.")
+        k = int(C_arr.shape[1])
+
+        method_eff = str(self.method if method is None else method).lower()
+        if method_eff not in {"fixed", "mmle"}:
+            raise ValueError("method must be one of {'fixed', 'mmle'}.")
+
+        a_vec: np.ndarray
+        if a is not None:
+            a_vec = np.asarray(a, dtype=float).reshape(-1)
+            if a_vec.size != G:
+                raise ValueError("a must have length equal to number of groups.")
+        elif self.a_value is not None:
+            a_vec = np.full(G, float(self.a_value), dtype=float)
+        elif method_eff == "fixed":
+            a_vec = np.full(G, float(self.a_fixed_default), dtype=float)
+        else:
+            a_vec = np.full(G, 1.0 / max(n, 1), dtype=float)
+
+        if b is not None:
+            b_vec = np.asarray(b, dtype=float).reshape(-1)
+            if b_vec.size != G:
+                raise ValueError("b must have length equal to number of groups.")
+        else:
+            b_vec = np.full(G, max(self.b_init, self.b_floor), dtype=float)
+
+        if beta_inits is not None:
+            beta = np.asarray(beta_inits, dtype=float).reshape(-1)
+            if beta.size != p:
+                raise ValueError("beta_inits must have length p.")
+        else:
+            beta = np.zeros(p, dtype=float)
+
+        if alpha_inits is not None:
+            alpha = np.asarray(alpha_inits, dtype=float).reshape(-1)
+            if alpha.size != k:
+                raise ValueError("alpha_inits must have length ncol(C).")
+        else:
+            alpha = np.zeros(k, dtype=float)
+
+        if self.num_chains > 1:
+            return self._fit_multichain(
+                X,
+                y_arr,
+                groups=normalised_groups,
+                C=C_arr,
+                alpha_inits=alpha,
+                beta_inits=beta,
+                a=a_vec,
+                b=b_vec,
+                method=method_eff,
+            )
+
         self.rng_ = default_rng(self.seed)
         rng = self.rng_
 
-        a_const = float(self.a_value) if self.a_value is not None else 1.0 / max(n, 1)
-        a_vec = np.full(G, a_const)
-        b_vec = np.full(G, max(self.b_init, self.b_floor))
-
         lambda_sq = np.ones(p, dtype=float)
         gamma_sq = np.ones(G, dtype=float)
-        tau_sq = _clip_positive_scalar(self.tau_scale)
-        sigma_sq = _clip_positive_scalar(self.sigma_scale)
+        tau_sq = _clip_positive_scalar(self.tau_sq_init)
+        sigma_sq = _clip_positive_scalar(self.sigma_sq_init)
         xi_tau = 1.0
         xi_sigma = 1.0
 
         XtX = X.T @ X
-        Xty = X.T @ y
+        CtC = C_arr.T @ C_arr if k > 0 else None
 
-        kept = max(0, (self.iters - self.burnin) // max(self.thin, 1))
+        kept = self.n_samples
         coef_draws = np.zeros((kept, p), dtype=float)
+        alpha_draws = np.zeros((kept, k), dtype=float) if k > 0 else None
         tau2_draws = np.zeros(kept, dtype=float)
         sigma2_draws = np.zeros(kept, dtype=float)
         gamma2_draws = np.zeros((kept, G), dtype=float)
@@ -331,22 +426,36 @@ class GIGGRegression:
         b_draws = np.zeros((kept, G), dtype=float)
 
         log_lambda_mean = np.zeros(G, dtype=float)
-
         keep_idx = 0
-        for it in range(self.iters):
-            # ---- β | rest
+        total_iters = self.iters
+
+        for it in range(total_iters):
+            if k > 0:
+                resid_alpha = y_arr - X @ beta
+                if self.stable_solve:
+                    precision_alpha = CtC + np.eye(k, dtype=float) * max(self.jitter, 0.0)
+                    chol_alpha = cho_factor(precision_alpha, lower=True, check_finite=False)
+                    mean_alpha = cho_solve(chol_alpha, C_arr.T @ resid_alpha, check_finite=False)
+                    noise_alpha = cho_solve(chol_alpha, rng.normal(size=k), check_finite=False)
+                    alpha = mean_alpha + math.sqrt(sigma_sq) * noise_alpha
+                else:
+                    precision_alpha = CtC + np.eye(k, dtype=float) * max(self.jitter, 0.0)
+                    cov_alpha = np.linalg.pinv(precision_alpha)
+                    mean_alpha = cov_alpha @ (C_arr.T @ resid_alpha)
+                    alpha = mean_alpha + math.sqrt(sigma_sq) * (np.linalg.cholesky(cov_alpha) @ rng.normal(size=k))
+
+            y_tilde = y_arr - (C_arr @ alpha if k > 0 else 0.0)
             local_scale = _clip_positive_array(tau_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
             prior_prec = 1.0 / local_scale
-            precision = XtX + np.diag(prior_prec)
+            precision_beta = XtX + np.diag(prior_prec)
             if self.jitter > 0.0:
-                precision = precision + np.eye(p) * self.jitter
-            chol = cho_factor(precision, lower=True, check_finite=False)
-            mean = cho_solve(chol, Xty, check_finite=False)
-            noise = cho_solve(chol, rng.normal(size=p), check_finite=False)
-            beta = mean + math.sqrt(sigma_sq) * noise
+                precision_beta = precision_beta + np.eye(p) * self.jitter
+            chol_beta = cho_factor(precision_beta, lower=True, check_finite=False)
+            mean_beta = cho_solve(chol_beta, X.T @ y_tilde, check_finite=False)
+            noise_beta = cho_solve(chol_beta, rng.normal(size=p), check_finite=False)
+            beta = mean_beta + math.sqrt(sigma_sq) * noise_beta
             beta = np.clip(np.nan_to_num(beta, nan=0.0, posinf=_BETA_CAP, neginf=-_BETA_CAP), -_BETA_CAP, _BETA_CAP)
 
-            # ---- λ^2 | β, γ
             for gid, idxs in enumerate(normalised_groups):
                 denom = _clip_positive_scalar(2.0 * tau_sq * gamma_sq[gid], floor=self.jitter)
                 b_shape = max(b_vec[gid] + 0.5, 1e-6)
@@ -359,7 +468,6 @@ class GIGGRegression:
                         draw = lambda_sq[j]
                     lambda_sq[j] = _clip_positive_scalar(draw)
 
-            # ---- γ_g^2 | β, λ
             for gid, idxs in enumerate(normalised_groups):
                 lam_param = float(a_vec[gid] - 0.5 * group_sizes[gid])
                 denom = _clip_positive_array(lambda_sq[idxs], floor=self.jitter)
@@ -377,29 +485,25 @@ class GIGGRegression:
                     theta = gamma_sq[gid]
                 gamma_sq[gid] = _clip_positive_scalar(theta, floor=self.jitter)
 
-            # ---- τ^2 | β, λ, γ  (log-space slice sampling for stability)
             denom_tau = _clip_positive_array(gamma_sq[group_id] * lambda_sq, floor=self.jitter)
-            beta_quad = float(np.sum(np.minimum(beta ** 2, _POS_CAP) / denom_tau))
-            alpha_tau = 0.5 * (p + 1)
-            beta_tau = 0.5 * beta_quad + 1.0 / _clip_positive_scalar(xi_tau, floor=self.jitter)
-
-            def _logp_tau(v: float) -> float:
-                return -alpha_tau * v - beta_tau * math.exp(-v)
-
-            log_tau = math.log(max(tau_sq, self.jitter))
-            log_tau_new = _slice_sample_1d(_logp_tau, log_tau, rng, w=0.5, m=100, max_steps=500)
-            tau_sq = _clip_positive_scalar(math.exp(log_tau_new), floor=self.jitter)
+            beta_quad = float(np.sum(np.minimum(beta**2, _POS_CAP) / denom_tau))
+            shape_tau = 0.5 * (p + 1)
+            scale_tau = _clip_positive_scalar(0.5 * beta_quad + 1.0 / _clip_positive_scalar(xi_tau, floor=self.jitter))
+            try:
+                tau_sq = invgamma.rvs(a=shape_tau, scale=scale_tau, random_state=rng)
+            except Exception:
+                tau_sq = scale_tau / max(shape_tau + 1.0, 1.0)
+            tau_sq = _clip_positive_scalar(tau_sq, floor=self.jitter)
             try:
                 xi_tau = invgamma.rvs(a=1.0, scale=1.0 + 1.0 / tau_sq, random_state=rng)
             except Exception:
                 xi_tau = 1.0
             xi_tau = _clip_positive_scalar(xi_tau)
 
-            # ---- σ^2 | β
-            resid = y - X @ beta
+            resid = y_arr - X @ beta - (C_arr @ alpha if k > 0 else 0.0)
             rss = float(resid @ resid)
             denom_sigma = _clip_positive_array(tau_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
-            prior_quad = float(np.sum(np.minimum(beta ** 2, _POS_CAP) / denom_sigma))
+            prior_quad = float(np.sum(np.minimum(beta**2, _POS_CAP) / denom_sigma))
             shape_sigma = 0.5 * (n + p)
             scale_sigma = _clip_positive_scalar(0.5 * (rss + prior_quad) + 1.0 / _clip_positive_scalar(xi_sigma, floor=self.jitter))
             try:
@@ -413,11 +517,7 @@ class GIGGRegression:
                 xi_sigma = 1.0
             xi_sigma = _clip_positive_scalar(xi_sigma)
 
-            # Empirical Bayes update for b_g following the paper's b-only MMLE path:
-            #   b_g^{l+1} = psi_0^{-1}( - E[ mean_j log(lambda_gj^2) | y ] )
-            do_mmle_update = bool(self.mmle_enabled) and (
-                (not bool(self.mmle_burnin_only)) or (it < int(self.burnin))
-            )
+            do_mmle_update = method_eff == "mmle" and ((not self.mmle_burnin_only) or (it < self.n_burn_in))
             if do_mmle_update:
                 targets = np.empty(G, dtype=float)
                 for gid, idxs in enumerate(normalised_groups):
@@ -450,8 +550,10 @@ class GIGGRegression:
             gamma_sq = _clip_positive_array(gamma_sq, floor=self.jitter)
             b_vec = _clip_positive_array(b_vec, floor=self.b_floor, cap=self.b_max)
 
-            if it >= self.burnin and ((it - self.burnin) % max(self.thin, 1) == 0):
+            if it >= self.n_burn_in and ((it - self.n_burn_in) % self.n_thin == 0):
                 coef_draws[keep_idx] = beta
+                if alpha_draws is not None:
+                    alpha_draws[keep_idx] = alpha
                 tau2_draws[keep_idx] = tau_sq
                 sigma2_draws[keep_idx] = sigma_sq
                 gamma2_draws[keep_idx] = gamma_sq
@@ -461,6 +563,7 @@ class GIGGRegression:
                 keep_idx += 1
 
         self.coef_samples_ = coef_draws if kept else None
+        self.alpha_samples_ = alpha_draws
         self.tau2_samples_ = tau2_draws if kept else None
         self.sigma2_samples_ = sigma2_draws if kept else None
         self.gamma2_samples_ = gamma2_draws if kept else None
@@ -470,12 +573,19 @@ class GIGGRegression:
         self.lambda_samples_ = lambda_draws if lambda_draws is not None else None
         self.b_samples_ = b_draws if kept else None
         self.coef_mean_ = coef_draws.mean(axis=0) if kept else beta
+        self.alpha_mean_ = None if alpha_draws is None else alpha_draws.mean(axis=0)
         self.b_mean_ = b_draws.mean(axis=0) if kept else b_vec.copy()
         self.intercept_ = 0.0
         return self
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: np.ndarray, C: Optional[np.ndarray] = None) -> np.ndarray:
         if self.coef_mean_ is None:
             raise RuntimeError("Model must be fitted before calling predict().")
         X_arr = np.asarray(X, dtype=float)
-        return X_arr @ self.coef_mean_ + self.intercept_
+        y_hat = X_arr @ self.coef_mean_
+        if C is not None and self.alpha_mean_ is not None and self.alpha_mean_.size > 0:
+            C_arr = np.asarray(C, dtype=float)
+            if C_arr.ndim != 2 or C_arr.shape[0] != X_arr.shape[0]:
+                raise ValueError("C must be a 2D array with same row count as X.")
+            y_hat = y_hat + C_arr @ self.alpha_mean_
+        return y_hat + self.intercept_

@@ -114,6 +114,11 @@ Priors:
 - `_RIDGE_ALPHA=1e-3`
 - `_TAU_PENALTY=5e-5`
 
+Round-2 stability controls:
+- `inference.gibbs.tau_slice_w`
+- `inference.gibbs.tau_slice_m`
+- These tune the global-scale (`tau`) slice sampler separately from local-scale (`lambda`) updates.
+
 ---
 
 ## 2) GRRHS_Gibbs_Logistic (Classification)
@@ -155,18 +160,20 @@ Uses Polya-Gamma augmentation:
 ### 3.1 Parameters and hierarchy
 
 Class defaults:
-- `iters=3000, burnin=1500, thin=1, jitter=1e-8`
-- `b_init=1.0, b_floor=1e-3, b_max=4.0`
-- `tau_scale=1.0, sigma_scale=1.0`
-- `a_value=None -> a_g=1/n`
-- `mmle_enabled=True, mmle_update="paper_lambda_only"`
+- `method="mmle", n_burn_in=500, n_samples=1000, n_thin=1, jitter=1e-8`
+- `b_init=0.5, b_floor=1e-3, b_max=4.0`
+- `tau_sq_init=1.0, sigma_sq_init=1.0`
+- `a_value=None -> mmle: a_g=1/n, fixed: a_g=0.5`
+- `mmle_update="paper_lambda_only"`
+- Supports CRAN-style joint adjustment covariates (`C`) with explicit `alpha` block sampling.
 
 Method config (`configs/methods/gigg.yaml`):
-- `iters=2000, burn_in=1000, thin=1, num_chains=4`
-- `b_init=1.0, b_floor=0.001, b_max=4.0`
-- `tau_scale=1.0, sigma_scale=1.0`
+- `method="mmle", n_samples=1000, burn_in=500, thin=1, num_chains=4`
+- `b_init=0.5, b_floor=0.001, b_max=4.0`
+- `tau_sq_init=1.0, sigma_sq_init=1.0`
 - `store_lambda=true` (enabled for complete convergence-block diagnostics)
-- `mmle_enabled=true, mmle_update=paper_lambda_only`
+- `mmle_update=paper_lambda_only`
+- `mmle_burnin_only=true` (MMLE updates applied during burn-in, then frozen in sampling phase)
 
 Variance hierarchy:
 $$\beta_j\mid\tau^2,\gamma_{g(j)}^2,\lambda_j^2,\sigma^2\sim
@@ -364,7 +371,7 @@ Also, if `disable_budget_retry=true`, Bayesian retries are forced to `max_retrie
 ### 7.2 Method-file budgets (already aligned with fairness defaults)
 
 - GRRHS: `iters=2000`, `burn_in=1000`, `thin=1`, `num_chains=4`
-- GIGG: `iters=2000`, `burn_in=1000`, `thin=1`, `num_chains=4`
+- GIGG: `method=mmle`, `n_samples=1000`, `burn_in=500`, `thin=1`, `num_chains=4`
 - RHS: `num_warmup=1000`, `num_samples=1000`, `num_chains=4`, `thinning=1`, `target_accept_prob=0.9`
 
 ---

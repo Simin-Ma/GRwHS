@@ -278,6 +278,31 @@ def _is_bayesian_config(config: Mapping[str, Any]) -> bool:
     return _is_bayesian_model_name(_resolve_model_name(config))
 
 
+def _uses_joint_covariates_model_name(name: str) -> bool:
+    key = str(name).strip().lower()
+    return key in {"gigg", "gigg_regression"}
+
+
+def _fit_model_dispatch(
+    model: Any,
+    X: np.ndarray,
+    y: np.ndarray,
+    *,
+    groups: Sequence[Sequence[int]],
+    C: Optional[np.ndarray] = None,
+) -> None:
+    if C is not None:
+        try:
+            model.fit(X, y, groups=groups, C=C)
+            return
+        except TypeError:
+            pass
+    try:
+        model.fit(X, y, groups=groups)
+    except TypeError:
+        model.fit(X, y)
+
+
 def _bayesian_fairness_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     experiments_cfg = config.get("experiments", {}) or {}
     raw = experiments_cfg.get("bayesian_fairness", {}) or {}
@@ -742,6 +767,7 @@ def _fit_model_with_retry(
     p: int,
     X_train: np.ndarray,
     y_train: np.ndarray,
+    C_train: Optional[np.ndarray],
     task: str,
     std_cfg: StandardizationConfig,
     convergence_cfg: Mapping[str, Any],
@@ -779,10 +805,7 @@ def _fit_model_with_retry(
 
         _maybe_calibrate_tau(attempt_model_cfg, std_cfg, X_train, y_train, groups, task)
         model = _instantiate_model(attempt_config, groups, p)
-        try:
-            model.fit(X_train, y_train, groups=groups)
-        except TypeError:
-            model.fit(X_train, y_train)
+        _fit_model_dispatch(model, X_train, y_train, groups=groups, C=C_train)
 
         arrays = _collect_posterior_arrays(model)
         sampler_diagnostics = _collect_sampler_diagnostics(model)
@@ -1419,6 +1442,8 @@ def _evaluate_inner_candidate(
     fold_scores: List[float] = []
     skipped_folds = 0
 
+    model_name = _resolve_model_name(base_config)
+    use_joint_covariates = _uses_joint_covariates_model_name(model_name)
     for inner_fold in inner_folds:
         train_idx = inner_fold.train
         val_idx = inner_fold.test
@@ -1432,12 +1457,15 @@ def _evaluate_inner_candidate(
         else:
             y_val = np.asarray(y[val_idx], dtype=np.float32)
 
+        C_train_model = None
         if C is not None:
             C_train_raw = np.asarray(C[train_idx], dtype=np.float32)
             C_val_raw = np.asarray(C[val_idx], dtype=np.float32)
             C_train, C_val, _, _, _ = _standardize_covariates_train_test(C_train_raw, C_val_raw)
-            X_train, X_val, _ = _residualize_against_covariates(X_train, X_val, C_train, C_val)
-            y_train, y_val, _ = _residualize_against_covariates(y_train, y_val, C_train, C_val)
+            C_train_model = C_train
+            if not use_joint_covariates:
+                X_train, X_val, _ = _residualize_against_covariates(X_train, X_val, C_train, C_val)
+                y_train, y_val, _ = _residualize_against_covariates(y_train, y_val, C_train, C_val)
 
         if task == "classification":
             unique_classes = np.unique(y_train)
@@ -1450,10 +1478,7 @@ def _evaluate_inner_candidate(
             _apply_mapping_overrides(candidate_cfg, runtime_overrides)
         _maybe_calibrate_tau(candidate_cfg["model"], std_cfg, X_train, y_train, groups, task)
         model = _instantiate_model(candidate_cfg, groups, X.shape[1])
-        try:
-            model.fit(X_train, y_train, groups=groups)
-        except TypeError:
-            model.fit(X_train, y_train)
+        _fit_model_dispatch(model, X_train, y_train, groups=groups, C=C_train_model if use_joint_covariates else None)
 
         score = _compute_inner_metric(task, y_val, model, X_val, class_labels=class_labels)
         fold_scores.append(score)
@@ -1711,6 +1736,7 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
     arrays: Dict[str, np.ndarray] = {}
     attr_map = {
         "coef_samples_": "beta",
+        "alpha_samples_": "alpha",
         "intercept_samples_": "intercept",
         "sigma_samples_": "sigma",
         "sigma2_samples_": "sigma2",
@@ -1739,6 +1765,7 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
                 "phi": ("phi_mean_",),
                 "gamma": ("gamma_mean_",),
                 "b": ("b_mean_",),
+                "alpha": ("alpha_mean_",),
             }
             param_len = None
             for attr_name in ref_map.get(key, ()):
@@ -2000,6 +2027,7 @@ def _run_seed_stability_validation(
     p: int,
     X_train: np.ndarray,
     y_train: np.ndarray,
+    C_train: Optional[np.ndarray],
     task: str,
     std_cfg: StandardizationConfig,
     convergence_cfg: Mapping[str, Any],
@@ -2048,6 +2076,7 @@ def _run_seed_stability_validation(
                 p,
                 X_train,
                 y_train,
+                C_train,
                 task,
                 std_cfg,
                 convergence_cfg,
@@ -2117,6 +2146,7 @@ def _run_posterior_validation(
     groups: Sequence[Sequence[int]],
     p: int,
     X_train_model: np.ndarray,
+    C_train_model: Optional[np.ndarray],
     y_train: np.ndarray,
     std_cfg: StandardizationConfig,
     convergence_cfg: Mapping[str, Any],
@@ -2153,6 +2183,7 @@ def _run_posterior_validation(
             p=p,
             X_train=X_train_model,
             y_train=y_train,
+            C_train=C_train_model,
             task=task,
             std_cfg=std_cfg,
             convergence_cfg=convergence_cfg,
@@ -2412,6 +2443,8 @@ def _run_fold_nested(
     groups_true = dataset["groups"]
     model_groups = dataset.get("model_groups", groups_true)
     beta = dataset.get("beta")
+    model_name = _resolve_model_name(base_config)
+    use_joint_covariates = _uses_joint_covariates_model_name(model_name)
 
     train_idx = np.asarray(fold.train, dtype=int)
     test_idx = np.asarray(fold.test, dtype=int)
@@ -2450,8 +2483,9 @@ def _run_fold_nested(
             C_train_raw,
             C_test_raw,
         )
-        X_train_model, X_test_model, _ = _residualize_against_covariates(X_train, X_test, C_train, C_test)
-        y_train, y_test, _ = _residualize_against_covariates(y_train, y_test, C_train, C_test)
+        if not use_joint_covariates:
+            X_train_model, X_test_model, _ = _residualize_against_covariates(X_train, X_test, C_train, C_test)
+            y_train, y_test, _ = _residualize_against_covariates(y_train, y_test, C_train, C_test)
 
     degenerate_model: Optional[_ConstantClassificationModel] = None
     degenerate_label_value: Optional[float] = None
@@ -2522,6 +2556,7 @@ def _run_fold_nested(
             X_train_model.shape[1],
             X_train_model,
             y_train,
+            C_train if use_joint_covariates else None,
             task,
             std_cfg,
             convergence_cfg,
@@ -2618,6 +2653,7 @@ def _run_fold_nested(
             groups=model_groups,
             p=int(X_train_model.shape[1]),
             X_train_model=X_train_model,
+            C_train_model=C_train if use_joint_covariates else None,
             y_train=y_train,
             std_cfg=std_cfg,
             convergence_cfg=convergence_cfg,

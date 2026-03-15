@@ -1,0 +1,22 @@
+name: "sim_s1_bayes3_round2_fast_exec"
+output_dir: "outputs/sweeps/sim_s1_bayes3_round2_fast_exec"
+
+common_config_files:
+  - "../experiments/sim_s1.yaml"
+  - "../overrides/production_posterior_strong.yaml"
+  - "../overrides/bayes_round2_fast_exec.yaml"
+
+common_overrides:
+  experiments:
+    repeats: 1
+
+variations:
+  - name: "grrhs"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+  - name: "rhs"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+  - name: "gigg"
+    config_files:
+      - "../methods/gigg.yaml"

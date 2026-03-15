@@ -403,9 +403,18 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
     groups = _infer_groups(cfg)
     if groups is None:
         raise ValueError("GIGGRegression requires 'data.groups' in config (list of index lists).")
-    iters = int(_get(cfg, "model.iters", 3000))
-    burnin = int(_get(cfg, "inference.gibbs.burn_in", _get(cfg, "model.burnin", 1500)))
-    thin = max(1, int(_get(cfg, "inference.gibbs.thin", _get(cfg, "model.thin", 1))))
+    method = str(_get(cfg, "model.method", "mmle")).lower()
+    mmle_enabled = _get(cfg, "model.mmle_enabled", None)
+    if mmle_enabled is not None and not bool(mmle_enabled):
+        method = "fixed"
+    burnin = int(_get(cfg, "inference.gibbs.burn_in", _get(cfg, "model.n_burn_in", _get(cfg, "model.burnin", 500))))
+    thin = max(1, int(_get(cfg, "inference.gibbs.thin", _get(cfg, "model.n_thin", _get(cfg, "model.thin", 1)))))
+    n_samples_raw = _get(cfg, "model.n_samples", None)
+    if n_samples_raw is None:
+        total_iters = int(_get(cfg, "model.iters", 3000))
+        n_samples = max(1, (max(0, total_iters - burnin)) // thin)
+    else:
+        n_samples = max(1, int(n_samples_raw))
     num_chains = max(1, int(_get(cfg, "inference.gibbs.num_chains", _get(cfg, "model.num_chains", 1))))
     jitter = float(_get(cfg, "model.jitter", 1e-8))
     seed = _get(
@@ -416,33 +425,36 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
     b_init = float(_get(cfg, "model.b_init", 1.0))
     b_floor = float(_get(cfg, "model.b_floor", 1e-3))
     b_max = float(_get(cfg, "model.b_max", 4.0))
-    tau_scale = float(_get(cfg, "model.tau_init", _get(cfg, "model.tau_scale", 1.0)))
-    sigma_scale = float(_get(cfg, "model.sigma_init", _get(cfg, "model.sigma_scale", 1.0)))
+    tau_sq_init = float(_get(cfg, "model.tau_sq_init", _get(cfg, "model.tau_init", _get(cfg, "model.tau_scale", 1.0))))
+    sigma_sq_init = float(_get(cfg, "model.sigma_sq_init", _get(cfg, "model.sigma_init", _get(cfg, "model.sigma_scale", 1.0))))
     store_lambda = bool(_get(cfg, "model.store_lambda", False))
     a_value = _get(cfg, "model.a_value", None)
     share_group_hyper = bool(_get(cfg, "model.share_group_hyper", False))
-    mmle_enabled = bool(_get(cfg, "model.mmle_enabled", True))
     mmle_update = str(_get(cfg, "model.mmle_update", "paper_lambda_only"))
     mmle_burnin_only = bool(_get(cfg, "model.mmle_burnin_only", True))
+    btrick = bool(_get(cfg, "model.btrick", False))
+    stable_solve = bool(_get(cfg, "model.stable_solve", True))
 
     return GIGGRegression(
-        iters=iters,
-        burnin=burnin,
-        thin=thin,
+        method=method,
+        n_burn_in=burnin,
+        n_samples=n_samples,
+        n_thin=thin,
         jitter=jitter,
         seed=int(seed) if seed is not None else 0,
         num_chains=num_chains,
+        a_value=None if a_value is None else float(a_value),
         b_init=b_init,
         b_floor=b_floor,
         b_max=b_max,
-        tau_scale=tau_scale,
-        sigma_scale=sigma_scale,
+        tau_sq_init=tau_sq_init,
+        sigma_sq_init=sigma_sq_init,
         store_lambda=store_lambda,
-        a_value=None if a_value is None else float(a_value),
         share_group_hyper=share_group_hyper,
-        mmle_enabled=mmle_enabled,
         mmle_update=mmle_update,
         mmle_burnin_only=mmle_burnin_only,
+        btrick=btrick,
+        stable_solve=stable_solve,
     )
 
 
