@@ -149,6 +149,8 @@ DEFAULT_POSTERIOR_VALIDATION_CONFIG: Dict[str, Any] = {
         "seed_stride": 1009,
         "max_beta_rel_l2": 0.15,
         "min_beta_cosine": 0.98,
+        "tau_stability_mode": "log_median",
+        "max_tau_log_sd": 0.35,
         "max_tau_rel_sd": 0.20,
         "fail_on_missing_tau": False,
     },
@@ -365,6 +367,8 @@ def _posterior_validation_config(config: Mapping[str, Any]) -> Dict[str, Any]:
         "seed_stride": max(1, int(seed_cfg.get("seed_stride", 1009))),
         "max_beta_rel_l2": max(0.0, float(seed_cfg.get("max_beta_rel_l2", 0.15))),
         "min_beta_cosine": float(seed_cfg.get("min_beta_cosine", 0.98)),
+        "tau_stability_mode": str(seed_cfg.get("tau_stability_mode", "log_median")).lower(),
+        "max_tau_log_sd": max(0.0, float(seed_cfg.get("max_tau_log_sd", 0.35))),
         "max_tau_rel_sd": max(0.0, float(seed_cfg.get("max_tau_rel_sd", 0.20))),
         "fail_on_missing_tau": bool(seed_cfg.get("fail_on_missing_tau", False)),
     }
@@ -2100,13 +2104,33 @@ def _run_seed_stability_validation(
     baseline_tau = _flatten_scalar_draws(
         None if "tau" not in baseline_arrays else np.asarray(baseline_arrays["tau"], dtype=float)
     )
-    baseline_tau_mean = float(np.mean(baseline_tau)) if baseline_tau is not None and baseline_tau.size else None
+    tau_mode = str(cfg.get("tau_stability_mode", "log_median")).lower()
+    max_tau_log_sd = float(cfg.get("max_tau_log_sd", 0.35))
+    max_tau_rel_sd = float(cfg.get("max_tau_rel_sd", 0.20))
+
+    def _tau_scalar(draws: Optional[np.ndarray], mode: str) -> Optional[float]:
+        if draws is None:
+            return None
+        arr = np.asarray(draws, dtype=float).reshape(-1)
+        arr = arr[np.isfinite(arr)]
+        arr = arr[arr > 0.0]
+        if arr.size == 0:
+            return None
+        if mode == "mean":
+            return float(np.mean(arr))
+        if mode == "median":
+            return float(np.median(arr))
+        if mode == "log_mean":
+            return float(np.mean(np.log(np.maximum(arr, 1e-12))))
+        # default: "log_median"
+        return float(np.median(np.log(np.maximum(arr, 1e-12))))
+
+    baseline_tau_stat = _tau_scalar(baseline_tau, tau_mode)
 
     num_restarts = int(cfg.get("num_restarts", 2))
     stride = int(cfg.get("seed_stride", 1009))
     max_beta_rel_l2 = float(cfg.get("max_beta_rel_l2", 0.15))
     min_beta_cosine = float(cfg.get("min_beta_cosine", 0.98))
-    max_tau_rel_sd = float(cfg.get("max_tau_rel_sd", 0.20))
     fail_on_missing_tau = bool(cfg.get("fail_on_missing_tau", False))
 
     beta_rel_l2_values: List[float] = []
@@ -2155,8 +2179,9 @@ def _run_seed_stability_validation(
         beta_cos_values.append(cosine)
 
         tau_draws = _flatten_scalar_draws(None if "tau" not in arrays else np.asarray(arrays["tau"], dtype=float))
-        if tau_draws is not None and tau_draws.size:
-            tau_values.append(float(np.mean(tau_draws)))
+        tau_stat = _tau_scalar(tau_draws, tau_mode)
+        if tau_stat is not None:
+            tau_values.append(tau_stat)
 
     if not beta_rel_l2_values or not beta_cos_values:
         reasons.append("no_valid_restarts")
@@ -2167,11 +2192,17 @@ def _run_seed_stability_validation(
             reasons.append(f"beta_cosine_min={min(beta_cos_values):.3f}<{min_beta_cosine:.3f}")
 
     tau_rel_sd = None
-    if baseline_tau_mean is not None and tau_values:
-        all_tau = np.asarray([baseline_tau_mean] + tau_values, dtype=float)
-        tau_rel_sd = float(np.std(all_tau, ddof=1) / max(1e-12, abs(np.mean(all_tau))))
-        if tau_rel_sd > max_tau_rel_sd:
-            reasons.append(f"tau_rel_sd={tau_rel_sd:.3f}>{max_tau_rel_sd:.3f}")
+    tau_log_sd = None
+    if baseline_tau_stat is not None and tau_values:
+        all_tau = np.asarray([baseline_tau_stat] + tau_values, dtype=float)
+        if tau_mode in {"log_median", "log_mean"}:
+            tau_log_sd = float(np.std(all_tau, ddof=1))
+            if tau_log_sd > max_tau_log_sd:
+                reasons.append(f"tau_log_sd={tau_log_sd:.3f}>{max_tau_log_sd:.3f}")
+        else:
+            tau_rel_sd = float(np.std(all_tau, ddof=1) / max(1e-12, abs(np.mean(all_tau))))
+            if tau_rel_sd > max_tau_rel_sd:
+                reasons.append(f"tau_rel_sd={tau_rel_sd:.3f}>{max_tau_rel_sd:.3f}")
     elif fail_on_missing_tau:
         reasons.append("missing_tau_for_stability")
 
@@ -2182,7 +2213,9 @@ def _run_seed_stability_validation(
             "num_restarts": int(num_restarts),
             "beta_rel_l2_max": None if not beta_rel_l2_values else float(max(beta_rel_l2_values)),
             "beta_cosine_min": None if not beta_cos_values else float(min(beta_cos_values)),
+            "tau_stability_mode": tau_mode,
             "tau_rel_sd": tau_rel_sd,
+            "tau_log_sd": tau_log_sd,
         }
     )
     return out

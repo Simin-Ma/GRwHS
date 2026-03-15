@@ -401,7 +401,8 @@ Process:
 Hard thresholds:
 - `beta_rel_l2_max <= max_beta_rel_l2` (default `0.15`)
 - `beta_cosine_min >= min_beta_cosine` (default `0.98`)
-- if tau available: `tau_rel_sd <= max_tau_rel_sd` (default `0.20`)
+- tau stability (default robust mode): `tau_stability_mode = log_median`, require `tau_log_sd <= max_tau_log_sd` (default `0.35`)
+- legacy tau check (if `tau_stability_mode` set to `mean`/`median`): `tau_rel_sd <= max_tau_rel_sd` (default `0.20`)
 
 Outputs:
 - Saved per fold as `posterior_validation.json`

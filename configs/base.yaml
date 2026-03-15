@@ -82,7 +82,7 @@ experiments:
       max_treedepth_hits: 0
       require_present: true
   posterior_validation:
-    enabled: false
+    enabled: true
     apply_to_bayesian_only: true
     sbc:
       enabled: true
@@ -104,6 +104,8 @@ experiments:
       seed_stride: 1009
       max_beta_rel_l2: 0.15
       min_beta_cosine: 0.98
+      tau_stability_mode: log_median
+      max_tau_log_sd: 0.35
       max_tau_rel_sd: 0.20
       fail_on_missing_tau: false
   metrics:

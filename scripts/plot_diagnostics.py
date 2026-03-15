@@ -156,11 +156,11 @@ def main() -> None:
     series = {}
     titles = {}
     if tau_samples is not None and tau_samples.size:
-        series["?"] = np.ravel(tau_samples)
-        titles["?"] = "Trace of global scale ?"
+        series["tau"] = np.ravel(tau_samples)
+        titles["tau"] = "Trace of global scale tau"
     if sigma2_series is not None and sigma2_series.size:
-        series["??"] = np.ravel(sigma2_series)
-        titles["??"] = "Trace of noise variance ??"
+        series["sigma2"] = np.ravel(sigma2_series)
+        titles["sigma2"] = "Trace of noise variance sigma2"
     phi_for_kappa = (
         phi_samples is not None
         and phi_samples.ndim == 2
@@ -182,8 +182,8 @@ def main() -> None:
             sigma_samples=sigma_samples,
             slab_width=slab_width,
         )
-        series["Mean ?"] = mean_kappa
-        titles["Mean ?"] = "Mean shrinkage ??"
+        series["mean_kappa"] = mean_kappa
+        titles["mean_kappa"] = "Mean shrinkage kappa"
 
     trace_fig = None
     acf_fig = None
@@ -191,11 +191,11 @@ def main() -> None:
         trace_fig = trace_plot(series, burn_in=None, titles=titles)
         acf_series = {}
         if tau_samples is not None:
-            acf_series["?"] = autocorrelation(np.ravel(tau_samples), min(args.max_lag, tau_samples.size - 1))
+            acf_series["tau"] = autocorrelation(np.ravel(tau_samples), min(args.max_lag, tau_samples.size - 1))
         if sigma2_series is not None:
-            acf_series["??"] = autocorrelation(np.ravel(sigma2_series), min(args.max_lag, sigma2_series.size - 1))
+            acf_series["sigma2"] = autocorrelation(np.ravel(sigma2_series), min(args.max_lag, sigma2_series.size - 1))
         if mean_kappa is not None:
-            acf_series["Mean ?"] = autocorrelation(mean_kappa, min(args.max_lag, mean_kappa.size - 1))
+            acf_series["mean_kappa"] = autocorrelation(mean_kappa, min(args.max_lag, mean_kappa.size - 1))
         if acf_series:
             acf_fig = autocorrelation_plot(acf_series)
 
