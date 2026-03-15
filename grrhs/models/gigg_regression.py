@@ -521,7 +521,12 @@ class GIGGRegression:
                 )
 
             for gid, idxs in enumerate(normalised_groups):
-                denom = _clip_positive_scalar(2.0 * tau_sq * gamma_sq[gid], floor=self.jitter)
+                # beta_j | ... variance is sigma_sq * tau_sq * gamma_sq_g * lambda_sq_j,
+                # so the lambda_sq full conditional uses the same sigma_sq-scaled denominator.
+                denom = _clip_positive_scalar(
+                    2.0 * sigma_sq * tau_sq * gamma_sq[gid],
+                    floor=self.jitter,
+                )
                 b_shape = max(b_vec[gid] + 0.5, 1e-6)
                 for j in idxs:
                     numer = min(float(beta[j] ** 2), _POS_CAP)
@@ -535,7 +540,14 @@ class GIGGRegression:
             for gid, idxs in enumerate(normalised_groups):
                 lam_param = float(a_vec[gid] - 0.5 * group_sizes[gid])
                 denom = _clip_positive_array(lambda_sq[idxs], floor=self.jitter)
-                chi = _clip_positive_scalar(np.sum(np.minimum(beta[idxs] ** 2, _POS_CAP) / denom), floor=self.jitter)
+                # gamma_sq enters beta variance through sigma_sq * tau_sq * gamma_sq * lambda_sq.
+                chi = _clip_positive_scalar(
+                    np.sum(
+                        np.minimum(beta[idxs] ** 2, _POS_CAP)
+                        / _clip_positive_array(sigma_sq * tau_sq * denom, floor=self.jitter)
+                    ),
+                    floor=self.jitter,
+                )
                 psi = 2.0
                 try:
                     theta = sample_gig(
@@ -549,7 +561,7 @@ class GIGGRegression:
                     theta = gamma_sq[gid]
                 gamma_sq[gid] = _clip_positive_scalar(theta, floor=self.jitter)
 
-            denom_tau = _clip_positive_array(gamma_sq[group_id] * lambda_sq, floor=self.jitter)
+            denom_tau = _clip_positive_array(sigma_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
             beta_quad = float(np.sum(np.minimum(beta**2, _POS_CAP) / denom_tau))
             shape_tau = 0.5 * (p + 1)
             scale_tau = _clip_positive_scalar(0.5 * beta_quad + 1.0 / _clip_positive_scalar(xi_tau, floor=self.jitter))

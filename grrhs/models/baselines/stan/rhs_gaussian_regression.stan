@@ -12,6 +12,10 @@ data {
   real<lower=0> slab_df;
 }
 
+transformed data {
+  real<lower=1e-9> y_sd = fmax(sd(y), 1e-9);
+}
+
 parameters {
   real beta0;
   vector[d] z;
@@ -32,16 +36,18 @@ transformed parameters {
   vector<lower=0>[d] lambda;
   real<lower=0> c;
   vector<lower=0>[d] lambda_tilde;
+  vector<lower=0>[d] lambda_tilde_sq;
   vector[d] beta;
   vector[n] mu;
 
-  sigma = exp(logsigma);
+  sigma = fmax(exp(logsigma), 1e-9);
 
   lambda = aux1_local .* sqrt(aux2_local);
   tau = aux1_global * sqrt(aux2_global) * scale_global * sigma;
 
   c = slab_scale * sqrt(caux);
-  lambda_tilde = sqrt(c^2 * square(lambda) ./ (c^2 + tau^2 * square(lambda)));
+  lambda_tilde_sq = c^2 * square(lambda) ./ (c^2 + tau^2 * square(lambda) + 1e-12);
+  lambda_tilde = sqrt(lambda_tilde_sq);
 
   beta = z .* lambda_tilde * tau;
   mu = beta0 + X * beta;
@@ -58,6 +64,7 @@ model {
 
   caux ~ inv_gamma(0.5 * slab_df, 0.5 * slab_df);
   beta0 ~ normal(0, scale_icept);
+  logsigma ~ normal(log(y_sd), 1.0);
   y ~ normal(mu, sigma);
 }
 

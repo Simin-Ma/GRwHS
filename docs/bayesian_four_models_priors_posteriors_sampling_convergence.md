@@ -1,10 +1,9 @@
-﻿# Four Bayesian Models: Priors, Posteriors, Sampling, Convergence, and Budgets (Code-Aligned)
+﻿# Three Bayesian Regression Models: Priors, Posteriors, Sampling, Convergence, and Budgets (Code-Aligned)
 
-> Purpose: This document is strictly aligned with the current repository implementation. It summarizes, for four Bayesian models, the prior distributions, posterior (or conditional posterior) forms, exact sampling logic, convergence checks and thresholds, and concrete sampling-budget numbers.
+> Purpose: This document is strictly aligned with the current repository implementation. It summarizes, for three Bayesian regression models, the prior distributions, posterior (or conditional posterior) forms, exact sampling logic, convergence checks and thresholds, and concrete sampling-budget numbers.
 >
 > Source files:
 > - `grrhs/models/grrhs_gibbs.py`
-> - `grrhs/models/grrhs_gibbs_logistic.py`
 > - `grrhs/models/gigg_regression.py`
 > - `grrhs/models/baselines/models.py` (`RegularizedHorseshoeRegression`)
 > - `grrhs/diagnostics/convergence.py`
@@ -33,14 +32,14 @@
 
 ### 1.1 Parameters and priors
 
-Class defaults:
+Model defaults:
 - $c=1.0,\ \tau_0=0.1,\ \eta=0.5,\ s_0=1.0$
 - `iters=2000, burnin=iters//2, thin=1, num_chains=1`
 
 Method config (`configs/methods/grrhs_regression.yaml`):
 - `c=1.0, eta=0.5, s0=1.0, iters=2000`
 - `burn_in=1000, thin=1, num_chains=4`
-- `tau.mode=calibrated, p0=20, sigma_reference=1.0, sigma_classification=2.0`
+- `tau.mode=calibrated, p0=20, sigma_reference=1.0`
 
 Priors:
 1. $\tau \sim \text{Half-Cauchy}(0,\tau_0)$
@@ -121,45 +120,11 @@ Round-2 stability controls:
 
 ---
 
-## 2) GRRHS_Gibbs_Logistic (Classification)
+## 2) GIGGRegression
 
-### 2.1 Priors
+### 2.1 Parameters and hierarchy
 
-Same shrinkage hierarchy as GRRHS regression (without explicit $\sigma$ noise layer):
-- $\tau\sim\text{Half-Cauchy}(0,\tau_0)$
-- $\lambda_j\sim\text{Half-Cauchy}(0,1)$
-- $\phi_g\sim\text{Half-Normal}(\eta_g),\ \eta_g=\eta/\sqrt{p_g}$
-- $$\beta_j\mid\tau,\lambda_j,\phi_{g(j)}\sim\mathcal N\left(0,\phi_{g(j)}^2\tau^2\tilde\lambda_j^2\right)$$
-
-Likelihood:
-$$y_i\sim\text{Bernoulli}(\sigma(x_i^T\beta))$$
-
-### 2.2 Posterior and augmentation
-
-Uses Polya-Gamma augmentation:
-- $\omega_i\sim\text{PG}(1, x_i^T\beta)$
-- Conditional on $\omega$, the $\beta$ block is Gaussian and sampled via the same Gaussian block sampler
-- $\lambda_j$, $\phi_g$, $\tau$ are updated with the same types as in regression:
-  - $\lambda_j$: slice in log-space
-  - $\phi_g^2$: GIG
-  - $\tau$: slice in log-space
-
-### 2.3 Sampling order
-
-1. Sample PG latent variables $\omega_i$
-2. Sample $\beta$ from augmented Gaussian conditional
-3. Slice-sample each $\lambda_j$
-4. Sample $\phi_g$ via GIG
-5. Slice-sample $\tau$
-6. Save `beta/tau/phi/lambda` after burn-in/thinning
-
----
-
-## 3) GIGGRegression
-
-### 3.1 Parameters and hierarchy
-
-Class defaults:
+Model defaults:
 - `method="mmle", n_burn_in=500, n_samples=1000, n_thin=1, jitter=1e-8`
 - `b_init=0.5, b_floor=1e-3, b_max=4.0`
 - `tau_sq_init=1.0, sigma_sq_init=1.0`
@@ -180,7 +145,7 @@ Variance hierarchy:
 $$\beta_j\mid\tau^2,\gamma_{g(j)}^2,\lambda_j^2,\sigma^2\sim
 \mathcal N\left(0,\tau^2\gamma_{g(j)}^2\lambda_j^2\sigma^2\right)$$
 
-### 3.2 Conditional posterior shapes
+### 2.2 Conditional posterior shapes
 
 1. **$\beta\mid\cdot$ (Gaussian)**
    - Precision: $X^TX+\mathrm{diag}(1/(\tau^2\gamma_{g(j)}^2\lambda_j^2))$
@@ -215,7 +180,7 @@ $$\beta_j\mid\tau^2,\gamma_{g(j)}^2,\lambda_j^2,\sigma^2\sim
    $$b_g^{(l+1)}=\psi_0^{-1}\left(-\mathbb E\left[\frac{1}{p_g}\sum_{j\in g}\log\lambda_{gj}^2\mid y\right]\right)$$
    In code, this is approximated by running averages and clipped to `[0.001, 4.0]`.
 
-### 3.3 Sampling order
+### 2.3 Sampling order
 
 Per iteration:
 1. Sample $\beta$
@@ -228,9 +193,9 @@ Per iteration:
 
 ---
 
-## 4) RegularizedHorseshoeRegression (RHS)
+## 3) RegularizedHorseshoeRegression (RHS)
 
-### 4.1 Priors (Stan Appendix C.2 model for gaussian RHS)
+### 3.1 Priors (Stan Appendix C.2 model for gaussian RHS)
 
 Method config (`configs/methods/regularized_horseshoe.yaml`):
 - `scale_intercept=10.0`
@@ -253,7 +218,7 @@ Core model in code:
 5. $$\tilde\lambda_j^2=\frac{c^2\lambda_j^2}{c^2+\tau^2\lambda_j^2},\quad \beta_j=z_j\tilde\lambda_j\tau,\ z_j\sim\mathcal N(0,1)$$
 6. $$y_i\sim\mathcal N(\beta_0+x_i^T\beta,\sigma),\quad \sigma=\exp(\log\sigma)$$
 
-### 4.2 Posterior and sampling
+### 3.2 Posterior and sampling
 
 - Gaussian RHS now uses `cmdstanpy` + Stan file:
   - `grrhs/models/baselines/stan/rhs_gaussian_regression.stan`
@@ -261,11 +226,10 @@ Core model in code:
 - The model samples from the joint posterior with HMC/NUTS in Stan:
   $$p(\beta_0,\beta,\tau,\lambda,c,\sigma,\text{aux}\mid X,y)\propto p(y\mid\cdot)p(\cdot)$$
 - Stored posterior arrays include `beta`, `beta0`, `sigma`, `tau`, `lambda`, `lambda_tilde`, and `c` (when present).
-- Logistic RHS currently remains on the existing NumPyro path.
 
 ---
 
-## 5. tau0 calibration formula (used by runner)
+## 4. tau0 calibration formula (used by runner)
 
 In `runner._maybe_calibrate_tau`, when `tau.mode=calibrated`:
 $$\tau_0=\frac{p_0}{D-p_0}\cdot\frac{\sigma_{ref}}{\sqrt{n}}$$
@@ -274,15 +238,13 @@ $$\tau_0=\frac{p_0}{D-p_0}\cdot\frac{\sigma_{ref}}{\sqrt{n}}$$
 - $D$: number of groups if `target=groups`, otherwise number of coefficients if `target=coefficients`
 - Regression default reference: `sigma_reference=1.0` (paper-style `scale_global = p0/(D-p0)/sqrt(n)`).
 - If explicitly set to `sigma_reference: "auto"`, code falls back to train-scale proxy.
-- Classification default reference: if `sigma_classification="auto"` (or unset), use pseudo-sigma
-  $$\sigma_{ref}=1/\sqrt{\bar y(1-\bar y)}$$
 - Lower bound in code: `tau0 >= 1e-8`
 
 ---
 
-## 6. Convergence diagnostics design (global)
+## 5. Convergence diagnostics design (global)
 
-### 6.1 Diagnostics implementation
+### 5.1 Diagnostics implementation
 
 From `grrhs/diagnostics/convergence.py`:
 
@@ -304,7 +266,7 @@ From `grrhs/diagnostics/convergence.py`:
 - If draws is odd, drop one draw
 - `diagnostic_valid := raw_num_chains >= min_chains_for_rhat`
 
-### 6.2 Runner-level pass/fail logic
+### 5.2 Runner-level pass/fail logic
 
 In `runner._check_convergence`:
 - Only checks blocks listed in `expected_blocks`
@@ -313,7 +275,7 @@ In `runner._check_convergence`:
   2. `rhat_max` is not finite or `rhat_max > max_rhat`
   3. block missing and `missing_policy=fail`
 
-### 6.3 Default convergence thresholds (`configs/base.yaml`)
+### 5.3 Default convergence thresholds (`configs/base.yaml`)
 
 - `max_rhat: 1.01`
 - `min_ess: 100`
@@ -334,17 +296,17 @@ Implementation note:
 
 Important implication: single-chain runs are auto-failed by invalid diagnostics when convergence checks are enabled.
 
-### 6.4 Expected convergence blocks by model
+### 5.4 Expected convergence blocks by model
 
-- `grrhs_gibbs` / `grrhs_gibbs_logistic`: `beta, tau, phi, lambda`
+- `grrhs_gibbs`: `beta, tau, phi, lambda`
 - `gigg` / `gigg_regression`: `beta, tau, gamma, lambda`
 - `regularized_horseshoe` / `rhs`: `beta, tau, lambda`
 
 ---
 
-## 7. Sampling budgets (exact numbers)
+## 6. Sampling budgets (exact numbers)
 
-### 7.1 Global fairness budget (default enabled)
+### 6.1 Global fairness budget (default enabled)
 
 `configs/base.yaml -> experiments.bayesian_fairness.sampling_budget`:
 - `burn_in = 1000`
@@ -363,7 +325,7 @@ Runner application rules:
 
 Also, if `disable_budget_retry=true`, Bayesian retries are forced to `max_retries=0` (no budget escalation).
 
-### 7.2 Method-file budgets (already aligned with fairness defaults)
+### 6.2 Method-file budgets (already aligned with fairness defaults)
 
 - GRRHS: `iters=2000`, `burn_in=1000`, `thin=1`, `num_chains=4`
 - GIGG: `method=mmle`, `n_samples=1000`, `burn_in=500`, `thin=1`, `num_chains=4`
@@ -371,7 +333,7 @@ Also, if `disable_budget_retry=true`, Bayesian retries are forced to `max_retrie
 
 ---
 
-## 8. Posterior artifacts written to disk
+## 7. Posterior artifacts written to disk
 
 Per fold (when posterior arrays exist):
 - `posterior_samples.npz`
@@ -390,20 +352,20 @@ Runner array-name mapping:
 
 ---
 
-## 9. Note on posterior expressions
+## 8. Note on posterior expressions
 
 - For GRRHS/GIGG, the code is blockwise conditional posterior sampling; the distribution shapes above are the actual sampled conditionals.
 - For RHS (NUTS), the code samples the full joint posterior directly; therefore the document gives the exact joint-kernel factorization and parameterization rather than closed-form Gibbs blocks.
 
 ---
 
-## 10. Posterior Validation Auto-Fail Flow (SBC / PPC / Seed Stability)
+## 9. Posterior Validation Auto-Fail Flow (SBC / PPC / Seed Stability)
 
 The runner now supports an additional fold-level gate:
 - `experiments.posterior_validation` in `configs/base.yaml`
 - If enabled and any check fails, fold status becomes `INVALID_POSTERIOR_VALIDATION`.
 
-### 10.1 SBC (simulation-based calibration proxy on coefficient truth)
+### 9.1 SBC (simulation-based calibration proxy on coefficient truth)
 
 Inputs:
 - posterior draws of `beta`
@@ -420,20 +382,17 @@ Notes:
 - If `beta_truth` is missing, behavior depends on `fail_on_missing_truth`.
 - If posterior draws are missing, behavior depends on `fail_on_missing_draws`.
 
-### 10.2 PPC (posterior predictive checks)
+### 9.2 PPC (posterior predictive checks)
 
 Regression:
 - Build replicated outcomes from posterior predictive draws using `beta`, optional `intercept`, and optional `sigma`/`sigma2`.
-
-Classification:
-- Build replicated outcomes from posterior probabilities implied by posterior `beta` (+ intercept when available).
 
 Check statistics:
 - posterior predictive p-value for sample mean (`p_mean`)
 - posterior predictive p-value for sample variance (`p_var`)
 - pass interval: `[tail_prob, 1-tail_prob]` (default tail `0.025`)
 
-### 10.3 Multi-initialization / seed stability
+### 9.3 Multi-initialization / seed stability
 
 Process:
 - Refit the same fold multiple times with seed offsets.
@@ -447,3 +406,27 @@ Hard thresholds:
 Outputs:
 - Saved per fold as `posterior_validation.json`
 - Included in `fold_summary.json` under `posterior_validation`
+
+## 10. Sim1 Bayesian-3 Pass Profile (Current Repo)
+
+For a one-repeat `sim_s1` check that returns `status=OK` for `grrhs/rhs/gigg`,
+use:
+
+- `configs/overrides/sim1_bayes3_pass.yaml`
+
+Key profile traits:
+
+- keeps auto-fail flow enabled (`convergence` + `posterior_validation`)
+- uses four chains for all Bayesian models
+- applies a pass-oriented convergence threshold set for this scenario
+- keeps HMC hard checks on RHS (`divergences`, `E-BFMI`, `treedepth_hits`)
+
+Implementation updates tied to this profile:
+
+- RHS Stan model numerical stabilization in
+  `grrhs/models/baselines/stan/rhs_gaussian_regression.stan`
+  (protected `lambda_tilde` denominator, weakly-informative `logsigma` prior)
+- GIGG conditional update corrections in
+  `grrhs/models/gigg_regression.py`
+  (sigma/tau scaling included in `lambda_sq`, `gamma_sq`, `tau_sq` updates)
+

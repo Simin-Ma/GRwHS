@@ -1,0 +1,69 @@
+﻿experiments:
+  repeats: 1
+
+  bayesian_fairness:
+    enabled: true
+    disable_inner_cv: true
+    enforce_shared_sampling_budget: true
+    require_posterior_mean_summary: true
+    disable_budget_retry: true
+    sampling_budget:
+      burn_in: 1500
+      kept_draws: 1500
+      thinning: 1
+      num_chains: 4
+
+  convergence:
+    enabled: true
+    max_rhat: 1.15
+    min_ess: 50
+    min_ess_by_block:
+      beta: 400
+      tau: 60
+      phi: 100
+      gamma: 60
+      lambda: 200
+      b: 100
+    max_mcse_over_sd: 0.14
+    max_retries: 0
+    missing_policy: fail
+    require_valid_diagnostics: true
+    min_chains_for_rhat: 4
+    hmc:
+      enabled: true
+      models: ["regularized_horseshoe", "rhs", "regularised_horseshoe"]
+      max_divergences: 0
+      min_ebfmi: 0.3
+      max_treedepth_hits: 0
+      require_present: true
+
+  posterior_validation:
+    enabled: true
+    apply_to_bayesian_only: true
+    sbc:
+      enabled: true
+      ks_pvalue_min: 1.0e-30
+      coverage_level: 0.9
+      coverage_tolerance: 0.80
+      min_coefficients: 12
+      max_coefficients: 128
+      fail_on_missing_truth: false
+      fail_on_missing_draws: true
+    ppc:
+      enabled: true
+      tail_prob: 0.025
+      min_draws: 500
+      fail_on_missing_draws: true
+    seed_stability:
+      enabled: true
+      num_restarts: 2
+      seed_stride: 1009
+      max_beta_rel_l2: 0.12
+      min_beta_cosine: 0.985
+      max_tau_rel_sd: 0.40
+      fail_on_missing_tau: false
+
+inference:
+  nuts:
+    target_accept_prob: 0.99
+    max_tree_depth: 13
