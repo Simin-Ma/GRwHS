@@ -174,6 +174,7 @@ Method config (`configs/methods/gigg.yaml`):
 - `store_lambda=true` (enabled for complete convergence-block diagnostics)
 - `mmle_update=paper_lambda_only`
 - `mmle_burnin_only=true` (MMLE updates applied during burn-in, then frozen in sampling phase)
+- `btrick=true` now activates Bhattacharya et al. (2016) fast Gaussian beta-draw branch (`n x n` system), matching CRAN `btrick` intent.
 
 Variance hierarchy:
 $$\beta_j\mid\tau^2,\gamma_{g(j)}^2,\lambda_j^2,\sigma^2\sim
@@ -236,7 +237,7 @@ Method config (`configs/methods/regularized_horseshoe.yaml`):
 - `sigma_scale=1.0`
 - `slab_scale=2.0, slab_df=4.0`
 - `num_warmup=1000, num_samples=1000, num_chains=4, thinning=1`
-- `target_accept_prob=0.9`
+- `target_accept_prob=0.97`
 - `max_tree_depth=10`
 - `tau.mode=calibrated, p0=20`
 
@@ -264,11 +265,13 @@ Core model in code:
 
 ### 4.2 Posterior and sampling
 
-- No explicit Gibbs conditionals are derived in code.
-- The implementation samples from the joint posterior with NUTS:
-  $$p(\beta_0,\beta,\tau,\lambda^{raw},c,\sigma,r_{1\cdot},r_{2\cdot}\mid X,y)
-  \propto p(y\mid\cdot)\,p(\cdot)$$
-- NumPyro `NUTS + MCMC` stores `beta/tau/lambda/sigma/c` when available.
+- Gaussian RHS now uses `cmdstanpy` + Stan file:
+  - `grrhs/models/baselines/stan/rhs_gaussian_regression.stan`
+  - parameterization follows Piironen & Vehtari Appendix C.2 (alternative parametrization).
+- The model samples from the joint posterior with HMC/NUTS in Stan:
+  $$p(\beta_0,\beta,\tau,\lambda,c,\sigma,\text{aux}\mid X,y)\propto p(y\mid\cdot)p(\cdot)$$
+- Stored posterior arrays include `beta`, `beta0`, `sigma`, `tau`, `lambda`, `lambda_tilde`, and `c` (when present).
+- Logistic RHS currently remains on the existing NumPyro path.
 
 ---
 

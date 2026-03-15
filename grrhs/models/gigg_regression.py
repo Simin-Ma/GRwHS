@@ -317,6 +317,64 @@ class GIGGRegression:
         self.intercept_ = float(lead["intercept"])
         return self
 
+    def _draw_beta_standard(
+        self,
+        *,
+        X: np.ndarray,
+        y_tilde: np.ndarray,
+        sigma_sq: float,
+        local_scale: np.ndarray,
+        rng: Generator,
+    ) -> np.ndarray:
+        p = int(X.shape[1])
+        prior_prec = 1.0 / local_scale
+        precision_beta = (X.T @ X) + np.diag(prior_prec)
+        if self.jitter > 0.0:
+            precision_beta = precision_beta + np.eye(p) * self.jitter
+        chol_beta = cho_factor(precision_beta, lower=True, check_finite=False)
+        mean_beta = cho_solve(chol_beta, X.T @ y_tilde, check_finite=False)
+        noise_beta = cho_solve(chol_beta, rng.normal(size=p), check_finite=False)
+        beta = mean_beta + math.sqrt(sigma_sq) * noise_beta
+        return np.clip(np.nan_to_num(beta, nan=0.0, posinf=_BETA_CAP, neginf=-_BETA_CAP), -_BETA_CAP, _BETA_CAP)
+
+    def _draw_beta_btrick(
+        self,
+        *,
+        X: np.ndarray,
+        y_tilde: np.ndarray,
+        sigma_sq: float,
+        local_scale: np.ndarray,
+        rng: Generator,
+    ) -> np.ndarray:
+        """
+        Bhattacharya et al. (2016) fast Gaussian draw for beta block.
+
+        For theta = beta / sigma with prior theta ~ N(0, D), D=diag(local_scale):
+          y/sigma = X theta + eps, eps~N(0, I)
+        draw theta from posterior using n x n solve, then beta = sigma * theta.
+        """
+        n = int(X.shape[0])
+        sigma = math.sqrt(_clip_positive_scalar(sigma_sq, floor=self.jitter))
+        y_star = y_tilde / sigma
+        d = _clip_positive_array(local_scale, floor=self.jitter)
+
+        u = rng.normal(size=d.shape[0]) * np.sqrt(d)
+        delta = rng.normal(size=n)
+        v = X @ u + delta
+        x_d = X * d[np.newaxis, :]
+        mat = x_d @ X.T + np.eye(n, dtype=float)
+        rhs = y_star - v
+        if self.jitter > 0.0:
+            mat = mat + np.eye(n, dtype=float) * self.jitter
+        if self.stable_solve:
+            chol = cho_factor(mat, lower=True, check_finite=False)
+            w = cho_solve(chol, rhs, check_finite=False)
+        else:
+            w = np.linalg.solve(mat, rhs)
+        theta = u + d * (X.T @ w)
+        beta = sigma * theta
+        return np.clip(np.nan_to_num(beta, nan=0.0, posinf=_BETA_CAP, neginf=-_BETA_CAP), -_BETA_CAP, _BETA_CAP)
+
     def fit(
         self,
         X: np.ndarray,
@@ -413,7 +471,6 @@ class GIGGRegression:
         xi_tau = 1.0
         xi_sigma = 1.0
 
-        XtX = X.T @ X
         CtC = C_arr.T @ C_arr if k > 0 else None
 
         kept = self.n_samples
@@ -446,15 +503,22 @@ class GIGGRegression:
 
             y_tilde = y_arr - (C_arr @ alpha if k > 0 else 0.0)
             local_scale = _clip_positive_array(tau_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
-            prior_prec = 1.0 / local_scale
-            precision_beta = XtX + np.diag(prior_prec)
-            if self.jitter > 0.0:
-                precision_beta = precision_beta + np.eye(p) * self.jitter
-            chol_beta = cho_factor(precision_beta, lower=True, check_finite=False)
-            mean_beta = cho_solve(chol_beta, X.T @ y_tilde, check_finite=False)
-            noise_beta = cho_solve(chol_beta, rng.normal(size=p), check_finite=False)
-            beta = mean_beta + math.sqrt(sigma_sq) * noise_beta
-            beta = np.clip(np.nan_to_num(beta, nan=0.0, posinf=_BETA_CAP, neginf=-_BETA_CAP), -_BETA_CAP, _BETA_CAP)
+            if self.btrick:
+                beta = self._draw_beta_btrick(
+                    X=X,
+                    y_tilde=y_tilde,
+                    sigma_sq=sigma_sq,
+                    local_scale=local_scale,
+                    rng=rng,
+                )
+            else:
+                beta = self._draw_beta_standard(
+                    X=X,
+                    y_tilde=y_tilde,
+                    sigma_sq=sigma_sq,
+                    local_scale=local_scale,
+                    rng=rng,
+                )
 
             for gid, idxs in enumerate(normalised_groups):
                 denom = _clip_positive_scalar(2.0 * tau_sq * gamma_sq[gid], floor=self.jitter)

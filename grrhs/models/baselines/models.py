@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
@@ -12,6 +13,10 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 from sklearn.linear_model import LogisticRegression as _SklearnLogisticRegression
 from grrhs.models.grrhs_gibbs import GRRHS_Gibbs
+try:
+    from cmdstanpy import CmdStanModel as _CmdStanModel
+except Exception:  # pragma: no cover - optional dependency
+    _CmdStanModel = None  # type: ignore[assignment]
 
 try:
     from skglm import GeneralizedLinearEstimator as _SkglmGeneralizedLinearEstimator
@@ -43,6 +48,7 @@ GroupsLike = Sequence[Sequence[int]]
 WeightsLike = Optional[Sequence[float]]
 FeatureWeightsLike = Optional[Sequence[float]]
 ArrayLike = Any
+_CMDSTAN_MODEL_CACHE: dict[str, Any] = {}
 
 
 class _SkglmRegressorBase:
@@ -501,12 +507,14 @@ class _BaseHorseshoeRegression:
     target_accept_prob: float = 0.99
     max_tree_depth: int = 10
     progress_bar: bool = False
+    stan_file: Optional[str] = None
 
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_samples_: Optional[np.ndarray] = field(default=None, init=False)
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    lambda_tilde_samples_: Optional[np.ndarray] = field(default=None, init=False)
     c_samples_: Optional[np.ndarray] = field(default=None, init=False)
     coef_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: Optional[float] = field(default=None, init=False)
@@ -615,6 +623,185 @@ class _BaseHorseshoeRegression:
     def _use_gibbs_backend(self) -> bool:
         return self.likelihood == "gaussian"
 
+    def _use_cmdstan_backend(self) -> bool:
+        return False
+
+    def _default_stan_file(self) -> Optional[Path]:
+        return None
+
+    def _resolve_stan_file(self) -> Path:
+        if self.stan_file is not None:
+            return Path(self.stan_file).expanduser().resolve()
+        default_path = self._default_stan_file()
+        if default_path is None:
+            raise RuntimeError("No Stan model file configured for this model.")
+        return default_path
+
+    def _load_cmdstan_model(self) -> Any:
+        if _CmdStanModel is None:
+            raise ImportError(
+                "cmdstanpy is required for the configured RHS backend. Install with `pip install cmdstanpy` "
+                "and ensure CmdStan is installed (e.g., via `python -m cmdstanpy.install_cmdstan`)."
+            )
+        stan_path = str(self._resolve_stan_file())
+        cached = _CMDSTAN_MODEL_CACHE.get(stan_path)
+        if cached is not None:
+            return cached
+        model = _CmdStanModel(stan_file=stan_path)
+        _CMDSTAN_MODEL_CACHE[stan_path] = model
+        return model
+
+    @staticmethod
+    def _extract_cmdstan_array(
+        draws_df: "np.ndarray | Any",
+        *,
+        name: str,
+        scalar: bool,
+        thinning: int,
+    ) -> Optional[np.ndarray]:
+        import pandas as pd
+
+        if not isinstance(draws_df, pd.DataFrame):
+            return None
+
+        chain_ids = sorted(int(v) for v in draws_df["chain__"].unique())
+        if scalar:
+            if name not in draws_df.columns:
+                return None
+            chain_blocks: list[np.ndarray] = []
+            for chain_id in chain_ids:
+                chain_df = draws_df.loc[draws_df["chain__"] == chain_id].sort_values("draw__")
+                chain_blocks.append(chain_df[name].to_numpy(dtype=np.float64))
+            arr = np.stack(chain_blocks, axis=0)
+            arr = _thin_posterior_samples(arr, thinning)
+            if arr is not None and arr.ndim == 2:
+                return arr[..., None]
+            return arr
+
+        prefix = f"{name}["
+        cols = [col for col in draws_df.columns if col.startswith(prefix)]
+        if not cols:
+            return None
+        cols.sort(key=lambda text: int(text.split("[", 1)[1].split("]", 1)[0]))
+        chain_blocks_v: list[np.ndarray] = []
+        for chain_id in chain_ids:
+            chain_df = draws_df.loc[draws_df["chain__"] == chain_id].sort_values("draw__")
+            chain_blocks_v.append(chain_df[cols].to_numpy(dtype=np.float64))
+        arr_v = np.stack(chain_blocks_v, axis=0)
+        return _thin_posterior_samples(arr_v, thinning)
+
+    def _extract_cmdstan_diagnostics(self, draws_df: Any) -> Dict[str, Any]:
+        diagnostics: Dict[str, Any] = {"backend": "cmdstan_hmc"}
+        required = {"chain__", "draw__", "divergent__", "energy__"}
+        if not required.issubset(set(draws_df.columns)):
+            diagnostics["hmc"] = {}
+            return diagnostics
+        chain_ids = sorted(int(v) for v in draws_df["chain__"].unique())
+
+        divergences = 0
+        treedepth_hits = -1
+        max_num_steps = -1
+        ebfmi_values: list[float] = []
+        td_hits = 0
+        has_tree = "treedepth__" in draws_df.columns
+        has_steps = "n_leapfrog__" in draws_df.columns
+
+        for chain_id in chain_ids:
+            chain_df = draws_df.loc[draws_df["chain__"] == chain_id].sort_values("draw__")
+            div = chain_df["divergent__"].to_numpy(dtype=float)
+            divergences += int(np.sum(div > 0.5))
+
+            if has_tree:
+                td = chain_df["treedepth__"].to_numpy(dtype=float)
+                td_hits += int(np.sum(td >= float(self.max_tree_depth)))
+            if has_steps:
+                ns = chain_df["n_leapfrog__"].to_numpy(dtype=float)
+                if ns.size:
+                    max_num_steps = max(max_num_steps, int(np.max(ns)))
+
+            energy = chain_df["energy__"].to_numpy(dtype=float)
+            if energy.size < 3:
+                ebfmi_values.append(float("nan"))
+            else:
+                numer = float(np.mean(np.diff(energy) ** 2))
+                denom = float(np.var(energy))
+                if denom <= 0.0 or not np.isfinite(denom):
+                    ebfmi_values.append(float("nan"))
+                else:
+                    ebfmi_values.append(numer / denom)
+
+        if has_tree:
+            treedepth_hits = int(td_hits)
+        ebfmi_min = float(np.nanmin(ebfmi_values)) if ebfmi_values else float("nan")
+        diagnostics["hmc"] = {
+            "divergences": int(divergences),
+            "treedepth_hits": treedepth_hits,
+            "max_num_steps": max_num_steps,
+            "ebfmi_per_chain": ebfmi_values,
+            "ebfmi_min": ebfmi_min,
+        }
+        return diagnostics
+
+    def _fit_with_cmdstan(self, X: np.ndarray, y: np.ndarray) -> None:
+        if self.likelihood != "gaussian":
+            raise RuntimeError("CmdStan backend is currently configured for gaussian RHS only.")
+        model = self._load_cmdstan_model()
+        n, d = X.shape
+        data = {
+            "n": int(n),
+            "d": int(d),
+            "y": np.asarray(y, dtype=float).reshape(-1),
+            "X": np.asarray(X, dtype=float),
+            "scale_icept": float(self.scale_intercept),
+            "scale_global": float(self.scale_global),
+            "nu_global": float(self.nu_global),
+            "nu_local": float(self.nu_local),
+            "slab_scale": float(self.slab_scale if self.slab_scale is not None else 2.0),
+            "slab_df": float(self.slab_df if self.slab_df is not None else 4.0),
+        }
+        fit = model.sample(
+            data=data,
+            seed=0 if self.seed is None else int(self.seed),
+            chains=int(self.num_chains),
+            parallel_chains=max(1, min(int(self.num_chains), 4)),
+            iter_warmup=int(self.num_warmup),
+            iter_sampling=int(self.num_samples),
+            adapt_delta=float(self.target_accept_prob),
+            max_treedepth=int(self.max_tree_depth),
+            show_progress=bool(self.progress_bar),
+        )
+        draws_df = fit.draws_pd()
+
+        self.coef_samples_ = self._extract_cmdstan_array(
+            draws_df, name="beta", scalar=False, thinning=int(self.thinning)
+        )
+        if self.coef_samples_ is None:
+            raise RuntimeError("CmdStan RHS model did not produce beta draws.")
+        self.intercept_samples_ = self._extract_cmdstan_array(
+            draws_df, name="beta0", scalar=True, thinning=int(self.thinning)
+        )
+        self.sigma_samples_ = self._extract_cmdstan_array(
+            draws_df, name="sigma", scalar=True, thinning=int(self.thinning)
+        )
+        self.tau_samples_ = self._extract_cmdstan_array(
+            draws_df, name="tau", scalar=True, thinning=int(self.thinning)
+        )
+        self.lambda_samples_ = self._extract_cmdstan_array(
+            draws_df, name="lambda", scalar=False, thinning=int(self.thinning)
+        )
+        self.lambda_tilde_samples_ = self._extract_cmdstan_array(
+            draws_df, name="lambda_tilde", scalar=False, thinning=int(self.thinning)
+        )
+        self.c_samples_ = self._extract_cmdstan_array(
+            draws_df, name="c", scalar=True, thinning=int(self.thinning)
+        )
+
+        coef_draws = _flatten_param_draws(self.coef_samples_)
+        intercept_draws = _flatten_scalar_draws(self.intercept_samples_)
+        self.coef_ = None if coef_draws is None else coef_draws.mean(axis=0)
+        self.intercept_ = 0.0 if intercept_draws is None else float(intercept_draws.mean())
+        self.sampler_diagnostics_ = self._extract_cmdstan_diagnostics(draws_df)
+
     def fit(
         self,
         X: ArrayLike,
@@ -627,6 +814,9 @@ class _BaseHorseshoeRegression:
         if X_arr.shape[0] != y_arr.shape[0]:
             raise ValueError("X and y must have matching number of rows.")
 
+        if self._use_cmdstan_backend():
+            self._fit_with_cmdstan(X_arr.astype(np.float64), y_arr.astype(np.float64))
+            return self
         if self._use_gibbs_backend():
             self._fit_with_gibbs(X_arr, y_arr, groups=groups)
             return self
@@ -850,6 +1040,13 @@ class RegularizedHorseshoeRegression(_BaseHorseshoeRegression):
 
     slab_scale: float = 2.0
     slab_df: float = 4.0
+
+    def _default_stan_file(self) -> Optional[Path]:
+        return (Path(__file__).resolve().parent / "stan" / "rhs_gaussian_regression.stan").resolve()
+
+    def _use_cmdstan_backend(self) -> bool:
+        # Match paper Appendix C.2 implementation for gaussian RHS.
+        return self.likelihood == "gaussian"
 
     def _use_gibbs_backend(self) -> bool:
         return False

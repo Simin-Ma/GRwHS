@@ -95,3 +95,35 @@ def test_gigg_regression_preserves_multichain_draws_for_convergence():
     assert convergence["beta"]["diagnostic_valid"] is True
     assert convergence["tau"]["raw_num_chains"] == 2
     assert convergence["tau"]["diagnostic_valid"] is True
+
+
+def test_gigg_regression_btrick_with_covariates_smoke():
+    rng = np.random.default_rng(21)
+    n = 60
+    p = 8
+    k = 2
+    X = rng.normal(size=(n, p))
+    C = rng.normal(size=(n, k))
+    beta_true = np.array([1.0, -0.8, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0], dtype=float)
+    alpha_true = np.array([0.6, -0.3], dtype=float)
+    y = X @ beta_true + C @ alpha_true + rng.normal(scale=0.3, size=n)
+    groups = [[0, 1, 2, 3], [4, 5, 6, 7]]
+
+    model = GIGGRegression(
+        method="mmle",
+        n_burn_in=120,
+        n_samples=60,
+        n_thin=1,
+        seed=11,
+        btrick=True,
+        stable_solve=True,
+        store_lambda=True,
+    )
+    fitted = model.fit(X, y, groups=groups, C=C)
+    pred = fitted.predict(X[:10], C=C[:10])
+
+    assert pred.shape == (10,)
+    assert fitted.coef_samples_ is not None
+    assert fitted.alpha_samples_ is not None
+    assert fitted.alpha_samples_.shape[-1] == k
+    assert fitted.lambda_samples_ is not None
