@@ -37,10 +37,10 @@ experiments:
     disable_inner_cv: true
     enforce_shared_sampling_budget: true
     require_posterior_mean_summary: true
-    disable_budget_retry: true
+    disable_budget_retry: false
     sampling_budget:
-      burn_in: 1000
-      kept_draws: 1000
+      burn_in: 8000
+      kept_draws: 8000
       thinning: 1
       num_chains: 4
   evaluation:
@@ -57,7 +57,7 @@ experiments:
       lambda: 200
       b: 200
     max_mcse_over_sd: 0.10
-    max_retries: 1
+    max_retries: 3
     retry_scale: 2.0
     parameters: ["beta", "tau"]
     expected_blocks:

@@ -8,7 +8,7 @@ This note documents the fairness contract implemented by the current regression 
 - **Shared data generation inside sweeps**: `run_sweep` pins one common `data.seed` / `seeds.data_generation` across all variations in the same sweep.
 - **Shared group metadata**: grouped methods read the same contiguous group layout from the experiment config.
 - **Nested CV scope**: inner CV is only used for methods that declare `model.search`. In the main paper-style sweeps that means the frequentist baselines; Bayesian grouped-sparsity models run with fixed, predeclared defaults.
-- **Bayesian fairness guardrail**: for `RHS`, `GR-RHS`, and `GIGG`, `experiments.bayesian_fairness` disables Bayesian inner CV, enforces one shared posterior budget, requires posterior-mean summaries, and disables budget-escalation retries in the headline benchmark.
+- **Bayesian fairness guardrail**: for `RHS`, `GR-RHS`, and `GIGG`, `experiments.bayesian_fairness` disables Bayesian inner CV, enforces one shared posterior budget, requires posterior-mean summaries, and keeps auto-retry active under the same policy so failed folds are re-fit with a scaled budget.
 
 ## 1. Metric fairness
 
@@ -43,7 +43,7 @@ Current canonical grids:
   and declared compute budget for each method family rather than forcing Bayesian and frequentist methods through one identical tuning loop.
 - Fairness is defined as **paper-faithful defaults under a shared data/split/evaluation protocol**, not “force every Bayesian method into the same search routine”.
 - GRRHS prior sensitivity remains separated from the main leaderboard.
-- The default shared Bayesian sampling budget is `burn_in=1000`, `kept_draws=1000`, `thinning=1`, `num_chains=4`.
+- The default shared Bayesian sampling budget is `burn_in=8000`, `kept_draws=8000`, `thinning=1`, `num_chains=4`.
 
 ## 3. Convergence fairness
 
@@ -53,8 +53,8 @@ Current canonical grids:
 - Regularized Horseshoe / Horseshoe: `beta`, `tau`, `lambda`
 
 ### Decision rule
-- Outside the fairness guardrail, the runner retries once with a larger budget when the configured `max_rhat` threshold is missed.
-- Inside the fairness guardrail, retries are disabled so no Bayesian method silently receives extra posterior budget.
+- The runner retries with larger budget when configured thresholds are missed (`max_retries=3`, `retry_scale=2.0` by default).
+- In the fairness guardrail, retries are still enabled but follow one shared rule across Bayesian methods.
 - Folds that still fail are marked `INVALID_CONVERGENCE` and excluded from aggregate metric summaries.
 - Missing monitored blocks are treated as convergence failures for Bayesian models (`missing_policy: "fail"` guardrail).
 - Bayesian runs are hard-failed when any outer fold is `INVALID_CONVERGENCE`; those runs are not allowed into fair-comparison tables.

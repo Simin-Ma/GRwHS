@@ -2,7 +2,8 @@ name: "gigg"
 
 model:
   name: "gigg"
-  method: "mmle"
+  method: "fixed"
+  mmle_enabled: false
   n_samples: 1000
   a_value: null
   b_init: 0.5

@@ -18,7 +18,7 @@ inference:
     burn_in: 1000
     thin: 1
     num_chains: 4
-    tau_slice_w: 0.35
-    tau_slice_m: 200
+    tau_slice_w: 0.8
+    tau_slice_m: 1200
     jitter: 1.0e-08
     seed: 321
