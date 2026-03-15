@@ -342,58 +342,6 @@ def test_make_report_benchmark_safe_uses_common_valid_fold_intersection(tmp_path
     assert (reports_dir / "benchmark_comparisons_summary.json").exists()
 
 
-def test_run_experiment_classification(tmp_path):
-    config = {
-        "seed": 7,
-        "task": "classification",
-        "data": {
-            "type": "synthetic",
-            "n": 40,
-            "p": 6,
-            "G": 3,
-            "group_sizes": "equal",
-            "signal": {
-                "sparsity": 0.5,
-                "strong_frac": 0.5,
-                "beta_scale_strong": 1.2,
-                "beta_scale_weak": 0.3,
-            },
-            "classification": {
-                "scale": 0.9,
-                "bias": 0.0,
-                "noise_std": 0.1,
-            },
-            "test_ratio": 0.25,
-            "val_ratio": 0.1,
-        },
-        "standardization": {"X": "unit_variance", "y_center": False},
-        "splits": _tiny_nested_splits(stratify=True),
-        "model": {
-            "name": "logistic_regression",
-            "logistic": {
-                "solver": "lbfgs",
-                "max_iter": 300,
-                "penalty": "l2",
-                "C": 1.0,
-            },
-        },
-        "experiments": {
-            "metrics": {
-                "classification": ["ClassAccuracy", "ClassLogLoss", "ClassF1"],
-            },
-            "coverage_level": 0.9,
-            "classification_threshold": 0.5,
-        },
-    }
-
-    out_dir = tmp_path / "classification_run"
-    result = run_experiment(config, out_dir)
-    assert result["status"] == "OK"
-    metrics_payload = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
-    assert "ClassAccuracy" in metrics_payload
-    assert metrics_payload["ClassAccuracy"] is not None
-
-
 def test_run_sweep_parallel(tmp_path):
     base_cfg = _make_basic_config(tmp_path)
     base_cfg_path = tmp_path / "base.yaml"

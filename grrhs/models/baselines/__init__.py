@@ -5,14 +5,12 @@ from .models import (
     ElasticNet,
     HorseshoeRegression,
     Lasso,
-    LogisticRegressionClassifier,
     RegularizedHorseshoeRegression,
     Ridge,
     SparseGroupLasso,
 )
 
 __all__ = [
-    "LogisticRegressionClassifier",
     "Ridge",
     "Lasso",
     "ElasticNet",

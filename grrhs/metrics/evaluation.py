@@ -624,13 +624,13 @@ def evaluate_model_metrics(
     y_pred_override: Optional[np.ndarray] = None,
     pred_draws_override: Optional[np.ndarray] = None,
 ) -> Dict[str, Optional[float]]:
-    """Evaluate a fitted model across predictive, classification, selection, and calibration metrics."""
+    """Evaluate a fitted model for regression workflows."""
 
     task_label = str(task).lower()
-    if task_label in {"binary", "binary_classification", "cls"}:
-        task_label = "classification"
-    if task_label not in {"regression", "classification"}:
-        raise ValueError(f"Unsupported task '{task}'. Expected 'regression' or 'classification'.")
+    if task_label in {"binary", "binary_classification", "cls", "classification"}:
+        raise ValueError("Classification evaluation was removed; regression-only mode is enabled.")
+    if task_label != "regression":
+        raise ValueError(f"Unsupported task '{task}'. Expected 'regression'.")
 
     metrics: Dict[str, Optional[float]] = {}
 

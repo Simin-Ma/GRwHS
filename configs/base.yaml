@@ -32,7 +32,6 @@ splits:
 experiments:
   repeats: 1
   coverage_level: 0.9
-  classification_threshold: 0.5
   bayesian_fairness:
     enabled: true
     disable_inner_cv: true
@@ -64,9 +63,6 @@ experiments:
     expected_blocks:
       default: ["beta", "tau"]
       grrhs_gibbs: ["beta", "tau", "phi", "lambda"]
-      grrhs_gibbs_logistic: ["beta", "tau", "phi", "lambda"]
-      grrhs_logistic: ["beta", "tau", "phi", "lambda"]
-      grrhs_gibbs_cls: ["beta", "tau", "phi", "lambda"]
       gigg: ["beta", "tau", "gamma", "lambda"]
       gigg_regression: ["beta", "tau", "gamma", "lambda"]
       regularized_horseshoe: ["beta", "tau", "lambda"]
@@ -125,16 +121,6 @@ experiments:
       - ActiveBetaIntervalWidth90
       - MeanEffectiveNonzeros
       - EffectiveDoF
-    classification:
-      - MLPD
-      - ClassLogLoss
-      - ClassBrier
-      - ClassAccuracy
-      - ClassF1
-      - ClassAUROC
-      - ClassAveragePrecision
-      - Coverage90
-      - MeanEffectiveNonzeros
   reporting:
     comparison_metrics:
       regression:

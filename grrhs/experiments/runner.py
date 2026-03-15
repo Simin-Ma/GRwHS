@@ -88,9 +88,6 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
     "expected_blocks": {
         "default": ["beta", "tau"],
         "grrhs_gibbs": ["beta", "tau", "phi", "lambda"],
-        "grrhs_gibbs_logistic": ["beta", "tau", "phi", "lambda"],
-        "grrhs_logistic": ["beta", "tau", "phi", "lambda"],
-        "grrhs_gibbs_cls": ["beta", "tau", "phi", "lambda"],
         "gigg": ["beta", "tau", "gamma", "lambda"],
         "gigg_regression": ["beta", "tau", "gamma", "lambda"],
         "regularized_horseshoe": ["beta", "tau", "lambda"],
@@ -158,9 +155,6 @@ DEFAULT_POSTERIOR_VALIDATION_CONFIG: Dict[str, Any] = {
 
 _BAYESIAN_MODEL_NAMES = {
     "grrhs_gibbs",
-    "grrhs_gibbs_logistic",
-    "grrhs_logistic",
-    "grrhs_gibbs_cls",
     "gigg",
     "gigg_regression",
     "regularized_horseshoe",
@@ -170,10 +164,6 @@ _BAYESIAN_MODEL_NAMES = {
 
 _BAYESIAN_HYPERPRIOR_LABELS: Dict[str, Dict[str, str]] = {
     "grrhs_gibbs": {
-        "tau": "tau ~ C+(0, 1) via calibrated tau0 heuristic",
-        "group": "group scales use HalfNormal/Cauchy-style grouped shrinkage defaults",
-    },
-    "grrhs_gibbs_logistic": {
         "tau": "tau ~ C+(0, 1) via calibrated tau0 heuristic",
         "group": "group scales use HalfNormal/Cauchy-style grouped shrinkage defaults",
     },
@@ -261,7 +251,12 @@ def _resolve_task(config: Mapping[str, Any]) -> str:
         or config.get("experiments", {}).get("task", "regression")
     ).lower()
     aliases = {"binary": "classification", "binary_classification": "classification", "cls": "classification"}
-    return aliases.get(task, task)
+    resolved = aliases.get(task, task)
+    if resolved != "regression":
+        raise ExperimentError(
+            "This repository is configured for regression-only workflows; classification modules were removed."
+        )
+    return "regression"
 
 
 def _resolve_model_name(config: Mapping[str, Any]) -> str:
@@ -388,7 +383,7 @@ def _apply_bayesian_sampling_budget(config: MutableMapping[str, Any]) -> None:
     inference_cfg = config.setdefault("inference", {})
     model_name = _resolve_model_name(config)
 
-    if model_name in {"grrhs_gibbs", "grrhs_gibbs_logistic", "grrhs_logistic", "grrhs_gibbs_cls", "gigg", "gigg_regression"}:
+    if model_name in {"grrhs_gibbs", "gigg", "gigg_regression"}:
         gibbs_cfg = inference_cfg.setdefault("gibbs", {})
         gibbs_cfg["burn_in"] = int(budget["burn_in"])
         gibbs_cfg["thin"] = int(budget["thinning"])
@@ -733,7 +728,7 @@ def _scale_bayesian_runtime(
 ) -> None:
     model_name = str(model_config.get("name", "")).lower()
 
-    if model_name in {"grrhs_gibbs", "grrhs_gibbs_logistic", "grrhs_logistic", "grrhs_gibbs_cls", "gigg", "gigg_regression"}:
+    if model_name in {"grrhs_gibbs", "gigg", "gigg_regression"}:
         if "iters" in model_config:
             model_config["iters"] = max(4, int(math.ceil(float(model_config["iters"]) * scale)))
         gibbs_cfg = inference_cfg.get("gibbs")

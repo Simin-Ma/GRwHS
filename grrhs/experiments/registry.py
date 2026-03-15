@@ -22,18 +22,12 @@ except Exception:  # pragma: no cover
     GRRHS_Gibbs = None  # type: ignore
 
 try:
-    from grrhs.models.grrhs_gibbs_logistic import GRRHS_Gibbs_Logistic  # type: ignore
-except Exception:  # pragma: no cover
-    GRRHS_Gibbs_Logistic = None  # type: ignore
-
-try:
     from grrhs.models.gigg_regression import GIGGRegression  # type: ignore
 except Exception:  # pragma: no cover
     GIGGRegression = None  # type: ignore
 
 # Baselines (numpy/skglm implementations)
 from grrhs.models.baselines import (
-    LogisticRegressionClassifier,
     Ridge,
     Lasso,
     ElasticNet,
@@ -213,75 +207,13 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
     }
     if seed_val is not None:
         kwargs["seed"] = int(seed_val)
-    task_label = str(_get(cfg, "task", _get(cfg, "data.task", "regression"))).lower()
-    likelihood = str(_get(cfg, "model.likelihood", task_label)).lower()
-    if likelihood in {"classification", "logistic"}:
-        kwargs["likelihood"] = "logistic"
-    else:
-        kwargs["likelihood"] = "gaussian"
+    kwargs["likelihood"] = "gaussian"
     return kwargs
 
 
 # ------------------------------
 # Baselines
 # ------------------------------
-
-
-@register("logistic_regression")
-@register("logistic")
-@register("logreg")
-def _build_logistic_regression(cfg: Dict[str, Any]) -> Any:
-    logistic_cfg = _get(cfg, "model.logistic", {})
-
-    def _resolve(key: str, default: Any) -> Any:
-        explicit = _get(cfg, f"model.{key}", None)
-        if explicit is not None:
-            return explicit
-        if isinstance(logistic_cfg, dict) and key in logistic_cfg:
-            return logistic_cfg[key]
-        return default
-
-    penalty = str(_resolve("penalty", "l2"))
-    solver = str(_resolve("solver", "lbfgs"))
-    max_iter = int(_resolve("max_iter", 200))
-    tol = float(_resolve("tol", 1e-4))
-    C = float(_resolve("C", 1.0))
-    fit_intercept = bool(_resolve("fit_intercept", True))
-    class_weight = _resolve("class_weight", None)
-    l1_ratio_raw = _resolve("l1_ratio", None)
-    l1_ratio = float(l1_ratio_raw) if l1_ratio_raw is not None else None
-    multi_class = str(_resolve("multi_class", "auto"))
-    intercept_scaling = float(_resolve("intercept_scaling", 1.0))
-    warm_start = bool(_resolve("warm_start", False))
-    verbose = int(_resolve("verbose", 0))
-    n_jobs_raw = _resolve("n_jobs", None)
-    n_jobs = int(n_jobs_raw) if n_jobs_raw is not None else None
-    if l1_ratio is not None and penalty.lower() != "elasticnet":
-        raise ValueError("model.l1_ratio is only valid when penalty='elasticnet'.")
-    random_state_raw = _resolve("seed", _get(cfg, "seed", None))
-    random_state = None
-    if random_state_raw is not None:
-        try:
-            random_state = int(random_state_raw)
-        except (TypeError, ValueError):
-            random_state = None
-
-    return LogisticRegressionClassifier(
-        penalty=penalty,
-        C=C,
-        fit_intercept=fit_intercept,
-        solver=solver,
-        max_iter=max_iter,
-        tol=tol,
-        class_weight=class_weight,
-        l1_ratio=l1_ratio,
-        multi_class=multi_class,
-        intercept_scaling=intercept_scaling,
-        n_jobs=n_jobs,
-        warm_start=warm_start,
-        verbose=verbose,
-        random_state=random_state,
-    )
 
 
 @register("ridge")
@@ -573,35 +505,6 @@ def _build_grrhs_gibbs(cfg: Dict[str, Any]) -> Any:
         iters=iters,
         seed=int(seed),
         use_groups=use_groups,
-        **runtime_overrides,
-    )  # type: ignore
-    return sampler
-
-
-@register("grrhs_gibbs_logistic")
-@register("grrhs_logistic")
-@register("grrhs_gibbs_cls")
-def _build_grrhs_gibbs_logistic(cfg: Dict[str, Any]) -> Any:
-    if GRRHS_Gibbs_Logistic is None:
-        raise ImportError("GRRHS_Gibbs_Logistic is not available. Ensure grrhs.models.grrhs_gibbs_logistic exists.")
-    c = float(_get(cfg, "model.c", 1.0))
-    tau0 = float(_get(cfg, "model.tau0", 0.1))
-    eta = float(_get(cfg, "model.eta", 0.5))
-    s0 = float(_get(cfg, "model.s0", 1.0))
-    iters = int(_get(cfg, "model.iters", 2000))
-    seed = _get(
-        cfg,
-        "inference.gibbs.seed",
-        _get(cfg, "model.seed", _get(cfg, "seed", 42)),
-    )
-    runtime_overrides = _gibbs_runtime_overrides(cfg)
-    sampler = GRRHS_Gibbs_Logistic(
-        c=c,
-        tau0=tau0,
-        eta=eta,
-        s0=s0,
-        iters=iters,
-        seed=int(seed),
         **runtime_overrides,
     )  # type: ignore
     return sampler

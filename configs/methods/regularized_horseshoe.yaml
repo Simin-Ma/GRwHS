@@ -20,4 +20,3 @@ model:
     target: "coefficients"
     p0:
       value: 20
-    sigma_classification: "auto"

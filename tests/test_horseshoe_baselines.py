@@ -25,16 +25,6 @@ def _synthetic_regression(seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.nda
     return X, y, beta
 
 
-def _synthetic_classification(seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
-    rng = np.random.default_rng(seed)
-    n, p = 60, 5
-    X = rng.normal(size=(n, p)).astype(np.float32)
-    beta = np.array([1.5, -0.75, 0.5, 0.0, 0.25], dtype=np.float32)
-    logits = X @ beta
-    probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -8.0, 8.0)))
-    y = rng.binomial(1, probs).astype(np.float32)
-    return X, y
-
 
 def test_horseshoe_regression_prefers_signal_features():
     X, y, _ = _synthetic_regression(seed=123)
@@ -99,23 +89,5 @@ def test_regularized_horseshoe_reports_posterior_summaries():
     assert "treedepth_hits" in hmc_diag
 
 
-def test_horseshoe_logistic_handles_binary_targets():
-    X, y = _synthetic_classification(seed=7)
-    model = HorseshoeRegression(
-        likelihood="logistic",
-        num_warmup=120,
-        num_samples=120,
-        num_chains=1,
-        target_accept_prob=0.9,
-        progress_bar=False,
-        seed=77,
-    )
-    fitted = model.fit(X, y)
-
-    logits = fitted.predict(X[:5])
-    probs = fitted.predict_proba(X[:5])
-    assert logits.shape == (5,)
-    assert probs.shape == (5, 2)
-    np.testing.assert_allclose(probs.sum(axis=1), np.ones(5), atol=1e-6)
 
 

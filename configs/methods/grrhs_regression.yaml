@@ -12,7 +12,6 @@ model:
     p0:
       value: 20
     sigma_reference: 1.0
-    sigma_classification: 2.0
 
 inference:
   gibbs:
