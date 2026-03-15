@@ -3,14 +3,15 @@ name: "regularized_horseshoe_regression"
 model:
   name: "regularized_horseshoe"
   scale_intercept: 10.0
-  sigma_scale: 1.0
+  nu_global: 1.0
+  nu_local: 1.0
   slab_scale: 2.0
   slab_df: 4.0
   num_warmup: 1000
   num_samples: 1000
   num_chains: 4
   thinning: 1
-  target_accept_prob: 0.97
+  target_accept_prob: 0.99
   max_tree_depth: 10
   progress_bar: false
   seed: 151
@@ -19,5 +20,4 @@ model:
     target: "coefficients"
     p0:
       value: 20
-    sigma_reference: 1.0
-    sigma_classification: 2.0
+    sigma_classification: "auto"

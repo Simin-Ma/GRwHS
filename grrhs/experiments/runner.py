@@ -1186,13 +1186,24 @@ def _maybe_calibrate_tau(
         raise ExperimentError("Cannot calibrate τ: feature/group dimension is zero.")
 
     if task == "classification":
-        sigma_ref = float(tau_cfg.get("sigma_classification", 2.0))
-    else:
-        if std_cfg.y_center:
-            y_scale = float(np.std(y, ddof=1)) if y.size else 1.0
+        sigma_classification = tau_cfg.get("sigma_classification", "auto")
+        if sigma_classification in {None, "auto"}:
+            y_bin = np.asarray(y, dtype=float).reshape(-1)
+            if y_bin.size == 0:
+                sigma_ref = 2.0
+            else:
+                p_hat = float(np.mean(y_bin))
+                p_hat = float(min(max(p_hat, 1e-6), 1.0 - 1e-6))
+                sigma_ref = float(1.0 / math.sqrt(p_hat * (1.0 - p_hat)))
         else:
+            sigma_ref = float(sigma_classification)
+    else:
+        sigma_reference = tau_cfg.get("sigma_reference", 1.0)
+        if sigma_reference in {None, "auto"}:
             y_scale = float(np.std(y, ddof=1)) if y.size else 1.0
-        sigma_ref = float(tau_cfg.get("sigma_reference", y_scale))
+            sigma_ref = y_scale
+        else:
+            sigma_ref = float(sigma_reference)
 
     n = X.shape[0]
     p0 = max(1.0, candidates[0])

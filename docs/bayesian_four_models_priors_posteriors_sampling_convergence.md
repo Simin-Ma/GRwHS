@@ -230,38 +230,28 @@ Per iteration:
 
 ## 4) RegularizedHorseshoeRegression (RHS)
 
-### 4.1 Priors (NumPyro model)
+### 4.1 Priors (Stan Appendix C.2 model for gaussian RHS)
 
 Method config (`configs/methods/regularized_horseshoe.yaml`):
 - `scale_intercept=10.0`
-- `sigma_scale=1.0`
+- `nu_global=1.0, nu_local=1.0`
 - `slab_scale=2.0, slab_df=4.0`
 - `num_warmup=1000, num_samples=1000, num_chains=4, thinning=1`
-- `target_accept_prob=0.97`
+- `target_accept_prob=0.99`
 - `max_tree_depth=10`
 - `tau.mode=calibrated, p0=20`
 
 Core model in code:
-1. $$\sigma\sim\text{Half-Cauchy}(\sigma_{scale})$$
-2. $$\beta_0\sim\mathcal N(0,\text{scale\_intercept})$$
-3. Global hierarchy:
-   $$r_{1g}\sim\text{Half-Normal}(\text{scale\_global}\cdot\sigma),
-   \quad r_{2g}\sim\text{Inv-Gamma}(\nu_{global}/2,\nu_{global}/2),
-   \quad \tau=r_{1g}\sqrt{r_{2g}}$$
-4. Local hierarchy:
-   $$r_{1j}\sim\text{Half-Normal}(1),
-   \quad r_{2j}\sim\text{Inv-Gamma}(\nu_{local}/2,\nu_{local}/2),
-   \quad \lambda_j^{raw}=r_{1j}\sqrt{r_{2j}}$$
-5. Slab regularization:
-   - if `slab_df` is present:
-     $$c_{aux}\sim\text{Inv-Gamma}(\nu/2,\nu/2),\quad c=\text{slab\_scale}\sqrt{c_{aux}}$$
-   - effective local scale:
-     $$\tilde\lambda_j^2=\frac{c^2(\lambda_j^{raw})^2}{c^2+\tau^2(\lambda_j^{raw})^2},\quad
-     \lambda_j=\sqrt{\tilde\lambda_j^2}$$
-6. Non-centered coefficient parameterization:
-   $$z_j\sim\mathcal N(0,1),\quad \beta_j=z_j\lambda_j\tau$$
-7. Likelihood:
-   $$y_i\sim\mathcal N(\beta_0+x_i^T\beta,\sigma)$$
+1. $$\beta_0\sim\mathcal N(0,\text{scale\_icept})$$
+2. $$\lambda_j=\text{aux1}_{local,j}\sqrt{\text{aux2}_{local,j}},\quad
+\text{aux1}_{local,j}\sim\text{Half-Normal}(1),\ 
+\text{aux2}_{local,j}\sim\text{Inv-Gamma}(\nu_{local}/2,\nu_{local}/2)$$
+3. $$\tau=\text{aux1}_{global}\sqrt{\text{aux2}_{global}}\cdot\text{scale\_global}\cdot\sigma,\quad
+\text{aux1}_{global}\sim\text{Half-Normal}(1),\ 
+\text{aux2}_{global}\sim\text{Inv-Gamma}(\nu_{global}/2,\nu_{global}/2)$$
+4. $$c=\text{slab\_scale}\sqrt{c_{aux}},\quad c_{aux}\sim\text{Inv-Gamma}(\text{slab\_df}/2,\text{slab\_df}/2)$$
+5. $$\tilde\lambda_j^2=\frac{c^2\lambda_j^2}{c^2+\tau^2\lambda_j^2},\quad \beta_j=z_j\tilde\lambda_j\tau,\ z_j\sim\mathcal N(0,1)$$
+6. $$y_i\sim\mathcal N(\beta_0+x_i^T\beta,\sigma),\quad \sigma=\exp(\log\sigma)$$
 
 ### 4.2 Posterior and sampling
 
@@ -282,8 +272,10 @@ $$\tau_0=\frac{p_0}{D-p_0}\cdot\frac{\sigma_{ref}}{\sqrt{n}}$$
 
 - $p_0$: configured value (default in method files is `p0=20`)
 - $D$: number of groups if `target=groups`, otherwise number of coefficients if `target=coefficients`
-- Regression default reference: `sigma_reference=1.0`
-- Classification default reference: `sigma_classification=2.0`
+- Regression default reference: `sigma_reference=1.0` (paper-style `scale_global = p0/(D-p0)/sqrt(n)`).
+- If explicitly set to `sigma_reference: "auto"`, code falls back to train-scale proxy.
+- Classification default reference: if `sigma_classification="auto"` (or unset), use pseudo-sigma
+  $$\sigma_{ref}=1/\sqrt{\bar y(1-\bar y)}$$
 - Lower bound in code: `tau0 >= 1e-8`
 
 ---
