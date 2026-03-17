@@ -7,15 +7,50 @@ from typing import List, Optional, Sequence
 
 import numpy as np
 from numpy.random import Generator, default_rng
-from scipy.linalg import cho_factor, cho_solve
-from scipy.special import digamma, polygamma
-from scipy.stats import invgamma
-
-from grrhs.inference.gig import sample_gig
+# NOTE:
+# We avoid scipy.stats samplers here because repeated scalar rvs calls can be
+# prohibitively slow in some runtime environments.
 
 _POS_FLOOR = 1e-8
 _POS_CAP = 1e3
 _BETA_CAP = 1e3
+
+
+def _digamma_approx(x: float) -> float:
+    """Lightweight digamma approximation with recurrence + asymptotic expansion."""
+    xx = float(x)
+    if xx <= 0.0:
+        xx = _POS_FLOOR
+    out = 0.0
+    while xx < 6.0:
+        out -= 1.0 / xx
+        xx += 1.0
+    inv = 1.0 / xx
+    inv2 = inv * inv
+    out += math.log(xx) - 0.5 * inv - inv2 * (1.0 / 12.0 - inv2 * (1.0 / 120.0 - inv2 / 252.0))
+    return out
+
+
+def _trigamma_approx(x: float) -> float:
+    """Lightweight trigamma approximation with recurrence + asymptotic expansion."""
+    xx = float(x)
+    if xx <= 0.0:
+        xx = _POS_FLOOR
+    out = 0.0
+    while xx < 6.0:
+        out += 1.0 / (xx * xx)
+        xx += 1.0
+    inv = 1.0 / xx
+    inv2 = inv * inv
+    out += inv + 0.5 * inv2 + inv2 * inv * (1.0 / 6.0 - inv2 * (1.0 / 30.0 - inv2 / 42.0))
+    return out
+
+
+def _chol_solve(mat: np.ndarray, vec: np.ndarray) -> np.ndarray:
+    """Solve mat * x = vec for SPD mat via Cholesky."""
+    chol = np.linalg.cholesky(mat)
+    y = np.linalg.solve(chol, vec)
+    return np.linalg.solve(chol.T, y)
 
 
 def _digamma_inv(y: float, tol: float = 1e-8, max_iter: int = 50) -> float:
@@ -23,10 +58,11 @@ def _digamma_inv(y: float, tol: float = 1e-8, max_iter: int = 50) -> float:
     if y >= -2.22:
         x = math.exp(y) + 0.5
     else:
-        x = -1.0 / (y - digamma(1.0))
+        x = -1.0 / (y - _digamma_approx(1.0))
     for _ in range(max_iter):
         prev = x
-        x = prev - (digamma(prev) - y) / polygamma(1, prev)
+        trig = max(_trigamma_approx(prev), 1e-12)
+        x = prev - (_digamma_approx(prev) - y) / trig
         if abs(x - prev) < tol:
             break
     return max(x, tol)
@@ -84,6 +120,138 @@ def _clip_positive_array(values: np.ndarray, *, floor: float = _POS_FLOOR, cap: 
     return np.clip(arr, floor, cap)
 
 
+def _soft_cap_positive_scalar(value: float, *, floor: float, cap: float) -> float:
+    x = float(value)
+    if not np.isfinite(x):
+        x = float(floor)
+    x = max(x, float(floor))
+    c = float(max(cap, floor + 1e-12))
+    span = c - float(floor)
+    # Smoothly saturates below cap without creating a hard boundary pile-up.
+    return float(floor + span * (1.0 - math.exp(-(x - floor) / max(span, 1e-12))))
+
+
+def _soft_cap_positive_array(values: np.ndarray, *, floor: float, cap: float) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    arr = np.where(np.isfinite(arr), arr, floor)
+    arr = np.maximum(arr, floor)
+    c = float(max(cap, floor + 1e-12))
+    span = c - float(floor)
+    return floor + span * (1.0 - np.exp(-(arr - floor) / max(span, 1e-12)))
+
+
+def _rgig_cpp_scalar(chi: float, psi: float, lambda_param: float, rng: Generator, *, max_iter: int = 200000) -> float:
+    """Python port of CRAN gigg::rgig_cpp scalar sampler."""
+    chi_pos = max(float(chi), _POS_FLOOR)
+    psi_pos = max(float(psi), _POS_FLOOR)
+    lam = float(lambda_param)
+    alpha = math.sqrt(psi_pos / chi_pos)
+    beta = math.sqrt(chi_pos * psi_pos)
+
+    def _target_log(x: float) -> float:
+        return (lam - 1.0) * math.log(x) - 0.5 * beta * (x + 1.0 / x)
+
+    if (lam > 1.0) or (beta > 1.0):
+        m = (math.sqrt((lam - 1.0) ** 2 + beta**2) + (lam - 1.0)) / beta
+        a = -2.0 * (lam + 1.0) / beta - m
+        b = 2.0 * (lam - 1.0) * m / beta - 1.0
+        c = m
+        p = b - a**2 / 3.0
+        q = 2.0 * a**3 / 27.0 - a * b / 3.0 + c
+        cos_arg = max(min(-(q / 2.0) * math.sqrt(-27.0 / (p**3)), 1.0), -1.0)
+        phi = math.acos(cos_arg)
+        x_minus = math.sqrt(-(4.0 / 3.0) * p) * math.cos(phi / 3.0 + (4.0 / 3.0) * math.pi) - a / 3.0
+        x_plus = math.sqrt(-(4.0 / 3.0) * p) * math.cos(phi / 3.0) - a / 3.0
+        v_plus = math.sqrt(math.exp(_target_log(m)))
+        u_minus = (x_minus - m) * math.sqrt(math.exp(_target_log(x_minus)))
+        u_plus = (x_plus - m) * math.sqrt(math.exp(_target_log(x_plus)))
+        for _ in range(max_iter):
+            u_draw = rng.uniform(u_minus, u_plus)
+            v_draw = rng.uniform(0.0, v_plus)
+            if v_draw <= 0.0:
+                continue
+            x_draw = u_draw / v_draw + m
+            if x_draw <= 0.0:
+                continue
+            if (v_draw**2) <= math.exp(_target_log(x_draw)):
+                return _clip_positive_scalar(x_draw / alpha, floor=_POS_FLOOR, cap=_POS_CAP)
+    elif (0.0 <= lam <= 1.0) and (min(0.5, (2.0 / 3.0) * math.sqrt(max(1.0 - lam, 0.0))) <= beta <= 1.0):
+        m = beta / ((1.0 - lam) + math.sqrt((1.0 - lam) ** 2 + beta**2))
+        x_plus = ((1.0 + lam) + math.sqrt((1.0 + lam) ** 2 + beta**2)) / beta
+        v_plus = math.sqrt(math.exp(_target_log(m)))
+        u_plus = x_plus * math.sqrt(math.exp(_target_log(x_plus)))
+        for _ in range(max_iter):
+            u_draw = rng.uniform(0.0, u_plus)
+            v_draw = rng.uniform(0.0, v_plus)
+            if v_draw <= 0.0:
+                continue
+            x_draw = u_draw / v_draw
+            if x_draw <= 0.0:
+                continue
+            if (v_draw**2) <= math.exp(_target_log(x_draw)):
+                return _clip_positive_scalar(x_draw / alpha, floor=_POS_FLOOR, cap=_POS_CAP)
+    elif (0.0 <= lam < 1.0) and (0.0 < beta <= (2.0 / 3.0) * math.sqrt(max(1.0 - lam, 0.0))):
+        m = beta / ((1.0 - lam) + math.sqrt((1.0 - lam) ** 2 + beta**2))
+        x0 = beta / max(1.0 - lam, _POS_FLOOR)
+        x_star = max(x0, 2.0 / beta)
+        k1 = math.exp(_target_log(m))
+        A1 = k1 * x0
+        if x0 < 2.0 / beta:
+            k2 = math.exp(-beta)
+            if lam == 0.0:
+                A2 = k2 * math.log(2.0 / (beta**2))
+            else:
+                A2 = k2 * ((2.0 / beta) ** lam - x0**lam) / lam
+        else:
+            k2 = 0.0
+            A2 = 0.0
+        k3 = x_star ** (lam - 1.0)
+        A3 = 2.0 * k3 * math.exp(-x_star * beta / 2.0) / beta
+        A = A1 + A2 + A3
+        for _ in range(max_iter):
+            u_draw = rng.uniform(0.0, 1.0)
+            v_draw = rng.uniform(0.0, A)
+            if v_draw <= A1:
+                x_draw = x0 * v_draw / max(A1, _POS_FLOOR)
+                h = k1
+            elif v_draw <= A1 + A2:
+                vv = v_draw - A1
+                if lam == 0.0:
+                    x_draw = beta * math.exp(vv * math.exp(beta))
+                else:
+                    x_draw = (x0**lam + vv * lam / max(k2, _POS_FLOOR)) ** (1.0 / lam)
+                h = k2 * x_draw ** (lam - 1.0)
+            else:
+                vv = v_draw - (A1 + A2)
+                inner = math.exp(-x_star * beta / 2.0) - vv * beta / (2.0 * max(k3, _POS_FLOOR))
+                if inner <= 0.0:
+                    continue
+                x_draw = -2.0 / beta * math.log(inner)
+                h = k3 * math.exp(-x_draw * beta / 2.0)
+            if x_draw <= 0.0:
+                continue
+            if u_draw * h <= math.exp(_target_log(x_draw)):
+                return _clip_positive_scalar(x_draw / alpha, floor=_POS_FLOOR, cap=_POS_CAP)
+
+    # Fallback if sampler did not accept.
+    return _POS_FLOOR
+
+
+def _sample_gig_scalar(lambda_param: float, chi: float, psi: float, rng: Generator) -> float:
+    """Sample one GIG(lambda, chi, psi) draw with a CRAN-style scalar sampler."""
+    draw = _rgig_cpp_scalar(chi=max(chi, _POS_FLOOR), psi=max(psi, _POS_FLOOR), lambda_param=max(lambda_param, _POS_FLOOR), rng=rng)
+    return _clip_positive_scalar(draw, floor=_POS_FLOOR, cap=_POS_CAP)
+
+
+def _sample_invgamma_scalar(shape: float, scale: float, rng: Generator, *, floor: float) -> float:
+    """Sample scalar inverse-gamma by gamma transform."""
+    a = max(float(shape), 1e-12)
+    b = max(float(scale), floor)
+    # If G ~ Gamma(a, theta=1/b), then 1/G ~ InvGamma(a, scale=b).
+    g = rng.gamma(shape=a, scale=1.0 / b)
+    return _clip_positive_scalar(1.0 / max(float(g), floor), floor=floor, cap=_POS_CAP)
+
+
 def _fit_gigg_chain_task(payload: dict) -> dict:
     model = GIGGRegression(
         method=str(payload["method"]),
@@ -102,9 +270,16 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         mmle_update=str(payload["mmle_update"]),
         mmle_burnin_only=bool(payload["mmle_burnin_only"]),
         share_group_hyper=bool(payload["share_group_hyper"]),
+        mmle_samp_size=int(payload.get("mmle_samp_size", 1000)),
+        mmle_tol_scale=float(payload.get("mmle_tol_scale", 1e-4)),
+        mmle_max_iters=int(payload.get("mmle_max_iters", 50000)),
+        fit_intercept=bool(payload.get("fit_intercept", True)),
         store_lambda=bool(payload["store_lambda"]),
         btrick=bool(payload["btrick"]),
         stable_solve=bool(payload["stable_solve"]),
+        lambda_constraint_mode=str(payload.get("lambda_constraint_mode", "hard")),
+        lambda_cap=float(payload.get("lambda_cap", _POS_CAP)),
+        lambda_soft_cap=float(payload.get("lambda_soft_cap", payload.get("lambda_cap", _POS_CAP))),
     )
     fitted = model.fit(
         np.asarray(payload["X"], dtype=float),
@@ -159,9 +334,16 @@ class GIGGRegression:
     mmle_update: str = "paper_lambda_only"
     mmle_burnin_only: bool = True
     share_group_hyper: bool = False
+    mmle_samp_size: int = 1000
+    mmle_tol_scale: float = 1e-4
+    mmle_max_iters: int = 50000
+    fit_intercept: bool = True
     store_lambda: bool = True
     btrick: bool = False
     stable_solve: bool = True
+    lambda_constraint_mode: str = "hard"  # one of {"hard", "soft", "none"}
+    lambda_cap: float = _POS_CAP
+    lambda_soft_cap: float = _POS_CAP
 
     rng_: Generator = field(init=False, repr=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -178,6 +360,7 @@ class GIGGRegression:
     alpha_mean_: Optional[np.ndarray] = field(default=None, init=False)
     b_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
+    auto_intercept_: bool = field(default=False, init=False)
 
     # Backward-compatible aliases used elsewhere in the project.
     iters: Optional[int] = None
@@ -208,9 +391,33 @@ class GIGGRegression:
             self.n_samples = max(1, kept // self.n_thin)
         else:
             self.n_samples = int(max(0, self.n_samples))
+        mode = str(self.lambda_constraint_mode).strip().lower()
+        if mode not in {"hard", "soft", "none"}:
+            raise ValueError("lambda_constraint_mode must be one of {'hard','soft','none'}.")
+        self.lambda_constraint_mode = mode
+        self.lambda_cap = float(max(self.lambda_cap, self.jitter * 10.0))
+        self.lambda_soft_cap = float(max(self.lambda_soft_cap, self.jitter * 10.0))
         self.burnin = self.n_burn_in
         self.iters = self.n_burn_in + (self.n_samples * self.n_thin)
         self.thin = self.n_thin
+
+    def _stabilize_lambda_scalar(self, value: float) -> float:
+        floor = max(self.jitter, _POS_FLOOR)
+        if self.lambda_constraint_mode == "none":
+            return _clip_positive_scalar(value, floor=floor, cap=max(floor, value if np.isfinite(value) else floor))
+        if self.lambda_constraint_mode == "soft":
+            return _soft_cap_positive_scalar(value, floor=floor, cap=self.lambda_soft_cap)
+        return _clip_positive_scalar(value, floor=floor, cap=self.lambda_cap)
+
+    def _stabilize_lambda_array(self, values: np.ndarray) -> np.ndarray:
+        floor = max(self.jitter, _POS_FLOOR)
+        if self.lambda_constraint_mode == "none":
+            arr = np.asarray(values, dtype=float)
+            arr = np.where(np.isfinite(arr), arr, floor)
+            return np.maximum(arr, floor)
+        if self.lambda_constraint_mode == "soft":
+            return _soft_cap_positive_array(values, floor=floor, cap=self.lambda_soft_cap)
+        return _clip_positive_array(values, floor=floor, cap=self.lambda_cap)
 
     @staticmethod
     def _flatten_param_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
@@ -275,9 +482,16 @@ class GIGGRegression:
                     "mmle_update": self.mmle_update,
                     "mmle_burnin_only": self.mmle_burnin_only,
                     "share_group_hyper": self.share_group_hyper,
+                    "mmle_samp_size": self.mmle_samp_size,
+                    "mmle_tol_scale": self.mmle_tol_scale,
+                    "mmle_max_iters": self.mmle_max_iters,
+                    "fit_intercept": self.fit_intercept,
                     "store_lambda": self.store_lambda,
                     "btrick": self.btrick,
                     "stable_solve": self.stable_solve,
+                    "lambda_constraint_mode": self.lambda_constraint_mode,
+                    "lambda_cap": self.lambda_cap,
+                    "lambda_soft_cap": self.lambda_soft_cap,
                     "X": np.asarray(X, dtype=float),
                     "y": np.asarray(y, dtype=float),
                     "C": None if C is None else np.asarray(C, dtype=float),
@@ -331,9 +545,8 @@ class GIGGRegression:
         precision_beta = (X.T @ X) + np.diag(prior_prec)
         if self.jitter > 0.0:
             precision_beta = precision_beta + np.eye(p) * self.jitter
-        chol_beta = cho_factor(precision_beta, lower=True, check_finite=False)
-        mean_beta = cho_solve(chol_beta, X.T @ y_tilde, check_finite=False)
-        noise_beta = cho_solve(chol_beta, rng.normal(size=p), check_finite=False)
+        mean_beta = _chol_solve(precision_beta, X.T @ y_tilde)
+        noise_beta = _chol_solve(precision_beta, rng.normal(size=p))
         beta = mean_beta + math.sqrt(sigma_sq) * noise_beta
         return np.clip(np.nan_to_num(beta, nan=0.0, posinf=_BETA_CAP, neginf=-_BETA_CAP), -_BETA_CAP, _BETA_CAP)
 
@@ -367,8 +580,7 @@ class GIGGRegression:
         if self.jitter > 0.0:
             mat = mat + np.eye(n, dtype=float) * self.jitter
         if self.stable_solve:
-            chol = cho_factor(mat, lower=True, check_finite=False)
-            w = cho_solve(chol, rhs, check_finite=False)
+            w = _chol_solve(mat, rhs)
         else:
             w = np.linalg.solve(mat, rhs)
         theta = u + d * (X.T @ w)
@@ -407,6 +619,10 @@ class GIGGRegression:
         G = group_sizes.size
 
         C_arr = np.zeros((n, 0), dtype=float) if C is None else np.asarray(C, dtype=float)
+        self.auto_intercept_ = False
+        if C is None and bool(self.fit_intercept):
+            C_arr = np.ones((n, 1), dtype=float)
+            self.auto_intercept_ = True
         if C_arr.ndim != 2 or C_arr.shape[0] != n:
             raise ValueError("C must be a 2D array with n rows.")
         k = int(C_arr.shape[1])
@@ -466,12 +682,17 @@ class GIGGRegression:
 
         lambda_sq = np.ones(p, dtype=float)
         gamma_sq = np.ones(G, dtype=float)
+        eta = np.ones(G, dtype=float)
+        p_vec = _clip_positive_array(a_vec, floor=self.jitter, cap=_POS_CAP)
+        q_vec = _clip_positive_array(b_vec, floor=self.b_floor, cap=self.b_max)
         tau_sq = _clip_positive_scalar(self.tau_sq_init)
         sigma_sq = _clip_positive_scalar(self.sigma_sq_init)
-        xi_tau = 1.0
-        xi_sigma = 1.0
+        nu = 1.0
 
         CtC = C_arr.T @ C_arr if k > 0 else None
+        group_arrays = [np.asarray(idxs, dtype=int) for idxs in normalised_groups]
+        tau_shape = 0.5 * (p + 1.0)
+        sigma_shape = 0.5 * (n + 1.0)
 
         kept = self.n_samples
         coef_draws = np.zeros((kept, p), dtype=float)
@@ -481,19 +702,16 @@ class GIGGRegression:
         gamma2_draws = np.zeros((kept, G), dtype=float)
         lambda_draws = np.zeros((kept, p), dtype=float) if self.store_lambda else None
         b_draws = np.zeros((kept, G), dtype=float)
-
-        log_lambda_mean = np.zeros(G, dtype=float)
         keep_idx = 0
-        total_iters = self.iters
 
-        for it in range(total_iters):
+        def _gibbs_step() -> None:
+            nonlocal alpha, beta, lambda_sq, gamma_sq, tau_sq, sigma_sq, nu
             if k > 0:
                 resid_alpha = y_arr - X @ beta
                 if self.stable_solve:
                     precision_alpha = CtC + np.eye(k, dtype=float) * max(self.jitter, 0.0)
-                    chol_alpha = cho_factor(precision_alpha, lower=True, check_finite=False)
-                    mean_alpha = cho_solve(chol_alpha, C_arr.T @ resid_alpha, check_finite=False)
-                    noise_alpha = cho_solve(chol_alpha, rng.normal(size=k), check_finite=False)
+                    mean_alpha = _chol_solve(precision_alpha, C_arr.T @ resid_alpha)
+                    noise_alpha = _chol_solve(precision_alpha, rng.normal(size=k))
                     alpha = mean_alpha + math.sqrt(sigma_sq) * noise_alpha
                 else:
                     precision_alpha = CtC + np.eye(k, dtype=float) * max(self.jitter, 0.0)
@@ -520,113 +738,139 @@ class GIGGRegression:
                     rng=rng,
                 )
 
-            for gid, idxs in enumerate(normalised_groups):
-                # beta_j | ... variance is sigma_sq * tau_sq * gamma_sq_g * lambda_sq_j,
-                # so the lambda_sq full conditional uses the same sigma_sq-scaled denominator.
-                denom = _clip_positive_scalar(
-                    2.0 * sigma_sq * tau_sq * gamma_sq[gid],
-                    floor=self.jitter,
-                )
-                b_shape = max(b_vec[gid] + 0.5, 1e-6)
-                for j in idxs:
-                    numer = min(float(beta[j] ** 2), _POS_CAP)
-                    scale = _clip_positive_scalar(1.0 + numer / denom)
-                    try:
-                        draw = invgamma.rvs(a=b_shape, scale=scale, random_state=rng)
-                    except Exception:
-                        draw = lambda_sq[j]
-                    lambda_sq[j] = _clip_positive_scalar(draw)
-
-            for gid, idxs in enumerate(normalised_groups):
-                lam_param = float(a_vec[gid] - 0.5 * group_sizes[gid])
-                denom = _clip_positive_array(lambda_sq[idxs], floor=self.jitter)
-                # gamma_sq enters beta variance through sigma_sq * tau_sq * gamma_sq * lambda_sq.
-                chi = _clip_positive_scalar(
-                    np.sum(
-                        np.minimum(beta[idxs] ** 2, _POS_CAP)
-                        / _clip_positive_array(sigma_sq * tau_sq * denom, floor=self.jitter)
-                    ),
-                    floor=self.jitter,
-                )
-                psi = 2.0
-                try:
-                    theta = sample_gig(
-                        lambda_param=lam_param,
-                        chi=chi,
-                        psi=max(psi, self.jitter),
-                        size=1,
-                        rng=rng,
-                    )[0]
-                except Exception:
-                    theta = gamma_sq[gid]
-                gamma_sq[gid] = _clip_positive_scalar(theta, floor=self.jitter)
-
-            denom_tau = _clip_positive_array(sigma_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
-            beta_quad = float(np.sum(np.minimum(beta**2, _POS_CAP) / denom_tau))
-            shape_tau = 0.5 * (p + 1)
-            scale_tau = _clip_positive_scalar(0.5 * beta_quad + 1.0 / _clip_positive_scalar(xi_tau, floor=self.jitter))
+            gl_param_expand_diag_inv = _clip_positive_array(1.0 / local_scale, floor=self.jitter)
+            tau_rate = _clip_positive_scalar(
+                0.5 * tau_sq * float(np.sum(np.minimum(beta**2, _POS_CAP) * gl_param_expand_diag_inv))
+                + 1.0 / _clip_positive_scalar(nu, floor=self.jitter),
+                floor=self.jitter,
+            )
             try:
-                tau_sq = invgamma.rvs(a=shape_tau, scale=scale_tau, random_state=rng)
+                tau_sq = _sample_invgamma_scalar(tau_shape, tau_rate, rng, floor=self.jitter)
             except Exception:
-                tau_sq = scale_tau / max(shape_tau + 1.0, 1.0)
+                tau_sq = tau_rate / max(tau_shape + 1.0, 1.0)
             tau_sq = _clip_positive_scalar(tau_sq, floor=self.jitter)
-            try:
-                xi_tau = invgamma.rvs(a=1.0, scale=1.0 + 1.0 / tau_sq, random_state=rng)
-            except Exception:
-                xi_tau = 1.0
-            xi_tau = _clip_positive_scalar(xi_tau)
 
             resid = y_arr - X @ beta - (C_arr @ alpha if k > 0 else 0.0)
             rss = float(resid @ resid)
-            denom_sigma = _clip_positive_array(tau_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
-            prior_quad = float(np.sum(np.minimum(beta**2, _POS_CAP) / denom_sigma))
-            shape_sigma = 0.5 * (n + p)
-            scale_sigma = _clip_positive_scalar(0.5 * (rss + prior_quad) + 1.0 / _clip_positive_scalar(xi_sigma, floor=self.jitter))
+            scale_sigma = _clip_positive_scalar(0.5 * rss + 1.0 / _clip_positive_scalar(nu, floor=self.jitter))
             try:
-                sigma_sq = invgamma.rvs(a=shape_sigma, scale=scale_sigma, random_state=rng)
+                sigma_sq = _sample_invgamma_scalar(sigma_shape, scale_sigma, rng, floor=self.jitter)
             except Exception:
-                sigma_sq = scale_sigma / max(shape_sigma + 1.0, 1.0)
+                sigma_sq = scale_sigma / max(sigma_shape + 1.0, 1.0)
             sigma_sq = _clip_positive_scalar(sigma_sq, floor=self.jitter)
-            try:
-                xi_sigma = invgamma.rvs(a=1.0, scale=1.0 + 1.0 / sigma_sq, random_state=rng)
-            except Exception:
-                xi_sigma = 1.0
-            xi_sigma = _clip_positive_scalar(xi_sigma)
 
-            do_mmle_update = method_eff == "mmle" and ((not self.mmle_burnin_only) or (it < self.n_burn_in))
-            if do_mmle_update:
-                targets = np.empty(G, dtype=float)
-                for gid, idxs in enumerate(normalised_groups):
-                    log_lambda_group = float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter))))
-                    log_lambda_mean[gid] = (it * log_lambda_mean[gid] + log_lambda_group) / (it + 1)
-                    if self.mmle_update == "paper_lambda_only":
-                        targets[gid] = -log_lambda_mean[gid]
-                    elif self.mmle_update == "legacy_gamma_minus_lambda":
-                        targets[gid] = float(np.log(max(gamma_sq[gid], self.jitter))) - log_lambda_mean[gid]
-                    else:
-                        raise ValueError(f"Unsupported mmle_update '{self.mmle_update}'.")
-
-                if self.share_group_hyper:
-                    aggregate = float(np.mean(targets))
-                    try:
-                        b_update = _digamma_inv(aggregate)
-                    except Exception:
-                        b_update = float(np.mean(b_vec))
-                    clipped = min(max(float(b_update), self.b_floor), self.b_max)
-                    b_vec.fill(clipped)
+            for gid, idxs in enumerate(group_arrays):
+                psi = _clip_positive_scalar(
+                    float(np.sum(np.minimum(beta[idxs] ** 2, _POS_CAP) / _clip_positive_array(lambda_sq[idxs], floor=self.jitter)))
+                    / _clip_positive_scalar(tau_sq, floor=self.jitter),
+                    floor=self.jitter,
+                )
+                group_half = 0.5 * float(group_sizes[gid])
+                shape_gap = float(abs(float(p_vec[gid]) - group_half))
+                if shape_gap < self.jitter:
+                    shape_gap = self.jitter
+                if group_half < float(p_vec[gid]):
+                    gamma_draw = _sample_gig_scalar(
+                        lambda_param=shape_gap,
+                        chi=psi,
+                        psi=max(2.0 * float(eta[gid]), self.jitter),
+                        rng=rng,
+                    )
                 else:
-                    for gid in range(G):
-                        try:
-                            b_update = _digamma_inv(targets[gid])
-                        except Exception:
-                            b_update = b_vec[gid]
-                        b_vec[gid] = min(max(float(b_update), self.b_floor), self.b_max)
+                    inv_draw = _sample_gig_scalar(
+                        lambda_param=shape_gap,
+                        chi=max(2.0 * float(eta[gid]), self.jitter),
+                        psi=psi,
+                        rng=rng,
+                    )
+                    gamma_draw = 1.0 / _clip_positive_scalar(float(inv_draw), floor=self.jitter)
+                gamma_sq[gid] = _clip_positive_scalar(float(gamma_draw), floor=self.jitter)
 
-            lambda_sq = _clip_positive_array(lambda_sq, floor=self.jitter)
+                lam_shape = max(float(q_vec[gid]) + 0.5, 1e-6)
+                lam_denom = _clip_positive_scalar(2.0 * tau_sq * gamma_sq[gid], floor=self.jitter)
+                for j in idxs:
+                    lam_scale = _clip_positive_scalar(float(eta[gid]) + min(float(beta[j] ** 2), _POS_CAP) / lam_denom, floor=self.jitter)
+                    try:
+                        draw = _sample_invgamma_scalar(lam_shape, lam_scale, rng, floor=self.jitter)
+                    except Exception:
+                        draw = lambda_sq[j]
+                    lambda_sq[j] = self._stabilize_lambda_scalar(float(draw))
+
+            eta.fill(1.0)
+            nu_scale = _clip_positive_scalar(1.0 / _clip_positive_scalar(tau_sq, floor=self.jitter) + 1.0 / _clip_positive_scalar(sigma_sq, floor=self.jitter), floor=self.jitter)
+            try:
+                nu = _sample_invgamma_scalar(1.0, nu_scale, rng, floor=self.jitter)
+            except Exception:
+                nu = nu_scale / 2.0
+            nu = _clip_positive_scalar(nu, floor=self.jitter)
+
+            lambda_sq = self._stabilize_lambda_array(lambda_sq)
             gamma_sq = _clip_positive_array(gamma_sq, floor=self.jitter)
-            b_vec = _clip_positive_array(b_vec, floor=self.b_floor, cap=self.b_max)
+            p_vec[:] = _clip_positive_array(p_vec, floor=self.jitter, cap=_POS_CAP)
+            q_vec[:] = _clip_positive_array(q_vec, floor=self.b_floor, cap=self.b_max)
 
-            if it >= self.n_burn_in and ((it - self.n_burn_in) % self.n_thin == 0):
+        for _ in range(self.n_burn_in):
+            _gibbs_step()
+            if method_eff == "mmle" and self.mmle_burnin_only:
+                if self.share_group_hyper:
+                    mean_targets = []
+                    for idxs in group_arrays:
+                        mean_targets.append(-float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter)))))
+                    try:
+                        shared_q = _digamma_inv(float(np.mean(mean_targets)))
+                    except Exception:
+                        shared_q = float(np.mean(q_vec))
+                    q_vec[:] = min(max(float(shared_q), self.b_floor), self.b_max)
+                else:
+                    for gid, idxs in enumerate(group_arrays):
+                        target = -float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter))))
+                        try:
+                            q_est = _digamma_inv(target)
+                        except Exception:
+                            q_est = float(q_vec[gid])
+                        q_vec[gid] = min(max(float(q_est), self.b_floor), self.b_max)
+                p_vec[:] = _clip_positive_array(np.full(G, 1.0 / max(float(n), 1.0), dtype=float), floor=self.jitter, cap=_POS_CAP)
+                q_vec[:] = _clip_positive_array(q_vec, floor=self.b_floor, cap=self.b_max)
+
+        if method_eff == "mmle" and (not self.mmle_burnin_only):
+            mmle_samp_size = max(20, int(self.mmle_samp_size))
+            terminate_mmle = float(self.mmle_tol_scale) * float(G)
+            delta_mmle = float("inf")
+            mmle_cnt = 0
+            lambda_mmle_store = np.zeros((mmle_samp_size, p), dtype=float)
+            max_mmle_iters = max(1, int(self.mmle_max_iters))
+            while delta_mmle >= terminate_mmle and mmle_cnt < max_mmle_iters:
+                _gibbs_step()
+                lambda_mmle_store[mmle_cnt % mmle_samp_size] = lambda_sq
+                mmle_cnt += 1
+                if mmle_cnt % mmle_samp_size == 0:
+                    q_new = q_vec.copy()
+                    p_new = np.full(G, 1.0 / max(float(n), 1.0), dtype=float)
+                    if self.share_group_hyper:
+                        mean_targets = []
+                        for idxs in group_arrays:
+                            mean_targets.append(-float(np.mean(np.log(np.maximum(lambda_mmle_store[:, idxs], self.jitter)))))
+                        try:
+                            shared_q = _digamma_inv(float(np.mean(mean_targets)))
+                        except Exception:
+                            shared_q = float(np.mean(q_vec))
+                        q_new[:] = min(max(float(shared_q), self.b_floor), self.b_max)
+                    else:
+                        for gid, idxs in enumerate(group_arrays):
+                            target = -float(np.mean(np.log(np.maximum(lambda_mmle_store[:, idxs], self.jitter))))
+                            try:
+                                est = _digamma_inv(target)
+                            except Exception:
+                                est = float(q_vec[gid])
+                            q_new[gid] = min(max(float(est), self.b_floor), self.b_max)
+                    delta_mmle = float(np.sum((q_new - q_vec) ** 2 + (p_new - p_vec) ** 2))
+                    q_vec[:] = _clip_positive_array(q_new, floor=self.b_floor, cap=self.b_max)
+                    p_vec[:] = _clip_positive_array(p_new, floor=self.jitter, cap=_POS_CAP)
+
+        sample_iters = kept * self.n_thin
+        for it in range(sample_iters):
+            _gibbs_step()
+            if it % self.n_thin == 0:
                 coef_draws[keep_idx] = beta
                 if alpha_draws is not None:
                     alpha_draws[keep_idx] = alpha
@@ -635,7 +879,7 @@ class GIGGRegression:
                 gamma2_draws[keep_idx] = gamma_sq
                 if lambda_draws is not None:
                     lambda_draws[keep_idx] = lambda_sq
-                b_draws[keep_idx] = b_vec
+                b_draws[keep_idx] = q_vec
                 keep_idx += 1
 
         self.coef_samples_ = coef_draws if kept else None
@@ -647,11 +891,15 @@ class GIGGRegression:
         self.sigma_samples_ = None if self.sigma2_samples_ is None else np.sqrt(np.maximum(self.sigma2_samples_, self.jitter))
         self.gamma_samples_ = None if self.gamma2_samples_ is None else np.sqrt(np.maximum(self.gamma2_samples_, self.jitter))
         self.lambda_samples_ = lambda_draws if lambda_draws is not None else None
-        self.b_samples_ = b_draws if kept else None
+        expose_b = not (method_eff == "mmle" and (not self.mmle_burnin_only))
+        self.b_samples_ = b_draws if (kept and expose_b) else None
         self.coef_mean_ = coef_draws.mean(axis=0) if kept else beta
         self.alpha_mean_ = None if alpha_draws is None else alpha_draws.mean(axis=0)
-        self.b_mean_ = b_draws.mean(axis=0) if kept else b_vec.copy()
-        self.intercept_ = 0.0
+        self.b_mean_ = b_draws.mean(axis=0) if kept else q_vec.copy()
+        if self.auto_intercept_ and self.alpha_mean_ is not None and self.alpha_mean_.size > 0:
+            self.intercept_ = float(self.alpha_mean_[0])
+        else:
+            self.intercept_ = 0.0
         return self
 
     def predict(self, X: np.ndarray, C: Optional[np.ndarray] = None) -> np.ndarray:

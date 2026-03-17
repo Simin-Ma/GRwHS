@@ -1,0 +1,5 @@
+
+useDynLib(gigg, .registration=TRUE)
+importFrom(Rcpp, evalCpp)
+export(gigg)
+importFrom("stats", "quantile")

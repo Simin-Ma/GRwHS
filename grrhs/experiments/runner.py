@@ -360,6 +360,7 @@ def _posterior_validation_config(config: Mapping[str, Any]) -> Dict[str, Any]:
         "tail_prob": float(ppc_cfg.get("tail_prob", 0.025)),
         "min_draws": max(20, int(ppc_cfg.get("min_draws", 200))),
         "fail_on_missing_draws": bool(ppc_cfg.get("fail_on_missing_draws", True)),
+        "use_train_data": bool(ppc_cfg.get("use_train_data", True)),
     }
     resolved["seed_stability"] = {
         "enabled": bool(seed_cfg.get("enabled", True)),
@@ -2255,12 +2256,13 @@ def _run_posterior_validation(
     if bool(sbc_cfg.get("enabled", True)):
         result["sbc"] = _run_sbc_validation(beta_truth=beta_truth, posterior_arrays=posterior_arrays, cfg=sbc_cfg)
     if bool(ppc_cfg.get("enabled", True)):
+        use_train_for_ppc = bool(ppc_cfg.get("use_train_data", True))
         result["ppc"] = _run_ppc_validation(
             task=task,
             model=model,
             posterior_arrays=posterior_arrays,
-            X_test=X_test_prediction,
-            y_test=y_test_eval,
+            X_test=X_train_model if use_train_for_ppc else X_test_prediction,
+            y_test=y_train if use_train_for_ppc else y_test_eval,
             cfg=ppc_cfg,
         )
     if bool(seed_cfg.get("enabled", True)):

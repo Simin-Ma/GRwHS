@@ -354,7 +354,7 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
         "inference.gibbs.seed",
         _get(cfg, "model.seed", _get(cfg, "seed", 0)),
     )
-    b_init = float(_get(cfg, "model.b_init", 1.0))
+    b_init = float(_get(cfg, "model.b_init", 0.5))
     b_floor = float(_get(cfg, "model.b_floor", 1e-3))
     b_max = float(_get(cfg, "model.b_max", 4.0))
     tau_sq_init = float(_get(cfg, "model.tau_sq_init", _get(cfg, "model.tau_init", _get(cfg, "model.tau_scale", 1.0))))
@@ -364,8 +364,15 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
     share_group_hyper = bool(_get(cfg, "model.share_group_hyper", False))
     mmle_update = str(_get(cfg, "model.mmle_update", "paper_lambda_only"))
     mmle_burnin_only = bool(_get(cfg, "model.mmle_burnin_only", True))
+    mmle_samp_size = int(_get(cfg, "model.mmle_samp_size", 1000))
+    mmle_tol_scale = float(_get(cfg, "model.mmle_tol_scale", 1e-4))
+    mmle_max_iters = int(_get(cfg, "model.mmle_max_iters", 50000))
+    fit_intercept = bool(_get(cfg, "model.fit_intercept", True))
     btrick = bool(_get(cfg, "model.btrick", False))
     stable_solve = bool(_get(cfg, "model.stable_solve", True))
+    lambda_constraint_mode = str(_get(cfg, "model.lambda_constraint_mode", "hard"))
+    lambda_cap = float(_get(cfg, "model.lambda_cap", 1e3))
+    lambda_soft_cap = float(_get(cfg, "model.lambda_soft_cap", lambda_cap))
 
     return GIGGRegression(
         method=method,
@@ -385,8 +392,15 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
         share_group_hyper=share_group_hyper,
         mmle_update=mmle_update,
         mmle_burnin_only=mmle_burnin_only,
+        mmle_samp_size=mmle_samp_size,
+        mmle_tol_scale=mmle_tol_scale,
+        mmle_max_iters=mmle_max_iters,
+        fit_intercept=fit_intercept,
         btrick=btrick,
         stable_solve=stable_solve,
+        lambda_constraint_mode=lambda_constraint_mode,
+        lambda_cap=lambda_cap,
+        lambda_soft_cap=lambda_soft_cap,
     )
 
 

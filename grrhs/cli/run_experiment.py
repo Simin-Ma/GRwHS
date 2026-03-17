@@ -191,6 +191,18 @@ def _auto_inject_tau0(resolved_cfg: Dict[str, Any], *, n: int | None = None, p: 
         )
     return resolved_cfg
 
+
+def _patch_windows_platform_machine() -> None:
+    """Avoid Windows WMI stalls triggered by platform.machine() in scipy imports."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import platform
+
+        platform.machine = lambda: "x86_64"  # type: ignore[assignment]
+    except Exception:
+        return
+
 def _maybe_call_runner(resolved_cfg: Dict[str, Any], run_dir: Path) -> Dict[str, Any]:
     """
     Delegates the actual experiment logic to grrhs.experiments.runner.run_experiment.
@@ -199,6 +211,7 @@ def _maybe_call_runner(resolved_cfg: Dict[str, Any], run_dir: Path) -> Dict[str,
     Returns:
         metrics dict (will be saved as metrics.json).
     """
+    _patch_windows_platform_machine()
     try:
         from grrhs.experiments.runner import run_experiment  # type: ignore
     except Exception as e:

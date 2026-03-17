@@ -153,29 +153,25 @@ $$\beta_j\mid\tau^2,\gamma_{g(j)}^2,\lambda_j^2,\sigma^2\sim
 
 2. **$\lambda_j^2\mid\cdot$ (Inverse-Gamma)**
    In code:
-   $$\lambda_j^2\sim\text{Inv-Gamma}\left(a=b_g+\tfrac12,\ \text{scale}=1+\frac{\beta_j^2}{2\tau^2\gamma_{g(j)}^2}\right)$$
+   $$\lambda_j^2\sim\text{Inv-Gamma}\left(a=b_g+\tfrac12,\ \text{scale}=\eta_g+\frac{\beta_j^2}{2\tau^2\gamma_{g(j)}^2}\right)$$
 
 3. **$\gamma_g^2\mid\cdot$ (GIG)**
    $$\gamma_g^2\sim\text{GIG}(\lambda_g,\chi_g,\psi_g)$$
-   $$\lambda_g=a_g-\frac{p_g}{2},\quad
-   \chi_g=\sum_{j\in g}\frac{\beta_j^2}{\lambda_j^2},\quad
-   \psi_g=2$$
+   $$\lambda_g=\left|a_g-\frac{p_g}{2}\right|,\quad
+   \chi_g=\frac{1}{\tau^2}\sum_{j\in g}\frac{\beta_j^2}{\lambda_j^2},\quad
+   \psi_g=2\eta_g$$
+   (implemented with the same reciprocal branch logic as CRAN when $p_g/2\gtrless a_g$).
 
-4. **$\tau^2\mid\cdot$ (slice in log-space)**
-   Code target:
-   $$\log\pi(v)=-\alpha_\tau v-\beta_\tau e^{-v},\ v=\log\tau^2$$
-   where
-   $$\alpha_\tau=\frac{p+1}{2},\quad
-   \beta_\tau=\frac12\sum_j\frac{\beta_j^2}{\gamma_{g(j)}^2\lambda_j^2}+\frac{1}{\xi_\tau}$$
+4. **$\tau^2\mid\cdot$ (Inverse-Gamma)**
+   $$\tau^2\sim\text{Inv-Gamma}\left(\frac{p+1}{2},\ \frac12\sum_j\frac{\beta_j^2}{\gamma_{g(j)}^2\lambda_j^2}+\frac{1}{\nu}\right)$$
 
 5. **$\sigma^2\mid\cdot$ (Inverse-Gamma)**
-   $$\sigma^2\sim\text{Inv-Gamma}(a_\sigma,\text{scale}_\sigma)$$
-   $$a_\sigma=\frac{n+p}{2}$$
-   $$\text{scale}_\sigma=
-   \frac12\|y-X\beta\|_2^2+
-   \frac12\sum_j\frac{\beta_j^2}{\tau^2\gamma_{g(j)}^2\lambda_j^2}+\frac{1}{\xi_\sigma}$$
+   $$\sigma^2\sim\text{Inv-Gamma}\left(\frac{n+1}{2},\ \frac12\|y-C\alpha-X\beta\|_2^2+\frac{1}{\nu}\right)$$
 
-6. **$b_g$ MMLE update (not sampled)**
+6. **$\nu\mid\cdot$ (Inverse-Gamma augmentation)**
+   $$\nu\sim\text{Inv-Gamma}\left(1,\ \frac{1}{\tau^2}+\frac{1}{\sigma^2}\right)$$
+
+7. **$b_g$ MMLE update (not sampled)**
    With `paper_lambda_only`:
    $$b_g^{(l+1)}=\psi_0^{-1}\left(-\mathbb E\left[\frac{1}{p_g}\sum_{j\in g}\log\lambda_{gj}^2\mid y\right]\right)$$
    In code, this is approximated by running averages and clipped to `[0.001, 4.0]`.
@@ -391,6 +387,10 @@ Check statistics:
 - posterior predictive p-value for sample mean (`p_mean`)
 - posterior predictive p-value for sample variance (`p_var`)
 - pass interval: `[tail_prob, 1-tail_prob]` (default tail `0.025`)
+
+Default execution mode:
+- `ppc.use_train_data = true` (posterior check on training-scale data by default).
+- Can be switched to held-out checks by setting `ppc.use_train_data = false`.
 
 ### 9.3 Multi-initialization / seed stability
 
