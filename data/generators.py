@@ -332,6 +332,38 @@ def _draw_design(
 
         low = max(in_low, rho_out)
         high = in_high
+        if high < low:
+            raise GeneratorError("group_block_random received invalid rho ranges after rho_out draw.")
+
+        # Optional per-group ranges. Supports:
+        # - mapping: {"0": [0.8, 0.95], "1": [0.2, 0.4], ...}
+        # - sequence aligned with group id: [[0.8,0.95], [0.2,0.4], ...]
+        per_group_ranges: Dict[int, tuple[float, float]] = {}
+        group_ranges_raw = corr_cfg.get("rho_in_group_ranges")
+        if isinstance(group_ranges_raw, Mapping):
+            for gid_raw, val in group_ranges_raw.items():
+                gid = int(gid_raw)
+                if gid < 0 or gid >= int(group_count):
+                    raise GeneratorError(f"rho_in_group_ranges key {gid} is out of bounds for group_count={group_count}.")
+                gl, gh = _parse_range(val, f"rho_in_group_ranges[{gid}]")
+                if not (0.0 <= gl <= gh < 1.0):
+                    raise GeneratorError(f"rho_in_group_ranges[{gid}] must lie in [0, 1).")
+                per_group_ranges[gid] = (gl, gh)
+        elif isinstance(group_ranges_raw, Sequence) and not isinstance(group_ranges_raw, (str, bytes)):
+            for gid, val in enumerate(group_ranges_raw):
+                if gid >= int(group_count):
+                    break
+                gl, gh = _parse_range(val, f"rho_in_group_ranges[{gid}]")
+                if not (0.0 <= gl <= gh < 1.0):
+                    raise GeneratorError(f"rho_in_group_ranges[{gid}] must lie in [0, 1).")
+                per_group_ranges[int(gid)] = (gl, gh)
+
+        # Optional within-group mixed-correlation pattern.
+        mix_fraction = float(corr_cfg.get("within_group_mix_fraction", 0.0))
+        mix_fraction = min(max(mix_fraction, 0.0), 1.0)
+        strong_band_raw = corr_cfg.get("within_group_strong_range")
+        weak_band_raw = corr_cfg.get("within_group_weak_range")
+
         # Assign per-feature within-group correlation targets to create wide dispersion
         # inside every group (some weak, some strong).
         rho_in_by_feature = np.empty(p, dtype=float)
@@ -339,10 +371,45 @@ def _draw_design(
             members = np.where(primary_group == gid)[0]
             if members.size == 0:
                 continue
-            if members.size == 1:
-                rho_vals = np.array([rng.uniform(low, high)], dtype=float)
+
+            gid_low, gid_high = per_group_ranges.get(int(gid), (low, high))
+            gid_low = max(gid_low, rho_out)
+            if gid_high < gid_low:
+                raise GeneratorError(f"group {gid} rho range [{gid_low}, {gid_high}] is invalid after rho_out adjustment.")
+
+            if strong_band_raw is not None:
+                strong_low, strong_high = _parse_range(strong_band_raw, "within_group_strong_range")
             else:
-                rho_vals = np.linspace(low, high, members.size, dtype=float)
+                strong_low = gid_low + 0.65 * (gid_high - gid_low)
+                strong_high = gid_high
+
+            if weak_band_raw is not None:
+                weak_low, weak_high = _parse_range(weak_band_raw, "within_group_weak_range")
+            else:
+                weak_low = gid_low
+                weak_high = gid_low + 0.35 * (gid_high - gid_low)
+
+            strong_low = min(max(strong_low, gid_low), gid_high)
+            strong_high = min(max(strong_high, strong_low), gid_high)
+            weak_low = min(max(weak_low, gid_low), gid_high)
+            weak_high = min(max(weak_high, weak_low), gid_high)
+
+            if members.size == 1:
+                rho_vals = np.array([rng.uniform(gid_low, gid_high)], dtype=float)
+            elif mix_fraction > 0.0:
+                strong_count = int(round(mix_fraction * members.size))
+                strong_count = min(max(strong_count, 1), int(members.size - 1))
+                strong_members = rng.choice(members, size=strong_count, replace=False)
+                strong_set = set(int(v) for v in np.asarray(strong_members, dtype=int).tolist())
+                weak_members = np.array([m for m in members if int(m) not in strong_set], dtype=int)
+                member_to_pos = {int(m): idx for idx, m in enumerate(members.tolist())}
+                rho_vals = np.empty(int(members.size), dtype=float)
+                for m in strong_members:
+                    rho_vals[member_to_pos[int(m)]] = rng.uniform(strong_low, strong_high)
+                for m in weak_members:
+                    rho_vals[member_to_pos[int(m)]] = rng.uniform(weak_low, weak_high)
+            else:
+                rho_vals = np.linspace(gid_low, gid_high, members.size, dtype=float)
                 rng.shuffle(rho_vals)
             rho_in_by_feature[members] = rho_vals
 
