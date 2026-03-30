@@ -333,6 +333,7 @@ class GIGGRegression:
     mmle_enabled: Optional[bool] = None
     mmle_update: str = "paper_lambda_only"
     mmle_burnin_only: bool = True
+    force_a_1_over_n: bool = True
     share_group_hyper: bool = False
     mmle_samp_size: int = 1000
     mmle_tol_scale: float = 1e-4
@@ -829,7 +830,14 @@ class GIGGRegression:
                         except Exception:
                             q_est = float(q_vec[gid])
                         q_vec[gid] = min(max(float(q_est), self.b_floor), self.b_max)
-                p_vec[:] = _clip_positive_array(np.full(G, 1.0 / max(float(n), 1.0), dtype=float), floor=self.jitter, cap=_POS_CAP)
+                if self.force_a_1_over_n:
+                    p_vec[:] = _clip_positive_array(
+                        np.full(G, 1.0 / max(float(n), 1.0), dtype=float),
+                        floor=self.jitter,
+                        cap=_POS_CAP,
+                    )
+                else:
+                    p_vec[:] = _clip_positive_array(a_vec, floor=self.jitter, cap=_POS_CAP)
                 q_vec[:] = _clip_positive_array(q_vec, floor=self.b_floor, cap=self.b_max)
 
         if method_eff == "mmle" and (not self.mmle_burnin_only):
@@ -845,7 +853,10 @@ class GIGGRegression:
                 mmle_cnt += 1
                 if mmle_cnt % mmle_samp_size == 0:
                     q_new = q_vec.copy()
-                    p_new = np.full(G, 1.0 / max(float(n), 1.0), dtype=float)
+                    if self.force_a_1_over_n:
+                        p_new = np.full(G, 1.0 / max(float(n), 1.0), dtype=float)
+                    else:
+                        p_new = a_vec.copy()
                     if self.share_group_hyper:
                         mean_targets = []
                         for idxs in group_arrays:

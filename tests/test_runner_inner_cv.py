@@ -91,7 +91,7 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
 
     attempts = {"count": 0}
 
-    def fake_instantiate_model(config, groups, p):
+    def fake_instantiate_model(config, groups, p, *, apply_bayesian_budget=True):
         attempts["count"] += 1
         return DummyModel()
 
@@ -103,6 +103,25 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
                 "mcse_over_sd_max": 0.22,
                 "diagnostic_valid": True,
             }
+            ,
+            "tau": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "phi": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "lambda": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
         },
         {
             "beta": {
@@ -111,6 +130,25 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
                 "mcse_over_sd_max": 0.09,
                 "diagnostic_valid": True,
             }
+            ,
+            "tau": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "phi": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "lambda": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
         },
     ]
 
@@ -327,6 +365,25 @@ def test_run_fold_marks_invalid_when_posterior_validation_fails(monkeypatch, tmp
                 "mcse_over_sd_max": 0.02,
                 "diagnostic_valid": True,
             }
+            ,
+            "tau": {
+                "rhat_max": 1.0,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "phi": {
+                "rhat_max": 1.0,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "lambda": {
+                "rhat_max": 1.0,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
         },
     )
     monkeypatch.setattr(

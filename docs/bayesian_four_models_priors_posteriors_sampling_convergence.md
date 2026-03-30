@@ -1,433 +1,490 @@
-﻿# Three Bayesian Regression Models: Priors, Posteriors, Sampling, Convergence, and Budgets (Code-Aligned)
+# Four Bayesian Regression Models: Priors, Posteriors, Sampling, Convergence, and Budgets (Code-Aligned)
 
-> Purpose: This document is strictly aligned with the current repository implementation. It summarizes, for three Bayesian regression models, the prior distributions, posterior (or conditional posterior) forms, exact sampling logic, convergence checks and thresholds, and concrete sampling-budget numbers.
+> Purpose: This document is strictly aligned with the current repository implementation. It summarizes (i) the priors, (ii) posterior / conditional-posterior forms actually sampled, (iii) exact sampling logic, (iv) convergence checks + thresholds, and (v) concrete sampling-budget numbers for the Bayesian regression models implemented in this repo.
 >
-> Source files:
-> - `grrhs/models/grrhs_gibbs.py`
-> - `grrhs/models/gigg_regression.py`
-> - `grrhs/models/baselines/models.py` (`RegularizedHorseshoeRegression`)
-> - `grrhs/diagnostics/convergence.py`
-> - `grrhs/experiments/runner.py`
-> - `configs/base.yaml`
-> - `configs/methods/grrhs_regression.yaml`
-> - `configs/methods/gigg.yaml`
-> - `configs/methods/regularized_horseshoe.yaml`
+> Scope note (runner gates):
+> - The runner’s “Bayesian fairness / convergence / posterior_validation” gates only apply when `model.name` is one of:
+>   `grrhs_gibbs`, `gigg` / `gigg_regression`, `regularized_horseshoe` / `rhs` / `regularised_horseshoe`
+>   (see `grrhs/experiments/runner.py:_BAYESIAN_MODEL_NAMES`).
+> - `grrhs_svi` (variational) is Bayesian (explicit priors) but is **not** treated as “Bayesian” by those gates unless `_BAYESIAN_MODEL_NAMES` is expanded.
+>
+> Code-as-truth sources:
+> - Models: `grrhs/models/grrhs_gibbs.py`, `grrhs/models/gigg_regression.py`, `grrhs/models/grrhs_svi_numpyro.py`,
+>   `grrhs/models/baselines/models.py`, `grrhs/models/baselines/stan/rhs_gaussian_regression.stan`
+> - Runner + checks: `grrhs/experiments/runner.py`, `grrhs/experiments/registry.py`, `grrhs/diagnostics/convergence.py`
+> - Defaults: `configs/base.yaml`, `configs/methods/grrhs_regression.yaml`, `configs/methods/gigg.yaml`, `configs/methods/regularized_horseshoe.yaml`
 
 ---
 
 ## 0. Notation
 
 - Data: $X \in \mathbb{R}^{n \times p},\ y \in \mathbb{R}^n$
-- Group map: $g(j) \in \{1,\dots,G\}$, group size $p_g$
+- Groups: $g(j)\in\{1,\dots,G\}$, group size $p_g$
 - Local scale: $\lambda_j > 0$
-- Group scale: $\phi_g > 0$ (in GIGG, $\gamma_g$)
+- Group scale: $\phi_g > 0$ (in GIGG, group scale is $\gamma_g$)
 - Global scale: $\tau > 0$
-- Noise scale (regression): $\sigma > 0$
-- Regularized-HS local scale:
-  $$\tilde\lambda_j = \frac{c\lambda_j}{\sqrt{c^2 + \tau^2\lambda_j^2}}$$
+- Noise scale: $\sigma > 0$
+- Regularized horseshoe local scale:
+  $$\tilde\lambda_j=\frac{c\lambda_j}{\sqrt{c^2+\tau^2\lambda_j^2}}$$
 
 ---
 
-## 1) GRRHS_Gibbs (Regression)
+## 1) `GRRHS_Gibbs` (Gaussian regression; Gibbs + slice)
 
-### 1.1 Parameters and priors
+Implementation: `grrhs/models/grrhs_gibbs.py:GRRHS_Gibbs`.
 
-Model defaults:
-- $c=1.0,\ \tau_0=0.1,\ \eta=0.5,\ s_0=1.0$
-- `iters=2000, burnin=iters//2, thin=1, num_chains=1`
+### 1.1 Parameters and defaults (code + method YAML)
 
-Method config (`configs/methods/grrhs_regression.yaml`):
-- `c=1.0, eta=0.5, s0=1.0, iters=2000`
-- `burn_in=1000, thin=1, num_chains=4`
-- `tau.mode=calibrated, p0=20, sigma_reference=1.0`
+Packages used:
+- NumPy for linear algebra + RNG.
+- No external MCMC engine (slice sampling + GIG draws are implemented inside `GRRHS_Gibbs`).
 
-Priors:
+Code defaults:
+- Hyperparameters: `c=1.0`, `tau0=0.1`, `eta=0.5`, `s0=1.0`, `use_groups=true`
+- Sampling: `iters=2000`, `burnin=iters//2`, `thin=1`, `num_chains=1`, `seed=42`
+- Slice samplers: local `slice_w=1.0, slice_m=100`; global tau `tau_slice_w=0.35, tau_slice_m=200`
+- Numerical: `jitter=1e-10`
+
+Method config: `configs/methods/grrhs_regression.yaml`
+- `model.c=1.0, model.eta=0.5, model.s0=1.0, model.iters=2000`
+- `inference.gibbs.burn_in=1000, thin=1, num_chains=4, jitter=1e-8, seed=321`
+- `inference.gibbs.tau_slice_w=0.8, tau_slice_m=1200`
+- `model.tau.mode=calibrated, target=coefficients, p0.value=20, sigma_reference=1.0`
+
+Budget note (default repo behavior):
+- `configs/base.yaml` sets `experiments.bayesian_fairness.enforce_shared_sampling_budget: true`, so the runner overwrites
+  burn-in / total iterations / chain counts for Bayesian models (see §7).
+
+### 1.2 Priors (as implemented)
+
 1. $\tau \sim \text{Half-Cauchy}(0,\tau_0)$
 2. $\lambda_j \sim \text{Half-Cauchy}(0,1)$
-3. Group scale (if grouped shrinkage is enabled):
-   $$\phi_g \sim \text{Half-Normal}(\eta_g),\quad \eta_g=\frac{\eta}{\sqrt{p_g}}$$
-4. Noise scale:
-   $$\sigma \sim \text{Half-Cauchy}(0,s_0)$$
-5. Coefficient prior (conditional):
-   $$\beta_j \mid \tau,\lambda_j,\phi_{g(j)},\sigma \sim \mathcal{N}\left(0,\phi_{g(j)}^2\tau^2\tilde\lambda_j^2\sigma^2\right)$$
+3. If `use_groups=true`: $\phi_g \sim \text{Half-Normal}(\eta_g)$ with $\eta_g=\eta/\sqrt{p_g}$
+4. $\sigma \sim \text{Half-Cauchy}(0,s_0)$
+5. Conditional coefficient prior:
+   $$\beta_j\mid\tau,\lambda_j,\phi_{g(j)},\sigma \sim \mathcal N\!\left(0,\ \phi_{g(j)}^2\tau^2\tilde\lambda_j^2\sigma^2\right)$$
 
-### 1.2 Conditional posterior shapes (as implemented)
+### 1.3 Conditional posteriors sampled (exact code shapes)
 
-1. **$\beta \mid \cdot$ (Gaussian, closed form)**
-   - Prior covariance $C_0=\mathrm{diag}(v_j)$ with
-     $$v_j=\phi_{g(j)}^2\tau^2\tilde\lambda_j^2\sigma^2$$
-   - Posterior precision:
-     $$P=C_0^{-1}+\frac{X^TX}{\sigma^2}$$
-   - Posterior mean:
-     $$\mu=P^{-1}\frac{X^Ty}{\sigma^2}$$
+1. **$\beta\mid\cdot$ (Gaussian)**
+   - $C_0=\mathrm{diag}(v_j)$ with $v_j=\phi_{g(j)}^2\tau^2\tilde\lambda_j^2\sigma^2$
+   - $P=C_0^{-1}+\dfrac{X^TX}{\sigma^2}$, $\ \mu=P^{-1}\dfrac{X^Ty}{\sigma^2}$
    - Draw: $\beta\sim\mathcal N(\mu,P^{-1})$
+   - Implementation: Cholesky on the $p\times p$ precision in `_sample_beta_conditional`.
 
-2. **$\lambda_j \mid \cdot$ (non-conjugate, slice on $u_j=\log\lambda_j$)**
-   Unnormalized target:
-   $$\log\pi(u_j\mid\cdot)= -\log\tilde\lambda_j
-   -\frac{\beta_j^2}{2\phi_{g(j)}^2\tau^2\tilde\lambda_j^2\sigma^2}
-   -\log(1+\lambda_j^2)+u_j$$
-   where $\lambda_j=e^{u_j}$.
+2. **$\lambda_j\mid\cdot$ (slice on $u_j=\log\lambda_j$)**
+   $$\log\pi(u_j\mid\cdot)=-\log\tilde\lambda_j-\frac{\beta_j^2}{2\phi_{g(j)}^2\tau^2\tilde\lambda_j^2\sigma^2}-\log(1+\lambda_j^2)+u_j,\quad \lambda_j=e^{u_j}$$
 
-3. **$\phi_g^2 \mid \cdot$ (GIG)**
+3. **$\phi_g^2\mid\cdot$ (GIG; then apply adaptive floor)**
    Let $\theta_g=\phi_g^2$:
    $$\theta_g\sim\text{GIG}(\lambda_g,\chi_g,\psi_g)$$
    $$\lambda_g=\frac12-\frac{p_g}{2},\quad
    \chi_g=\frac{1}{\tau^2\sigma^2}\sum_{j\in g}\frac{\beta_j^2}{\tilde\lambda_j^2},\quad
    \psi_g=\frac{1}{\eta_g^2}$$
-   then $\phi_g=\sqrt{\theta_g}$.
+   Then $\phi_g=\sqrt{\theta_g}$ and code enforces a floor that increases with $\tau$ during burn-in.
 
-4. **$\tau \mid \cdot$ (non-conjugate, slice on $v=\log\tau$)**
-   Unnormalized target:
+4. **$\tau\mid\cdot$ (slice on $v=\log\tau$)**
    $$\log\pi(v\mid\cdot)= -p\log\tau-\sum_j\log\tilde\lambda_j
    -\sum_j\frac{\beta_j^2}{2\phi_{g(j)}^2\tau^2\tilde\lambda_j^2\sigma^2}
    -\log\left(1+\frac{\tau^2}{\tau_0^2}\right)+v-\alpha_\tau\tau^2$$
-   with $\alpha_\tau=\texttt{\_TAU\_PENALTY}\times\texttt{burnin\_w}$ and `_TAU_PENALTY=5e-5`.
+   where $\alpha_\tau=\texttt{\_TAU\_PENALTY}\times\texttt{burnin\_w}$ and `_TAU_PENALTY=5e-5`. After sampling, code caps `tau <= _TAU_MAX` with `_TAU_MAX=5e3`.
 
-5. **$\sigma^2 \mid \cdot$ (Inverse-Gamma)**
-   $$\sigma^2\sim\text{Inv-Gamma}(\alpha,\beta)$$
-   $$\alpha=\frac{n+p+1}{2}$$
-   $$\beta=\frac12\|y-X\beta\|_2^2 +
-   \frac12\sum_j\frac{\beta_j^2}{\phi_{g(j)}^2\tau^2\tilde\lambda_j^2}+
-   \frac{1}{\xi_\sigma}$$
+5. **$\sigma^2\mid\cdot$ (inverse-gamma; Half-Cauchy via auxiliary refresh)**
+   $$\sigma^2\sim\text{Inv-Gamma}\left(\alpha=\frac{n+p+1}{2},\ \beta=\frac12\|y-X\beta\|_2^2+\frac12\sum_j\frac{\beta_j^2}{\phi_{g(j)}^2\tau^2\tilde\lambda_j^2}+\frac{1}{\xi_\sigma}\right)$$
+   $$\xi_\sigma\mid\sigma^2\sim\text{Inv-Gamma}\left(1,\ \frac{1}{s_0^2}+\frac{1}{\sigma^2}\right)$$
 
-### 1.3 Per-iteration sampling order
+### 1.4 Sampling order (one chain)
 
-1. Compute $\tilde\lambda$, $v_j$, and $d_j=1/v_j$
-2. Sample $\beta\mid\cdot$
-3. Slice-sample each $\lambda_j$
-4. Sample $\phi_g$ via GIG
-5. Slice-sample $\tau$
-6. Sample $\sigma^2$
-7. After burn-in, store draws with thinning
+Per iteration (see the `for it in ...` loop in `fit`):
+1. Compute $\tilde\lambda$, prior variances `v_prior`
+2. Sample $\beta$
+3. Slice-sample each $\lambda_j$ (on $u_j=\log\lambda_j$)
+4. Refresh per-$j$ auxiliary `xi_j` (inverse-gamma; currently not used elsewhere in the update)
+5. Sample $\phi_g$ via GIG (and apply adaptive floor)
+6. Slice-sample $\tau$ (on $v=\log\tau$), cap at `_TAU_MAX`
+7. Refresh auxiliary `xi_tau` (inverse-gamma; currently not used elsewhere in the update)
+8. Sample $\sigma^2$ and refresh $\xi_\sigma$; cap $\sigma^2$ at `_SIGMA2_FACTOR * var(y)`
+9. Store draws after burn-in with thinning
 
-### 1.4 Numerical constants in code
+Multi-chain:
+- When `num_chains>1`, the class spawns independent single-chain fits (seeds `seed + chain_idx`) via `ProcessPoolExecutor`,
+  then stacks arrays as `(chains, draws, ...)`.
 
-- `_PHI_EPS=1e-12`
-- `_PHI_BASE_FLOOR=2e-5`
-- `_PHI_ADAPT_COEFF=5e-7`
-- `_FLOOR_MIN_WEIGHT=0.002`
-- `_TAU_MAX=5e3`
-- `_SIGMA2_FACTOR=2.0`
-- `_BURNIN_WARM=1000`
-- `_RIDGE_ALPHA=1e-3`
-- `_TAU_PENALTY=5e-5`
+### 1.5 Key numerical constants
 
-Round-2 stability controls:
-- `inference.gibbs.tau_slice_w`
-- `inference.gibbs.tau_slice_m`
-- These tune the global-scale (`tau`) slice sampler separately from local-scale (`lambda`) updates.
+From `grrhs/models/grrhs_gibbs.py`:
+- `_PHI_EPS=1e-12`, `_PHI_BASE_FLOOR=2e-5`, `_PHI_ADAPT_COEFF=5e-7`, `_FLOOR_MIN_WEIGHT=0.002`
+- `_TAU_MAX=5e3`, `_TAU_PENALTY=5e-5`
+- `_SIGMA2_FACTOR=2.0`, `_BURNIN_WARM=1000`, `_RIDGE_ALPHA=1e-3`
 
 ---
 
-## 2) GIGGRegression
+## 2) `GIGGRegression` (Gaussian regression; Gibbs)
 
-### 2.1 Parameters and hierarchy
+Implementation (default): `grrhs/models/gigg_regression.py:GIGGRegression` (pure NumPy Gibbs; repo-native).
 
-Model defaults:
-- `method="mmle", n_burn_in=500, n_samples=1000, n_thin=1, jitter=1e-8`
-- `b_init=0.5, b_floor=1e-3, b_max=4.0`
-- `tau_sq_init=1.0, sigma_sq_init=1.0`
-- `a_value=None -> mmle: a_g=1/n, fixed: a_g=0.5`
-- `mmle_update="paper_lambda_only"`
-- Supports CRAN-style joint adjustment covariates (`C`) with explicit `alpha` block sampling.
+Optional CRAN-compatible backend (Python port of CRAN `gigg` v0.2.1):
+- `grrhs/models/gigg_cran.py:GIGGRegressionCRAN` (select via `model.backend: cran` for `model.name: gigg` / `gigg_regression`)
+- Details: `docs/gigg_cran_python_port.md`
 
-Method config (`configs/methods/gigg.yaml`):
-- `method="mmle", n_samples=1000, burn_in=500, thin=1, num_chains=4`
-- `b_init=0.5, b_floor=0.001, b_max=4.0`
-- `tau_sq_init=1.0, sigma_sq_init=1.0`
-- `store_lambda=true` (enabled for complete convergence-block diagnostics)
-- `mmle_update=paper_lambda_only`
-- `mmle_burnin_only=true` (MMLE updates applied during burn-in, then frozen in sampling phase)
-- `btrick=true` now activates Bhattacharya et al. (2016) fast Gaussian beta-draw branch (`n x n` system), matching CRAN `btrick` intent.
+### 2.1 Parameters and defaults (code + method YAML)
 
-Variance hierarchy:
-$$\beta_j\mid\tau^2,\gamma_{g(j)}^2,\lambda_j^2,\sigma^2\sim
-\mathcal N\left(0,\tau^2\gamma_{g(j)}^2\lambda_j^2\sigma^2\right)$$
+Packages used:
+- `GIGGRegression`: NumPy-only (no `scipy.stats`; scalar samplers are implemented directly for speed/portability).
+- `GIGGRegressionCRAN`: NumPy-only (direct algorithmic port; includes a rejection-based scalar GIG sampler).
 
-### 2.2 Conditional posterior shapes
+Code defaults:
+- `method="mmle"`, `n_burn_in=500`, `n_samples=1000`, `n_thin=1`, `jitter=1e-8`, `seed=0`, `num_chains=1`
+- `a_value=None`, `a_fixed_default=0.5`, `b_init=0.5`, `b_floor=1e-3`, `b_max=4.0`
+- `tau_sq_init=1.0`, `sigma_sq_init=1.0`
+- `mmle_update="paper_lambda_only"`, `mmle_burnin_only=true`
+- `force_a_1_over_n=true` (in MMLE mode, keep $a_g=1/n$ as in the CRAN defaults; set false to use user-provided `a_value`)
+- `fit_intercept=true` (if `C` is not passed, code uses `C=1` and samples `alpha`)
+- `store_lambda=true`, `btrick=false`, `stable_solve=true`
+- `lambda_constraint_mode="hard"`, caps via `lambda_cap` / `lambda_soft_cap`
 
-1. **$\beta\mid\cdot$ (Gaussian)**
-   - Precision: $X^TX+\mathrm{diag}(1/(\tau^2\gamma_{g(j)}^2\lambda_j^2))$
-   - Sampled via Cholesky Gaussian draw
+Method config: `configs/methods/gigg.yaml`
+- `model.method="fixed"`, `model.mmle_enabled=false` (so MMLE is off)
+- `model.n_samples=1000`, `inference.gibbs.burn_in=500`, `inference.gibbs.thin=1`, `inference.gibbs.num_chains=4`
+- `model.store_lambda=true`, `model.stable_solve=true`, `model.btrick=false`
 
-2. **$\lambda_j^2\mid\cdot$ (Inverse-Gamma)**
-   In code:
-   $$\lambda_j^2\sim\text{Inv-Gamma}\left(a=b_g+\tfrac12,\ \text{scale}=\eta_g+\frac{\beta_j^2}{2\tau^2\gamma_{g(j)}^2}\right)$$
+Budget note:
+- As with GRRHS, the runner overwrites burn-in / draws / chain counts under `experiments.bayesian_fairness` (see §7).
 
-3. **$\gamma_g^2\mid\cdot$ (GIG)**
-   $$\gamma_g^2\sim\text{GIG}(\lambda_g,\chi_g,\psi_g)$$
-   $$\lambda_g=\left|a_g-\frac{p_g}{2}\right|,\quad
-   \chi_g=\frac{1}{\tau^2}\sum_{j\in g}\frac{\beta_j^2}{\lambda_j^2},\quad
-   \psi_g=2\eta_g$$
-   (implemented with the same reciprocal branch logic as CRAN when $p_g/2\gtrless a_g$).
+### 2.2 Hierarchy implied by the sampled $\beta$-block
 
-4. **$\tau^2\mid\cdot$ (Inverse-Gamma)**
-   $$\tau^2\sim\text{Inv-Gamma}\left(\frac{p+1}{2},\ \frac12\sum_j\frac{\beta_j^2}{\gamma_{g(j)}^2\lambda_j^2}+\frac{1}{\nu}\right)$$
+The sampled $\beta$ conditional corresponds to:
+$$y=C\alpha + X\beta + \varepsilon,\quad \varepsilon\sim\mathcal N(0,\sigma^2I)$$
+$$\beta\mid\sigma^2,\tau^2,\gamma^2,\lambda^2\sim\mathcal N\!\left(0,\ \sigma^2\,\mathrm{diag}(\tau^2\gamma_{g(j)}^2\lambda_j^2)\right)$$
+where `local_scale[j] = tau_sq * gamma_sq[group_id[j]] * lambda_sq[j]`.
 
-5. **$\sigma^2\mid\cdot$ (Inverse-Gamma)**
-   $$\sigma^2\sim\text{Inv-Gamma}\left(\frac{n+1}{2},\ \frac12\|y-C\alpha-X\beta\|_2^2+\frac{1}{\nu}\right)$$
+### 2.3 Conditional updates (exact code forms)
 
-6. **$\nu\mid\cdot$ (Inverse-Gamma augmentation)**
+One Gibbs step (`_gibbs_step`) updates:
+
+1. **$\alpha\mid\cdot$ (Gaussian; only if `C` has columns)**
+   - Uses `precision_alpha = C^T C + I * jitter`
+   - Draw: $\alpha = \mu_\alpha + \sqrt{\sigma^2}\,\epsilon$ via Cholesky solve.
+
+2. **$\beta\mid\cdot$ (Gaussian)**
+   - $y_\text{tilde}=y-C\alpha$
+   - Precision: $X^TX+\mathrm{diag}(1/\text{local\_scale})$
+   - Mean: $(X^TX+\mathrm{diag}(1/\text{local\_scale}))^{-1}X^Ty_\text{tilde}$
+   - Covariance: $\sigma^2(\cdot)^{-1}$
+   - If `btrick=true`, uses the Bhattacharya et al. (2016) $n\times n$ draw.
+
+3. **$\tau^2\mid\cdot$ (inverse-gamma)**
+   - Shape: `tau_shape = 0.5*(p+1)`
+   - Code uses
+     `tau_rate = 0.5 * tau_sq * sum(beta^2 / local_scale) + 1/nu`
+     (which simplifies because `local_scale` contains `tau_sq`).
+
+4. **$\sigma^2\mid\cdot$ (inverse-gamma)**
+   - Shape: `sigma_shape = 0.5*(n+1)`
+   - Scale: `0.5 * ||y - X beta - C alpha||^2 + 1/nu`
+
+5. **Per group $g$: $\gamma_g^2\mid\cdot$ (GIG with reciprocal branch)**
+   - Code computes
+     $$\psi_g^\ast=\frac{1}{\tau^2}\sum_{j\in g}\frac{\beta_j^2}{\lambda_j^2}$$
+   - Then samples either $\gamma_g^2$ or $(\gamma_g^2)^{-1}$ with swapped GIG parameters depending on whether $p_g/2$ is smaller/larger than `p_vec[g]` (which depends on `method` / `a_value` / `a_fixed_default`).
+
+6. **Per coefficient: $\lambda_j^2\mid\cdot$ (inverse-gamma)**
+   - Shape: `lam_shape = q_vec[g] + 0.5` (where `q_vec` is the per-group $q_g$, initialized from `b_init`)
+   - Scale: `eta[g] + beta[j]^2 / (2*tau_sq*gamma_sq[g])`
+   - Implementation then enforces positivity and optional capping via `lambda_constraint_mode`.
+   - `eta[g]` is set to `1.0` each step (`eta.fill(1.0)`).
+
+7. **$\nu\mid\cdot$ (inverse-gamma augmentation)**
    $$\nu\sim\text{Inv-Gamma}\left(1,\ \frac{1}{\tau^2}+\frac{1}{\sigma^2}\right)$$
 
-7. **$b_g$ MMLE update (not sampled)**
-   With `paper_lambda_only`:
-   $$b_g^{(l+1)}=\psi_0^{-1}\left(-\mathbb E\left[\frac{1}{p_g}\sum_{j\in g}\log\lambda_{gj}^2\mid y\right]\right)$$
-   In code, this is approximated by running averages and clipped to `[0.001, 4.0]`.
+8. **MMLE update of $q_g$ (only when `method="mmle"`)**
+   - Uses `_digamma_inv` on targets derived from `-mean(log(lambda_sq))`, with clipping to `[b_floor, b_max]`.
+   - If `method="fixed"` (repo default), $q_g$ stays fixed at its initialization.
 
-### 2.3 Sampling order
+### 2.4 Sampling schedule
 
-Per iteration:
-1. Sample $\beta$
-2. Sample $\lambda_j^2$
-3. Sample $\gamma_g^2$
-4. Slice-sample $\tau^2$
-5. Sample $\sigma^2$
-6. MMLE update of $b_g$
-7. Save post burn-in, with thinning
+- Burn-in: run `_gibbs_step` exactly `n_burn_in` times.
+- Sampling: run `_gibbs_step` exactly `n_samples * n_thin` times and store every `n_thin`.
+- Multi-chain: same pattern as GRRHS (`ProcessPoolExecutor`, seeds `seed + chain_idx`, stack to `(chains, draws, ...)`).
+
+### 2.5 CRAN parity note (answering “is my GIGG logic the CRAN logic?”)
+
+- If you run `model.name: gigg` with the default backend, you are running `GIGGRegression` (repo-native Gibbs), which is *conceptually aligned* with a GIGG hierarchy but is not intended as a line-by-line CRAN clone.
+- If you want the **same update order / helper routines / sampler structure** as the CRAN package you pasted (v0.2.1), use `model.backend: cran` to run `GIGGRegressionCRAN` (see `docs/gigg_cran_python_port.md`).
 
 ---
 
-## 3) RegularizedHorseshoeRegression (RHS)
+## 3) `RegularizedHorseshoeRegression` (Gaussian RHS; CmdStan HMC/NUTS)
 
-### 3.1 Priors (Stan Appendix C.2 model for gaussian RHS)
+Implementation: `grrhs/models/baselines/models.py:RegularizedHorseshoeRegression` + Stan file `grrhs/models/baselines/stan/rhs_gaussian_regression.stan`.
 
-Method config (`configs/methods/regularized_horseshoe.yaml`):
+### 3.1 Method YAML defaults
+
+Method config: `configs/methods/regularized_horseshoe.yaml`
 - `scale_intercept=10.0`
-- `nu_global=1.0, nu_local=1.0`
-- `slab_scale=2.0, slab_df=4.0`
-- `num_warmup=1000, num_samples=1000, num_chains=4, thinning=1`
-- `target_accept_prob=0.99`
-- `max_tree_depth=10`
-- `tau.mode=calibrated, p0=20`
+- `nu_global=1.0`, `nu_local=1.0`
+- `slab_scale=2.0`, `slab_df=4.0`
+- `num_warmup=1000`, `num_samples=1000`, `num_chains=4`, `thinning=1`
+- `target_accept_prob=0.999`, `max_tree_depth=14`, `progress_bar=false`, `seed=151`
+- `tau.mode=calibrated`, `tau.target=coefficients`, `tau.p0.value=20`
 
-Core model in code:
-1. $$\beta_0\sim\mathcal N(0,\text{scale\_icept})$$
-2. $$\lambda_j=\text{aux1}_{local,j}\sqrt{\text{aux2}_{local,j}},\quad
-\text{aux1}_{local,j}\sim\text{Half-Normal}(1),\ 
-\text{aux2}_{local,j}\sim\text{Inv-Gamma}(\nu_{local}/2,\nu_{local}/2)$$
-3. $$\tau=\text{aux1}_{global}\sqrt{\text{aux2}_{global}}\cdot\text{scale\_global}\cdot\sigma,\quad
-\text{aux1}_{global}\sim\text{Half-Normal}(1),\ 
-\text{aux2}_{global}\sim\text{Inv-Gamma}(\nu_{global}/2,\nu_{global}/2)$$
-4. $$c=\text{slab\_scale}\sqrt{c_{aux}},\quad c_{aux}\sim\text{Inv-Gamma}(\text{slab\_df}/2,\text{slab\_df}/2)$$
-5. $$\tilde\lambda_j^2=\frac{c^2\lambda_j^2}{c^2+\tau^2\lambda_j^2},\quad \beta_j=z_j\tilde\lambda_j\tau,\ z_j\sim\mathcal N(0,1)$$
-6. $$y_i\sim\mathcal N(\beta_0+x_i^T\beta,\sigma),\quad \sigma=\exp(\log\sigma)$$
+### 3.2 Priors and parameterization (exact Stan program)
 
-### 3.2 Posterior and sampling
+From `rhs_gaussian_regression.stan`:
 
-- Gaussian RHS now uses `cmdstanpy` + Stan file:
-  - `grrhs/models/baselines/stan/rhs_gaussian_regression.stan`
-  - parameterization follows Piironen & Vehtari Appendix C.2 (alternative parametrization).
-- The model samples from the joint posterior with HMC/NUTS in Stan:
-  $$p(\beta_0,\beta,\tau,\lambda,c,\sigma,\text{aux}\mid X,y)\propto p(y\mid\cdot)p(\cdot)$$
-- Stored posterior arrays include `beta`, `beta0`, `sigma`, `tau`, `lambda`, `lambda_tilde`, and `c` (when present).
+- $y_{sd}=\max(\mathrm{sd}(y),10^{-9})$
+- $z\sim\mathcal N(0,1)$ (vector length $d=p$)
+- Intercept: $\beta_0\sim\mathcal N(0,\text{scale\_icept})$
+- Noise: `logsigma ~ Normal(log(y_sd), 1.0)`, $\sigma=\max(\exp(\log\sigma),10^{-9})$
+- Local scales:
+  - `aux1_local[j] ~ Normal(0,1)` with `<lower=0>` (Half-Normal)
+  - `aux2_local[j] ~ Inv-Gamma(nu_local/2, nu_local/2)`
+  - $\lambda_j=\text{aux1}_{local,j}\sqrt{\text{aux2}_{local,j}}$
+- Global scale:
+  - `aux1_global ~ Normal(0,1)` with `<lower=0>` (Half-Normal)
+  - `aux2_global ~ Inv-Gamma(nu_global/2, nu_global/2)`
+  - $\tau=\text{aux1}_{global}\sqrt{\text{aux2}_{global}}\cdot\text{scale\_global}\cdot\sigma$
+- Slab:
+  - `caux ~ Inv-Gamma(slab_df/2, slab_df/2)`, $c=\text{slab\_scale}\sqrt{c_{aux}}$
+- Regularized horseshoe:
+  $$\tilde\lambda_j^2=\frac{c^2\lambda_j^2}{c^2+\tau^2\lambda_j^2+10^{-12}},\quad \beta_j=z_j\tilde\lambda_j\tau$$
+- Likelihood: $y\sim\mathcal N(\beta_0+X\beta,\sigma)$
+
+### 3.3 Sampling + diagnostics (Python wrapper)
+
+- Packages used: `cmdstanpy` to run Stan HMC/NUTS (model code in `rhs_gaussian_regression.stan`).
+- For gaussian likelihood, the class uses CmdStan (`_use_cmdstan_backend()` returns true).
+- It runs HMC/NUTS via `CmdStanModel.sample(...)` with `iter_warmup=num_warmup`, `iter_sampling=num_samples`, `chains=num_chains`,
+  `adapt_delta=target_accept_prob`, `max_treedepth=max_tree_depth`.
+- Extracted posterior arrays (stored on the fitted model, then written by the runner):
+  - `beta`, `beta0`, `sigma`, `tau`, `lambda`, `lambda_tilde`, `c`
+- Extracted HMC diagnostics (used by runner hard checks):
+  - `divergences`, `ebfmi_min`, `treedepth_hits` (computed from CmdStan columns `divergent__`, `energy__`, `treedepth__`).
 
 ---
 
-## 4. tau0 calibration formula (used by runner)
+## 4) `GRRHS_SVI_Numpyro` (Gaussian regression; variational inference)
 
-In `runner._maybe_calibrate_tau`, when `tau.mode=calibrated`:
+Implementation: `grrhs/models/grrhs_svi_numpyro.py:GRRHS_SVI_Numpyro` (registered as `model.name="grrhs_svi"`).
+
+Packages used:
+- JAX + NumPyro (`numpyro.infer.SVI`, `Trace_ELBO`, `Predictive`) for variational inference and approximate posterior sampling.
+
+### 4.1 Priors (model)
+
+The SVI model uses the same prior family as GRRHS Gibbs:
+- $\sigma\sim\text{Half-Cauchy}(0,s_0)$, $\tau\sim\text{Half-Cauchy}(0,\tau_0)$
+- $\lambda_j\sim\text{Half-Cauchy}(0,1)$
+- $\phi_g\sim\text{Half-Normal}(\eta/\sqrt{p_g})$
+- $\beta_j\mid\cdot\sim\mathcal N(0,\phi_{g(j)}^2\tau^2\tilde\lambda_j^2\sigma^2)$
+- $y\mid\beta,\sigma\sim\mathcal N(X\beta,\sigma)$
+
+### 4.2 Guide (approximate posterior) and “sampling”
+
+Guide structure (`_guide`):
+- Uses log-normal auxiliaries for `tau`, `sigma`, `lambda` via `Normal(...)` on log-scale and `Delta(exp(.))`.
+- Couples log-scales with a shared factor `u_shared ~ Normal(0,1)`.
+- Per group: $q([\beta_g,\log\phi_g])$ is a multivariate normal with learned `loc_group_g` and lower-triangular `L_group_g`.
+
+Optimization:
+- Uses NumPyro `SVI` with `Trace_ELBO(num_particles=...)`.
+- Defaults: `num_steps=3000`, `lr=1e-2`, `seed=42`.
+- If `use_hutchinson=true`, sets `num_particles=hutchinson_samples` (default `8`).
+- Only hard stop condition in code: raise if the ELBO loss becomes NaN.
+
+Exported posterior-like draws:
+- After training, code samples from the guide via `Predictive(guide, num_samples=num_samples_export)` (default `1000`).
+- Exported arrays include `beta` (`coef_samples_`), `tau_samples_`, `sigma_samples_`, `lambda_samples_`, `phi_samples_`.
+- These are samples from $q(\cdot)$ (not exact MCMC posterior draws).
+
+---
+
+## 5. `tau0` calibration (runner behavior)
+
+In `grrhs/experiments/runner.py:_maybe_calibrate_tau`, when `model.tau.mode=calibrated`:
 $$\tau_0=\frac{p_0}{D-p_0}\cdot\frac{\sigma_{ref}}{\sqrt{n}}$$
 
-- $p_0$: configured value (default in method files is `p0=20`)
-- $D$: number of groups if `target=groups`, otherwise number of coefficients if `target=coefficients`
-- Regression default reference: `sigma_reference=1.0` (paper-style `scale_global = p0/(D-p0)/sqrt(n)`).
-- If explicitly set to `sigma_reference: "auto"`, code falls back to train-scale proxy.
-- Lower bound in code: `tau0 >= 1e-8`
+- $p_0$: `model.tau.p0.value` (or fallback) (method YAML defaults use `20`)
+- $D$: number of groups if `target=groups`, else number of coefficients if `target=coefficients`
+- Regression: $\sigma_{ref}$ is `sigma_reference` unless it is `"auto"`, in which case $\sigma_{ref}=\mathrm{sd}(y)$ on the training data.
+- Lower bound: `tau0 >= 1e-8`
+- Implementation detail: if a `p0.grid` is present, code currently builds `candidates` but uses only the first candidate (`candidates[0]`).
+
+Where it is used:
+- `GRRHS_Gibbs`: runner writes `model.tau0`.
+- RHS: registry maps `model.tau0` → `scale_global` (see `grrhs/experiments/registry.py:_horseshoe_common_kwargs`).
 
 ---
 
-## 5. Convergence diagnostics design (global)
+## 6. Convergence diagnostics (R-hat / ESS / MCSE) and runner pass/fail
 
-### 5.1 Diagnostics implementation
+### 6.1 Diagnostics implementation (`grrhs/diagnostics/convergence.py`)
 
-From `grrhs/diagnostics/convergence.py`:
-
-1. **Split-$\hat R$**
-- Each chain is split into two halves and concatenated.
-- For split chains ($C$ chains, $N$ draws each):
+For each parameter block array, the code computes:
+- Split-$\hat R$ by splitting each chain in half, doubling the chain count, then applying:
   $$W=\frac1C\sum_{c=1}^C s_c^2,\quad
   B=N\,\mathrm{Var}(\bar\theta_c),\quad
   \hat V=\frac{N-1}{N}W+\frac{1}{N}B,\quad
   \hat R=\sqrt{\hat V/W}$$
-
-2. **ESS (bulk-style approximation)**
-- Uses autocorrelation pair-sum truncation (stop when pair sum becomes negative):
+- ESS via per-lag autocorrelation with pair-sum truncation:
   $$ESS=\frac{CN}{1+2\sum_k\rho_k}$$
-- Then clipped to at most $CN$.
+- MCSE/SD proxy for the posterior mean: $\sqrt{1/ESS}$
 
-3. **Shape/draw requirements**
-- Needs at least `draws >= 4`
-- If draws is odd, drop one draw
-- `diagnostic_valid := raw_num_chains >= min_chains_for_rhat`
+Shape requirements:
+- Needs at least `draws >= 4`; if odd, drops one draw.
+- `diagnostic_valid := raw_num_chains >= min_chains_for_rhat`.
 
-### 5.2 Runner-level pass/fail logic
+### 6.2 Runner convergence gate (`grrhs/experiments/runner.py:_check_convergence`)
 
-In `runner._check_convergence`:
-- Only checks blocks listed in `expected_blocks`
-- Failure if any of the following holds:
-  1. `require_valid_diagnostics=true` and `diagnostic_valid=false`
-  2. `rhat_max` is not finite or `rhat_max > max_rhat`
-  3. block missing and `missing_policy=fail`
+For Bayesian model names (see scope at top), runner checks:
+- Block presence per `experiments.convergence.expected_blocks[model_name]`
+- `diagnostic_valid` (when `require_valid_diagnostics=true`)
+- `rhat_max <= max_rhat`
+- `ess_min >= min_ess_by_block[block]` (fallback `min_ess`)
+- `mcse_over_sd_max <= max_mcse_over_sd`
 
-### 5.3 Default convergence thresholds (`configs/base.yaml`)
+HMC hard checks (only for models listed in `experiments.convergence.hmc.models`):
+- `divergences <= max_divergences`
+- `ebfmi_min >= min_ebfmi`
+- `treedepth_hits <= max_treedepth_hits`
+- if `require_present=true`, missing HMC diagnostics causes failure.
 
+### 6.3 Default thresholds (repo defaults in `configs/base.yaml`)
+
+`experiments.convergence`:
+- `enabled: true`
 - `max_rhat: 1.01`
 - `min_ess: 100`
 - `min_ess_by_block: beta=400, tau=1000, phi=400, gamma=400, lambda=200, b=200`
 - `max_mcse_over_sd: 0.10`
-- `max_retries: 1`
+- `max_retries: 3`
 - `retry_scale: 2.0`
-- `missing_policy: warn`
-- `min_chains_for_rhat: 4`
+- `missing_policy: fail`
 - `require_valid_diagnostics: true`
-- HMC hard checks for regularized horseshoe:
-  - `divergences <= 0`
-  - `ebfmi_min >= 0.3`
-  - `treedepth_hits <= 0`
+- `min_chains_for_rhat: 4`
+- `hmc.enabled: true`
+- `hmc.models: ["regularized_horseshoe", "rhs", "regularised_horseshoe"]`
+- `hmc.max_divergences: 0`, `hmc.min_ebfmi: 0.3`, `hmc.max_treedepth_hits: 0`, `hmc.require_present: true`
 
-Implementation note:
-- RHS now explicitly requests HMC extra fields (`diverging`, `energy`, `num_steps`) during NUTS runs so E-BFMI and treedepth-hit checks are populated instead of missing.
-
-Important implication: single-chain runs are auto-failed by invalid diagnostics when convergence checks are enabled.
-
-### 5.4 Expected convergence blocks by model
-
+Expected blocks (base config):
 - `grrhs_gibbs`: `beta, tau, phi, lambda`
 - `gigg` / `gigg_regression`: `beta, tau, gamma, lambda`
-- `regularized_horseshoe` / `rhs`: `beta, tau, lambda`
+- `regularized_horseshoe` / `rhs` / `regularised_horseshoe`: `beta, tau, lambda`
 
 ---
 
-## 6. Sampling budgets (exact numbers)
+## 7. Sampling budgets (exact numbers)
 
-### 6.1 Global fairness budget (default enabled)
+### 7.1 Default shared fairness budget (repo defaults)
 
-`configs/base.yaml -> experiments.bayesian_fairness.sampling_budget`:
-- `burn_in = 1000`
-- `kept_draws = 1000`
-- `thinning = 1`
-- `num_chains = 4`
+`configs/base.yaml -> experiments.bayesian_fairness`:
+- `enabled: true`
+- `enforce_shared_sampling_budget: true`
+- `sampling_budget: burn_in=8000, kept_draws=8000, thinning=1, num_chains=4`
+- `disable_budget_retry: false`
 
-Runner application rules:
-- Gibbs-family models (GRRHS/GIGG):
-  - `burn_in=1000, thin=1, num_chains=4`
-  - `iters = burn_in + kept_draws*thinning = 2000`
-- NUTS-family models (RHS):
-  - `num_warmup=1000`
-  - `num_samples=1000`
-  - `num_chains=4, thinning=1`
+Runner application (`grrhs/experiments/runner.py:_apply_bayesian_sampling_budget`):
+- GRRHS / GIGG:
+  - `inference.gibbs.burn_in = 8000`, `thin = 1`, `num_chains = 4`
+  - `model.iters = burn_in + kept_draws * thinning = 16000`
+  - For GIGG: also sets `model.n_burn_in=8000`, `model.n_thin=1`, `model.n_samples=8000`
+- RHS (NUTS / CmdStan interface):
+  - `model.num_warmup = 8000`
+  - `model.num_samples = kept_draws * thinning = 8000`
+  - `model.num_chains = 4`, `model.thinning = 1`
 
-Also, if `disable_budget_retry=true`, Bayesian retries are forced to `max_retries=0` (no budget escalation).
+### 7.2 Retry scaling (when convergence fails)
 
-### 6.2 Method-file budgets (already aligned with fairness defaults)
+In `runner._fit_model_with_retry`:
+- Total attempts = `1 + experiments.convergence.max_retries`, but:
+  - if `experiments.bayesian_fairness.disable_budget_retry=true`, then `max_retries` is forced to `0`.
+- Attempt `k` (0-indexed) scales runtime by `retry_scale ** k` after applying the shared budget.
 
-- GRRHS: `iters=2000`, `burn_in=1000`, `thin=1`, `num_chains=4`
-- GIGG: `method=mmle`, `n_samples=1000`, `burn_in=500`, `thin=1`, `num_chains=4`
-- RHS: `num_warmup=1000`, `num_samples=1000`, `num_chains=4`, `thinning=1`, `target_accept_prob=0.9`
+### 7.3 Method-file budgets (checked-in, but overridden by default)
+
+The method YAML files define smaller budgets, but they are overridden by the shared budget above unless
+`experiments.bayesian_fairness.enforce_shared_sampling_budget=false`.
+
+For reference:
+- `configs/methods/grrhs_regression.yaml`: `iters=2000`, `burn_in=1000`, `thin=1`, `num_chains=4`
+- `configs/methods/gigg.yaml`: `burn_in=500`, `n_samples=1000`, `thin=1`, `num_chains=4`
+- `configs/methods/regularized_horseshoe.yaml`: `num_warmup=1000`, `num_samples=1000`, `num_chains=4`, `thinning=1`,
+  `target_accept_prob=0.999`, `max_tree_depth=14`
 
 ---
 
-## 7. Posterior artifacts written to disk
+## 8. Posterior artifacts written to disk
 
-Per fold (when posterior arrays exist):
+Per fold (when posterior arrays exist), runner writes:
 - `posterior_samples.npz`
 - `convergence.json`
 - `posterior_summary.parquet` (or `.csv` fallback)
+- `posterior_validation.json` (when enabled)
 
-Runner array-name mapping:
+Array collection mapping (attribute → key in `posterior_samples.npz`), from `runner._collect_posterior_arrays`:
 - `coef_samples_ -> beta`
+- `alpha_samples_ -> alpha`
+- `intercept_samples_ -> intercept`
+- `sigma_samples_ -> sigma`
+- `sigma2_samples_ -> sigma2`
 - `tau_samples_ -> tau`
 - `phi_samples_ -> phi`
 - `gamma_samples_ -> gamma`
 - `lambda_samples_ -> lambda`
-- `sigma_samples_ -> sigma`
-- `sigma2_samples_ -> sigma2`
+- `lambda_group_samples_ -> group_lambda`
+- `b_samples_ -> b`
 - `c_samples_ -> c`
+- `loglik_samples_ -> loglik`
+
+Not every model exports every key; missing keys simply do not appear in the `.npz`.
 
 ---
 
-## 8. Note on posterior expressions
+## 9. Posterior Validation auto-fail flow (SBC / PPC / seed stability)
 
-- For GRRHS/GIGG, the code is blockwise conditional posterior sampling; the distribution shapes above are the actual sampled conditionals.
-- For RHS (NUTS), the code samples the full joint posterior directly; therefore the document gives the exact joint-kernel factorization and parameterization rather than closed-form Gibbs blocks.
+Enabled by default in `configs/base.yaml` (`experiments.posterior_validation.enabled: true`).
 
----
-
-## 9. Posterior Validation Auto-Fail Flow (SBC / PPC / Seed Stability)
-
-The runner now supports an additional fold-level gate:
-- `experiments.posterior_validation` in `configs/base.yaml`
-- If enabled and any check fails, fold status becomes `INVALID_POSTERIOR_VALIDATION`.
+Runner behavior:
+- When `apply_to_bayesian_only=true`, this gate is only applied to model names in `_BAYESIAN_MODEL_NAMES` (see top of doc).
+- If it fails, fold status becomes `INVALID_POSTERIOR_VALIDATION` (runner logic near `_run_posterior_validation`).
 
 ### 9.1 SBC (simulation-based calibration proxy on coefficient truth)
 
-Inputs:
-- posterior draws of `beta`
-- coefficient truth `beta_truth` (when available from synthetic/loader bundles)
-
-Checks:
-1. Rank-uniformity via KS test on normalized ranks of selected coefficients
-   - pass threshold: `ks_pvalue >= ks_pvalue_min` (default `0.05`)
-2. Central credible-interval coverage around truth
-   - target level: `coverage_level` (default `0.9`)
-   - pass threshold: `|empirical_coverage - coverage_level| <= coverage_tolerance` (default `0.15`)
-
-Notes:
-- If `beta_truth` is missing, behavior depends on `fail_on_missing_truth`.
-- If posterior draws are missing, behavior depends on `fail_on_missing_draws`.
+Defaults from `configs/base.yaml -> experiments.posterior_validation.sbc`:
+- `ks_pvalue_min: 0.05`
+- `coverage_level: 0.9`
+- `coverage_tolerance: 0.15`
+- `min_coefficients: 8`, `max_coefficients: 128`
+- `fail_on_missing_truth: false`, `fail_on_missing_draws: true`
 
 ### 9.2 PPC (posterior predictive checks)
 
-Regression:
-- Build replicated outcomes from posterior predictive draws using `beta`, optional `intercept`, and optional `sigma`/`sigma2`.
+Defaults from `configs/base.yaml -> experiments.posterior_validation.ppc`:
+- `tail_prob: 0.025`
+- `min_draws: 200`
+- `fail_on_missing_draws: true`
+- `use_train_data: true` (runner default unless overridden)
 
-Check statistics:
-- posterior predictive p-value for sample mean (`p_mean`)
-- posterior predictive p-value for sample variance (`p_var`)
-- pass interval: `[tail_prob, 1-tail_prob]` (default tail `0.025`)
+### 9.3 Seed stability (multi-restart)
 
-Default execution mode:
-- `ppc.use_train_data = true` (posterior check on training-scale data by default).
-- Can be switched to held-out checks by setting `ppc.use_train_data = false`.
+Defaults from `configs/base.yaml -> experiments.posterior_validation.seed_stability`:
+- `num_restarts: 2`, `seed_stride: 1009`
+- `max_beta_rel_l2: 0.15`, `min_beta_cosine: 0.98`
+- `tau_stability_mode: log_median`, `max_tau_log_sd: 0.35`, `max_tau_rel_sd: 0.20`
+- `fail_on_missing_tau: false`
 
-### 9.3 Multi-initialization / seed stability
+---
 
-Process:
-- Refit the same fold multiple times with seed offsets.
-- Compare posterior means against the baseline fold fit.
+## 10. `sim1_bayes3_pass` profile (repo override file)
 
-Hard thresholds:
-- `beta_rel_l2_max <= max_beta_rel_l2` (default `0.15`)
-- `beta_cosine_min >= min_beta_cosine` (default `0.98`)
-- tau stability (default robust mode): `tau_stability_mode = log_median`, require `tau_log_sd <= max_tau_log_sd` (default `0.35`)
-- legacy tau check (if `tau_stability_mode` set to `mean`/`median`): `tau_rel_sd <= max_tau_rel_sd` (default `0.20`)
-
-Outputs:
-- Saved per fold as `posterior_validation.json`
-- Included in `fold_summary.json` under `posterior_validation`
-
-## 10. Sim1 Bayesian-3 Pass Profile (Current Repo)
-
-For a one-repeat `sim_s1` check that returns `status=OK` for `grrhs/rhs/gigg`,
-use:
-
+For a lighter-weight “Bayesian-3” pass-oriented configuration, the repo provides:
 - `configs/overrides/sim1_bayes3_pass.yaml`
 
-Key profile traits:
+Key differences vs `configs/base.yaml`:
+- Fairness sampling budget: `burn_in=1500`, `kept_draws=1500`, `num_chains=4`
+- Convergence thresholds relaxed (e.g. `max_rhat=1.15`, `min_ess=50`, and `max_retries=0`)
+- `disable_budget_retry=true` (so retries are forced off)
+- NUTS tuning override: `inference.nuts.target_accept_prob=0.99`, `inference.nuts.max_tree_depth=13`
 
-- keeps auto-fail flow enabled (`convergence` + `posterior_validation`)
-- uses four chains for all Bayesian models
-- applies a pass-oriented convergence threshold set for this scenario
-- keeps HMC hard checks on RHS (`divergences`, `E-BFMI`, `treedepth_hits`)
-
-Implementation updates tied to this profile:
-
-- RHS Stan model numerical stabilization in
-  `grrhs/models/baselines/stan/rhs_gaussian_regression.stan`
-  (protected `lambda_tilde` denominator, weakly-informative `logsigma` prior)
-- GIGG conditional update corrections in
-  `grrhs/models/gigg_regression.py`
-  (sigma/tau scaling included in `lambda_sq`, `gamma_sq`, `tau_sq` updates)
-
+RHS implementation note:
+- Stan stabilization lives in `grrhs/models/baselines/stan/rhs_gaussian_regression.stan` (e.g. `+ 1e-12` in the `lambda_tilde` denominator).

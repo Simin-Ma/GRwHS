@@ -8,6 +8,8 @@ environments can still import this module without errors.
 
 from typing import Callable, Dict, Any, Optional, Sequence
 
+import numpy as np
+
 from data.generators import make_groups
 
 # Optional: GRRHS main models (if available)
@@ -25,6 +27,11 @@ try:
     from grrhs.models.gigg_regression import GIGGRegression  # type: ignore
 except Exception:  # pragma: no cover
     GIGGRegression = None  # type: ignore
+
+try:
+    from grrhs.models.gigg_cran import GIGGRegressionCRAN  # type: ignore
+except Exception:  # pragma: no cover
+    GIGGRegressionCRAN = None  # type: ignore
 
 # Baselines (numpy/skglm implementations)
 from grrhs.models.baselines import (
@@ -330,8 +337,14 @@ def _build_regularized_horseshoe(cfg: Dict[str, Any]) -> Any:
 @register("gigg")
 @register("gigg_regression")
 def _build_gigg(cfg: Dict[str, Any]) -> Any:
-    if GIGGRegression is None:
-        raise ImportError("GIGGRegression is not available. Ensure grrhs.models.gigg_regression exists.")
+    backend = str(_get(cfg, "model.backend", _get(cfg, "model.gigg_backend", "python"))).strip().lower()
+    use_cran = backend in {"cran", "cran_compatible"} or bool(_get(cfg, "model.cran_compatible", False))
+    if use_cran:
+        if GIGGRegressionCRAN is None:
+            raise ImportError("GIGGRegressionCRAN is not available. Ensure grrhs.models.gigg_cran exists.")
+    else:
+        if GIGGRegression is None:
+            raise ImportError("GIGGRegression is not available. Ensure grrhs.models.gigg_regression exists.")
     groups = _infer_groups(cfg)
     if groups is None:
         raise ValueError("GIGGRegression requires 'data.groups' in config (list of index lists).")
@@ -373,6 +386,27 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
     lambda_constraint_mode = str(_get(cfg, "model.lambda_constraint_mode", "hard"))
     lambda_cap = float(_get(cfg, "model.lambda_cap", 1e3))
     lambda_soft_cap = float(_get(cfg, "model.lambda_soft_cap", lambda_cap))
+    force_a_1_over_n = bool(_get(cfg, "model.force_a_1_over_n", True))
+
+    if use_cran:
+        # CRAN sampler expects group hyperparameter vectors `a` and `b` (length G).
+        G = len(groups)
+        a_vec = np.full(G, 0.5, dtype=float) if a_value is None else np.full(G, float(a_value), dtype=float)
+        b_vec = np.full(G, float(b_init), dtype=float)
+        return GIGGRegressionCRAN(
+            method=method,
+            n_burn_in=burnin,
+            n_samples=n_samples,
+            n_thin=thin,
+            seed=int(seed) if seed is not None else 0,
+            num_chains=num_chains,
+            btrick=btrick,
+            stable_solve=stable_solve,
+            fit_intercept=fit_intercept,
+            store_lambda=store_lambda,
+            a=a_vec,
+            b=b_vec,
+        )
 
     return GIGGRegression(
         method=method,
@@ -392,6 +426,7 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
         share_group_hyper=share_group_hyper,
         mmle_update=mmle_update,
         mmle_burnin_only=mmle_burnin_only,
+        force_a_1_over_n=force_a_1_over_n,
         mmle_samp_size=mmle_samp_size,
         mmle_tol_scale=mmle_tol_scale,
         mmle_max_iters=mmle_max_iters,
