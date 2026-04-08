@@ -34,6 +34,16 @@ Paper guidance: use `RMSE` as the main predictive ranking metric unless every co
 - Ridge, Lasso, and Sparse Group Lasso use nested CV on the outer-train split only.
 - The selected hyper-parameters are refit on the full outer-train fold before testing.
 
+### Optional Bayesian baseline via BGLSS
+- `bglss_python` is a Python-native BGLSS-style Gibbs baseline (no R dependency).
+- `bglss_mbsgs` wraps `MBSGS::BGLSS` (R package) through `Rscript`.
+- This method is optional and requires:
+  1. A working `Rscript` in PATH (or explicit `model.rscript` path),
+  2. `install.packages("MBSGS")` in that R environment.
+- It can be included in both synthetic and real-data sweeps using:
+  - [configs/sweeps/sim_s1_seven_models_with_bglss.yaml](D:/FilesP/GR-RHS/configs/sweeps/sim_s1_seven_models_with_bglss.yaml)
+  - [configs/sweeps/real_nhanes_2003_2004_ggt_methods_with_bglss.yaml](D:/FilesP/GR-RHS/configs/sweeps/real_nhanes_2003_2004_ggt_methods_with_bglss.yaml)
+
 Current canonical grids:
 - Ridge: `alpha ∈ {1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000}` from [configs/methods/ridge.yaml](D:/FilesP/GR-RHS/configs/methods/ridge.yaml)
 
@@ -48,7 +58,7 @@ Current canonical grids:
 ## 3. Convergence fairness
 
 ### Model-specific monitored blocks
-- GRRHS: `beta`, `tau`, `phi`, `lambda`
+- GRRHS: `beta`, `tau`, `a`, `c2`, `lambda` (legacy alias: `phi` maps to `a`)
 - GIGG: `beta`, `tau`, `gamma`, `lambda`
 - Regularized Horseshoe / Horseshoe: `beta`, `tau`, `lambda`
 
@@ -86,6 +96,10 @@ These audit sweeps are not part of the headline benchmark table; they are intend
 ## 5. Practical checklist
 1. Use [configs/experiments/exp1_group_regression.yaml](D:/FilesP/GR-RHS/configs/experiments/exp1_group_regression.yaml) or the NHANES experiment configs as the shared task definition.
 2. Run the canonical benchmark sweeps from [configs/sweeps/exp1_methods.yaml](D:/FilesP/GR-RHS/configs/sweeps/exp1_methods.yaml) and [configs/sweeps/real_nhanes_2003_2004_ggt_methods.yaml](D:/FilesP/GR-RHS/configs/sweeps/real_nhanes_2003_2004_ggt_methods.yaml).
+   If you need Bayesian group-lasso-with-spike-and-slab in the roster, use
+   [configs/sweeps/sim_s1_seven_models_with_bglss.yaml](D:/FilesP/GR-RHS/configs/sweeps/sim_s1_seven_models_with_bglss.yaml)
+   and
+   [configs/sweeps/real_nhanes_2003_2004_ggt_methods_with_bglss.yaml](D:/FilesP/GR-RHS/configs/sweeps/real_nhanes_2003_2004_ggt_methods_with_bglss.yaml).
 3. Inspect `repeat_*/fold_*/convergence.json` together with `fold_summary.json`, not just aggregate metrics.
 4. Use the audit sweeps before making claims about seed robustness or “fully converged” runtime stability.
 5. Treat `MLPD` as a strict-comparison metric only when every compared model reports the same density source.

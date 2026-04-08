@@ -1,4 +1,4 @@
-# GR-RHS Experimentation Toolkit
+﻿# GR-RHS Experimentation Toolkit
 
 Comprehensive infrastructure for benchmarking generalized regularized horseshoe (GRRHS) models across synthetic group regression benchmarks, real pathway-aware regression-style datasets, and targeted robustness/ablation studies. The toolkit helps you generate data, train multiple model families, evaluate metrics, track posterior convergence, and produce reproducible reports and plots.
 
@@ -98,8 +98,8 @@ The renewed experiment plan is organised into three composable layers: dataset d
 
 - **Splits** - `splits.outer` defines the outer K-fold (with optional repeats and auto stratification); `splits.inner` sets the inner CV used for convex baselines.
 - **Standardisation** - feature scaling and optional response centring (default: regressions centre `y`, classification leaves labels untouched).
-- **Model** - GRRHS prior hyperparameters (`c`, `eta`, `s0`) and a `tau` block that can be `mode: calibrated` (m_eff heuristic with p0 grid) or `mode: fixed`.
-- **Inference** - Gibbs sampler defaults (iterations, burn-in, jitter).
+- **Model** - GRRHS prior hyperparameters (`c`, `eta`, `alpha_c`, `beta_c`, `s0`) and a `tau` block that can be `mode: calibrated` (m_eff heuristic with p0 grid) or `mode: fixed`.
+- **Inference** - Metropolis-within-Gibbs defaults (iterations, burn-in, jitter, log-MH step sizes).
 - **Metrics** - canonical regression/classification metrics evaluated on the outer test fold only.
 
 Every other configuration inherits from this foundation.
@@ -108,23 +108,25 @@ Every other configuration inherits from this foundation.
 
 Dataset files adjust only the `data` (and occasionally `standardization` or `splits`) section. The regression campaign now centres on the following descriptors:
 
-- `sim_s1.yaml` *(Group-sparse strong signal)* – n=1300 pool with 300/1000 hold-out splits, 8 uneven groups showing strongly activated blocks in G1/G3, SNR swept via overrides.
-- `sim_s2.yaml` *(Dense but weak)* – same structural prior, but 30–50% of features within every group carry 0.2–0.5 effects so global shrinkage must stay gentle.
-- `sim_s3.yaml` *(Mixed strong/weak/noise)* – combines an 80% active strong group, a medium group, and sparse weak groups to stress simultaneous group + feature shrinkage.
-- `exp4_ablation.yaml` / `exp4_group_misspec.yaml` – legacy configs kept for ablation plots (RHS vs GRRHS, or shuffled groups).
-- `real_<dataset>.yaml` – add one YAML per real dataset, pointing to loader entries (see Section 4.2) or direct CSV/NPZ paths plus group maps.
+- `sim_s1.yaml` *(Group-sparse strong signal)* 鈥?n=1300 pool with 300/1000 hold-out splits, 8 uneven groups showing strongly activated blocks in G1/G3, SNR swept via overrides.
+- `sim_s2.yaml` *(Dense but weak)* 鈥?same structural prior, but 30鈥?0% of features within every group carry 0.2鈥?.5 effects so global shrinkage must stay gentle.
+- `sim_s3.yaml` *(Mixed strong/weak/noise)* 鈥?combines an 80% active strong group, a medium group, and sparse weak groups to stress simultaneous group + feature shrinkage.
+- `exp4_ablation.yaml` / `exp4_group_misspec.yaml` 鈥?legacy configs kept for ablation plots (RHS vs GRRHS, or shuffled groups).
+- `real_<dataset>.yaml` 鈥?add one YAML per real dataset, pointing to loader entries (see Section 4.2) or direct CSV/NPZ paths plus group maps.
 
 ### 3.3 Method presets (`configs/methods/*.yaml`)
 
 Method presets collect model-specific defaults and, for convex baselines only, tuning instructions:
 
-- `grrhs_regression.yaml` – GRRHS Gibbs sampler with fixed default prior shape (`c=1.0`, `eta=0.5`) and calibrated global shrinkage from `tau.p0.value = 20`.
-- `regularized_horseshoe.yaml` – RHS baseline aligned to the Piironen–Vehtari path: global shrinkage is calibrated from an expected nonzero count `p0` via the `tau0 ≈ (p0 / (D - p0)) * sigma / sqrt(n)` heuristic, and the slab uses the paper-style regularized horseshoe prior with `c^2 ~ Inv-Gamma(ν/2, ν s^2 / 2)` implemented through `slab_scale = 2.0` and `slab_df = 4.0`.
-- `gigg.yaml` – GIGG Gibbs sampler using the paper-preferred hyperparameter path: `a_g = 1/n` fixed implicitly (`a_value: null`) and group-specific `b_g` estimated by MMLE via the paper's `paper_lambda_only` update, with `b_g` clipped to `[0.001, 4.0]` for numerical stability.
-- `sparse_group_lasso.yaml` – skglm SGL with log-spaced α grid × {0.2,0.5,0.8} ℓ₁ ratios.
-- `lasso.yaml` – classic L1 path using auto-computed λ_max → 10⁻³ λ_max.
-- `ridge.yaml` – eight-point L2 grid spanning 1e-4…1e3.
+- `grrhs_regression.yaml` 鈥?GRRHS MWG sampler with fixed default prior shape (`c=1.0`, `eta=0.5`, `alpha_c=2.0`, `beta_c=2.0`) and calibrated global shrinkage from `tau.p0.value = 20`.
+- `regularized_horseshoe.yaml` 鈥?RHS baseline aligned to the Piironen鈥揤ehtari path: global shrinkage is calibrated from an expected nonzero count `p0` via the `tau0 鈮?(p0 / (D - p0)) * sigma / sqrt(n)` heuristic, and the slab uses the paper-style regularized horseshoe prior with `c^2 ~ Inv-Gamma(谓/2, 谓 s^2 / 2)` implemented through `slab_scale = 2.0` and `slab_df = 4.0`.
+- `gigg.yaml` 鈥?GIGG Gibbs sampler using the paper-preferred hyperparameter path: `a_g = 1/n` fixed implicitly (`a_value: null`) and group-specific `b_g` estimated by MMLE via the paper's `paper_lambda_only` update, with `b_g` clipped to `[0.001, 4.0]` for numerical stability.
+- `sparse_group_lasso.yaml` 鈥?skglm SGL with log-spaced 伪 grid 脳 {0.2,0.5,0.8} 鈩撯倎 ratios.
+- `lasso.yaml` 鈥?classic L1 path using auto-computed 位_max 鈫?10鈦宦?位_max.
+- `ridge.yaml` 鈥?eight-point L2 grid spanning 1e-4鈥?e3.
 For the paper-facing justification of the Bayesian defaults, including a model-by-model provenance table for `RHS`, `GIGG`, and `GRRHS`, see [docs/fair_benchmark_protocol.md](/d:/FilesP/GR-RHS/docs/fair_benchmark_protocol.md).
+
+Compatibility note: GR-RHS now uses group amplitude `a_g` and slab variance `c_g^2`; legacy `phi` fields in outputs are retained as aliases of `a_g`.
 
 *(Retired)* Logistic presets (`*_logistic.yaml`) remain in git history if binary tasks return later.
 
@@ -134,9 +136,9 @@ These files can be stacked (dataset + method + ablation override) by passing mul
 
 Sweeps combine datasets and methods into experiment suites:
 
-- `sim_s1.yaml`, `sim_s2.yaml`, `sim_s3.yaml` – final benchmark sweeps; each variation pairs one of the three SNR overrides (`configs/overrides/snr_{0p5,1p0,3p0}.yaml`) with the active six-model roster (`GRRHS`, `RHS`, `GIGG`, `SGL`, `Lasso`, `Ridge`). Every sweep now redraws the synthetic dataset 3× across repeats and standardises the 300/1000 hold-out split to trade minor variance for faster turnarounds.
-- `exp4_ablation.yaml` / `exp4_group_misspec.yaml` – optional add-ons for interpretability sections (structure removal or shuffled groups).
-- `real_<dataset>_methods.yaml` – create one per real dataset once you configure loaders; follow the synthetic sweeps as a template (same six methods, identical preprocessing, repeated 70/30 shuffles).
+- `sim_s1.yaml`, `sim_s2.yaml`, `sim_s3.yaml` 鈥?final benchmark sweeps; each variation pairs one of the three SNR overrides (`configs/overrides/snr_{0p5,1p0,3p0}.yaml`) with the active six-model roster (`GRRHS`, `RHS`, `GIGG`, `SGL`, `Lasso`, `Ridge`). Every sweep now redraws the synthetic dataset 3脳 across repeats and standardises the 300/1000 hold-out split to trade minor variance for faster turnarounds.
+- `exp4_ablation.yaml` / `exp4_group_misspec.yaml` 鈥?optional add-ons for interpretability sections (structure removal or shuffled groups).
+- `real_<dataset>_methods.yaml` 鈥?create one per real dataset once you configure loaders; follow the synthetic sweeps as a template (same six methods, identical preprocessing, repeated 70/30 shuffles).
 
 Logistic sweeps (`exp2_methods.yaml`, `exp3_real_methods.yaml`) were deleted when the repo was narrowed to regression-only studies.
 
@@ -165,7 +167,7 @@ python -m grrhs.cli.run_experiment ^
 ### 3.6 Launching a sweep
 
 ```bash
-# Scenario S2 sweep (all 3 SNR levels × 6 methods)
+# Scenario S2 sweep (all 3 SNR levels 脳 6 methods)
 python -m grrhs.cli.run_sweep ^
   --base-config configs/base.yaml ^
   --sweep-config configs/sweeps/sim_s2.yaml ^
@@ -186,20 +188,20 @@ python -m grrhs.cli.run_sweep ^
 
 Follow this checklist to reproduce the final regression study (three synthetic suites + real data + ablations):
 
-1. **Synthetic Scenarios (S1–S3)**
-   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR ∈ {0.1, 0.5, 1, 3} via the override files, redraws the dataset on each repeat, and evaluates the active six-model roster (`GRRHS`, `RHS`, `GIGG`, `SGL`, `Lasso`, `Ridge`) under identical preprocessing and nested-CV settings.
+1. **Synthetic Scenarios (S1鈥揝3)**
+   - Launch `configs/sweeps/sim_s1.yaml`, `sim_s2.yaml`, and `sim_s3.yaml`. Each sweep iterates over SNR 鈭?{0.1, 0.5, 1, 3} via the override files, redraws the dataset on each repeat, and evaluates the active six-model roster (`GRRHS`, `RHS`, `GIGG`, `SGL`, `Lasso`, `Ridge`) under identical preprocessing and nested-CV settings.
    - Outputs live under `outputs/sweeps/sim_s*/` with per-variant resolved configs that document the chosen SNR, seeds, and fixed prior settings.
 
 2. **Real Data Benchmarks**
     - Ready-to-run real-data experiment descriptors now include `configs/experiments/real_nhanes_2003_2004_ggt.yaml` and `configs/experiments/real_covid19_trust_experts.yaml`.
     - Match each real dataset with its `configs/sweeps/real_<dataset>_methods.yaml` sweep so all methods share identical preprocessing and folds.
     - Create `configs/experiments/real_<dataset>.yaml` for each dataset (specify loader module + split policy, or furnish `path_X`, `path_y`, and `path_group_map`). Keep the same preprocessing as synthetic runs (train-only standardisation, shared splits across methods).
-    - Mirror the synthetic sweeps by adding `configs/sweeps/real_<dataset>_methods.yaml`: six methods, no hyperparameter fiddling beyond what is already codified in `configs/methods/`, and repeated 70/30 (or 5× CV) splits for standard errors.
+    - Mirror the synthetic sweeps by adding `configs/sweeps/real_<dataset>_methods.yaml`: six methods, no hyperparameter fiddling beyond what is already codified in `configs/methods/`, and repeated 70/30 (or 5脳 CV) splits for standard errors.
     - For GRRHS-specific prior robustness, use a dedicated sensitivity sweep such as `configs/sweeps/real_nhanes_2003_2004_grrhs_sensitivity.yaml` instead of tuned overrides.
     - Typical candidates: a crisis-omics regression task with pathway groupings + a second dataset where group structure is curated (e.g. proteomics pathways). Store raw data under `data/real/` and point YAMLs to the loader helper you wire up in `data/loaders.py`.
 
 3. **Ablations & Robustness**
-   - `configs/sweeps/exp4_ablation.yaml` isolates the “remove group layer” comparison (GRRHS vs RHS) on the S1 blueprint.
+   - `configs/sweeps/exp4_ablation.yaml` isolates the 鈥渞emove group layer鈥?comparison (GRRHS vs RHS) on the S1 blueprint.
    - `configs/sweeps/exp4_group_misspec.yaml` probes shuffled group assignments (35% of features reassigned before fitting).
 
 4. **Summaries**
@@ -477,7 +479,7 @@ Each run directory (`outputs/runs/<name-timestamp>/`) contains:
 - `dataset.npz`: standardized train/val/test splits, true coefficients, means/scales.
 - `dataset_meta.json`: metadata (n, p, group mapping, splits, model, posterior info).
 - `metrics.json`: metrics (`mse`, `r2`, `tpr`, `fpr`, `auc`, etc.) serialized to JSON-friendly types.
-- `posterior_samples.npz`: posterior arrays (coefficients, tau, phi, lambda, sigma) if available.
+- `posterior_samples.npz`: posterior arrays (coefficients, tau, lambda, sigma, `a`, `c2`; legacy alias `phi`) if available.
 - `repeat_*/fold_*/convergence.json`: fold-level R-hat & ESS summaries computed from posterior arrays (no aggregate file).
 - `repeat_*/fold_*/covariate_adjustment.npz`: for loader datasets with a separate `C`, stores `alpha_hat` and optional `alpha_draws`.
 - `plots_check/`: generated plots (prediction scatter/histograms & posterior traces).
@@ -677,7 +679,7 @@ The script reads group structure, seeds, and posterior arrays directly from the 
 
 ### 8.2 GRRHS vs RHS Group-Level Comparison
 
-Use `scripts/plot_group_level_comparison.py` to regenerate the synthetic ground-truth coefficients, align them with each fold’s standardized coefficients, and build the GRRHS-vs-RHS figures that highlight structural gains:
+Use `scripts/plot_group_level_comparison.py` to regenerate the synthetic ground-truth coefficients, align them with each fold鈥檚 standardized coefficients, and build the GRRHS-vs-RHS figures that highlight structural gains:
 
 ```bash
 python scripts/plot_group_level_comparison.py \
@@ -688,15 +690,15 @@ python scripts/plot_group_level_comparison.py \
 ```
 
 Outputs:
-- `sim_s3_group_mse.png` – per-group MSE bars (GRRHS vs RHS) with the strong/medium/weak/null tags shown on the x-axis.
-- `sim_s3_group_scales.png` – posterior \(E[\log \phi_g]\) with 90% intervals, contrasted against the RHS global \(E[\log \tau]\).
-- `sim_s3_group_combined.png` – side-by-side panel (MSE + scales) for easy drop-in to the main text.
-- `sim_s3_group_calibration.png` – scatter of true group ‖β‖ vs the estimated ‖β̂‖ for both models, color-coded by group type.
-- `sim_s3_group_stacked.png` – stacked bars of strong/medium/weak/null signal mass comparing ground truth vs GRRHS vs RHS.
-- `sim_s3_triptych.png` – 3-in-1 figure (left: per-group MSE, right: log φ_g panel, bottom: MeanEffectiveNonzeros vs SNR with the current SNR highlighted).
-- `group_comparison_summary.json` – machine-readable dump (group tags, per-group statistics, figure paths) for tables or supplements.
+- `sim_s3_group_mse.png` 鈥?per-group MSE bars (GRRHS vs RHS) with the strong/medium/weak/null tags shown on the x-axis.
+- `sim_s3_group_scales.png` 鈥?posterior \(E[\log a_g]\) with 90% intervals, contrasted against the RHS global \(E[\log \tau]\).
+- `sim_s3_group_combined.png` 鈥?side-by-side panel (MSE + scales) for easy drop-in to the main text.
+- `sim_s3_group_calibration.png` 鈥?scatter of true group 鈥栁测€?vs the estimated 鈥栁蔡傗€?for both models, color-coded by group type.
+- `sim_s3_group_stacked.png` 鈥?stacked bars of strong/medium/weak/null signal mass comparing ground truth vs GRRHS vs RHS.
+- `sim_s3_triptych.png` 鈥?3-in-1 figure (left: per-group MSE, right: log `a_g` panel, bottom: MeanEffectiveNonzeros vs SNR with the current SNR highlighted).
+- `group_comparison_summary.json` 鈥?machine-readable dump (group tags, per-group statistics, figure paths) for tables or supplements.
 
-The script infers group tags from the sim_s3 blueprint, so the captions automatically read “strong dense group”, “medium”, “sparse/weak”, or “null” without any manual labeling.
+The script infers group tags from the sim_s3 blueprint, so the captions automatically read 鈥渟trong dense group鈥? 鈥渕edium鈥? 鈥渟parse/weak鈥? or 鈥渘ull鈥?without any manual labeling.
 
 ### 8.3 Coefficient-Level Recovery
 
@@ -712,11 +714,11 @@ python scripts/plot_coefficient_recovery.py \
 ```
 
 Outputs:
-- `coeff_scatter_all_std.png` / `coeff_scatter_topk_std.png`: standardized true vs estimated β_j (all coefficients / top-k).
+- `coeff_scatter_all_std.png` / `coeff_scatter_topk_std.png`: standardized true vs estimated 尾_j (all coefficients / top-k).
 - `coeff_scatter_all_raw.png` / `coeff_scatter_topk_raw.png`: the same scatter points shown on the original coefficient scale.
 - `coeff_bar_topk.png`: grouped bars (truth/GRRHS/RHS) for the top-k coefficients.
-- `coeff_mass_stacked.png`: coefficient-level |β| mass share by group tag (truth vs GRRHS vs RHS).
-- `coefficients_summary.csv`: per-coefficient table with group tags, true/estimated values, and |β| ranking.
+- `coeff_mass_stacked.png`: coefficient-level |尾| mass share by group tag (truth vs GRRHS vs RHS).
+- `coefficients_summary.csv`: per-coefficient table with group tags, true/estimated values, and |尾| ranking.
 
 ### 8.2 Randomized Sweep Selector
 
@@ -755,11 +757,11 @@ python scripts/run_validation_checklist.py --minimum --fast --output outputs/che
 ```
 Outputs list each scenario with `status` (pass/warn), metrics, and notes. Core coverage:
 - **Sanity (SC-1/2/3):** pure noise shrinkage; no-group collapse to RHS; single strong signal protected without dragging neighbours.
-- **Degeneracy (D-1/2/3/4):** dense-weak → RHS, high-noise collapse, ridge-like behaviour when λ_j are constrained, slab extremes c→∞/small.
-- **Sensitivity (S-1/2/3/4):** smooth performance vs τ/ϕ/λ/c sweeps; stable group ordering and controlled false positives.
-- **Negative controls (NC-1/2):** dense-weak regime (GRRHS≈RHS≈Ridge); mild degradation under 20% mis-specified groups.
-- **Interpretability (E-1/2/3):** ϕ_g rank vs true group strength; ordering stability across seeds; κ separates strong/weak.
-- **Failure modes:** documents p≫n + high correlation and near-equal/overlapping groups where GRRHS should not beat RHS but must remain stable.
+- **Degeneracy (D-1/2/3/4):** dense-weak 鈫?RHS, high-noise collapse, ridge-like behaviour when 位_j are constrained, slab extremes c鈫掆垶/small.
+- **Sensitivity (S-1/2/3/4):** smooth performance vs 蟿/蠒/位/c sweeps; stable group ordering and controlled false positives.
+- **Negative controls (NC-1/2):** dense-weak regime (GRRHS鈮圧HS鈮圧idge); mild degradation under 20% mis-specified groups.
+- **Interpretability (E-1/2/3):** 蠒_g rank vs true group strength; ordering stability across seeds; 魏 separates strong/weak.
+- **Failure modes:** documents p鈮玭 + high correlation and near-equal/overlapping groups where GRRHS should not beat RHS but must remain stable.
 
 If you need manual inspection beyond the harness: run `scripts/plot_check.py` on checklist-generated runs, check `convergence.json` for R-hat/ESS, and confirm `posterior_samples.npz` is present for Bayesian models.
 
@@ -790,15 +792,15 @@ If you need manual inspection beyond the harness: run `scripts/plot_check.py` on
 ### 10.5 Validation Checklist
 - Run the checklist via `python scripts/run_validation_checklist.py [--minimum] [--fast] [--output path]`. `--minimum` limits the run to the 14 core scenarios, while `--fast` shortens iterations/burn-in without changing thresholds.
 - Key parameters (fast-level defaults in parentheses):
-  - **SC-1 Null / Pure Noise**: `tau0=0.0015`, `eta=0.6`, iters/burn-in `4800/2200` (`3000/1500`); collapse_ok when `beta_abs<0.08` and `phi_spread<0.35`, warn only if `tau_median>0.5` but collapse is detected.
-  - **SC-2 No Group Structure**: grouped vs RHS, `eta=0.5`, iters/burn-in `700/250` (`400/250`); warn when `phi_spread>0.45` and `max|Pr(phi_g>phi_h)-0.5|>0.35`, or `rmse_gap>0.25`.
+  - **SC-1 Null / Pure Noise**: `tau0=0.0015`, `eta=0.6`, iters/burn-in `4800/2200` (`3000/1500`); collapse_ok when `beta_abs<0.08` and `a_spread<0.35`, warn only if `tau_median>0.5` but collapse is detected.
+  - **SC-2 No Group Structure**: grouped vs RHS, `eta=0.5`, iters/burn-in `700/250` (`400/250`); warn when `a_spread>0.45` and `max|Pr(a_g>a_h)-0.5|>0.35`, or `rmse_gap>0.25`.
   - **SC-3 Single Strong Signal**: `c=1.5`, `tau0=0.15`, `eta=0.5`, iters/burn-in `900/300` (`450/300`); warn when the active coefficient is not preserved or `beta_abs_inactive>0.25`.
-  - **D-1 GRRHS -> RHS**: `eta=0.6`, iters/burn-in `800/250` (`450/250`); warn if `phi_spread>0.25` or `rmse_gap>0.15`.
+  - **D-1 GRRHS -> RHS**: `eta=0.6`, iters/burn-in `800/250` (`450/250`); warn if `a_spread>0.25` or `rmse_gap>0.15`.
   - **D-2 High-Noise / Small-n**: `tau0=0.0025`, `eta=0.45`, iters/burn-in `3600/1400` (`2400/1000`); warn if (`tau_median>0.65` and `beta_abs>0.35`) or `beta_abs>0.45`. Log one strict replay (iters/burn-in `5200/2000` or `3600/1600`) and record `strict_tau_median`, `strict_beta_abs_mean`, and `strict_rmse` to distinguish fast-specific deviations from actual failures.
   - **D-3 Local Shrinkage Collapse**: iters/burn-in `750/240` (`420/240`); lambda collapse is not expected, warn only if the ridge-like `kappa` spread exceeds `0.35`.
   - **D-4 Slab Extremes**: `c=0.5` vs `c=50.0`, iters/burn-in `650/220` (`380/220`); warn only when the extreme values reverse the `kappa` ordering, otherwise just document the values.
   - **S-1 tau sensitivity**: `tau0` in {0.3, 1, 3, 10} with `eta=0.6`, iters/burn-in `520/180` (`320/180`); warn if adjacent RMSE jumps exceed `0.35`.
-  - **S-2 phi_g sensitivity**: `eta` in {0.3, 1, 3}, iters/burn-in `520/170` (`320/170`); warn if the minimum Spearman(rank) drops below `0.6`.
+  - **S-2 a_g sensitivity**: `eta` in {0.3, 1, 3}, iters/burn-in `520/170` (`320/170`); warn if the minimum Spearman(rank) drops below `0.6`.
   - **S-3 lambda_j sensitivity**: iters/burn-in `780/230` (`500/200`); warn only if the active/inactive kappa gap is `< -0.02` (longer iterations and wider tolerance help avoid fast-run artifacts).
   - **S-4 Slab c sensitivity**: `c` in {0.5, 1, 2, 5}, iters/burn-in `520/170` (`320/170`); monitor whether `kappa_mean` drops by more than `0.1` as `c` increases - warn only when this monotonicity breach occurs (`r_mean` is logged but does not trigger warnings).
   - **NC-1 Dense-and-Weak**: `eta=0.4`, iters/burn-in `1000/300` (`650/300`); warn if `rmse_gap>0.35` or the ridge gap exceeds `0.35`.
@@ -811,20 +813,20 @@ The checklist is rule-based: each scenario computes metrics and assigns PASS/WAR
 
 | Key | Scenario | PASS means (rules) | WARN triggers |
 |---:|---|---|---|
-| SC-1 | Null Model / Pure Noise | `beta_abs_mean <= 0.12` and `phi_spread <= 0.35`; `tau_median` may be `> 0.5` only if `beta_abs_mean < 0.08` and `phi_spread < 0.35` | `beta_abs_mean > 0.12`; `phi_spread > 0.35`; `tau_median > 0.5` without collapse; `tau_median > 0.4` while not collapsed |
-| SC-2 | No Group Structure | `rmse_gap <= 0.25` and NOT(`phi_spread > 0.45` AND `phi_pair_max_dev > 0.35`) | `rmse_gap > 0.25`; OR (`phi_spread > 0.45` AND `phi_pair_max_dev > 0.35`) |
+| SC-1 | Null Model / Pure Noise | `beta_abs_mean <= 0.12` and `a_spread <= 0.35`; `tau_median` may be `> 0.5` only if `beta_abs_mean < 0.08` and `a_spread < 0.35` | `beta_abs_mean > 0.12`; `a_spread > 0.35`; `tau_median > 0.5` without collapse; `tau_median > 0.4` while not collapsed |
+| SC-2 | No Group Structure | `rmse_gap <= 0.25` and NOT(`a_spread > 0.45` AND `a_pair_max_dev > 0.35`) | `rmse_gap > 0.25`; OR (`a_spread > 0.45` AND `a_pair_max_dev > 0.35`) |
 | SC-3 | Single Strong Signal | `lambda_median_active > lambda_median_inactive` and `beta_abs_inactive <= 0.25` | `lambda_median_active <= lambda_median_inactive`; `beta_abs_inactive > 0.25` |
-| D-1 | GRRHS -> RHS (dense-weak) | `phi_spread <= 0.25` and `rmse_gap <= 0.15` | `phi_spread > 0.25`; `rmse_gap > 0.15` |
+| D-1 | GRRHS -> RHS (dense-weak) | `a_spread <= 0.25` and `rmse_gap <= 0.15` | `a_spread > 0.25`; `rmse_gap > 0.15` |
 | D-2 | High-Noise / Small-Sample | NOT( (`tau_median > 0.65` AND `beta_abs_mean > 0.35`) OR `beta_abs_mean > 0.45` ) | (`tau_median > 0.65` AND `beta_abs_mean > 0.35`); OR `beta_abs_mean > 0.45` (strict rerun used to label fast artifacts vs persistent issues) |
 | D-3 | Local Shrinkage Collapse | `ridge_like_kappa_spread <= 0.35` | `ridge_like_kappa_spread > 0.35` |
 | D-4 | Slab Extremes | `c_small_beta_mean <= 1.2 * c_large_beta_mean` and `ordering_corr >= 0.8` | `c_small_beta_mean > 1.2 * c_large_beta_mean`; `ordering_corr < 0.8` |
 | S-1 | Global tau sensitivity | `rmse_max_step < 0.35` | `rmse_max_step >= 0.35` |
-| S-2 | Group-level phi sensitivity | `phi_order_corr_min >= 0.6` | `phi_order_corr_min < 0.6` |
+| S-2 | Group-level a sensitivity | `a_order_corr_min >= 0.6` | `a_order_corr_min < 0.6` |
 | S-3 | Local lambda sensitivity | `min(kappa_active_mean) - max(kappa_inactive_mean) >= -0.02` | `min(kappa_active_mean) - max(kappa_inactive_mean) < -0.02` |
 | S-4 | Slab c sensitivity | No drop in `kappa_mean` larger than `0.1` when sweeping `c` upward | Any negative step in `kappa_mean` less than `-0.1` |
 | NC-1 | Dense-and-Weak control | `rmse_gap_grrhs_rhs < 0.35` AND `abs(rmse_ridge - rmse_grrhs) < 0.35` | `rmse_gap_grrhs_rhs > 0.35` OR `abs(rmse_ridge - rmse_grrhs) > 0.35` |
 | NC-2 | Misspecified groupings | Strict rerun satisfies `rmse_gap_strict <= 0.9` AND `tau_gap_strict <= 0.75` | `rmse_gap_strict > 0.9`; `tau_gap_strict > 0.75` |
-| E-1 | phi_g vs true group strength | Any of: `spearman >= 0.45` OR `topk_hit_rate >= 0.6` OR `auc_group_separation >= 0.65` | None of the PASS conditions met |
+| E-1 | a_g vs true group strength | Any of: `spearman >= 0.45` OR `topk_hit_rate >= 0.6` OR `auc_group_separation >= 0.65` | None of the PASS conditions met |
 | E-2 | Group ordering stability | Any of: `order_corr_min >= 0.4` OR `win_prob_active_over_inactive >= 0.7` OR `topk_hit_mean >= 0.7` | None of the PASS conditions met |
 | E-3 | Shrinkage factor kappa | `kappa_active_mean > kappa_inactive_mean` | `kappa_active_mean <= kappa_inactive_mean` (or active/inactive sets missing) |
 | FailureModes | Documented failure regions | Always `INFO` (documents known hard regimes) | N/A |
@@ -842,12 +844,12 @@ The checklist scenarios each generate a small synthetic dataset tailored to the 
 | D-3 | Local Shrinkage Collapse | 80 (64) | 32 | 4 | equal, contiguous | independent | dense-weak beta as in D-1 | SNR-matched (`snr=0.8`) | forces lambda to a constant post-hoc, checks ridge-like kappa spread |
 | D-4 | Slab Extremes | 140 (110) | 28 | 4 | equal, contiguous | independent | random sparse beta: `sparsity=0.3`, `strong_frac=0.5`, `beta_scale_strong=1.4`, `beta_scale_weak=0.6` | default noise | fits with `c=0.5` vs `c=50.0`, compares ordering / shrinkage |
 | S-1 | Global tau sensitivity | 150 (110) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.25`, `strong_frac=0.6`, `beta_scale_strong=1.3`, `beta_scale_weak=0.5` | default noise | same dataset, sweeps `tau0=0.2*{0.3,1,3,10}` |
-| S-2 | Group-level phi sensitivity | 140 (110) | 32 | 4 | variable, contiguous | independent | random sparse beta: `sparsity=0.35`, `strong_frac=0.5`, `beta_scale_strong=1.2`, `beta_scale_weak=0.5` | default noise | same dataset, sweeps `eta in {0.3,1,3}` |
+| S-2 | Group-level a sensitivity | 140 (110) | 32 | 4 | variable, contiguous | independent | random sparse beta: `sparsity=0.35`, `strong_frac=0.5`, `beta_scale_strong=1.2`, `beta_scale_weak=0.5` | default noise | same dataset, sweeps `eta in {0.3,1,3}` |
 | S-3 | Local lambda sensitivity | 150 (110) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.2`, `strong_frac=0.5`, `beta_scale_strong=1.5`, `beta_scale_weak=0.5` | default noise | same dataset, evaluates lambda scaling `{0.5,1,2}` via post-hoc diagnostics |
 | S-4 | Slab c sensitivity | 150 (120) | 28 | 4 | equal, contiguous | independent | random sparse beta: `sparsity=0.22`, `strong_frac=0.5`, `beta_scale_strong=1.4`, `beta_scale_weak=0.5` | default noise | same dataset, sweeps `c in {0.5,1,2,5}` |
 | NC-1 | Dense-and-Weak control | 120 | 48 | 6 | equal, contiguous | independent | dense-weak beta: `sparsity=0.8`, `strong_frac=1.0`, `beta_scale_strong=0.35`, `beta_scale_weak=0.2` | SNR-matched (`snr=0.8`) | compares GRRHS vs RHS vs ridge |
 | NC-2 | Misspecified groupings | 160 (120) | 32 | 4 | equal, contiguous | independent | random sparse beta: `sparsity=0.3`, `strong_frac=0.6`, `beta_scale_strong=1.2`, `beta_scale_weak=0.4` | default noise | reassigns 20% of features to a different group (same X/y/beta), compares strict gaps |
-| E-1 | phi_g vs true group strength | 150 (120) | 36 | 6 | equal, contiguous | independent | blueprint: groups {0,1} get 4 strong (scale 2.0); groups {2,3} get 4 medium (scale 1.0); groups {4,5} get none | default noise | evaluates rank correlation / separability between true group norms and phi medians |
+| E-1 | a_g vs true group strength | 150 (120) | 36 | 6 | equal, contiguous | independent | blueprint: groups {0,1} get 4 strong (scale 2.0); groups {2,3} get 4 medium (scale 1.0); groups {4,5} get none | default noise | evaluates rank correlation / separability between true group norms and a_g medians |
 | E-2 | Group ordering stability | 150 (120) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.3`, `strong_frac=0.5`, `beta_scale_strong=1.3`, `beta_scale_weak=0.5` | default noise | re-fits 3 times with different inference seeds (same dataset) |
 | E-3 | Shrinkage factor kappa | 150 (120) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.25`, `strong_frac=0.5`, `beta_scale_strong=1.4`, `beta_scale_weak=0.4` | default noise | checks that kappa separates active vs inactive features |
 | FailureModes | Documented failure regions | 60 (50) | 120 | 8 | equal, contiguous | block: `rho=0.7`, `block_size=10` | random sparse beta: `sparsity=0.2`, `strong_frac=0.5`, `beta_scale_strong=1.0`, `beta_scale_weak=0.3` | fixed `noise_sigma=2.0` | informational only; stresses `p >> n` + strong correlations |
@@ -1006,6 +1008,7 @@ python scripts/plot_dual_synthetic_systems.py --system-a-csv outputs/sweeps/sim_
 - Use issues/PRs to coordinate new features or bug fixes.
 
 By following the steps above you can benchmark all supported models across the regression suites, targeted ablations, and any real datasets you plug in, inspecting metrics, posterior behavior, and convergence diagnostics end-to-end.
+
 
 
 

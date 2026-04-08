@@ -69,7 +69,7 @@ def test_synthetic_recovery_metrics_are_reported():
         y_train=y_train,
         y_test=y_test,
         beta_truth=beta_true,
-        group_index=np.array([0, 0, 1, 1]),
+        group_index=np.array([0, 0, 1, 2]),
         coverage_level=0.9,
         task="regression",
     )
@@ -77,6 +77,13 @@ def test_synthetic_recovery_metrics_are_reported():
     assert metrics["BetaRMSE"] is not None
     assert metrics["BetaPearson"] is not None
     assert metrics["GroupNormRMSE"] is not None
+    assert metrics["GroupNormMSE"] is not None
+    assert metrics["NullGroupMeanNorm"] is not None
+    assert metrics["GroupTPR"] is not None
+    assert metrics["GroupFPR"] is not None
+    assert metrics["GroupF1"] is not None
+    assert metrics["ActiveGroupSignalRMSE"] is not None
+    assert metrics["ActiveGroupNoiseAbsMean"] is not None
     assert metrics["BetaCoverage90"] is not None
     assert metrics["ActiveBetaIntervalWidth90"] is not None
     assert metrics["PredictiveCoverage90"] is not None
@@ -344,4 +351,3 @@ def test_gigg_gamma_samples_feed_group_shrinkage_diagnostics():
     assert np.isclose(metrics["MeanKappa"], float(np.mean(diag.per_coeff["kappa"])))
     assert np.isclose(metrics["EffectiveDoF"], float(np.sum(diag.per_group["edf"])))
     assert np.isclose(metrics["MeanEffectiveNonzeros"], float(diag.meta["effective_nonzeros_mean"]))
-

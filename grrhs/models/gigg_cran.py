@@ -111,6 +111,8 @@ def rgig_cpp(chi: float, psi: float, lambda_param: float, *, rng: Optional[Gener
     final_draw = 0.0
 
     def target(x: float) -> float:
+        if x <= 0.0:
+            return 0.0
         return (x ** (lam - 1.0)) * math.exp(-(beta / 2.0) * (x + 1.0 / x))
 
     if (lam > 1.0) or (beta > 1.0):
@@ -130,7 +132,7 @@ def rgig_cpp(chi: float, psi: float, lambda_param: float, *, rng: Optional[Gener
             u_draw = rng.uniform(u_minus, u_plus)
             v_draw = rng.uniform(0.0, v_plus)
             x_draw = u_draw / v_draw + m
-            if (v_draw**2 <= target(x_draw)) and (x_draw > 0.0):
+            if (x_draw > 0.0) and (v_draw**2 <= target(x_draw)):
                 final_draw = x_draw
                 break
     elif (0.0 <= lam <= 1.0) and (min(0.5, (2.0 / 3.0) * math.sqrt(1.0 - lam)) <= beta <= 1.0):
@@ -142,7 +144,7 @@ def rgig_cpp(chi: float, psi: float, lambda_param: float, *, rng: Optional[Gener
             u_draw = rng.uniform(0.0, u_plus)
             v_draw = rng.uniform(0.0, v_plus)
             x_draw = u_draw / v_draw
-            if v_draw**2 <= target(x_draw):
+            if (x_draw > 0.0) and (v_draw**2 <= target(x_draw)):
                 final_draw = x_draw
                 break
     elif (0.0 <= lam < 1.0) and (0.0 < beta <= (2.0 / 3.0) * math.sqrt(1.0 - lam)):
@@ -180,7 +182,7 @@ def rgig_cpp(chi: float, psi: float, lambda_param: float, *, rng: Optional[Gener
                 v_draw = v_draw - (A1 + A2)
                 x_draw = -2.0 / beta * math.log(math.exp(-x_star * beta / 2.0) - v_draw * beta / (2.0 * k3))
                 h = k3 * math.exp(-x_draw * beta / 2.0)
-            if u_draw * h <= target(x_draw):
+            if (x_draw > 0.0) and (u_draw * h <= target(x_draw)):
                 final_draw = x_draw
                 break
     return float(final_draw / alpha)
@@ -284,8 +286,10 @@ def gigg_fixed_gibbs_sampler(
 
     tau_shape_const = (float(M) + 1.0) / 2.0
     sigma_shape_const = (float(n) + 1.0) / 2.0
-
-    gl_param_expand_diag_inv = np.zeros(M, dtype=float)
+    # With beta | sigma_sq, ... ~ N(0, sigma_sq * D), the conjugate sigma_sq conditional
+    # includes both RSS and the beta quadratic form. CRAN uses a Half-Cauchy style
+    # augmentation which adds the 1/nu term.
+    sigma_shape_const = (float(n) + float(M) + 1.0) / 2.0
 
     def _draw_alpha() -> None:
         nonlocal alpha
@@ -297,41 +301,47 @@ def gigg_fixed_gibbs_sampler(
         alpha = mean + chol @ rng.normal(size=K)
 
     def _draw_beta_standard() -> None:
-        nonlocal beta, gl_param_expand_diag_inv
+        nonlocal beta
         ytilde = Y - (C @ alpha if K else 0.0)
-        gl_param_expand_diag_inv = 1.0 / (tau_sq * gamma_sq[grp_idx0] * lambda_sq)
-        precision = (XtX / sigma_sq).copy()
-        precision.flat[:: M + 1] += gl_param_expand_diag_inv
-        mean_rhs = (tX @ ytilde) / sigma_sq
+        D_no_sigma = tau_sq * gamma_sq[grp_idx0] * lambda_sq
+        D_no_sigma = np.maximum(D_no_sigma, 1e-300)
+        precision = XtX.copy()
+        precision.flat[:: M + 1] += 1.0 / D_no_sigma
+        mean_rhs = tX @ ytilde
+        mean = chol_solve(precision, mean_rhs) if stable_solve else np.linalg.solve(precision, mean_rhs)
         cholP = np.linalg.cholesky(precision)
-        z = mean_rhs + cholP @ rng.normal(size=M)
-        beta = chol_solve(precision, z) if stable_solve else np.linalg.solve(precision, z)
+        noise = np.linalg.solve(cholP.T, rng.normal(size=M))
+        beta = mean + math.sqrt(max(sigma_sq, 0.0)) * noise
 
     def _draw_beta_btrick() -> None:
-        nonlocal beta, gl_param_expand_diag_inv
+        nonlocal beta
         ytilde = Y - (C @ alpha if K else 0.0)
-        D = tau_sq * gamma_sq[grp_idx0] * lambda_sq
-        gl_param_expand_diag_inv = 1.0 / D
+        D_no_sigma = tau_sq * gamma_sq[grp_idx0] * lambda_sq
+        D_no_sigma = np.maximum(D_no_sigma, 1e-300)
+        D = sigma_sq * D_no_sigma
         u = rng.normal(size=M) * np.sqrt(D)
         delta = rng.normal(size=n)
-        v = (X @ u) / math.sqrt(sigma_sq) + delta
+        v = (X @ u) / math.sqrt(max(sigma_sq, 1e-300)) + delta
         theta = (D[:, None] * tX)  # (M,n)
-        mat = (X @ theta) / sigma_sq + np.eye(n, dtype=float)
-        rhs = ytilde / math.sqrt(sigma_sq) - v
+        mat = (X @ theta) / max(sigma_sq, 1e-300) + np.eye(n, dtype=float)
+        rhs = ytilde / math.sqrt(max(sigma_sq, 1e-300)) - v
         w = np.linalg.solve(mat, rhs)
-        beta = u + (theta @ w) / math.sqrt(sigma_sq)
+        beta = u + (theta @ w) / math.sqrt(max(sigma_sq, 1e-300))
 
     def _draw_tau_sq() -> None:
         nonlocal tau_sq
-        tau_rate_const = float(np.sum(beta * gl_param_expand_diag_inv * beta))
-        rate = tau_sq * tau_rate_const / 2.0 + 1.0 / nu
+        denom = np.maximum(sigma_sq * gamma_sq[grp_idx0] * lambda_sq, 1e-300)
+        quad = float(np.sum((beta * beta) / denom))
+        rate = quad / 2.0 + 1.0 / max(nu, 1e-300)
         tau_sq = _inv_gamma_draw(tau_shape_const, rate, rng)
 
     def _draw_sigma_sq() -> None:
         nonlocal sigma_sq
         resid = Y - (C @ alpha if K else 0.0) - X @ beta
         rss = float(resid @ resid)
-        rate = rss / 2.0 + 1.0 / nu
+        denom = np.maximum(tau_sq * gamma_sq[grp_idx0] * lambda_sq, 1e-300)
+        beta_quad = float(np.sum((beta * beta) / denom))
+        rate = (rss + beta_quad) / 2.0 + 1.0 / max(nu, 1e-300)
         sigma_sq = _inv_gamma_draw(sigma_shape_const, rate, rng)
 
     def _draw_gamma_lambda_eta() -> None:
@@ -340,7 +350,7 @@ def gigg_fixed_gibbs_sampler(
             start = 0 if j == 0 else int(grp_size_cs[j - 1])
             end = int(grp_size_cs[j])
             stable_psi = float(np.sum(beta[start:end] ** 2 / np.maximum(lambda_sq[start:end], 1e-300)))
-            stable_psi *= 1.0 / tau_sq
+            stable_psi *= 1.0 / max(sigma_sq * tau_sq, 1e-300)
             stable_psi = max(stable_psi, float(stable_const))
             group_half = float(grp_size[j]) / 2.0
             if group_half < float(a[j]):
@@ -348,7 +358,7 @@ def gigg_fixed_gibbs_sampler(
             else:
                 gamma_sq[j] = 1.0 / rgig_cpp(2.0 * float(eta[j]), stable_psi, group_half - float(a[j]), rng=rng)
             for pos in range(start, end):
-                rate = float(eta[j]) + float(beta[pos] ** 2) / (2.0 * tau_sq * gamma_sq[j])
+                rate = float(eta[j]) + float(beta[pos] ** 2) / (2.0 * max(sigma_sq * tau_sq * gamma_sq[j], 1e-300))
                 lambda_sq[pos] = _inv_gamma_draw(float(b[j]) + 0.5, rate, rng)
             eta[j] = 1.0
 
@@ -489,9 +499,7 @@ def gigg_mmle_gibbs_sampler(
     nu_store = np.zeros(n_samples, dtype=float)
 
     tau_shape_const = (float(M) + 1.0) / 2.0
-    sigma_shape_const = (float(n) + 1.0) / 2.0
-
-    gl_param_expand_diag_inv = np.zeros(M, dtype=float)
+    sigma_shape_const = (float(n) + float(M) + 1.0) / 2.0
 
     def _draw_alpha() -> None:
         nonlocal alpha
@@ -503,41 +511,47 @@ def gigg_mmle_gibbs_sampler(
         alpha = mean + chol @ rng.normal(size=K)
 
     def _draw_beta_standard() -> None:
-        nonlocal beta, gl_param_expand_diag_inv
+        nonlocal beta
         ytilde = Y - (C @ alpha if K else 0.0)
-        gl_param_expand_diag_inv = 1.0 / (tau_sq * gamma_sq[grp_idx0] * lambda_sq)
-        precision = (XtX / sigma_sq).copy()
-        precision.flat[:: M + 1] += gl_param_expand_diag_inv
-        mean_rhs = (tX @ ytilde) / sigma_sq
+        D_no_sigma = tau_sq * gamma_sq[grp_idx0] * lambda_sq
+        D_no_sigma = np.maximum(D_no_sigma, 1e-300)
+        precision = XtX.copy()
+        precision.flat[:: M + 1] += 1.0 / D_no_sigma
+        mean_rhs = tX @ ytilde
+        mean = chol_solve(precision, mean_rhs) if stable_solve else np.linalg.solve(precision, mean_rhs)
         cholP = np.linalg.cholesky(precision)
-        z = mean_rhs + cholP @ rng.normal(size=M)
-        beta = chol_solve(precision, z) if stable_solve else np.linalg.solve(precision, z)
+        noise = np.linalg.solve(cholP.T, rng.normal(size=M))
+        beta = mean + math.sqrt(max(sigma_sq, 0.0)) * noise
 
     def _draw_beta_btrick() -> None:
-        nonlocal beta, gl_param_expand_diag_inv
+        nonlocal beta
         ytilde = Y - (C @ alpha if K else 0.0)
-        D = tau_sq * gamma_sq[grp_idx0] * lambda_sq
-        gl_param_expand_diag_inv = 1.0 / D
+        D_no_sigma = tau_sq * gamma_sq[grp_idx0] * lambda_sq
+        D_no_sigma = np.maximum(D_no_sigma, 1e-300)
+        D = sigma_sq * D_no_sigma
         u = rng.normal(size=M) * np.sqrt(D)
         delta = rng.normal(size=n)
-        v = (X @ u) / math.sqrt(sigma_sq) + delta
+        v = (X @ u) / math.sqrt(max(sigma_sq, 1e-300)) + delta
         theta = (D[:, None] * tX)  # (M,n)
-        mat = (X @ theta) / sigma_sq + np.eye(n, dtype=float)
-        rhs = ytilde / math.sqrt(sigma_sq) - v
+        mat = (X @ theta) / max(sigma_sq, 1e-300) + np.eye(n, dtype=float)
+        rhs = ytilde / math.sqrt(max(sigma_sq, 1e-300)) - v
         w = np.linalg.solve(mat, rhs)
-        beta = u + (theta @ w) / math.sqrt(sigma_sq)
+        beta = u + (theta @ w) / math.sqrt(max(sigma_sq, 1e-300))
 
     def _draw_tau_sq() -> None:
         nonlocal tau_sq
-        tau_rate_const = float(np.sum(beta * gl_param_expand_diag_inv * beta))
-        rate = tau_sq * tau_rate_const / 2.0 + 1.0 / nu
+        denom = np.maximum(sigma_sq * gamma_sq[grp_idx0] * lambda_sq, 1e-300)
+        quad = float(np.sum((beta * beta) / denom))
+        rate = quad / 2.0 + 1.0 / max(nu, 1e-300)
         tau_sq = _inv_gamma_draw(tau_shape_const, rate, rng)
 
     def _draw_sigma_sq() -> None:
         nonlocal sigma_sq
         resid = Y - (C @ alpha if K else 0.0) - X @ beta
         rss = float(resid @ resid)
-        rate = rss / 2.0 + 1.0 / nu
+        denom = np.maximum(tau_sq * gamma_sq[grp_idx0] * lambda_sq, 1e-300)
+        beta_quad = float(np.sum((beta * beta) / denom))
+        rate = (rss + beta_quad) / 2.0 + 1.0 / max(nu, 1e-300)
         sigma_sq = _inv_gamma_draw(sigma_shape_const, rate, rng)
 
     def _draw_gamma_lambda_eta() -> None:
@@ -546,7 +560,7 @@ def gigg_mmle_gibbs_sampler(
             start = 0 if j == 0 else int(grp_size_cs[j - 1])
             end = int(grp_size_cs[j])
             stable_psi = float(np.sum(beta[start:end] ** 2 / np.maximum(lambda_sq[start:end], 1e-300)))
-            stable_psi *= 1.0 / tau_sq
+            stable_psi *= 1.0 / max(sigma_sq * tau_sq, 1e-300)
             stable_psi = max(stable_psi, float(stable_const))
             group_half = float(grp_size[j]) / 2.0
             if group_half < float(p_vec[j]):
@@ -554,7 +568,7 @@ def gigg_mmle_gibbs_sampler(
             else:
                 gamma_sq[j] = 1.0 / rgig_cpp(2.0 * float(eta[j]), stable_psi, group_half - float(p_vec[j]), rng=rng)
             for pos in range(start, end):
-                rate = float(eta[j]) + float(beta[pos] ** 2) / (2.0 * tau_sq * gamma_sq[j])
+                rate = float(eta[j]) + float(beta[pos] ** 2) / (2.0 * max(sigma_sq * tau_sq * gamma_sq[j], 1e-300))
                 lambda_sq[pos] = _inv_gamma_draw(float(q_vec[j]) + 0.5, rate, rng)
             eta[j] = 1.0
 

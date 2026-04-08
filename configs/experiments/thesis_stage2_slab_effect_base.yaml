@@ -1,0 +1,87 @@
+defaults: "./thesis_grrhs_common.yaml"
+
+name: "thesis_stage2_slab_effect_base"
+
+experiments:
+  repeats: 30
+
+data:
+  type: "synthetic"
+  seed: 20260415
+  n: 200
+  p: 200
+  G: 10
+  group_sizes: "equal"
+  correlation:
+    type: "group_block"
+    rho_in: 0.90
+    rho_out: 0.10
+  noise_sigma: 1.0
+  signal:
+    blueprint:
+      - label: "active_group_2"
+        groups: [2]
+        components:
+          - name: "s1"
+            count: 1
+            distribution: "constant"
+            value: 2.0
+            sign: "positive"
+            tag: "signal"
+          - name: "s2"
+            count: 1
+            distribution: "constant"
+            value: 1.5
+            sign: "positive"
+            tag: "signal"
+          - name: "s3"
+            count: 1
+            distribution: "constant"
+            value: 1.0
+            sign: "positive"
+            tag: "signal"
+          - name: "s4"
+            count: 1
+            distribution: "constant"
+            value: 0.8
+            sign: "positive"
+            tag: "signal"
+          - name: "s5"
+            count: 1
+            distribution: "constant"
+            value: 0.5
+            sign: "positive"
+            tag: "signal"
+      - label: "active_group_7"
+        groups: [7]
+        components:
+          - name: "s1"
+            count: 1
+            distribution: "constant"
+            value: 2.0
+            sign: "positive"
+            tag: "signal"
+          - name: "s2"
+            count: 1
+            distribution: "constant"
+            value: 1.5
+            sign: "positive"
+            tag: "signal"
+          - name: "s3"
+            count: 1
+            distribution: "constant"
+            value: 1.0
+            sign: "positive"
+            tag: "signal"
+          - name: "s4"
+            count: 1
+            distribution: "constant"
+            value: 0.8
+            sign: "positive"
+            tag: "signal"
+          - name: "s5"
+            count: 1
+            distribution: "constant"
+            value: 0.5
+            sign: "positive"
+            tag: "signal"

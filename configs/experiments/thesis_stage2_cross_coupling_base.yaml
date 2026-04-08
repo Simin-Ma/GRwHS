@@ -1,0 +1,42 @@
+defaults: "./thesis_grrhs_common.yaml"
+
+name: "thesis_stage2_cross_coupling_base"
+
+experiments:
+  repeats: 30
+
+data:
+  type: "synthetic"
+  seed: 20260416
+  n: 200
+  p: 180
+  G: 12
+  group_sizes: "equal"
+  correlation:
+    type: "group_block"
+    rho_in: 0.85
+    rho_out: 0.10
+  noise_sigma: 1.0
+  signal:
+    blueprint:
+      - label: "active_groups"
+        groups: [0, 2, 5, 8, 10]
+        components:
+          - name: "s1"
+            count: 1
+            distribution: "constant"
+            value: 1.8
+            sign: "mixed"
+            tag: "signal"
+          - name: "s2"
+            count: 1
+            distribution: "constant"
+            value: 1.2
+            sign: "mixed"
+            tag: "signal"
+          - name: "s3"
+            count: 1
+            distribution: "constant"
+            value: 0.7
+            sign: "mixed"
+            tag: "signal"

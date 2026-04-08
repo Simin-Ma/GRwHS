@@ -35,10 +35,13 @@ except Exception:  # pragma: no cover
 
 # Baselines (numpy/skglm implementations)
 from grrhs.models.baselines import (
+    OLS,
     Ridge,
     Lasso,
     ElasticNet,
     SparseGroupLasso,
+    MBSGSBGLSSRegression,
+    BGLSSPythonRegression,
     HorseshoeRegression,
     RegularizedHorseshoeRegression,
 )
@@ -183,6 +186,7 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
         )
     )
     progress_bar = bool(_get(cfg, "model.progress_bar", _get(cfg, "runtime.progress_bar", False)))
+    backend = str(_get(cfg, "model.backend", _get(cfg, "model.rhs_backend", "cmdstan"))).strip().lower()
     seed_candidates = [
         "model.seed",
         "inference.nuts.seed",
@@ -211,6 +215,7 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "target_accept_prob": float(0.99 if target_accept is None else target_accept),
         "max_tree_depth": max(1, int(max_tree_depth)),
         "progress_bar": progress_bar,
+        "backend": backend,
     }
     if seed_val is not None:
         kwargs["seed"] = int(seed_val)
@@ -228,6 +233,20 @@ def _build_ridge(cfg: Dict[str, Any]) -> Any:
     alpha = float(_get(cfg, "model.alpha", 1.0))
     fit_intercept = bool(_get(cfg, "model.fit_intercept", False))
     return Ridge(alpha=alpha, fit_intercept=fit_intercept)
+
+
+@register("ols")
+@register("linear_regression")
+@register("linear")
+def _build_ols(cfg: Dict[str, Any]) -> Any:
+    fit_intercept = bool(_get(cfg, "model.fit_intercept", False))
+    positive = bool(_get(cfg, "model.positive", False))
+    n_jobs = _get(cfg, "model.n_jobs", None)
+    return OLS(
+        fit_intercept=fit_intercept,
+        positive=positive,
+        n_jobs=None if n_jobs is None else int(n_jobs),
+    )
 
 
 @register("lasso")
@@ -439,6 +458,102 @@ def _build_gigg(cfg: Dict[str, Any]) -> Any:
     )
 
 
+@register("bglss_mbsgs")
+@register("mbsgs_bglss")
+@register("bglss")
+def _build_bglss_mbsgs(cfg: Dict[str, Any]) -> Any:
+    groups = _infer_groups(cfg)
+    if groups is None:
+        raise ValueError("MBSGSBGLSSRegression requires grouped features in config (data.groups or inferable).")
+    niter = int(_get(cfg, "model.niter", _get(cfg, "model.n_samples", 3000)))
+    burnin = int(_get(cfg, "model.burnin", _get(cfg, "inference.gibbs.burn_in", 1000)))
+    seed = int(
+        _get(
+            cfg,
+            "model.seed",
+            _get(
+                cfg,
+                "inference.gibbs.seed",
+                _get(cfg, "seed", 2025),
+            ),
+        )
+    )
+    fit_intercept = bool(_get(cfg, "model.fit_intercept", False))
+    save_posterior_samples = bool(_get(cfg, "model.save_posterior_samples", False))
+    rscript = str(_get(cfg, "model.rscript", "Rscript"))
+    timeout_sec = int(_get(cfg, "model.timeout_sec", 1800))
+    verbose = bool(_get(cfg, "model.verbose", False))
+
+    return MBSGSBGLSSRegression(
+        groups=groups,
+        niter=niter,
+        burnin=burnin,
+        seed=seed,
+        fit_intercept=fit_intercept,
+        save_posterior_samples=save_posterior_samples,
+        rscript=rscript,
+        timeout_sec=timeout_sec,
+        verbose=verbose,
+    )
+
+
+@register("bglss_python")
+@register("bglss_py")
+def _build_bglss_python(cfg: Dict[str, Any]) -> Any:
+    groups = _infer_groups(cfg)
+    if groups is None:
+        raise ValueError("BGLSSPythonRegression requires grouped features in config (data.groups or inferable).")
+
+    niter = int(_get(cfg, "model.niter", _get(cfg, "model.n_samples", 6000)))
+    burnin = int(_get(cfg, "model.burnin", _get(cfg, "inference.gibbs.burn_in", 2000)))
+    seed = int(
+        _get(
+            cfg,
+            "model.seed",
+            _get(
+                cfg,
+                "inference.gibbs.seed",
+                _get(cfg, "seed", 2025),
+            ),
+        )
+    )
+    fit_intercept = bool(_get(cfg, "model.fit_intercept", False))
+    a = float(_get(cfg, "model.a", 1.0))
+    b = float(_get(cfg, "model.b", 1.0))
+    pi_prior = bool(_get(cfg, "model.pi_prior", True))
+    pi_init = float(_get(cfg, "model.pi", 0.5))
+    alpha = float(_get(cfg, "model.alpha", 0.1))
+    gamma = float(_get(cfg, "model.gamma", 0.1))
+    lambda_slab2 = float(_get(cfg, "model.lambda_slab2", _get(cfg, "model.lambda2_slab", 0.5)))
+    lambda_spike2 = float(_get(cfg, "model.lambda_spike2", _get(cfg, "model.lambda2_spike", 25.0)))
+    update_tau = bool(_get(cfg, "model.update_tau", True))
+    num_update = int(_get(cfg, "model.num_update", 100))
+    niter_update = int(_get(cfg, "model.niter.update", _get(cfg, "model.niter_update", 100)))
+    store_beta_samples = bool(_get(cfg, "model.store_beta_samples", False))
+    verbose = bool(_get(cfg, "model.verbose", False))
+
+    return BGLSSPythonRegression(
+        groups=groups,
+        niter=niter,
+        burnin=burnin,
+        seed=seed,
+        fit_intercept=fit_intercept,
+        a=a,
+        b=b,
+        pi_prior=pi_prior,
+        pi_init=pi_init,
+        alpha=alpha,
+        gamma=gamma,
+        lambda_slab2=lambda_slab2,
+        lambda_spike2=lambda_spike2,
+        update_tau=update_tau,
+        num_update=num_update,
+        niter_update=niter_update,
+        store_beta_samples=store_beta_samples,
+        verbose=verbose,
+    )
+
+
 # ------------------------------
 # GRRHS main models (if available)
 # ------------------------------
@@ -453,6 +568,8 @@ def _build_grrhs_svi(cfg: Dict[str, Any]) -> Any:
     tau0 = float(_get(cfg, "model.tau0", 0.1))
     eta = float(_get(cfg, "model.eta", 0.5))
     s0 = float(_get(cfg, "model.s0", 1.0))
+    alpha_c = float(_get(cfg, "model.alpha_c", 2.0))
+    beta_c = float(_get(cfg, "model.beta_c", 2.0))
     svi_kwargs: Dict[str, Any] = {}
     steps = _get(cfg, "inference.svi.steps", None)
     if steps is not None:
@@ -487,6 +604,8 @@ def _build_grrhs_svi(cfg: Dict[str, Any]) -> Any:
         tau0=tau0,
         eta=eta,
         s0=s0,
+        alpha_c=alpha_c,
+        beta_c=beta_c,
         natural_gradient=natural_grad,
         use_hutchinson=use_hutch,
         hutchinson_samples=hutch_samples,
@@ -527,6 +646,18 @@ def _gibbs_runtime_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
     num_chains = _get(cfg, "inference.gibbs.num_chains", _get(cfg, "model.num_chains", None))
     if num_chains is not None:
         overrides["num_chains"] = max(1, int(num_chains))
+    mh_sd_log_tau2 = _get(cfg, "inference.gibbs.mh_sd_log_tau2", None)
+    if mh_sd_log_tau2 is not None:
+        overrides["mh_sd_log_tau2"] = float(mh_sd_log_tau2)
+    mh_sd_log_lambda = _get(cfg, "inference.gibbs.mh_sd_log_lambda", None)
+    if mh_sd_log_lambda is not None:
+        overrides["mh_sd_log_lambda"] = float(mh_sd_log_lambda)
+    mh_sd_log_a = _get(cfg, "inference.gibbs.mh_sd_log_a", None)
+    if mh_sd_log_a is not None:
+        overrides["mh_sd_log_a"] = float(mh_sd_log_a)
+    mh_sd_log_c2 = _get(cfg, "inference.gibbs.mh_sd_log_c2", None)
+    if mh_sd_log_c2 is not None:
+        overrides["mh_sd_log_c2"] = float(mh_sd_log_c2)
     return overrides
 
 
@@ -539,6 +670,8 @@ def _build_grrhs_gibbs(cfg: Dict[str, Any]) -> Any:
     eta = float(_get(cfg, "model.eta", 0.5))
     use_groups = bool(_get(cfg, "model.use_groups", True))
     s0 = float(_get(cfg, "model.s0", 1.0))
+    alpha_c = float(_get(cfg, "model.alpha_c", 2.0))
+    beta_c = float(_get(cfg, "model.beta_c", 2.0))
     iters = int(_get(cfg, "model.iters", 2000))
     seed = _get(
         cfg,
@@ -551,6 +684,8 @@ def _build_grrhs_gibbs(cfg: Dict[str, Any]) -> Any:
         tau0=tau0,
         eta=eta,
         s0=s0,
+        alpha_c=alpha_c,
+        beta_c=beta_c,
         iters=iters,
         seed=int(seed),
         use_groups=use_groups,

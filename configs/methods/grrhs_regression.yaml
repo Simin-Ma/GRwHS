@@ -4,6 +4,8 @@ model:
   name: "grrhs_gibbs"
   c: 1.0
   eta: 0.5
+  alpha_c: 2.0
+  beta_c: 2.0
   s0: 1.0
   iters: 2000
   tau:
@@ -18,7 +20,12 @@ inference:
     burn_in: 1000
     thin: 1
     num_chains: 4
-    tau_slice_w: 0.8
+    tau_slice_w: 0.2
     tau_slice_m: 1200
+    slice_w: 0.25
+    mh_sd_log_tau2: 0.2
+    mh_sd_log_lambda: 0.25
+    mh_sd_log_a: 0.2
+    mh_sd_log_c2: 0.2
     jitter: 1.0e-08
     seed: 321

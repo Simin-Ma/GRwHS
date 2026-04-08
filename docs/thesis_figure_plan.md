@@ -112,4 +112,4 @@ Recommended thesis panels from NHANES:
 - group signal concentration
 - coefficient heatmap by exposure group
 - group predictive contribution
-- GR-RHS group-level posterior shrinkage supplement
+- GR-RHS group-level posterior shrinkage supplement (report `a_g` and `c_g^2`; `phi` is a compatibility alias for `a_g`)

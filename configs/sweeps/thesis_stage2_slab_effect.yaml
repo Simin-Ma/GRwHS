@@ -1,0 +1,46 @@
+name: "thesis_stage2_slab_effect"
+output_dir: "outputs/sweeps/thesis_stage2_slab_effect"
+
+common_config_files:
+  - "../experiments/thesis_stage2_slab_effect_base.yaml"
+
+variations:
+  - name: "grrhs_c2_0p05"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    overrides:
+      model:
+        c: 0.2236067977
+  - name: "grrhs_c2_0p20"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    overrides:
+      model:
+        c: 0.4472135955
+  - name: "grrhs_c2_1p00"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    overrides:
+      model:
+        c: 1.0
+  - name: "grrhs_c2_5p00"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    overrides:
+      model:
+        c: 2.2360679775
+  - name: "grrhs_c2_20p00"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+    overrides:
+      model:
+        c: 4.4721359550
+  - name: "rhs_ref"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+  - name: "gigg_ref"
+    config_files:
+      - "../methods/gigg.yaml"
+  - name: "ols_ref"
+    config_files:
+      - "../methods/ols.yaml"

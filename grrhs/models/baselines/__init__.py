@@ -5,16 +5,22 @@ from .models import (
     ElasticNet,
     HorseshoeRegression,
     Lasso,
+    OLS,
     RegularizedHorseshoeRegression,
     Ridge,
     SparseGroupLasso,
 )
+from .bglss_mbsgs import MBSGSBGLSSRegression
+from .bglss_python import BGLSSPythonRegression
 
 __all__ = [
     "Ridge",
+    "OLS",
     "Lasso",
     "ElasticNet",
     "SparseGroupLasso",
+    "MBSGSBGLSSRegression",
+    "BGLSSPythonRegression",
     "HorseshoeRegression",
     "RegularizedHorseshoeRegression",
 ]

@@ -52,6 +52,8 @@ experiments:
     min_ess_by_block:
       beta: 400
       tau: 1000
+      a: 400
+      c2: 400
       phi: 400
       gamma: 400
       lambda: 200
@@ -62,7 +64,7 @@ experiments:
     parameters: ["beta", "tau"]
     expected_blocks:
       default: ["beta", "tau"]
-      grrhs_gibbs: ["beta", "tau", "phi", "lambda"]
+      grrhs_gibbs: ["beta", "tau", "a", "c2", "lambda"]
       gigg: ["beta", "tau", "gamma", "lambda"]
       gigg_regression: ["beta", "tau", "gamma", "lambda"]
       regularized_horseshoe: ["beta", "tau", "lambda"]

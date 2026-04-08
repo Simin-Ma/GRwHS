@@ -1,0 +1,33 @@
+defaults: "./thesis_grrhs_common.yaml"
+
+name: "thesis_stage1_scene3_moderate_grouped"
+
+data:
+  type: "synthetic"
+  seed: 20260413
+  n: 150
+  p: 90
+  G: 30
+  group_sizes: "equal"
+  correlation:
+    type: "group_block"
+    rho_in: 0.30
+    rho_out: 0.05
+  noise_sigma: 1.0
+  signal:
+    blueprint:
+      - label: "active_moderate_groups"
+        groups: [0, 4, 8, 12, 16, 20, 24, 28]
+        components:
+          - name: "moderate_signal"
+            count: 1
+            distribution: "constant"
+            value: 1.2
+            sign: "mixed"
+            tag: "signal"
+          - name: "weak_signal"
+            count: 1
+            distribution: "constant"
+            value: 0.8
+            sign: "mixed"
+            tag: "signal"

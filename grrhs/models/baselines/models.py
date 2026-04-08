@@ -12,6 +12,7 @@ import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 from sklearn.linear_model import LogisticRegression as _SklearnLogisticRegression
+from sklearn.linear_model import LinearRegression as _SklearnLinearRegression
 from grrhs.models.grrhs_gibbs import GRRHS_Gibbs
 try:
     from cmdstanpy import CmdStanModel as _CmdStanModel
@@ -36,6 +37,7 @@ else:  # pragma: no cover - exercised when skglm is present
 
 __all__ = [
     "LogisticRegressionClassifier",
+    "OLS",
     "Ridge",
     "Lasso",
     "ElasticNet",
@@ -250,6 +252,62 @@ class LogisticRegressionClassifier:
         if self._estimator is None:
             raise RuntimeError("Model must be fitted before accessing the estimator.")
         return self._estimator
+
+
+@dataclass
+class OLS:
+    fit_intercept: bool = False
+    positive: bool = False
+    n_jobs: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        self._estimator: Optional[_SklearnLinearRegression] = None
+        self.coef_: Optional[np.ndarray] = None
+        self.intercept_: Optional[np.ndarray | float] = None
+
+    def _estimator_params(self) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "fit_intercept": bool(self.fit_intercept),
+            "positive": bool(self.positive),
+        }
+        if self.n_jobs is not None:
+            params["n_jobs"] = int(self.n_jobs)
+        return params
+
+    def fit(self, X: Any, y: Any, **fit_kwargs: Any) -> "OLS":
+        estimator = _SklearnLinearRegression(**self._estimator_params())
+        fitted = estimator.fit(X, y, **fit_kwargs)
+        self._estimator = fitted
+        coef = np.asarray(fitted.coef_, dtype=float)
+        self.coef_ = coef.copy()
+        intercept_arr = np.asarray(fitted.intercept_, dtype=float)
+        if intercept_arr.ndim == 0:
+            self.intercept_ = float(intercept_arr)
+        else:
+            self.intercept_ = intercept_arr.copy()
+        return self
+
+    def predict(self, X: Any, **predict_kwargs: Any) -> Any:
+        if self._estimator is None:
+            raise RuntimeError("Model must be fitted before calling predict().")
+        return self._estimator.predict(X, **predict_kwargs)
+
+    def get_estimator(self) -> _SklearnLinearRegression:
+        if self._estimator is None:
+            raise RuntimeError("Model must be fitted before accessing the estimator.")
+        return self._estimator
+
+    def get_posterior_summaries(self) -> dict[str, np.ndarray | float]:
+        if self.coef_ is None:
+            raise RuntimeError("Model must be fitted before requesting summaries.")
+        intercept = self.intercept_
+        if intercept is None:
+            intercept_summary: np.ndarray | float = 0.0
+        elif isinstance(intercept, np.ndarray):
+            intercept_summary = intercept.copy()
+        else:
+            intercept_summary = float(intercept)
+        return {"coef": self.coef_.copy(), "intercept": intercept_summary}
 
 
 @dataclass
@@ -499,6 +557,7 @@ class _BaseHorseshoeRegression:
     slab_scale: Optional[float] = None
     slab_df: Optional[float] = None
     likelihood: str = "gaussian"
+    backend: str = "cmdstan"
     num_warmup: int = 1000
     num_samples: int = 1000
     num_chains: int = 1
@@ -815,8 +874,22 @@ class _BaseHorseshoeRegression:
             raise ValueError("X and y must have matching number of rows.")
 
         if self._use_cmdstan_backend():
-            self._fit_with_cmdstan(X_arr.astype(np.float64), y_arr.astype(np.float64))
-            return self
+            try:
+                self._fit_with_cmdstan(X_arr.astype(np.float64), y_arr.astype(np.float64))
+                return self
+            except Exception:
+                # Fall back to NumPyro NUTS when CmdStan fails in the runtime environment.
+                # The runner's HMC diagnostics are still computed from NumPyro.
+                self.coef_samples_ = None
+                self.intercept_samples_ = None
+                self.sigma_samples_ = None
+                self.tau_samples_ = None
+                self.lambda_samples_ = None
+                self.lambda_tilde_samples_ = None
+                self.c_samples_ = None
+                self.coef_ = None
+                self.intercept_ = None
+                self.sampler_diagnostics_ = {"backend": "cmdstan_failed_fallback"}
         if self._use_gibbs_backend():
             self._fit_with_gibbs(X_arr, y_arr, groups=groups)
             return self
@@ -1045,8 +1118,9 @@ class RegularizedHorseshoeRegression(_BaseHorseshoeRegression):
         return (Path(__file__).resolve().parent / "stan" / "rhs_gaussian_regression.stan").resolve()
 
     def _use_cmdstan_backend(self) -> bool:
-        # Match paper Appendix C.2 implementation for gaussian RHS.
-        return self.likelihood == "gaussian"
+        # Default: use CmdStan for gaussian RHS, but allow an explicit fallback to NumPyro NUTS.
+        backend = str(self.backend).strip().lower()
+        return self.likelihood == "gaussian" and backend in {"cmdstan", "cmdstanpy", "stan"}
 
     def _use_gibbs_backend(self) -> bool:
         return False

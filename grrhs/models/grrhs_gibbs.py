@@ -1,10 +1,10 @@
-# grrhs/models/grrhs_gibbs.py
 from __future__ import annotations
+
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
 import logging
 import math
-from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from numpy.random import Generator, default_rng
@@ -12,85 +12,16 @@ from scipy.linalg import cho_factor, cho_solve, solve_triangular
 
 from grrhs.utils.logging_utils import progress
 
-# Prefer the stable GIG sampler implemented in inference/gig.py
-# Expected signature: sample_gig(lambda_param: float, chi: float, psi: float, size: int | tuple[int, ...] = 1, rng: Optional[Generator] = None) -> np.ndarray
-from grrhs.inference.gig import sample_gig
-
-_PHI_EPS = 1e-12
-_PHI_BASE_FLOOR = 2e-5
-_PHI_ADAPT_COEFF = 5e-7
-_FLOOR_MIN_WEIGHT = 0.002
-_TAU_MAX = 5e3
-_SIGMA2_FACTOR = 2.0
-_BURNIN_WARM = 1000
-_RIDGE_ALPHA = 1e-3
-_TAU_PENALTY = 5e-5
+_EPS = 1e-12
+_MIN_POS = 1e-10
 
 
-def _burnin_weight(step: int, burnin: Optional[int], warm: int = 1000) -> float:
-    if burnin is None or burnin <= 0:
-        return 0.0
-    if step < burnin:
-        return 1.0
-    if step < burnin + warm:
-        return 1.0 - (step - burnin) / float(max(warm, 1))
-    return 0.0
-
-
-# ------------------------------
-# Helpers: sampling utilities
-# ------------------------------
 def _sample_invgamma(alpha: float, beta: float, rng: Generator) -> float:
-    """
-    InvGamma(alpha, beta) with shape–scale parameterization used in the paper:
-        p(x) ∝ beta^alpha x^{-alpha-1} exp(-beta/x),  x > 0
-    Sampling: if Z ~ Gamma(alpha, scale=1/beta), then X = 1/Z ~ InvGamma(alpha, beta).
-    """
-    if alpha <= 0 or beta <= 0:
-        raise ValueError("InvGamma requires alpha,beta > 0")
+    """InvGamma(alpha, beta), shape-scale parameterization."""
+    if alpha <= 0.0 or beta <= 0.0:
+        raise ValueError("InvGamma requires alpha > 0 and beta > 0.")
     z = rng.gamma(shape=alpha, scale=1.0 / beta)
-    return 1.0 / z
-
-
-def _slice_sample_1d(logpdf, x0: float, rng: Generator, w: float = 1.0, m: int = 100, max_steps: int = 1000) -> float:
-    """
-    Robust 1-D slice sampler (Neal 2003 style with stepping-out and shrinkage).
-    - logpdf: callable returning an unnormalized log density
-    - x0:     current point (float)
-    - w:      initial step size
-    - m:      maximum stepping-out iterations
-    - returns: new sample
-    """
-    logy = logpdf(x0) - rng.exponential(1.0)
-
-    # Step out
-    u = rng.uniform(0.0, 1.0)
-    L = x0 - u * w
-    R = L + w
-    j = int(rng.integers(0, m))
-    k = (m - 1) - j
-
-    while j > 0 and logpdf(L) > logy:
-        L -= w
-        j -= 1
-    while k > 0 and logpdf(R) > logy:
-        R += w
-        k -= 1
-
-    # Shrinkage
-    it = 0
-    while it < max_steps:
-        x1 = rng.uniform(L, R)
-        if logpdf(x1) >= logy:
-            return x1
-        # shrink
-        if x1 < x0:
-            L = x1
-        else:
-            R = x1
-        it += 1
-    # Fallback
-    return x0
+    return float(1.0 / max(z, _MIN_POS))
 
 
 def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -100,6 +31,8 @@ def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         eta=float(payload["eta"]),
         s0=float(payload["s0"]),
         use_groups=bool(payload["use_groups"]),
+        alpha_c=float(payload["alpha_c"]),
+        beta_c=float(payload["beta_c"]),
         iters=int(payload["iters"]),
         burnin=int(payload["burnin"]),
         thin=int(payload["thin"]),
@@ -107,9 +40,13 @@ def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         num_chains=1,
         slice_w=float(payload["slice_w"]),
         slice_m=int(payload["slice_m"]),
-        tau_slice_w=float(payload.get("tau_slice_w", payload["slice_w"])),
-        tau_slice_m=int(payload.get("tau_slice_m", payload["slice_m"])),
+        tau_slice_w=float(payload["tau_slice_w"]),
+        tau_slice_m=int(payload["tau_slice_m"]),
         jitter=float(payload["jitter"]),
+        mh_sd_log_tau2=float(payload["mh_sd_log_tau2"]),
+        mh_sd_log_lambda=float(payload["mh_sd_log_lambda"]),
+        mh_sd_log_a=float(payload["mh_sd_log_a"]),
+        mh_sd_log_c2=float(payload["mh_sd_log_c2"]),
     )
     fitted = model.fit(
         np.asarray(payload["X"], dtype=float),
@@ -125,22 +62,38 @@ def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         "tau_samples": None if fitted.tau_samples_ is None else np.asarray(fitted.tau_samples_),
         "phi_samples": None if fitted.phi_samples_ is None else np.asarray(fitted.phi_samples_),
         "lambda_samples": None if fitted.lambda_samples_ is None else np.asarray(fitted.lambda_samples_),
+        "a_samples": None if fitted.a_samples_ is None else np.asarray(fitted.a_samples_),
+        "c2_samples": None if fitted.c2_samples_ is None else np.asarray(fitted.c2_samples_),
         "coef_mean": None if fitted.coef_mean_ is None else np.asarray(fitted.coef_mean_),
         "intercept": float(fitted.intercept_),
     }
 
 
-# ------------------------------
-# Core: GRRHS Gibbs sampler
-# ------------------------------
 @dataclass
 class GRRHS_Gibbs:
-    # Hyperparameters
-    c: float = 1.0           # slab width
-    tau0: float = 0.1        # global HC scale
-    eta: float = 0.5         # base group HalfNormal scale (before size adjustment)
-    s0: float = 1.0          # noise HC scale
-    use_groups: bool = True  # enable group shrinkage (phi)
+    """
+    Group Regularized Horseshoe (GR-RHS) Metropolis-within-Gibbs sampler.
+
+    Hierarchy implemented:
+      beta_j | lambda_j, a_g, c_g^2, tau ~ N(0, tau^2 * tilde_lambda_{j,g}^2)
+      tilde_lambda_{j,g}^2 = c_g^2 * lambda_j^2 * a_g^2 / (c_g^2 + tau^2 * lambda_j^2 * a_g^2)
+      lambda_j ~ HC(0, 1)
+      a_g ~ HN(0, s_{a,g}^2), with s_{a,g} = eta / sqrt(p_g)
+      c_g^2 ~ IG(alpha_c, beta_c)
+      tau ~ HC(0, tau0), via IG augmentation with nu
+      p(sigma^2) ∝ 1 / sigma^2
+    """
+
+    # Backward-compatible public hyperparameters
+    c: float = 1.0
+    tau0: float = 0.1
+    eta: float = 0.5
+    s0: float = 1.0
+    use_groups: bool = True
+
+    # New slab prior parameters
+    alpha_c: float = 2.0
+    beta_c: float = 2.0
 
     # Sampling controls
     iters: int = 2000
@@ -149,41 +102,64 @@ class GRRHS_Gibbs:
     seed: int = 42
     num_chains: int = 1
 
-    # Numerical settings
-    slice_w: float = 1.0
+    # Kept for compatibility with existing configs; mapped to MH step sizes
+    slice_w: float = 0.25
     slice_m: int = 100
-    tau_slice_w: float = 0.35
+    tau_slice_w: float = 0.2
     tau_slice_m: int = 200
-    jitter: float = 1e-10    # Numerical jitter to avoid degeneracy
+    jitter: float = 1e-10
 
-    # Runtime state (accessible after fit)
+    # Explicit MH proposal SDs in log space
+    mh_sd_log_tau2: Optional[float] = None
+    mh_sd_log_lambda: Optional[float] = None
+    mh_sd_log_a: Optional[float] = None
+    mh_sd_log_c2: Optional[float] = None
+
     rng: Generator = field(init=False)
-    coef_samples_: Optional[np.ndarray] = field(default=None, init=False)   # [S, p] or [C, S, p]
-    sigma2_samples_: Optional[np.ndarray] = field(default=None, init=False) # [S] or [C, S]
-    tau_samples_: Optional[np.ndarray] = field(default=None, init=False)    # [S] or [C, S]
-    phi_samples_: Optional[np.ndarray] = field(default=None, init=False)    # [S, G] or [C, S, G]
-    lambda_samples_: Optional[np.ndarray] = field(default=None, init=False) # [S, p] or [C, S, p]
+    coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    sigma2_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    phi_samples_: Optional[np.ndarray] = field(default=None, init=False)  # alias of a_samples_
+    lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    a_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    c2_samples_: Optional[np.ndarray] = field(default=None, init=False)
 
-    coef_mean_: Optional[np.ndarray] = field(default=None, init=False)      # Posterior mean
+    coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
 
-    # Data/group information
     groups_: Optional[List[List[int]]] = field(default=None, init=False)
-    group_id_: Optional[np.ndarray] = field(default=None, init=False)    # len p
-    group_sizes_: Optional[np.ndarray] = field(default=None, init=False) # len G
+    group_id_: Optional[np.ndarray] = field(default=None, init=False)
+    group_sizes_: Optional[np.ndarray] = field(default=None, init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.rng = default_rng(self.seed)
         if self.burnin is None:
             self.burnin = self.iters // 2
-        if self.c <= 0:
-            raise ValueError("c must be > 0")
+        if self.burnin < 0 or self.burnin >= self.iters:
+            raise ValueError("burnin must satisfy 0 <= burnin < iters.")
+        if self.thin <= 0:
+            raise ValueError("thin must be positive.")
+        if self.c <= 0.0:
+            raise ValueError("c must be positive.")
+        if self.tau0 <= 0.0:
+            raise ValueError("tau0 must be positive.")
+        if self.eta <= 0.0:
+            raise ValueError("eta must be positive.")
+        if self.alpha_c <= 0.0 or self.beta_c <= 0.0:
+            raise ValueError("alpha_c and beta_c must be positive.")
         if self.num_chains <= 0:
-            raise ValueError("num_chains must be a positive integer.")
-        if self.slice_w <= 0 or self.slice_m <= 0:
-            raise ValueError("slice_w and slice_m must be positive.")
-        if self.tau_slice_w <= 0 or self.tau_slice_m <= 0:
-            raise ValueError("tau_slice_w and tau_slice_m must be positive.")
+            raise ValueError("num_chains must be positive.")
+        if self.jitter <= 0.0:
+            raise ValueError("jitter must be positive.")
+
+        if self.mh_sd_log_tau2 is None:
+            self.mh_sd_log_tau2 = float(max(self.tau_slice_w, 1e-3))
+        if self.mh_sd_log_lambda is None:
+            self.mh_sd_log_lambda = float(max(self.slice_w, 1e-3))
+        if self.mh_sd_log_a is None:
+            self.mh_sd_log_a = float(max(self.slice_w, 1e-3))
+        if self.mh_sd_log_c2 is None:
+            self.mh_sd_log_c2 = float(max(self.slice_w, 1e-3))
 
     @staticmethod
     def _flatten_scalar_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
@@ -197,9 +173,7 @@ class GRRHS_Gibbs:
         if arr is None:
             return None
         data = np.asarray(arr, dtype=float)
-        if data.ndim == 0:
-            return data.reshape(1, 1)
-        if data.ndim == 1:
+        if data.ndim <= 1:
             return data.reshape(1, -1)
         if data.ndim == 2:
             return data
@@ -218,6 +192,8 @@ class GRRHS_Gibbs:
             eta=self.eta,
             s0=self.s0,
             use_groups=self.use_groups,
+            alpha_c=self.alpha_c,
+            beta_c=self.beta_c,
             iters=self.iters,
             burnin=self.burnin,
             thin=self.thin,
@@ -228,14 +204,13 @@ class GRRHS_Gibbs:
             tau_slice_w=self.tau_slice_w,
             tau_slice_m=self.tau_slice_m,
             jitter=self.jitter,
+            mh_sd_log_tau2=self.mh_sd_log_tau2,
+            mh_sd_log_lambda=self.mh_sd_log_lambda,
+            mh_sd_log_a=self.mh_sd_log_a,
+            mh_sd_log_c2=self.mh_sd_log_c2,
         )
 
-    def _fit_multichain(
-        self,
-        X: np.ndarray,
-        y: np.ndarray,
-        groups: Optional[List[List[int]]] = None,
-    ) -> "GRRHS_Gibbs":
+    def _fit_multichain(self, X: np.ndarray, y: np.ndarray, groups: Optional[List[List[int]]] = None) -> "GRRHS_Gibbs":
         payloads: List[Dict[str, Any]] = []
         groups_payload = None if groups is None else [list(group) for group in groups]
         for chain_idx in range(int(self.num_chains)):
@@ -246,6 +221,8 @@ class GRRHS_Gibbs:
                     "eta": self.eta,
                     "s0": self.s0,
                     "use_groups": self.use_groups,
+                    "alpha_c": self.alpha_c,
+                    "beta_c": self.beta_c,
                     "iters": self.iters,
                     "burnin": self.burnin,
                     "thin": self.thin,
@@ -255,6 +232,10 @@ class GRRHS_Gibbs:
                     "tau_slice_w": self.tau_slice_w,
                     "tau_slice_m": self.tau_slice_m,
                     "jitter": self.jitter,
+                    "mh_sd_log_tau2": self.mh_sd_log_tau2,
+                    "mh_sd_log_lambda": self.mh_sd_log_lambda,
+                    "mh_sd_log_a": self.mh_sd_log_a,
+                    "mh_sd_log_c2": self.mh_sd_log_c2,
                     "X": np.asarray(X, dtype=float),
                     "y": np.asarray(y, dtype=float),
                     "groups": groups_payload,
@@ -274,45 +255,32 @@ class GRRHS_Gibbs:
         self.coef_samples_ = self._stack_chain_draws([item["coef_samples"] for item in chain_results])
         self.sigma2_samples_ = self._stack_chain_draws([item["sigma2_samples"] for item in chain_results])
         self.tau_samples_ = self._stack_chain_draws([item["tau_samples"] for item in chain_results])
-        self.phi_samples_ = self._stack_chain_draws([item["phi_samples"] for item in chain_results])
         self.lambda_samples_ = self._stack_chain_draws([item["lambda_samples"] for item in chain_results])
+        self.a_samples_ = self._stack_chain_draws([item["a_samples"] for item in chain_results])
+        self.c2_samples_ = self._stack_chain_draws([item["c2_samples"] for item in chain_results])
+        self.phi_samples_ = self._stack_chain_draws([item["phi_samples"] for item in chain_results])
         coef_draws = self._flatten_param_draws(self.coef_samples_)
         self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
         self.intercept_ = float(lead["intercept"])
         return self
 
-    # ----------
-    # API
-    # ----------
     def fit(self, X: np.ndarray, y: np.ndarray, groups: Optional[List[List[int]]] = None) -> "GRRHS_Gibbs":
-        """
-        Run the Gibbs sampler. Assumes each column of X has unit variance and y is centered.
-
-        Parameters
-        ----------
-        X: (n, p)
-        y: (n,)
-        groups: list of index lists. If None, treat each variable as its own group.
-        """
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
         if self.num_chains > 1:
             return self._fit_multichain(X, y, groups)
+
         n, p = X.shape
-
-        y_var = float(np.var(y)) if y.size else 1.0
-        sigma2_cap = _SIGMA2_FACTOR * max(y_var, self.jitter)
-
         if groups is None:
             groups = [[j] for j in range(p)]
         self.groups_ = groups
 
         if self.use_groups:
-            sampler_groups = groups
+            sampler_groups = [list(g) for g in groups]
         else:
             sampler_groups = [list(range(p))]
-
         G = len(sampler_groups)
+
         group_id = np.empty(p, dtype=int)
         group_sizes = np.zeros(G, dtype=int)
         for g, idxs in enumerate(sampler_groups):
@@ -322,228 +290,118 @@ class GRRHS_Gibbs:
         self.group_id_ = group_id
         self.group_sizes_ = group_sizes
 
-        # Size-adjusted HalfNormal prior for group scales: η_g = η / sqrt(p_g)
-        if self.use_groups:
-            eta_g = self.eta / np.sqrt(group_sizes)
-        else:
-            eta_g = np.ones(G)
+        s_a = self.eta / np.sqrt(np.maximum(group_sizes.astype(float), 1.0))
 
-        # Initialize parameters
-        try:
-            beta = np.linalg.solve(
-                X.T @ X + _RIDGE_ALPHA * np.eye(p),
-                X.T @ y,
-            )
-        except np.linalg.LinAlgError:
-            beta = np.zeros(p)
-        sigma2 = 1.0
-        tau = self.tau0
-        if self.use_groups:
-            phi = np.ones(G) * (self.eta / np.sqrt(np.mean(group_sizes)))
-        else:
-            phi = np.ones(G)
-        lam = np.ones(p)
-
-        # Optional inverse-gamma auxiliaries
-        xi_j = np.ones(p)
-        xi_tau = 1.0
-        xi_sigma = 1.0
-
-        # Sampling controls
-        kept = max(0, (self.iters - self.burnin + self.thin - 1) // self.thin)
-        coef_draws = np.zeros((kept, p))
-        sigma2_draws = np.zeros(kept)
-        tau_draws = np.zeros(kept)
-        phi_draws = np.zeros((kept, G)) if self.use_groups and kept > 0 else None
-        lam_draws = np.zeros((kept, p))
-
-        keep_i = 0
-
-        # Precompute matrices
-        # Note: the algorithm repeatedly uses C0 = D_beta^{-1} = diag(φ_g^2 τ^2 \tildeλ_j^2 σ^2)
-        #       and the Cholesky of M = X C0 X^T + σ^2 I_n
         XtX = X.T @ X
         Xty = X.T @ y
-        xtx_diag = np.einsum("ij,ij->j", X, X)
+
+        try:
+            beta = np.linalg.solve(XtX + 1e-3 * np.eye(p), Xty)
+        except np.linalg.LinAlgError:
+            beta = np.zeros(p, dtype=float)
+
+        resid_init = y - X @ beta
+        sigma2 = max(float(np.mean(resid_init * resid_init)), self.jitter)
+        tau2 = max(self.tau0 * self.tau0, self.jitter)
+        nu = max(self.tau0 * self.tau0, self.jitter)
+
+        lam = np.ones(p, dtype=float)
+        a = np.maximum(s_a, 1e-3)
+        c2 = np.full(G, max(self.c * self.c, 1e-3), dtype=float)
+
+        kept = max(0, (self.iters - self.burnin + self.thin - 1) // self.thin)
+        beta_draws = np.zeros((kept, p), dtype=float)
+        sigma2_draws = np.zeros(kept, dtype=float)
+        tau_draws = np.zeros(kept, dtype=float)
+        lambda_draws = np.zeros((kept, p), dtype=float)
+        a_draws = np.zeros((kept, G), dtype=float)
+        c2_draws = np.zeros((kept, G), dtype=float)
+        keep_i = 0
+
         tau_trace: List[float] = []
         sigma_trace: List[float] = []
-        mean_kappa_trace: List[float] = []
-        for it in progress(range(self.iters), total=self.iters, desc="Gibbs sampling"):
-            burnin_w = _burnin_weight(it, self.burnin, _BURNIN_WARM)
-            # ---- 1) Compute tilde_lambda, prior precision d_j, and inverse C0 (prior covariance diag)
-            tilde_lam = (self.c * lam) / np.sqrt(self.c ** 2 + (tau ** 2) * (lam ** 2))
-            # prior variance v_j = φ_g^2 τ^2 \tildeλ_j^2 σ^2
-            if self.use_groups:
-                phi_safe = np.maximum(phi, _PHI_EPS)
-            else:
-                phi_safe = np.ones_like(phi)
-            phi_group_safe = phi_safe[group_id]
-            v_prior = (phi_group_safe ** 2) * (tau ** 2) * (tilde_lam ** 2) * sigma2
-            # Guard against numerical issues
-            v_prior = np.maximum(v_prior, self.jitter * sigma2)
 
-            # prior precision d_jj:
-            d_prior = 1.0 / v_prior
+        for it in progress(range(self.iters), total=self.iters, desc="GR-RHS MWG"):
+            d = self._prior_precision_vector(lam=lam, a=a, c2=c2, tau2=tau2, group_id=group_id)
+            beta = self._sample_beta_conditional(XtX=XtX, Xty=Xty, sigma2=sigma2, prior_prec=d, rng=self.rng)
 
-            # ---- 2) Conditional Gaussian block: sample β | rest
-            beta = self._sample_beta_conditional(XtX, Xty, sigma2, v_prior, rng=self.rng)
-
-            # ---- 3) Update λ_j: slice sample u_j = log λ_j (instead of MH)
-            # log-target: -log(tildeλ_j) - β_j^2/(2 φ_g^2 τ^2 tildeλ_j^2 σ^2) - log(1+λ_j^2) + u_j
-            phi_g_map = phi_group_safe
-
-            def make_logp_u(j: int):
-                b2 = beta[j] ** 2
-                phi2 = (phi_g_map[j] ** 2)
-                def _logp(u: float) -> float:
-                    lam_j = math.exp(u)
-                    # tilde
-                    num = self.c * lam_j
-                    den = math.sqrt(self.c ** 2 + (tau ** 2) * (lam_j ** 2))
-                    tl = num / den
-                    # Target
-                    val = 0.0
-                    val += -math.log(max(tl, 1e-300))
-                    val += -(b2 / (2.0 * phi2 * (tau ** 2) * (tl ** 2) * sigma2))
-                    # Half-Cauchy(0,1): -log(1+λ^2)
-                    val += -math.log(1.0 + lam_j ** 2)
-                    # Jacobian
-                    val += u
-                    return float(val)
-                return _logp
-
-            for j in range(p):
-                logp = make_logp_u(j)
-                u0 = math.log(lam[j])
-                u_new = _slice_sample_1d(logp, u0, rng=self.rng, w=self.slice_w, m=self.slice_m)
-                lam[j] = math.exp(u_new)
-
-            # Optional: refresh ξ_j | λ_j^2
-            for j in range(p):
-                xi_j[j] = _sample_invgamma(alpha=1.0, beta=1.0 + 1.0 / (lam[j] ** 2), rng=self.rng)
-
-            # ---- 4) Group scales φ_g: sample θ_g = φ_g^2 ~ GIG(λ=1/2 - p_g/2, χ=S_g, ψ=1/η_g^2)
-            # S_g = (1/(τ^2 σ^2)) Σ_{j∈Gg} β_j^2 / \tildeλ_j^2
-            if self.use_groups:
-                inv_tilde2 = 1.0 / np.maximum(tilde_lam ** 2, self.jitter)
-                S_g = np.zeros(G)
-                for g in range(G):
-                    idxs = sampler_groups[g]
-                    idx_arr = np.asarray(idxs, dtype=int)
-                    S_g[g] = (beta[idx_arr] ** 2 * inv_tilde2[idx_arr]).sum()
-                S_g *= 1.0 / (tau ** 2 * sigma2)
-                lam_gig = 0.5 - 0.5 * group_sizes
-                chi_gig = np.maximum(S_g, self.jitter)
-                psi_gig = 1.0 / np.maximum(eta_g ** 2, self.jitter)
-                theta = np.zeros(G)
-                for g in range(G):
-                    theta[g] = float(sample_gig(lambda_param=lam_gig[g], chi=chi_gig[g], psi=psi_gig[g], size=1, rng=self.rng)[0])
-                phi = np.sqrt(np.maximum(theta, 0.0))
-                adaptive_floor = max(_PHI_BASE_FLOOR, _PHI_ADAPT_COEFF * tau)
-                phi_floor_weight = max(_FLOOR_MIN_WEIGHT, burnin_w)
-                phi_floor_effective = max(_PHI_EPS, adaptive_floor * phi_floor_weight)
-                phi = np.maximum(phi, phi_floor_effective)
-                phi_safe = np.maximum(phi, _PHI_EPS)
-                phi_group_safe = phi_safe[group_id]
-            else:
-                phi_group_safe = np.ones(p)
-
-            # ---- 5) Global scale τ: slice sample v = log τ
-            # log-target:
-            #   - p log τ - sum_j log tildeλ_j
-            #   - (1/(2σ^2)) * sum_j β_j^2 / (φ_{g(j)}^2 τ^2 \tildeλ_j^2)
-            #   + log Half-Cauchy(τ | 0, τ0) + v
-            beta2 = beta ** 2
-
-            def logp_v(v: float) -> float:
-                t = math.exp(v)
-                # recompute tilde for given τ
-                tl = (self.c * lam) / np.sqrt(self.c ** 2 + (t ** 2) * (lam ** 2))
-                tl2 = np.maximum(tl ** 2, self.jitter)
-                # terms
-                val = 0.0
-                val += -p * v  # -p log τ
-                val += -np.log(np.maximum(tl, 1e-300)).sum()
-                denom = (phi_group_safe ** 2) * (t ** 2) * tl2 * sigma2
-                val += -(beta2 / (2.0 * denom)).sum()
-                # Half-Cauchy prior on τ with scale τ0: -log(1 + (τ/τ0)^2)
-                val += -math.log(1.0 + (t / self.tau0) ** 2)
-                val += -_TAU_PENALTY * burnin_w * (t ** 2)
-                # Jacobian
-                val += v
-                return float(val)
-
-            v0 = math.log(tau)
-            v_new = _slice_sample_1d(
-                logp_v,
-                v0,
-                rng=self.rng,
-                w=self.tau_slice_w,
-                m=self.tau_slice_m,
-            )
-            tau = math.exp(v_new)
-            tau = min(tau, _TAU_MAX)
-
-            # Optional: refresh ξ_tau | τ^2
-            xi_tau = _sample_invgamma(alpha=1.0, beta=(1.0 / (self.tau0 ** 2)) + 1.0 / (tau ** 2), rng=self.rng)
-
-            # ---- 6) Noise σ^2: inverse-gamma conditional
-            # α = (n + p + 1)/2
-            # β = 0.5 * ||y - Xβ||^2 + 0.5 * Σ β_j^2 / (φ_{g(j)}^2 τ^2 \tildeλ_j^2) + 1/ξ_σ
             resid = y - X @ beta
-            RSS = float(resid @ resid)
-            tl2 = np.maximum(((self.c * lam) / np.sqrt(self.c ** 2 + (tau ** 2) * (lam ** 2))) ** 2, self.jitter)
-            prior_quad = float((beta2 / (phi_group_safe ** 2 * (tau ** 2) * tl2)).sum())
-            alpha = 0.5 * (n + p + 1)
-            beta_scale = 0.5 * (RSS + prior_quad) + 1.0 / xi_sigma
-            sigma2 = _sample_invgamma(alpha=alpha, beta=beta_scale, rng=self.rng)
-            sigma2 = min(sigma2, sigma2_cap)
+            rss = float(resid @ resid)
+            sigma2 = _sample_invgamma(alpha=0.5 * n, beta=0.5 * max(rss, self.jitter), rng=self.rng)
 
-            # Refresh ξ_σ | σ^2
-            xi_sigma = _sample_invgamma(alpha=1.0, beta=(1.0 / (self.s0 ** 2)) + 1.0 / sigma2, rng=self.rng)
+            nu = _sample_invgamma(alpha=1.0, beta=(1.0 / (self.tau0 * self.tau0)) + (1.0 / max(tau2, self.jitter)), rng=self.rng)
 
-            # ---- Diagnostics trace logging (τ, σ, mean κ)
-            tilde_lam_log = (self.c * lam) / np.sqrt(self.c ** 2 + (tau ** 2) * (lam ** 2))
-            tilde_lam_log = np.maximum(tilde_lam_log, self.jitter)
-            v_prior_log = (phi_group_safe ** 2) * (tau ** 2) * (tilde_lam_log ** 2) * sigma2
-            v_prior_log = np.maximum(v_prior_log, self.jitter * sigma2)
-            d_prior_log = 1.0 / v_prior_log
-            q_diag = xtx_diag / sigma2
-            denom = q_diag + d_prior_log
-            kappa = np.divide(q_diag, denom, out=np.zeros_like(q_diag), where=denom > 0)
-            mean_kappa_trace.append(float(np.mean(kappa)))
-            tau_trace.append(float(tau))
-            sigma_trace.append(float(math.sqrt(max(sigma2, self.jitter))))
+            tau2 = self._mh_update_tau2(
+                tau2=tau2,
+                nu=nu,
+                beta=beta,
+                lam=lam,
+                a=a,
+                c2=c2,
+                group_id=group_id,
+            )
 
-            # ---- Store draws
+            for j in range(p):
+                g = group_id[j]
+                lam[j] = self._mh_update_lambda_j(
+                    lam_j=lam[j],
+                    beta_j=beta[j],
+                    tau2=tau2,
+                    a_g=a[g],
+                    c2_g=c2[g],
+                )
+
+            for g in range(G):
+                idx = np.asarray(sampler_groups[g], dtype=int)
+                a[g] = self._mh_update_a_g(
+                    a_g=a[g],
+                    beta_g=beta[idx],
+                    lam_g=lam[idx],
+                    tau2=tau2,
+                    c2_g=c2[g],
+                    s_a_g=s_a[g],
+                )
+
+            for g in range(G):
+                idx = np.asarray(sampler_groups[g], dtype=int)
+                c2[g] = self._mh_update_c2_g(
+                    c2_g=c2[g],
+                    beta_g=beta[idx],
+                    lam_g=lam[idx],
+                    tau2=tau2,
+                    a_g=a[g],
+                )
+
+            tau_trace.append(math.sqrt(max(tau2, self.jitter)))
+            sigma_trace.append(math.sqrt(max(sigma2, self.jitter)))
+
             if it >= self.burnin and ((it - self.burnin) % self.thin == 0):
-                coef_draws[keep_i] = beta
+                beta_draws[keep_i] = beta
                 sigma2_draws[keep_i] = sigma2
-                tau_draws[keep_i] = tau
-                if phi_draws is not None:
-                    phi_draws[keep_i] = phi
-                lam_draws[keep_i] = lam
+                tau_draws[keep_i] = math.sqrt(max(tau2, self.jitter))
+                lambda_draws[keep_i] = lam
+                a_draws[keep_i] = a
+                c2_draws[keep_i] = c2
                 keep_i += 1
 
-        # Finalize: persist state
-        self.coef_samples_ = coef_draws
+        self.coef_samples_ = beta_draws
         self.sigma2_samples_ = sigma2_draws
         self.tau_samples_ = tau_draws
-        self.phi_samples_ = phi_draws if phi_draws is not None else None
-        self.lambda_samples_ = lam_draws
-        self.coef_mean_ = coef_draws.mean(axis=0) if kept > 0 else np.zeros(p)
-        self.intercept_ = 0.0  # X and y are assumed centered/standardized
+        self.lambda_samples_ = lambda_draws
+        self.a_samples_ = a_draws
+        self.c2_samples_ = c2_draws
+        self.phi_samples_ = a_draws
+        self.coef_mean_ = beta_draws.mean(axis=0) if kept > 0 else np.zeros(p, dtype=float)
+        self.intercept_ = 0.0
 
         if tau_trace:
             logger = logging.getLogger(__name__)
             logger.info("tau_trace=%s", np.asarray(tau_trace))
             logger.info("sigma_trace=%s", np.asarray(sigma_trace))
-            logger.info("mean_kappa_trace=%s", np.asarray(mean_kappa_trace))
 
         return self
 
     def predict(self, X: np.ndarray, use_posterior_mean: bool = True) -> np.ndarray:
-        """Predict; uses the posterior mean by default."""
         X = np.asarray(X, dtype=float)
         if use_posterior_mean:
             if self.coef_mean_ is None:
@@ -554,32 +412,178 @@ class GRRHS_Gibbs:
             raise RuntimeError("No posterior samples available.")
         return X @ coef_draws[-1] + self.intercept_
 
-    # ----------
-    # Internal: conditional Gaussian sampler for β using the p x p
-    # posterior precision. This is preferable for the p << n regime.
-    # ----------
+    def get_posterior_summaries(self) -> Dict[str, Any]:
+        if self.coef_samples_ is None:
+            raise RuntimeError("Not fitted.")
+        beta_draws = self._flatten_param_draws(self.coef_samples_)
+        sigma2_draws = self._flatten_scalar_draws(self.sigma2_samples_)
+        tau_draws = self._flatten_scalar_draws(self.tau_samples_)
+        a_draws = self._flatten_param_draws(self.a_samples_)
+        c2_draws = self._flatten_param_draws(self.c2_samples_)
+        if beta_draws is None:
+            raise RuntimeError("Posterior coefficient draws are unavailable.")
+        return {
+            "beta_mean": beta_draws.mean(axis=0),
+            "beta_median": np.median(beta_draws, axis=0),
+            "beta_ci95": np.quantile(beta_draws, [0.025, 0.975], axis=0),
+            "sigma2_mean": float(sigma2_draws.mean()) if sigma2_draws is not None else None,
+            "tau_mean": float(tau_draws.mean()) if tau_draws is not None else None,
+            "phi_mean": a_draws.mean(axis=0) if a_draws is not None else None,
+            "a_mean": a_draws.mean(axis=0) if a_draws is not None else None,
+            "c2_mean": c2_draws.mean(axis=0) if c2_draws is not None else None,
+        }
+
+    def _prior_precision_vector(
+        self,
+        lam: np.ndarray,
+        a: np.ndarray,
+        c2: np.ndarray,
+        tau2: float,
+        group_id: np.ndarray,
+    ) -> np.ndarray:
+        a_map = a[group_id]
+        c2_map = c2[group_id]
+        tau2_safe = max(float(tau2), self.jitter)
+        local = 1.0 / np.maximum(tau2_safe * (lam * lam) * (a_map * a_map), self.jitter)
+        slab = 1.0 / np.maximum(c2_map, self.jitter)
+        return local + slab
+
+    def _beta_logprior_contrib(self, beta: np.ndarray, d: np.ndarray) -> float:
+        return float(0.5 * np.log(np.maximum(d, self.jitter)).sum() - 0.5 * (d * beta * beta).sum())
+
+    def _mh_accept(self, log_target_new: float, log_target_old: float) -> bool:
+        log_alpha = log_target_new - log_target_old
+        if log_alpha >= 0.0:
+            return True
+        u = max(self.rng.uniform(), _MIN_POS)
+        return math.log(u) < log_alpha
+
+    def _mh_update_tau2(
+        self,
+        tau2: float,
+        nu: float,
+        beta: np.ndarray,
+        lam: np.ndarray,
+        a: np.ndarray,
+        c2: np.ndarray,
+        group_id: np.ndarray,
+    ) -> float:
+        log_tau2 = math.log(max(tau2, self.jitter))
+        log_prop = log_tau2 + self.rng.normal(scale=float(self.mh_sd_log_tau2))
+        tau2_prop = max(math.exp(log_prop), self.jitter)
+
+        d_old = self._prior_precision_vector(lam=lam, a=a, c2=c2, tau2=tau2, group_id=group_id)
+        d_new = self._prior_precision_vector(lam=lam, a=a, c2=c2, tau2=tau2_prop, group_id=group_id)
+
+        lp_old = self._beta_logprior_contrib(beta=beta, d=d_old) + self._log_prior_tau2_given_nu(tau2=tau2, nu=nu) + log_tau2
+        lp_new = self._beta_logprior_contrib(beta=beta, d=d_new) + self._log_prior_tau2_given_nu(tau2=tau2_prop, nu=nu) + log_prop
+        return tau2_prop if self._mh_accept(lp_new, lp_old) else tau2
+
+    def _mh_update_lambda_j(
+        self,
+        lam_j: float,
+        beta_j: float,
+        tau2: float,
+        a_g: float,
+        c2_g: float,
+    ) -> float:
+        log_old = math.log(max(lam_j, self.jitter))
+        log_new = log_old + self.rng.normal(scale=float(self.mh_sd_log_lambda))
+        lam_new = max(math.exp(log_new), self.jitter)
+
+        d_old = self._single_precision(lam=lam_j, a_g=a_g, c2_g=c2_g, tau2=tau2)
+        d_new = self._single_precision(lam=lam_new, a_g=a_g, c2_g=c2_g, tau2=tau2)
+
+        lp_old = 0.5 * math.log(d_old) - 0.5 * d_old * (beta_j * beta_j) + self._log_prior_lambda(lam_j) + log_old
+        lp_new = 0.5 * math.log(d_new) - 0.5 * d_new * (beta_j * beta_j) + self._log_prior_lambda(lam_new) + log_new
+        return lam_new if self._mh_accept(lp_new, lp_old) else lam_j
+
+    def _mh_update_a_g(
+        self,
+        a_g: float,
+        beta_g: np.ndarray,
+        lam_g: np.ndarray,
+        tau2: float,
+        c2_g: float,
+        s_a_g: float,
+    ) -> float:
+        log_old = math.log(max(a_g, self.jitter))
+        log_new = log_old + self.rng.normal(scale=float(self.mh_sd_log_a))
+        a_new = max(math.exp(log_new), self.jitter)
+
+        d_old = self._group_precision(lam_g=lam_g, a_g=a_g, c2_g=c2_g, tau2=tau2)
+        d_new = self._group_precision(lam_g=lam_g, a_g=a_new, c2_g=c2_g, tau2=tau2)
+
+        lp_old = self._beta_logprior_contrib(beta=beta_g, d=d_old) + self._log_prior_a(a=a_g, s_a=s_a_g) + log_old
+        lp_new = self._beta_logprior_contrib(beta=beta_g, d=d_new) + self._log_prior_a(a=a_new, s_a=s_a_g) + log_new
+        return a_new if self._mh_accept(lp_new, lp_old) else a_g
+
+    def _mh_update_c2_g(
+        self,
+        c2_g: float,
+        beta_g: np.ndarray,
+        lam_g: np.ndarray,
+        tau2: float,
+        a_g: float,
+    ) -> float:
+        log_old = math.log(max(c2_g, self.jitter))
+        log_new = log_old + self.rng.normal(scale=float(self.mh_sd_log_c2))
+        c2_new = max(math.exp(log_new), self.jitter)
+
+        d_old = self._group_precision(lam_g=lam_g, a_g=a_g, c2_g=c2_g, tau2=tau2)
+        d_new = self._group_precision(lam_g=lam_g, a_g=a_g, c2_g=c2_new, tau2=tau2)
+
+        lp_old = self._beta_logprior_contrib(beta=beta_g, d=d_old) + self._log_prior_c2(c2_g) + log_old
+        lp_new = self._beta_logprior_contrib(beta=beta_g, d=d_new) + self._log_prior_c2(c2_new) + log_new
+        return c2_new if self._mh_accept(lp_new, lp_old) else c2_g
+
+    def _log_prior_tau2_given_nu(self, tau2: float, nu: float) -> float:
+        t = max(tau2, self.jitter)
+        n = max(nu, self.jitter)
+        alpha = 0.5
+        beta = 1.0 / n
+        return alpha * math.log(beta) - math.lgamma(alpha) - (alpha + 1.0) * math.log(t) - beta / t
+
+    @staticmethod
+    def _log_prior_lambda(lam: float) -> float:
+        return -math.log1p(lam * lam)
+
+    @staticmethod
+    def _log_prior_a(a: float, s_a: float) -> float:
+        ss = max(s_a, _MIN_POS)
+        return -0.5 * (a * a) / (ss * ss)
+
+    def _log_prior_c2(self, c2: float) -> float:
+        x = max(c2, self.jitter)
+        return (
+            self.alpha_c * math.log(self.beta_c)
+            - math.lgamma(self.alpha_c)
+            - (self.alpha_c + 1.0) * math.log(x)
+            - self.beta_c / x
+        )
+
+    def _single_precision(self, lam: float, a_g: float, c2_g: float, tau2: float) -> float:
+        local = 1.0 / max(tau2 * lam * lam * a_g * a_g, self.jitter)
+        slab = 1.0 / max(c2_g, self.jitter)
+        return local + slab
+
+    def _group_precision(self, lam_g: np.ndarray, a_g: float, c2_g: float, tau2: float) -> np.ndarray:
+        local = 1.0 / np.maximum(tau2 * (lam_g * lam_g) * (a_g * a_g), self.jitter)
+        slab = 1.0 / max(c2_g, self.jitter)
+        return local + slab
+
     def _sample_beta_conditional(
         self,
         XtX: np.ndarray,
         Xty: np.ndarray,
         sigma2: float,
-        v_prior: np.ndarray,
+        prior_prec: np.ndarray,
         rng: Generator,
     ) -> np.ndarray:
-        """
-        Sample β | rest ~ N(μ, Σ).
-        Prior: β ~ N(0, C0) with C0 = diag(v_prior) (diagonal).
-        Likelihood: y | β ~ N(Xβ, σ² I).
-        Posterior precision:
-            P = C0^{-1} + XᵀX / σ²
-        Posterior mean:
-            μ = P^{-1} Xᵀ y / σ²
-        """
         p = XtX.shape[0]
         sigma2_safe = max(float(sigma2), self.jitter)
-        prior_prec = 1.0 / np.maximum(v_prior, 1e-18)
         precision = (XtX / sigma2_safe).copy()
-        precision.flat[:: p + 1] += prior_prec
+        precision.flat[:: p + 1] += np.maximum(prior_prec, self.jitter)
 
         chol, lower = cho_factor(precision, overwrite_a=False, check_finite=False)
         mean = cho_solve((chol, lower), Xty / sigma2_safe, check_finite=False)
@@ -590,25 +594,3 @@ class GRRHS_Gibbs:
         else:
             noise = solve_triangular(chol, z, lower=False, check_finite=False)
         return mean + noise
-
-    # ----------
-    # Convenience exports (diagnostics/visualization)
-    # ----------
-    def get_posterior_summaries(self) -> Dict[str, Any]:
-        if self.coef_samples_ is None:
-            raise RuntimeError("Not fitted.")
-        beta_draws = self._flatten_param_draws(self.coef_samples_)
-        sigma2_draws = self._flatten_scalar_draws(self.sigma2_samples_)
-        tau_draws = self._flatten_scalar_draws(self.tau_samples_)
-        phi_draws = self._flatten_param_draws(self.phi_samples_)
-        if beta_draws is None:
-            raise RuntimeError("Posterior coefficient draws are unavailable.")
-        out = {
-            "beta_mean": beta_draws.mean(axis=0),
-            "beta_median": np.median(beta_draws, axis=0),
-            "beta_ci95": np.quantile(beta_draws, [0.025, 0.975], axis=0),
-            "sigma2_mean": float(sigma2_draws.mean()) if sigma2_draws is not None else None,
-            "tau_mean": float(tau_draws.mean()) if tau_draws is not None else None,
-            "phi_mean": phi_draws.mean(axis=0) if phi_draws is not None else None,
-        }
-        return out

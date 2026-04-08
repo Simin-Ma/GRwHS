@@ -1,0 +1,84 @@
+defaults: "./thesis_grrhs_common.yaml"
+
+name: "thesis_stage1_scene2_highcol_mixedsignal"
+
+data:
+  type: "synthetic"
+  seed: 20260412
+  n: 200
+  p: 200
+  G: 10
+  group_sizes: "equal"
+  correlation:
+    type: "group_block"
+    rho_in: 0.90
+    rho_out: 0.10
+  noise_sigma: 1.0
+  signal:
+    blueprint:
+      - label: "active_group_1"
+        groups: [1]
+        components:
+          - name: "s1"
+            count: 1
+            distribution: "constant"
+            value: 2.0
+            sign: "positive"
+            tag: "signal"
+          - name: "s2"
+            count: 1
+            distribution: "constant"
+            value: 1.5
+            sign: "positive"
+            tag: "signal"
+          - name: "s3"
+            count: 1
+            distribution: "constant"
+            value: 1.0
+            sign: "positive"
+            tag: "signal"
+          - name: "s4"
+            count: 1
+            distribution: "constant"
+            value: 0.8
+            sign: "positive"
+            tag: "signal"
+          - name: "s5"
+            count: 1
+            distribution: "constant"
+            value: 0.5
+            sign: "positive"
+            tag: "signal"
+      - label: "active_group_6"
+        groups: [6]
+        components:
+          - name: "s1"
+            count: 1
+            distribution: "constant"
+            value: 2.0
+            sign: "positive"
+            tag: "signal"
+          - name: "s2"
+            count: 1
+            distribution: "constant"
+            value: 1.5
+            sign: "positive"
+            tag: "signal"
+          - name: "s3"
+            count: 1
+            distribution: "constant"
+            value: 1.0
+            sign: "positive"
+            tag: "signal"
+          - name: "s4"
+            count: 1
+            distribution: "constant"
+            value: 0.8
+            sign: "positive"
+            tag: "signal"
+          - name: "s5"
+            count: 1
+            distribution: "constant"
+            value: 0.5
+            sign: "positive"
+            tag: "signal"

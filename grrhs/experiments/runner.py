@@ -59,6 +59,7 @@ from data.splits import OuterFold, holdout_splits, outer_kfold_splits
 from grrhs.diagnostics.convergence import summarize_convergence
 from grrhs.experiments.registry import build_from_config, get_model_name_from_config
 from grrhs.metrics.evaluation import evaluate_model_metrics
+from grrhs.models.parameter_naming import unify_parameter_names
 from grrhs.utils.logging_utils import progress
 
 
@@ -76,6 +77,8 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
     "min_ess_by_block": {
         "beta": 400.0,
         "tau": 1000.0,
+        "a": 400.0,
+        "c2": 400.0,
         "phi": 400.0,
         "gamma": 400.0,
         "lambda": 200.0,
@@ -87,7 +90,7 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
     "parameters": ["beta", "tau"],
     "expected_blocks": {
         "default": ["beta", "tau"],
-        "grrhs_gibbs": ["beta", "tau", "phi", "lambda"],
+        "grrhs_gibbs": ["beta", "tau", "a", "c2", "lambda"],
         "gigg": ["beta", "tau", "gamma", "lambda"],
         "gigg_regression": ["beta", "tau", "gamma", "lambda"],
         "regularized_horseshoe": ["beta", "tau", "lambda"],
@@ -168,7 +171,7 @@ _BAYESIAN_MODEL_NAMES = {
 _BAYESIAN_HYPERPRIOR_LABELS: Dict[str, Dict[str, str]] = {
     "grrhs_gibbs": {
         "tau": "tau ~ C+(0, 1) via calibrated tau0 heuristic",
-        "group": "group scales use HalfNormal/Cauchy-style grouped shrinkage defaults",
+        "group": "a_g ~ HalfNormal(eta/sqrt(p_g)), c_g^2 ~ Inv-Gamma(alpha_c, beta_c)",
     },
     "gigg": {
         "group": "a_g = 1/n when a_value is null",
@@ -289,16 +292,35 @@ def _fit_model_dispatch(
     groups: Sequence[Sequence[int]],
     C: Optional[np.ndarray] = None,
 ) -> None:
+    fit = getattr(model, "fit", None)
+    if fit is None:
+        raise TypeError(f"Model {type(model).__name__} has no .fit method.")
+
+    kwargs: dict[str, Any] = {"groups": groups}
     if C is not None:
-        try:
-            model.fit(X, y, groups=groups, C=C)
-            return
-        except TypeError:
-            pass
+        kwargs["C"] = C
+
     try:
-        model.fit(X, y, groups=groups)
-    except TypeError:
-        model.fit(X, y)
+        fit(X, y, **kwargs)
+        unify_parameter_names(model)
+        return
+    except TypeError as exc:
+        msg = str(exc)
+        # Only interpret TypeError as "signature mismatch" when the message
+        # explicitly indicates unexpected kwargs. Otherwise, re-raise to avoid
+        # masking real model failures.
+        if "unexpected keyword argument" not in msg:
+            raise
+        if "groups" in msg:
+            kwargs.pop("groups", None)
+        if "C" in msg:
+            kwargs.pop("C", None)
+        if kwargs:
+            fit(X, y, **kwargs)
+            unify_parameter_names(model)
+        else:
+            fit(X, y)
+            unify_parameter_names(model)
 
 
 def _bayesian_fairness_config(config: Mapping[str, Any]) -> Dict[str, Any]:
@@ -609,7 +631,7 @@ def _convergence_config(config: Mapping[str, Any]) -> Dict[str, Any]:
         "max_treedepth_hits": max(0, int(hmc_raw.get("max_treedepth_hits", 0))),
         "require_present": bool(hmc_raw.get("require_present", True)),
     }
-    parameters = resolved.get("parameters", ["beta", "tau", "phi", "lambda"])
+    parameters = resolved.get("parameters", ["beta", "tau", "a", "c2", "lambda"])
     if isinstance(parameters, str):
         parameters = [parameters]
     resolved["parameters"] = [str(name) for name in parameters]
@@ -1800,6 +1822,8 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
         "sigma_samples_": "sigma",
         "sigma2_samples_": "sigma2",
         "tau_samples_": "tau",
+        "a_samples_": "a",
+        "c2_samples_": "c2",
         "phi_samples_": "phi",
         "gamma_samples_": "gamma",
         "lambda_samples_": "lambda",
@@ -1820,8 +1844,10 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
             ref_map = {
                 "beta": ("coef_mean_", "coef_"),
                 "lambda": ("lambda_mean_",),
-                "group_lambda": ("group_lambda_mean_", "lambda_group_mean_", "phi_mean_"),
-                "phi": ("phi_mean_",),
+                "group_lambda": ("group_lambda_mean_", "lambda_group_mean_", "a_mean_", "phi_mean_"),
+                "phi": ("phi_mean_", "a_mean_"),
+                "a": ("a_mean_", "phi_mean_"),
+                "c2": ("c2_mean_",),
                 "gamma": ("gamma_mean_",),
                 "b": ("b_mean_",),
                 "alpha": ("alpha_mean_",),
@@ -2671,6 +2697,17 @@ def _run_fold_nested(
     classification_threshold = float(experiments_cfg.get("classification_threshold", 0.5))
     evaluation_cfg = experiments_cfg.get("evaluation", {}) or {}
     predictive_density_mode = str(evaluation_cfg.get("predictive_density_mode", "mixed"))
+    group_selection_cfg = evaluation_cfg.get("group_selection", {}) or {}
+    mixed_signal_cfg = evaluation_cfg.get("mixed_signal", {}) or {}
+    if not isinstance(group_selection_cfg, Mapping):
+        group_selection_cfg = {}
+    if not isinstance(mixed_signal_cfg, Mapping):
+        mixed_signal_cfg = {}
+    group_true_nonzero_tol = float(group_selection_cfg.get("true_nonzero_tol", 1e-8))
+    group_detection_abs_threshold = float(group_selection_cfg.get("abs_threshold", 1e-6))
+    group_detection_rel_threshold = float(group_selection_cfg.get("rel_threshold", 0.10))
+    coord_detection_abs_threshold = float(mixed_signal_cfg.get("abs_threshold", 1e-6))
+    coord_detection_rel_threshold = float(mixed_signal_cfg.get("rel_threshold", 0.10))
 
     if C_train is not None and task != "classification":
         beta_point = getattr(model, "coef_mean_", None)
@@ -2708,6 +2745,11 @@ def _run_fold_nested(
         predictive_density_mode=predictive_density_mode,
         y_pred_override=y_pred_override,
         pred_draws_override=pred_draws_override,
+        group_true_nonzero_tol=group_true_nonzero_tol,
+        group_detection_abs_threshold=group_detection_abs_threshold,
+        group_detection_rel_threshold=group_detection_rel_threshold,
+        coord_detection_abs_threshold=coord_detection_abs_threshold,
+        coord_detection_rel_threshold=coord_detection_rel_threshold,
     )
 
     metrics_path = fold_dir / "metrics.json"

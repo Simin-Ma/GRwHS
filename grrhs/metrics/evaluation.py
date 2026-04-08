@@ -37,6 +37,7 @@ from scipy.special import expit, logsumexp
 from scipy.stats import norm, probplot  # noqa: F401
 
 from grrhs.diagnostics.postprocess import compute_diagnostics_from_samples
+from grrhs.models.parameter_naming import unify_parameter_names
 
 
 def _as_numpy(x: Optional[ArrayLike]) -> Optional[np.ndarray]:
@@ -382,6 +383,148 @@ def _group_norms(beta: np.ndarray, group_index: np.ndarray) -> np.ndarray:
     return np.asarray(norms, dtype=float)
 
 
+def grouped_structure_metrics(
+    beta_truth: Optional[ArrayLike],
+    beta_estimate: Optional[ArrayLike],
+    group_index: Optional[np.ndarray],
+    *,
+    true_nonzero_tol: float = 1e-8,
+    group_abs_threshold: float = 1e-6,
+    group_rel_threshold: float = 0.10,
+) -> Dict[str, Optional[float]]:
+    """Group-aware recovery metrics including null-group suppression and detection."""
+
+    metrics: Dict[str, Optional[float]] = {
+        "GroupNormMSE": None,
+        "NullGroupMeanNorm": None,
+        "NullGroupMaxNorm": None,
+        "GroupTPR": None,
+        "GroupFPR": None,
+        "GroupPrecision": None,
+        "GroupF1": None,
+        "GroupDetectionThreshold": None,
+        "NumActiveGroupsTrue": None,
+        "NumActiveGroupsPred": None,
+    }
+
+    beta_true = _as_numpy(beta_truth)
+    beta_hat = _as_numpy(beta_estimate)
+    if beta_true is None or beta_hat is None or group_index is None:
+        return metrics
+    beta_true = np.asarray(beta_true, dtype=float).reshape(-1)
+    beta_hat = np.asarray(beta_hat, dtype=float).reshape(-1)
+    groups = np.asarray(group_index, dtype=int).reshape(-1)
+    if beta_true.shape[0] != beta_hat.shape[0] or groups.shape[0] != beta_true.shape[0]:
+        return metrics
+
+    unique_groups = np.unique(groups)
+    if unique_groups.size == 0:
+        return metrics
+
+    true_norms = _group_norms(beta_true, groups)
+    est_norms = _group_norms(beta_hat, groups)
+    metrics["GroupNormMSE"] = float(np.mean((est_norms - true_norms) ** 2))
+
+    true_active = true_norms > true_nonzero_tol
+    true_null = ~true_active
+    if np.any(true_null):
+        null_norms = est_norms[true_null]
+        metrics["NullGroupMeanNorm"] = float(np.mean(null_norms))
+        metrics["NullGroupMaxNorm"] = float(np.max(null_norms))
+
+    if np.any(true_active):
+        signal_scale = float(np.median(true_norms[true_active]))
+        threshold = max(float(group_abs_threshold), float(group_rel_threshold) * signal_scale)
+    else:
+        threshold = float(group_abs_threshold)
+    metrics["GroupDetectionThreshold"] = threshold
+
+    pred_active = est_norms >= threshold
+    tp = int(np.sum(pred_active & true_active))
+    fn = int(np.sum((~pred_active) & true_active))
+    fp = int(np.sum(pred_active & true_null))
+    tn = int(np.sum((~pred_active) & true_null))
+
+    metrics["NumActiveGroupsTrue"] = float(np.sum(true_active))
+    metrics["NumActiveGroupsPred"] = float(np.sum(pred_active))
+    if (tp + fn) > 0:
+        metrics["GroupTPR"] = float(tp / (tp + fn))
+    if (fp + tn) > 0:
+        metrics["GroupFPR"] = float(fp / (fp + tn))
+    if (tp + fp) > 0:
+        metrics["GroupPrecision"] = float(tp / (tp + fp))
+    elif np.sum(pred_active) == 0 and np.sum(true_active) == 0:
+        metrics["GroupPrecision"] = 1.0
+
+    precision = metrics["GroupPrecision"]
+    recall = metrics["GroupTPR"]
+    if precision is not None and recall is not None and (precision + recall) > 0:
+        metrics["GroupF1"] = float(2.0 * precision * recall / (precision + recall))
+
+    return metrics
+
+
+def mixed_signal_group_metrics(
+    beta_truth: Optional[ArrayLike],
+    beta_estimate: Optional[ArrayLike],
+    group_index: Optional[np.ndarray],
+    *,
+    true_nonzero_tol: float = 1e-8,
+    coord_abs_threshold: float = 1e-6,
+    coord_rel_threshold: float = 0.10,
+) -> Dict[str, Optional[float]]:
+    """Inside-active-group signal/noise discrimination metrics for mixed-signal designs."""
+
+    metrics: Dict[str, Optional[float]] = {
+        "ActiveGroupSignalRMSE": None,
+        "ActiveGroupNoiseRMSE": None,
+        "ActiveGroupNoiseAbsMean": None,
+        "ActiveGroupNoiseFalseRetentionRate": None,
+        "CoordDetectionThreshold": None,
+        "NumSignalInActiveGroups": None,
+        "NumNoiseInActiveGroups": None,
+    }
+
+    beta_true = _as_numpy(beta_truth)
+    beta_hat = _as_numpy(beta_estimate)
+    if beta_true is None or beta_hat is None or group_index is None:
+        return metrics
+    beta_true = np.asarray(beta_true, dtype=float).reshape(-1)
+    beta_hat = np.asarray(beta_hat, dtype=float).reshape(-1)
+    groups = np.asarray(group_index, dtype=int).reshape(-1)
+    if beta_true.shape[0] != beta_hat.shape[0] or groups.shape[0] != beta_true.shape[0]:
+        return metrics
+
+    signal_mask = np.abs(beta_true) > true_nonzero_tol
+    if not np.any(signal_mask):
+        return metrics
+
+    active_group_ids = np.unique(groups[signal_mask])
+    in_active_groups = np.isin(groups, active_group_ids)
+    signal_in_active = in_active_groups & signal_mask
+    noise_in_active = in_active_groups & (~signal_mask)
+
+    if np.any(signal_in_active):
+        signal_scale = float(np.median(np.abs(beta_true[signal_in_active])))
+        threshold = max(float(coord_abs_threshold), float(coord_rel_threshold) * signal_scale)
+    else:
+        threshold = float(coord_abs_threshold)
+    metrics["CoordDetectionThreshold"] = threshold
+
+    if np.any(signal_in_active):
+        err = beta_hat[signal_in_active] - beta_true[signal_in_active]
+        metrics["ActiveGroupSignalRMSE"] = float(np.sqrt(np.mean(err**2)))
+        metrics["NumSignalInActiveGroups"] = float(np.sum(signal_in_active))
+    if np.any(noise_in_active):
+        abs_vals = np.abs(beta_hat[noise_in_active])
+        metrics["ActiveGroupNoiseRMSE"] = float(np.sqrt(np.mean(beta_hat[noise_in_active] ** 2)))
+        metrics["ActiveGroupNoiseAbsMean"] = float(np.mean(abs_vals))
+        metrics["ActiveGroupNoiseFalseRetentionRate"] = float(np.mean(abs_vals >= threshold))
+        metrics["NumNoiseInActiveGroups"] = float(np.sum(noise_in_active))
+
+    return metrics
+
+
 def coefficient_recovery_metrics(
     beta_truth: Optional[ArrayLike],
     coef_draws: Optional[np.ndarray],
@@ -521,10 +664,13 @@ class PosteriorSamples:
     sigma: Optional[np.ndarray] = None  # (S,)
     lambda_: Optional[np.ndarray] = None  # (S, p)
     tau: Optional[np.ndarray] = None  # (S,)
+    a: Optional[np.ndarray] = None  # (S, G)
+    c2: Optional[np.ndarray] = None  # (S, G)
     phi: Optional[np.ndarray] = None  # (S, G)
 
 
 def _prepare_posterior_samples(model: Any) -> PosteriorSamples:
+    unify_parameter_names(model)
     coef = _as_numpy(getattr(model, "coef_samples_", None))
     if coef is not None:
         coef = _flatten_sample_axes(coef, scalar_param=False)
@@ -545,7 +691,17 @@ def _prepare_posterior_samples(model: Any) -> PosteriorSamples:
     if tau_samples is not None:
         tau_samples = _flatten_sample_axes(tau_samples, scalar_param=True)
 
+    a_samples = _as_numpy(getattr(model, "a_samples_", None))
+    if a_samples is not None:
+        a_samples = _flatten_sample_axes(a_samples, scalar_param=False)
+
+    c2_samples = _as_numpy(getattr(model, "c2_samples_", None))
+    if c2_samples is not None:
+        c2_samples = _flatten_sample_axes(c2_samples, scalar_param=False)
+
     phi_samples = _as_numpy(getattr(model, "phi_samples_", None))
+    if phi_samples is None:
+        phi_samples = a_samples
     if phi_samples is None:
         phi_samples = _as_numpy(getattr(model, "lambda_group_samples_", None))
     if phi_samples is None:
@@ -553,7 +709,15 @@ def _prepare_posterior_samples(model: Any) -> PosteriorSamples:
     if phi_samples is not None:
         phi_samples = _flatten_sample_axes(phi_samples, scalar_param=False)
 
-    return PosteriorSamples(coef=coef, sigma=sigma, lambda_=lambda_samples, tau=tau_samples, phi=phi_samples)
+    return PosteriorSamples(
+        coef=coef,
+        sigma=sigma,
+        lambda_=lambda_samples,
+        tau=tau_samples,
+        a=a_samples,
+        c2=c2_samples,
+        phi=phi_samples,
+    )
 
 
 def _predictive_draws(
@@ -623,6 +787,11 @@ def evaluate_model_metrics(
     predictive_density_mode: str = "mixed",
     y_pred_override: Optional[np.ndarray] = None,
     pred_draws_override: Optional[np.ndarray] = None,
+    group_true_nonzero_tol: float = 1e-8,
+    group_detection_abs_threshold: float = 1e-6,
+    group_detection_rel_threshold: float = 0.10,
+    coord_detection_abs_threshold: float = 1e-6,
+    coord_detection_rel_threshold: float = 0.10,
 ) -> Dict[str, Optional[float]]:
     """Evaluate a fitted model for regression workflows."""
 
@@ -801,6 +970,26 @@ def evaluate_model_metrics(
             coef_hat,
             group_index,
             coverage_level=coverage_level,
+        )
+    )
+    metrics.update(
+        grouped_structure_metrics(
+            beta_truth=beta_truth,
+            beta_estimate=selection_point,
+            group_index=group_index,
+            true_nonzero_tol=group_true_nonzero_tol,
+            group_abs_threshold=group_detection_abs_threshold,
+            group_rel_threshold=group_detection_rel_threshold,
+        )
+    )
+    metrics.update(
+        mixed_signal_group_metrics(
+            beta_truth=beta_truth,
+            beta_estimate=selection_point,
+            group_index=group_index,
+            true_nonzero_tol=group_true_nonzero_tol,
+            coord_abs_threshold=coord_detection_abs_threshold,
+            coord_rel_threshold=coord_detection_rel_threshold,
         )
     )
 

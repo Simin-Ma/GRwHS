@@ -1,0 +1,32 @@
+name: "toy_mechanism_main"
+output_dir: "outputs/sweeps/toy_mechanism_main"
+
+common_config_files:
+  - "../experiments/toy_mechanism.yaml"
+
+common_overrides:
+  experiments:
+    repeats: 1
+
+variations:
+  - name: "grrhs"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+
+  - name: "gigg"
+    config_files:
+      - "../methods/gigg.yaml"
+    overrides:
+      model:
+        backend: "cran"
+        method: "mmle"
+        mmle_enabled: true
+
+  - name: "rhs"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+    overrides:
+      model:
+        backend: "numpyro"
+        num_warmup: 400
+        num_samples: 400

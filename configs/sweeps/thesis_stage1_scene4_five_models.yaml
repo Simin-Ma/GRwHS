@@ -1,0 +1,22 @@
+name: "thesis_stage1_scene4_five_models"
+output_dir: "outputs/sweeps/thesis_stage1_scene4_five_models"
+
+common_config_files:
+  - "../experiments/thesis_stage1_scene4_highcoupling_mixedsignal.yaml"
+
+variations:
+  - name: "ols"
+    config_files:
+      - "../methods/ols.yaml"
+  - name: "rhs"
+    config_files:
+      - "../methods/regularized_horseshoe.yaml"
+  - name: "grrhs"
+    config_files:
+      - "../methods/grrhs_regression.yaml"
+  - name: "bglss"
+    config_files:
+      - "../methods/bglss_python.yaml"
+  - name: "gigg"
+    config_files:
+      - "../methods/gigg.yaml"

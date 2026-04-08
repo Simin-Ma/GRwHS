@@ -1,0 +1,6 @@
+name: "ols"
+
+model:
+  name: "ols"
+  fit_intercept: false
+  positive: false

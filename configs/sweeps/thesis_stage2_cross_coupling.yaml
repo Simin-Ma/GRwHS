@@ -1,0 +1,70 @@
+name: "thesis_stage2_cross_coupling"
+output_dir: "outputs/sweeps/thesis_stage2_cross_coupling"
+
+common_config_files:
+  - "../experiments/thesis_stage2_cross_coupling_base.yaml"
+
+variations:
+  - name: "rho0p0_ols"
+    config_files: ["../methods/ols.yaml"]
+    overrides: {"data.correlation.rho_out": 0.0}
+  - name: "rho0p0_rhs"
+    config_files: ["../methods/regularized_horseshoe.yaml"]
+    overrides: {"data.correlation.rho_out": 0.0}
+  - name: "rho0p0_grrhs"
+    config_files: ["../methods/grrhs_regression.yaml"]
+    overrides: {"data.correlation.rho_out": 0.0}
+  - name: "rho0p0_bglss"
+    config_files: ["../methods/bglss_python.yaml"]
+    overrides: {"data.correlation.rho_out": 0.0}
+  - name: "rho0p0_gigg"
+    config_files: ["../methods/gigg.yaml"]
+    overrides: {"data.correlation.rho_out": 0.0}
+
+  - name: "rho0p1_ols"
+    config_files: ["../methods/ols.yaml"]
+    overrides: {"data.correlation.rho_out": 0.1}
+  - name: "rho0p1_rhs"
+    config_files: ["../methods/regularized_horseshoe.yaml"]
+    overrides: {"data.correlation.rho_out": 0.1}
+  - name: "rho0p1_grrhs"
+    config_files: ["../methods/grrhs_regression.yaml"]
+    overrides: {"data.correlation.rho_out": 0.1}
+  - name: "rho0p1_bglss"
+    config_files: ["../methods/bglss_python.yaml"]
+    overrides: {"data.correlation.rho_out": 0.1}
+  - name: "rho0p1_gigg"
+    config_files: ["../methods/gigg.yaml"]
+    overrides: {"data.correlation.rho_out": 0.1}
+
+  - name: "rho0p3_ols"
+    config_files: ["../methods/ols.yaml"]
+    overrides: {"data.correlation.rho_out": 0.3}
+  - name: "rho0p3_rhs"
+    config_files: ["../methods/regularized_horseshoe.yaml"]
+    overrides: {"data.correlation.rho_out": 0.3}
+  - name: "rho0p3_grrhs"
+    config_files: ["../methods/grrhs_regression.yaml"]
+    overrides: {"data.correlation.rho_out": 0.3}
+  - name: "rho0p3_bglss"
+    config_files: ["../methods/bglss_python.yaml"]
+    overrides: {"data.correlation.rho_out": 0.3}
+  - name: "rho0p3_gigg"
+    config_files: ["../methods/gigg.yaml"]
+    overrides: {"data.correlation.rho_out": 0.3}
+
+  - name: "rho0p5_ols"
+    config_files: ["../methods/ols.yaml"]
+    overrides: {"data.correlation.rho_out": 0.5}
+  - name: "rho0p5_rhs"
+    config_files: ["../methods/regularized_horseshoe.yaml"]
+    overrides: {"data.correlation.rho_out": 0.5}
+  - name: "rho0p5_grrhs"
+    config_files: ["../methods/grrhs_regression.yaml"]
+    overrides: {"data.correlation.rho_out": 0.5}
+  - name: "rho0p5_bglss"
+    config_files: ["../methods/bglss_python.yaml"]
+    overrides: {"data.correlation.rho_out": 0.5}
+  - name: "rho0p5_gigg"
+    config_files: ["../methods/gigg.yaml"]
+    overrides: {"data.correlation.rho_out": 0.5}

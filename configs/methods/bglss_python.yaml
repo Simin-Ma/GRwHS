@@ -1,0 +1,29 @@
+name: "bglss_python"
+
+model:
+  name: "bglss_python"
+  # Gibbs iterations
+  niter: 6000
+  burnin: 2000
+  fit_intercept: false
+  # Beta prior for inclusion probability
+  a: 1.0
+  b: 1.0
+  pi_prior: true
+  pi: 0.5
+  # IG(alpha, gamma) for sigma^2
+  alpha: 0.1
+  gamma: 0.1
+  # Spike/slab group shrinkage strengths
+  lambda_slab2: 0.5
+  lambda_spike2: 25.0
+  # Optional MC-EM style slab update
+  update_tau: true
+  num_update: 100
+  niter_update: 100
+  store_beta_samples: false
+  verbose: false
+
+inference:
+  gibbs:
+    seed: 2025
