@@ -1,13 +1,24 @@
-name: "thesis_stage1_scene1_five_models"
-output_dir: "outputs/sweeps/thesis_stage1_scene1_five_models"
+name: "thesis_stage1_scene1_bayes_budget_pilot_12k"
+output_dir: "outputs/sweeps/thesis_stage1_scene1_bayes_budget_pilot_12k"
 
 common_config_files:
   - "../experiments/thesis_stage1_scene1_highcol_groupdense.yaml"
 
+common_overrides:
+  experiments:
+    repeats: 1
+    bayesian_fairness:
+      sampling_budget:
+        burn_in: 12000
+        kept_draws: 12000
+        thinning: 1
+        num_chains: 4
+  splits:
+    outer:
+      n_splits: 2
+      n_repeats: 1
+
 variations:
-  - name: "ols"
-    config_files:
-      - "../methods/ols.yaml"
   - name: "rhs"
     config_files:
       - "../methods/regularized_horseshoe.yaml"

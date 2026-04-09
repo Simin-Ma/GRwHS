@@ -11,7 +11,7 @@ variations:
   - name: "rhs"
     config_files:
       - "../methods/regularized_horseshoe.yaml"
-  - name: "grrhs"
+  - name: "grrhs_mwg"
     config_files:
       - "../methods/grrhs_regression.yaml"
   - name: "bglss"

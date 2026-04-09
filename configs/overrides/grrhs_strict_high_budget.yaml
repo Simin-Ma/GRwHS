@@ -1,0 +1,17 @@
+experiments:
+  bayesian_fairness:
+    enabled: true
+    disable_inner_cv: true
+    enforce_shared_sampling_budget: true
+    require_posterior_mean_summary: true
+    disable_budget_retry: false
+    sampling_budget:
+      burn_in: 6000
+      kept_draws: 6000
+      thinning: 1
+      num_chains: 4
+  convergence:
+    enabled: true
+    fail_run_on_invalid_bayesian: true
+    max_retries: 2
+    retry_scale: 2.0
