@@ -64,7 +64,9 @@ def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         adapt_interval=int(payload.get("adapt_interval", 50)),
         adapt_until_frac=float(payload.get("adapt_until_frac", 0.8)),
         adapt_target_accept=float(payload.get("adapt_target_accept", 0.30)),
+        adapt_target_accept_by_block=payload.get("adapt_target_accept_by_block"),
         adapt_step_size=float(payload.get("adapt_step_size", 0.05)),
+        adapt_only_during_burnin=bool(payload.get("adapt_only_during_burnin", True)),
         min_proposal_sd=float(payload.get("min_proposal_sd", 1e-3)),
         max_proposal_sd=float(payload.get("max_proposal_sd", 2.5)),
     )
@@ -154,7 +156,9 @@ class GRRHS_Gibbs:
     adapt_interval: int = 50
     adapt_until_frac: float = 0.8
     adapt_target_accept: float = 0.30
+    adapt_target_accept_by_block: Optional[Mapping[str, float]] = None
     adapt_step_size: float = 0.05
+    adapt_only_during_burnin: bool = True
     min_proposal_sd: float = 1e-3
     max_proposal_sd: float = 2.5
 
@@ -204,6 +208,11 @@ class GRRHS_Gibbs:
             raise ValueError("adapt_target_accept must lie in (0, 1).")
         if float(self.adapt_step_size) <= 0.0:
             raise ValueError("adapt_step_size must be positive.")
+        if self.adapt_target_accept_by_block is not None:
+            for key, value in dict(self.adapt_target_accept_by_block).items():
+                v = float(value)
+                if not (0.0 < v < 1.0):
+                    raise ValueError(f"adapt_target_accept_by_block[{key!r}] must lie in (0, 1).")
         if float(self.min_proposal_sd) <= 0.0 or float(self.max_proposal_sd) <= 0.0:
             raise ValueError("min_proposal_sd/max_proposal_sd must be positive.")
         if float(self.min_proposal_sd) > float(self.max_proposal_sd):
@@ -233,6 +242,12 @@ class GRRHS_Gibbs:
             self.lambda_slice_w = float(max(0.15, 0.5 * self.slice_w))
         if self.lambda_slice_m is None:
             self.lambda_slice_m = int(max(20, min(60, self.slice_m)))
+        if self.adapt_target_accept_by_block is None:
+            self.adapt_target_accept_by_block = {}
+        else:
+            self.adapt_target_accept_by_block = {
+                str(k): float(v) for k, v in dict(self.adapt_target_accept_by_block).items()
+            }
 
     def _init_mh_stats(self) -> None:
         keys = (
@@ -280,6 +295,8 @@ class GRRHS_Gibbs:
     def _adapt_proposals_if_needed(self, *, iteration: int) -> None:
         if not bool(self.adapt_proposals):
             return
+        if bool(self.adapt_only_during_burnin) and iteration >= int(self.burnin):
+            return
         max_adapt_iter = int(max(1, math.floor(float(self.iters) * float(self.adapt_until_frac))))
         if iteration >= max_adapt_iter:
             return
@@ -288,10 +305,11 @@ class GRRHS_Gibbs:
         stats = getattr(self, "_mh_stats", None)
         if not isinstance(stats, dict):
             return
-        target = float(self.adapt_target_accept)
+        default_target = float(self.adapt_target_accept)
         step = float(self.adapt_step_size)
         sd_min = float(self.min_proposal_sd)
         sd_max = float(self.max_proposal_sd)
+        target_by_block = dict(getattr(self, "adapt_target_accept_by_block", {}) or {})
         for key, attrs in self._proposal_bindings().items():
             slot = stats.get(key)
             if not isinstance(slot, dict):
@@ -301,6 +319,7 @@ class GRRHS_Gibbs:
             if attempted <= 0:
                 continue
             acc_rate = float(accepted / max(attempted, 1))
+            target = float(target_by_block.get(str(key), default_target))
             factor = math.exp(step * (acc_rate - target))
             for attr in attrs:
                 cur = float(getattr(self, attr))
@@ -346,7 +365,9 @@ class GRRHS_Gibbs:
                 "interval": int(self.adapt_interval),
                 "until_frac": float(self.adapt_until_frac),
                 "target_accept": float(self.adapt_target_accept),
+                "target_accept_by_block": dict(getattr(self, "adapt_target_accept_by_block", {}) or {}),
                 "step_size": float(self.adapt_step_size),
+                "only_during_burnin": bool(self.adapt_only_during_burnin),
             },
         }
 
@@ -424,6 +445,15 @@ class GRRHS_Gibbs:
             lambda_slice_w=self.lambda_slice_w,
             lambda_slice_m=self.lambda_slice_m,
             continuation_state=self.continuation_state,
+            adapt_proposals=self.adapt_proposals,
+            adapt_interval=self.adapt_interval,
+            adapt_until_frac=self.adapt_until_frac,
+            adapt_target_accept=self.adapt_target_accept,
+            adapt_target_accept_by_block=self.adapt_target_accept_by_block,
+            adapt_step_size=self.adapt_step_size,
+            adapt_only_during_burnin=self.adapt_only_during_burnin,
+            min_proposal_sd=self.min_proposal_sd,
+            max_proposal_sd=self.max_proposal_sd,
         )
 
     def _fit_multichain(self, X: np.ndarray, y: np.ndarray, groups: Optional[List[List[int]]] = None) -> "GRRHS_Gibbs":
@@ -472,7 +502,9 @@ class GRRHS_Gibbs:
                     "adapt_interval": self.adapt_interval,
                     "adapt_until_frac": self.adapt_until_frac,
                     "adapt_target_accept": self.adapt_target_accept,
+                    "adapt_target_accept_by_block": dict(self.adapt_target_accept_by_block or {}),
                     "adapt_step_size": self.adapt_step_size,
+                    "adapt_only_during_burnin": self.adapt_only_during_burnin,
                     "min_proposal_sd": self.min_proposal_sd,
                     "max_proposal_sd": self.max_proposal_sd,
                     "X": np.asarray(X, dtype=float),

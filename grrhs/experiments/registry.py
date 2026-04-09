@@ -6,7 +6,7 @@ Optional models (SVI/Gibbs) are imported in try blocks so that baseline-only
 environments can still import this module without errors.
 """
 
-from typing import Callable, Dict, Any, Optional, Sequence
+from typing import Callable, Dict, Any, Optional, Sequence, Mapping
 
 import numpy as np
 
@@ -700,9 +700,17 @@ def _gibbs_runtime_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
     adapt_target_accept = _get(cfg, "inference.gibbs.adapt_target_accept", None)
     if adapt_target_accept is not None:
         overrides["adapt_target_accept"] = float(adapt_target_accept)
+    adapt_target_accept_by_block = _get(cfg, "inference.gibbs.adapt_target_accept_by_block", None)
+    if isinstance(adapt_target_accept_by_block, Mapping):
+        overrides["adapt_target_accept_by_block"] = {
+            str(k): float(v) for k, v in adapt_target_accept_by_block.items()
+        }
     adapt_step_size = _get(cfg, "inference.gibbs.adapt_step_size", None)
     if adapt_step_size is not None:
         overrides["adapt_step_size"] = float(adapt_step_size)
+    adapt_only_during_burnin = _get(cfg, "inference.gibbs.adapt_only_during_burnin", None)
+    if adapt_only_during_burnin is not None:
+        overrides["adapt_only_during_burnin"] = bool(adapt_only_during_burnin)
     min_proposal_sd = _get(cfg, "inference.gibbs.min_proposal_sd", None)
     if min_proposal_sd is not None:
         overrides["min_proposal_sd"] = float(min_proposal_sd)

@@ -42,7 +42,17 @@ inference:
     adapt_interval: 50
     adapt_until_frac: 0.8
     adapt_target_accept: 0.3
+    adapt_target_accept_by_block:
+      tau2: 0.35
+      lambda: 0.40
+      a: 0.32
+      c2: 0.32
+      global_block: 0.28
+      global_comp: 0.28
+      group_ac2_block: 0.30
+      group_comp: 0.30
     adapt_step_size: 0.05
+    adapt_only_during_burnin: true
     min_proposal_sd: 1.0e-3
     max_proposal_sd: 2.5
     jitter: 1.0e-08
