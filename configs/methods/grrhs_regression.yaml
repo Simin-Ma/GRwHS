@@ -8,6 +8,8 @@ model:
   beta_c: 2.0
   s0: 1.0
   iters: 2000
+  use_pcabs_lite: true
+  use_collapsed_scale_updates: true
   tau:
     mode: "calibrated"
     target: "coefficients"
@@ -27,5 +29,21 @@ inference:
     mh_sd_log_lambda: 0.25
     mh_sd_log_a: 0.2
     mh_sd_log_c2: 0.2
+    global_block_sd_u: 0.12
+    global_block_sd_alpha: 0.18
+    global_comp_sd: 0.08
+    group_ac2_block_sd_alpha: 0.15
+    group_ac2_block_sd_xi: 0.15
+    group_comp_sd: 0.10
+    use_lambda_slice: false
+    lambda_slice_w: 0.12
+    lambda_slice_m: 20
+    adapt_proposals: true
+    adapt_interval: 50
+    adapt_until_frac: 0.8
+    adapt_target_accept: 0.3
+    adapt_step_size: 0.05
+    min_proposal_sd: 1.0e-3
+    max_proposal_sd: 2.5
     jitter: 1.0e-08
     seed: 321

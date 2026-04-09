@@ -658,6 +658,57 @@ def _gibbs_runtime_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
     mh_sd_log_c2 = _get(cfg, "inference.gibbs.mh_sd_log_c2", None)
     if mh_sd_log_c2 is not None:
         overrides["mh_sd_log_c2"] = float(mh_sd_log_c2)
+    global_block_sd_u = _get(cfg, "inference.gibbs.global_block_sd_u", None)
+    if global_block_sd_u is not None:
+        overrides["global_block_sd_u"] = float(global_block_sd_u)
+    global_block_sd_alpha = _get(cfg, "inference.gibbs.global_block_sd_alpha", None)
+    if global_block_sd_alpha is not None:
+        overrides["global_block_sd_alpha"] = float(global_block_sd_alpha)
+    global_comp_sd = _get(cfg, "inference.gibbs.global_comp_sd", None)
+    if global_comp_sd is not None:
+        overrides["global_comp_sd"] = float(global_comp_sd)
+    group_ac2_block_sd_alpha = _get(cfg, "inference.gibbs.group_ac2_block_sd_alpha", None)
+    if group_ac2_block_sd_alpha is not None:
+        overrides["group_ac2_block_sd_alpha"] = float(group_ac2_block_sd_alpha)
+    group_ac2_block_sd_xi = _get(cfg, "inference.gibbs.group_ac2_block_sd_xi", None)
+    if group_ac2_block_sd_xi is not None:
+        overrides["group_ac2_block_sd_xi"] = float(group_ac2_block_sd_xi)
+    group_comp_sd = _get(cfg, "inference.gibbs.group_comp_sd", None)
+    if group_comp_sd is not None:
+        overrides["group_comp_sd"] = float(group_comp_sd)
+    use_lambda_slice = _get(cfg, "inference.gibbs.use_lambda_slice", None)
+    if use_lambda_slice is not None:
+        overrides["use_lambda_slice"] = bool(use_lambda_slice)
+    lambda_slice_w = _get(cfg, "inference.gibbs.lambda_slice_w", None)
+    if lambda_slice_w is not None:
+        overrides["lambda_slice_w"] = float(lambda_slice_w)
+    lambda_slice_m = _get(cfg, "inference.gibbs.lambda_slice_m", None)
+    if lambda_slice_m is not None:
+        overrides["lambda_slice_m"] = int(lambda_slice_m)
+    use_collapsed_scale_updates = _get(cfg, "inference.gibbs.use_collapsed_scale_updates", None)
+    if use_collapsed_scale_updates is not None:
+        overrides["use_collapsed_scale_updates"] = bool(use_collapsed_scale_updates)
+    adapt_proposals = _get(cfg, "inference.gibbs.adapt_proposals", None)
+    if adapt_proposals is not None:
+        overrides["adapt_proposals"] = bool(adapt_proposals)
+    adapt_interval = _get(cfg, "inference.gibbs.adapt_interval", None)
+    if adapt_interval is not None:
+        overrides["adapt_interval"] = max(1, int(adapt_interval))
+    adapt_until_frac = _get(cfg, "inference.gibbs.adapt_until_frac", None)
+    if adapt_until_frac is not None:
+        overrides["adapt_until_frac"] = float(adapt_until_frac)
+    adapt_target_accept = _get(cfg, "inference.gibbs.adapt_target_accept", None)
+    if adapt_target_accept is not None:
+        overrides["adapt_target_accept"] = float(adapt_target_accept)
+    adapt_step_size = _get(cfg, "inference.gibbs.adapt_step_size", None)
+    if adapt_step_size is not None:
+        overrides["adapt_step_size"] = float(adapt_step_size)
+    min_proposal_sd = _get(cfg, "inference.gibbs.min_proposal_sd", None)
+    if min_proposal_sd is not None:
+        overrides["min_proposal_sd"] = float(min_proposal_sd)
+    max_proposal_sd = _get(cfg, "inference.gibbs.max_proposal_sd", None)
+    if max_proposal_sd is not None:
+        overrides["max_proposal_sd"] = float(max_proposal_sd)
     return overrides
 
 
@@ -673,6 +724,8 @@ def _build_grrhs_gibbs(cfg: Dict[str, Any]) -> Any:
     alpha_c = float(_get(cfg, "model.alpha_c", 2.0))
     beta_c = float(_get(cfg, "model.beta_c", 2.0))
     iters = int(_get(cfg, "model.iters", 2000))
+    use_pcabs_lite = bool(_get(cfg, "model.use_pcabs_lite", True))
+    use_collapsed_scale_updates = bool(_get(cfg, "model.use_collapsed_scale_updates", True))
     seed = _get(
         cfg,
         "inference.gibbs.seed",
@@ -689,6 +742,8 @@ def _build_grrhs_gibbs(cfg: Dict[str, Any]) -> Any:
         iters=iters,
         seed=int(seed),
         use_groups=use_groups,
+        use_pcabs_lite=use_pcabs_lite,
+        use_collapsed_scale_updates=use_collapsed_scale_updates,
         **runtime_overrides,
     )  # type: ignore
     return sampler

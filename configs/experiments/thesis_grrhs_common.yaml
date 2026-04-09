@@ -8,19 +8,19 @@ experiments:
   bayesian_fairness:
     enabled: true
     disable_inner_cv: true
-    enforce_shared_sampling_budget: true
+    enforce_shared_sampling_budget: false
     require_posterior_mean_summary: true
-    disable_budget_retry: true
+    disable_budget_retry: false
     sampling_budget:
-      burn_in: 12000
-      kept_draws: 12000
+      burn_in: 2000
+      kept_draws: 2000
       thinning: 1
       num_chains: 4
   posterior_validation:
     enabled: false
   convergence:
     enabled: true
-    max_retries: 1
+    max_retries: 6
     retry_scale: 2.0
   evaluation:
     predictive_density_mode: "strict"
@@ -84,3 +84,8 @@ splits:
     n_splits: 2
     shuffle: true
     seed: 20260410
+
+inference:
+  nuts:
+    target_accept_prob: 0.995
+    max_tree_depth: 13

@@ -835,6 +835,7 @@ def _fit_model_with_retry(
     last_summary: Optional[Dict[str, Dict[str, Any]]] = None
     last_effective_config: Mapping[str, Any] = model_config
     last_sampler_diagnostics: Dict[str, Any] = {}
+    previous_chain_states: Optional[List[Mapping[str, Any]]] = None
 
     fairness_cfg = _bayesian_fairness_config(model_config)
     max_retries = int(convergence_cfg.get("max_retries", 1))
@@ -849,9 +850,24 @@ def _fit_model_with_retry(
         attempt_config = deepcopy(model_config)
         attempt_model_cfg = attempt_config.setdefault("model", {})
         attempt_inference_cfg = attempt_config.setdefault("inference", {})
+        model_name = str(attempt_model_cfg.get("name", "")).strip().lower()
         _apply_bayesian_sampling_budget(attempt_config)
         if attempt > 0:
             _scale_bayesian_runtime(attempt_model_cfg, attempt_inference_cfg, scale ** attempt)
+            if model_name == "grrhs_gibbs" and previous_chain_states:
+                # Continuation mode: only sample additional iterations and keep warmup minimal.
+                try:
+                    scaled_iters = int(attempt_model_cfg.get("iters", 0))
+                    prev_iters = int(max(1, round(scaled_iters / scale)))
+                    attempt_model_cfg["iters"] = max(200, scaled_iters - prev_iters)
+                except Exception:
+                    pass
+                gibbs_cfg = attempt_inference_cfg.get("gibbs")
+                if isinstance(gibbs_cfg, Mapping):
+                    gibbs_mut = dict(gibbs_cfg)
+                    cont_iters = int(max(1, attempt_model_cfg.get("iters", 1)))
+                    gibbs_mut["burn_in"] = max(50, int(0.2 * cont_iters))
+                    attempt_inference_cfg["gibbs"] = gibbs_mut
 
         _maybe_calibrate_tau(attempt_model_cfg, std_cfg, X_train, y_train, groups, task)
         model = _instantiate_model(
@@ -860,6 +876,13 @@ def _fit_model_with_retry(
             p,
             apply_bayesian_budget=False,
         )
+        if attempt > 0 and model_name == "grrhs_gibbs" and previous_chain_states:
+            setter = getattr(model, "set_chain_initial_states", None)
+            if callable(setter):
+                try:
+                    setter(previous_chain_states)
+                except Exception:
+                    pass
         _fit_model_dispatch(model, X_train, y_train, groups=groups, C=C_train)
 
         arrays = _collect_posterior_arrays(model)
@@ -910,6 +933,10 @@ def _fit_model_with_retry(
         last_summary = summary
         last_effective_config = attempt_config
         last_sampler_diagnostics = sampler_diagnostics
+        if model_name == "grrhs_gibbs":
+            states = getattr(model, "chain_final_states_", None)
+            if isinstance(states, list) and states:
+                previous_chain_states = states
         if ok:
             break
 
