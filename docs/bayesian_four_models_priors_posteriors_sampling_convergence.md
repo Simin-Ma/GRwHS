@@ -63,6 +63,29 @@ Guide is mean-field/block variational with log-parameterized positive scales. Ex
 - `coef_samples_`, `sigma_samples_`, `tau_samples_`, `lambda_samples_`, `a_samples_`, `c2_samples_`
 - compatibility alias: `phi_samples_ = a_samples_`
 
+## 2.1 GR-RHS NUTS (`grrhs_nuts`)
+
+Reference path for paper-ready computation:
+
+- Primitive hierarchy with transformed variables:
+  - `log tau`, `log sigma`, `log lambda_j`, `log a_g`, `logit kappa_g`
+- Non-centered coefficients:
+  - `beta_j = beta_raw_j * sd_j`, `beta_raw_j ~ N(0,1)`
+- Global shrinkage recommendation:
+  - `tau0` via sparsity-aware calibration `tau0 = (p0 / (D - p0)) * (sigma_ref / sqrt(n))`
+- Group-level defaults (allowance interpretation):
+  - `kappa_g ~ Beta(alpha_kappa, beta_kappa)` with default `(2, 8)` (prior mass near low allowance)
+  - `a_g ~ HalfNormal(eta/sqrt(p_g))`, default `eta=0.5`
+
+Sampler diagnostics exported in `sampler_diagnostics_`:
+
+- `hmc.divergences`
+- `hmc.treedepth_hits`
+- `hmc.ebfmi_min`
+- `posterior_quality.max_rhat`
+- `posterior_quality.min_ess`
+- `posterior_quality.ess_per_sec`
+
 ## 3. GIGG and RHS
 
 - GIGG and RHS implementations are unchanged in model definition.

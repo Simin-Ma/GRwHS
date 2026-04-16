@@ -1,0 +1,28 @@
+name: "gigg_mmle"
+
+model:
+  name: "gigg"
+  backend: "python"
+  method: "mmle"
+  mmle_enabled: true
+  n_samples: 1000
+  a_value: null
+  b_init: 0.5
+  b_floor: 0.001
+  b_max: 4.0
+  share_group_hyper: false
+  mmle_update: "paper_lambda_only"
+  tau_sq_init: 1.0
+  sigma_sq_init: 1.0
+  store_lambda: true
+  mmle_burnin_only: true
+  btrick: false
+  stable_solve: true
+
+inference:
+  gibbs:
+    burn_in: 500
+    thin: 1
+    num_chains: 4
+    jitter: 1.0e-08
+    seed: 2025

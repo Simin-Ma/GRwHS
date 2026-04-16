@@ -81,6 +81,7 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
         "a": 400.0,
         "c2": 400.0,
         "phi": 400.0,
+        "kappa": 400.0,
         "gamma": 400.0,
         "lambda": 200.0,
         "b": 200.0,
@@ -101,6 +102,8 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
     "expected_blocks": {
         "default": ["beta", "tau"],
         "grrhs_gibbs": ["beta", "tau", "a", "c2", "lambda"],
+        "grrhs_nuts": ["beta", "tau", "a", "kappa", "c2", "lambda"],
+        "grrhs_hmc": ["beta", "tau", "a", "kappa", "c2", "lambda"],
         "gigg": ["beta", "tau", "gamma", "lambda"],
         "gigg_regression": ["beta", "tau", "gamma", "lambda"],
         "bglss": ["beta", "sigma2"],
@@ -113,13 +116,21 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
         "regularised_horseshoe": ["beta", "tau", "lambda"],
         "horseshoe": ["beta", "tau", "lambda"],
         "hs": ["beta", "tau", "lambda"],
+        "grouped_horseshoe": ["beta", "tau", "phi"],
+        "bghs": ["beta", "tau", "phi"],
+        "bayesian_grouped_horseshoe": ["beta", "tau", "phi"],
+        "hierarchical_grouped_horseshoe": ["beta", "tau", "phi", "lambda"],
+        "hbghs": ["beta", "tau", "phi", "lambda"],
+        "group_horseshoe_plus": ["beta", "tau", "phi", "lambda"],
+        "grouped_horseshoe_plus": ["beta", "tau", "phi", "lambda"],
+        "ghs_plus": ["beta", "tau", "phi", "lambda"],
     },
     "missing_policy": "warn",
     "require_valid_diagnostics": True,
     "min_chains_for_rhat": 4,
     "hmc": {
         "enabled": True,
-        "models": ["regularized_horseshoe", "rhs", "regularised_horseshoe"],
+        "models": ["regularized_horseshoe", "rhs", "regularised_horseshoe", "grrhs_nuts", "grrhs_hmc"],
         "max_divergences": 0,
         "min_ebfmi": 0.3,
         "max_treedepth_hits": 0,
@@ -176,6 +187,8 @@ DEFAULT_POSTERIOR_VALIDATION_CONFIG: Dict[str, Any] = {
 
 _BAYESIAN_MODEL_NAMES = {
     "grrhs_gibbs",
+    "grrhs_nuts",
+    "grrhs_hmc",
     "gigg",
     "gigg_regression",
     "bglss",
@@ -186,11 +199,27 @@ _BAYESIAN_MODEL_NAMES = {
     "regularized_horseshoe",
     "rhs",
     "regularised_horseshoe",
+    "grouped_horseshoe",
+    "bghs",
+    "bayesian_grouped_horseshoe",
+    "hierarchical_grouped_horseshoe",
+    "hbghs",
+    "group_horseshoe_plus",
+    "grouped_horseshoe_plus",
+    "ghs_plus",
 }
 
 _BAYESIAN_HYPERPRIOR_LABELS: Dict[str, Dict[str, str]] = {
     "grrhs_gibbs": {
         "tau": "tau ~ C+(0, 1) via calibrated tau0 heuristic",
+        "group": "a_g ~ HalfNormal(eta/sqrt(p_g)), kappa_g ~ Beta(alpha_kappa, beta_kappa), c_g^2=sigma^2*kappa_g/(1-kappa_g)",
+    },
+    "grrhs_nuts": {
+        "tau": "tau ~ C+(0, tau0) via sparsity-aware calibration",
+        "group": "a_g ~ HalfNormal(eta/sqrt(p_g)), kappa_g ~ Beta(alpha_kappa, beta_kappa), c_g^2=sigma^2*kappa_g/(1-kappa_g)",
+    },
+    "grrhs_hmc": {
+        "tau": "tau ~ C+(0, tau0) via sparsity-aware calibration",
         "group": "a_g ~ HalfNormal(eta/sqrt(p_g)), kappa_g ~ Beta(alpha_kappa, beta_kappa), c_g^2=sigma^2*kappa_g/(1-kappa_g)",
     },
     "gigg": {
@@ -218,6 +247,38 @@ _BAYESIAN_HYPERPRIOR_LABELS: Dict[str, Dict[str, str]] = {
     },
     "hs": {
         "tau": "tau ~ C+(0, 1)",
+    },
+    "grouped_horseshoe": {
+        "tau": "tau ~ C+(0, tau0) via half-Cauchy inverse-gamma augmentation",
+        "group": "lambda_g ~ C+(0, group_scale_prior), beta_j | g ~ N(0, sigma^2 tau^2 lambda_g^2)",
+    },
+    "bghs": {
+        "tau": "tau ~ C+(0, tau0) via half-Cauchy inverse-gamma augmentation",
+        "group": "lambda_g ~ C+(0, group_scale_prior), beta_j | g ~ N(0, sigma^2 tau^2 lambda_g^2)",
+    },
+    "bayesian_grouped_horseshoe": {
+        "tau": "tau ~ C+(0, tau0) via half-Cauchy inverse-gamma augmentation",
+        "group": "lambda_g ~ C+(0, group_scale_prior), beta_j | g ~ N(0, sigma^2 tau^2 lambda_g^2)",
+    },
+    "hierarchical_grouped_horseshoe": {
+        "tau": "tau ~ C+(0, tau0) via half-Cauchy inverse-gamma augmentation",
+        "group": "lambda_g ~ C+(0, group_scale_prior), delta_j ~ C+(0, local_scale_prior)",
+    },
+    "hbghs": {
+        "tau": "tau ~ C+(0, tau0) via half-Cauchy inverse-gamma augmentation",
+        "group": "lambda_g ~ C+(0, group_scale_prior), delta_j ~ C+(0, local_scale_prior)",
+    },
+    "group_horseshoe_plus": {
+        "tau": "tau ~ C+(0, tau0) via half-Cauchy inverse-gamma augmentation",
+        "group": "lambda_g ~ C+(0, group_scale_prior), delta_j ~ C+(0, local_scale_prior)",
+    },
+    "grouped_horseshoe_plus": {
+        "tau": "tau ~ C+(0, tau0) via half-Cauchy inverse-gamma augmentation",
+        "group": "lambda_g ~ C+(0, group_scale_prior), delta_j ~ C+(0, local_scale_prior)",
+    },
+    "ghs_plus": {
+        "tau": "tau ~ C+(0, tau0) via half-Cauchy inverse-gamma augmentation",
+        "group": "lambda_g ~ C+(0, group_scale_prior), delta_j ~ C+(0, local_scale_prior)",
     },
 }
 
@@ -446,7 +507,15 @@ def _apply_bayesian_sampling_budget(config: MutableMapping[str, Any]) -> None:
             model_cfg["n_samples"] = int(budget["kept_draws"])
         return
 
-    if model_name in {"horseshoe", "hs", "regularized_horseshoe", "rhs", "regularised_horseshoe"}:
+    if model_name in {
+        "horseshoe",
+        "hs",
+        "regularized_horseshoe",
+        "rhs",
+        "regularised_horseshoe",
+        "grrhs_nuts",
+        "grrhs_hmc",
+    }:
         nuts_cfg = inference_cfg.setdefault("nuts", {})
         nuts_cfg["num_warmup"] = int(budget["burn_in"])
         nuts_cfg["num_samples"] = int(budget["kept_draws"] * budget["thinning"])
@@ -886,7 +955,15 @@ def _scale_bayesian_runtime(
             gibbs_cfg["burn_in"] = max(2, int(math.ceil(float(gibbs_cfg["burn_in"]) * scale)))
         return
 
-    if model_name in {"horseshoe", "hs", "regularized_horseshoe", "rhs", "regularised_horseshoe"}:
+    if model_name in {
+        "horseshoe",
+        "hs",
+        "regularized_horseshoe",
+        "rhs",
+        "regularised_horseshoe",
+        "grrhs_nuts",
+        "grrhs_hmc",
+    }:
         for key in ("num_warmup", "num_samples"):
             if key in model_config:
                 model_config[key] = max(100, int(math.ceil(float(model_config[key]) * scale)))
@@ -2175,6 +2252,7 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
         "sigma2_samples_": "sigma2",
         "tau_samples_": "tau",
         "a_samples_": "a",
+        "kappa_samples_": "kappa",
         "c2_samples_": "c2",
         "phi_samples_": "phi",
         "gamma_samples_": "gamma",
@@ -2199,6 +2277,7 @@ def _collect_posterior_arrays(model: Any) -> Dict[str, np.ndarray]:
                 "group_lambda": ("group_lambda_mean_", "lambda_group_mean_", "a_mean_", "phi_mean_"),
                 "phi": ("phi_mean_", "a_mean_"),
                 "a": ("a_mean_", "phi_mean_"),
+                "kappa": ("kappa_mean_",),
                 "c2": ("c2_mean_",),
                 "gamma": ("gamma_mean_",),
                 "b": ("b_mean_",),

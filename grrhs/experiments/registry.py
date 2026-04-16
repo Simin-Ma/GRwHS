@@ -24,6 +24,11 @@ except Exception:  # pragma: no cover
     GRRHS_Gibbs = None  # type: ignore
 
 try:
+    from grrhs.models.grrhs_nuts import GRRHS_NUTS  # type: ignore
+except Exception:  # pragma: no cover
+    GRRHS_NUTS = None  # type: ignore
+
+try:
     from grrhs.models.gigg_regression import GIGGRegression  # type: ignore
 except Exception:  # pragma: no cover
     GIGGRegression = None  # type: ignore
@@ -43,6 +48,9 @@ from grrhs.models.baselines import (
     MBSGSBGLSSRegression,
     BGLSSPythonRegression,
     HorseshoeRegression,
+    GroupedHorseshoeRegression,
+    GroupHorseshoePlusRegression,
+    HierarchicalGroupedHorseshoeRegression,
     RegularizedHorseshoeRegression,
 )
 
@@ -359,6 +367,67 @@ def _build_regularized_horseshoe(cfg: Dict[str, Any]) -> Any:
     if slab_df is not None:
         kwargs["slab_df"] = float(slab_df)
     return RegularizedHorseshoeRegression(**kwargs)
+
+
+@register("grouped_horseshoe")
+@register("bghs")
+@register("bayesian_grouped_horseshoe")
+def _build_grouped_horseshoe(cfg: Dict[str, Any]) -> Any:
+    groups = _infer_groups(cfg)
+    if groups is None:
+        raise ValueError("GroupedHorseshoeRegression requires grouped features in config (data.groups or inferable).")
+    iters = int(_get(cfg, "model.iters", _get(cfg, "model.n_samples", 3000)))
+    burnin = int(_get(cfg, "model.burnin", _get(cfg, "inference.gibbs.burn_in", 1500)))
+    thin = max(1, int(_get(cfg, "model.thin", _get(cfg, "inference.gibbs.thin", 1))))
+    num_chains = max(1, int(_get(cfg, "model.num_chains", _get(cfg, "inference.gibbs.num_chains", 1))))
+    seed = int(_get(cfg, "model.seed", _get(cfg, "inference.gibbs.seed", _get(cfg, "seed", 42))))
+    return GroupedHorseshoeRegression(
+        fit_intercept=bool(_get(cfg, "model.fit_intercept", True)),
+        tau0=float(_get(cfg, "model.tau0", 1.0)),
+        group_scale_prior=float(_get(cfg, "model.group_scale_prior", 1.0)),
+        local_scale_prior=float(_get(cfg, "model.local_scale_prior", 1.0)),
+        iters=iters,
+        burnin=burnin,
+        thin=thin,
+        seed=seed,
+        num_chains=num_chains,
+        jitter=float(_get(cfg, "model.jitter", 1e-8)),
+        progress_bar=bool(_get(cfg, "model.progress_bar", _get(cfg, "runtime.progress_bar", False))),
+    )
+
+
+@register("hierarchical_grouped_horseshoe")
+@register("hbghs")
+@register("group_horseshoe_plus")
+@register("grouped_horseshoe_plus")
+@register("ghs_plus")
+def _build_group_horseshoe_plus(cfg: Dict[str, Any]) -> Any:
+    groups = _infer_groups(cfg)
+    if groups is None:
+        raise ValueError(
+            "HierarchicalGroupedHorseshoeRegression requires grouped features in config (data.groups or inferable)."
+        )
+    iters = int(_get(cfg, "model.iters", _get(cfg, "model.n_samples", 3000)))
+    burnin = int(_get(cfg, "model.burnin", _get(cfg, "inference.gibbs.burn_in", 1500)))
+    thin = max(1, int(_get(cfg, "model.thin", _get(cfg, "inference.gibbs.thin", 1))))
+    num_chains = max(1, int(_get(cfg, "model.num_chains", _get(cfg, "inference.gibbs.num_chains", 1))))
+    seed = int(_get(cfg, "model.seed", _get(cfg, "inference.gibbs.seed", _get(cfg, "seed", 42))))
+    model_cls = HierarchicalGroupedHorseshoeRegression
+    if bool(_get(cfg, "model.use_alias_class", True)):
+        model_cls = GroupHorseshoePlusRegression
+    return model_cls(
+        fit_intercept=bool(_get(cfg, "model.fit_intercept", True)),
+        tau0=float(_get(cfg, "model.tau0", 1.0)),
+        group_scale_prior=float(_get(cfg, "model.group_scale_prior", 1.0)),
+        local_scale_prior=float(_get(cfg, "model.local_scale_prior", 1.0)),
+        iters=iters,
+        burnin=burnin,
+        thin=thin,
+        seed=seed,
+        num_chains=num_chains,
+        jitter=float(_get(cfg, "model.jitter", 1e-8)),
+        progress_bar=bool(_get(cfg, "model.progress_bar", _get(cfg, "runtime.progress_bar", False))),
+    )
 
 
 @register("gigg")
@@ -693,6 +762,64 @@ def _build_grrhs_svi(cfg: Dict[str, Any]) -> Any:
         **svi_kwargs,
     )  # type: ignore
     return svi
+
+
+@register("grrhs_nuts")
+@register("grrhs_hmc")
+def _build_grrhs_nuts(cfg: Dict[str, Any]) -> Any:
+    if GRRHS_NUTS is None:
+        raise ImportError("GRRHS_NUTS is not available. Ensure grrhs.models.grrhs_nuts exists.")
+
+    tau0_raw = _get(cfg, "model.tau0", None)
+    tau0 = None if tau0_raw is None else float(tau0_raw)
+    eta = float(_get(cfg, "model.eta", 0.5))
+    s0 = float(_get(cfg, "model.s0", 1.0))
+    alpha_kappa = float(_get(cfg, "model.alpha_kappa", _get(cfg, "model.alpha_c", 2.0)))
+    beta_kappa = float(_get(cfg, "model.beta_kappa", _get(cfg, "model.beta_c", 8.0)))
+    tau_target = str(_get(cfg, "model.tau.target", _get(cfg, "model.tau_target", "coefficients")))
+    p0_cfg = _get(cfg, "model.tau.p0.value", _get(cfg, "model.p0", None))
+    sigma_reference = float(_get(cfg, "model.tau.sigma_reference", _get(cfg, "model.sigma_reference", 1.0)))
+
+    num_warmup = int(_get(cfg, "inference.nuts.num_warmup", _get(cfg, "model.num_warmup", 1000)))
+    num_samples = int(_get(cfg, "inference.nuts.num_samples", _get(cfg, "model.num_samples", 1000)))
+    num_chains = max(1, int(_get(cfg, "inference.nuts.num_chains", _get(cfg, "model.num_chains", 4))))
+    thinning = max(1, int(_get(cfg, "inference.nuts.thinning", _get(cfg, "model.thinning", 1))))
+    target_accept = float(
+        _get(cfg, "inference.nuts.target_accept_prob", _get(cfg, "model.target_accept_prob", 0.95))
+    )
+    max_tree_depth = int(_get(cfg, "inference.nuts.max_tree_depth", _get(cfg, "model.max_tree_depth", 12)))
+    dense_mass = bool(_get(cfg, "inference.nuts.dense_mass", _get(cfg, "model.dense_mass", True)))
+    chain_method = str(_get(cfg, "inference.nuts.chain_method", _get(cfg, "model.chain_method", "sequential")))
+    progress_bar = bool(_get(cfg, "model.progress_bar", _get(cfg, "runtime.progress_bar", False)))
+    seed = int(
+        _get(
+            cfg,
+            "inference.nuts.seed",
+            _get(cfg, "model.seed", _get(cfg, "inference.seed", _get(cfg, "seed", 42))),
+        )
+    )
+
+    return GRRHS_NUTS(
+        tau0=tau0,
+        eta=eta,
+        s0=s0,
+        alpha_kappa=alpha_kappa,
+        beta_kappa=beta_kappa,
+        auto_calibrate_tau=True,
+        tau_target=tau_target,
+        p0=None if p0_cfg is None else float(p0_cfg),
+        sigma_reference=sigma_reference,
+        num_warmup=num_warmup,
+        num_samples=num_samples,
+        num_chains=num_chains,
+        thinning=thinning,
+        target_accept_prob=target_accept,
+        max_tree_depth=max_tree_depth,
+        dense_mass=dense_mass,
+        chain_method=chain_method,
+        progress_bar=progress_bar,
+        seed=seed,
+    )
 
 
 def _gibbs_runtime_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
