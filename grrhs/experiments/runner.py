@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 import shutil
+import time
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
@@ -87,12 +88,26 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
     "max_mcse_over_sd": 0.10,
     "max_retries": 1,
     "retry_scale": 2.0,
+    "auto_stop": {
+        "enabled": False,
+        "initial_scale": 1.0,
+        "growth": 2.0,
+        "max_scale": None,
+        "max_attempts": None,
+        "continuation": True,
+        "force_include_baseline": True,
+    },
     "parameters": ["beta", "tau"],
     "expected_blocks": {
         "default": ["beta", "tau"],
         "grrhs_gibbs": ["beta", "tau", "a", "c2", "lambda"],
         "gigg": ["beta", "tau", "gamma", "lambda"],
         "gigg_regression": ["beta", "tau", "gamma", "lambda"],
+        "bglss": ["beta", "sigma2"],
+        "bglss_python": ["beta", "sigma2"],
+        "bglss_py": ["beta", "sigma2"],
+        "bglss_mbsgs": ["beta", "sigma2"],
+        "mbsgs_bglss": ["beta", "sigma2"],
         "regularized_horseshoe": ["beta", "tau", "lambda"],
         "rhs": ["beta", "tau", "lambda"],
         "regularised_horseshoe": ["beta", "tau", "lambda"],
@@ -163,6 +178,11 @@ _BAYESIAN_MODEL_NAMES = {
     "grrhs_gibbs",
     "gigg",
     "gigg_regression",
+    "bglss",
+    "bglss_python",
+    "bglss_py",
+    "bglss_mbsgs",
+    "mbsgs_bglss",
     "regularized_horseshoe",
     "rhs",
     "regularised_horseshoe",
@@ -171,7 +191,7 @@ _BAYESIAN_MODEL_NAMES = {
 _BAYESIAN_HYPERPRIOR_LABELS: Dict[str, Dict[str, str]] = {
     "grrhs_gibbs": {
         "tau": "tau ~ C+(0, 1) via calibrated tau0 heuristic",
-        "group": "a_g ~ HalfNormal(eta/sqrt(p_g)), c_g^2 ~ Inv-Gamma(alpha_c, beta_c)",
+        "group": "a_g ~ HalfNormal(eta/sqrt(p_g)), kappa_g ~ Beta(alpha_kappa, beta_kappa), c_g^2=sigma^2*kappa_g/(1-kappa_g)",
     },
     "gigg": {
         "group": "a_g = 1/n when a_value is null",
@@ -436,6 +456,20 @@ def _apply_bayesian_sampling_budget(config: MutableMapping[str, Any]) -> None:
         model_cfg["num_samples"] = int(budget["kept_draws"] * budget["thinning"])
         model_cfg["num_chains"] = int(budget["num_chains"])
         model_cfg["thinning"] = int(budget["thinning"])
+        return
+
+    if model_name in {"bglss", "bglss_python", "bglss_py", "bglss_mbsgs", "mbsgs_bglss"}:
+        gibbs_cfg = inference_cfg.setdefault("gibbs", {})
+        gibbs_cfg["burn_in"] = int(budget["burn_in"])
+        gibbs_cfg["thin"] = int(budget["thinning"])
+        gibbs_cfg["num_chains"] = int(budget["num_chains"])
+        total_iters = int(budget["burn_in"] + budget["kept_draws"] * budget["thinning"])
+        model_cfg["niter"] = total_iters
+        model_cfg["burnin"] = int(budget["burn_in"])
+        model_cfg["num_chains"] = int(budget["num_chains"])
+        model_cfg["thinning"] = int(budget["thinning"])
+        # Convergence checks need posterior draws (not collapsed posterior mean only).
+        model_cfg["store_beta_samples"] = True
 
 
 def _bayesian_protocol_summary(
@@ -599,12 +633,35 @@ def _convergence_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     resolved = dict(DEFAULT_CONVERGENCE_CONFIG)
     if isinstance(raw, Mapping):
         resolved.update(raw)
+        if isinstance(raw.get("expected_blocks"), Mapping):
+            merged_expected = dict(DEFAULT_CONVERGENCE_CONFIG.get("expected_blocks", {}) or {})
+            merged_expected.update(dict(raw.get("expected_blocks", {}) or {}))
+            resolved["expected_blocks"] = merged_expected
+        if isinstance(raw.get("min_ess_by_block"), Mapping):
+            merged_ess = dict(DEFAULT_CONVERGENCE_CONFIG.get("min_ess_by_block", {}) or {})
+            merged_ess.update(dict(raw.get("min_ess_by_block", {}) or {}))
+            resolved["min_ess_by_block"] = merged_ess
     resolved["enabled"] = bool(resolved.get("enabled", True))
     resolved["max_rhat"] = float(resolved.get("max_rhat", 1.01))
     resolved["min_ess"] = max(0.0, float(resolved.get("min_ess", 0.0)))
     resolved["max_mcse_over_sd"] = float(resolved.get("max_mcse_over_sd", 1.0))
     resolved["max_retries"] = max(0, int(resolved.get("max_retries", 1)))
     resolved["retry_scale"] = max(1.0, float(resolved.get("retry_scale", 2.0)))
+    auto_raw = resolved.get("auto_stop", {}) or {}
+    if isinstance(auto_raw, Mapping):
+        auto_cfg = dict(auto_raw)
+    else:
+        auto_cfg = {}
+    auto_cfg["enabled"] = bool(auto_cfg.get("enabled", False))
+    auto_cfg["initial_scale"] = max(0.05, float(auto_cfg.get("initial_scale", 1.0)))
+    auto_cfg["growth"] = max(1.01, float(auto_cfg.get("growth", resolved["retry_scale"])))
+    max_scale_raw = auto_cfg.get("max_scale", None)
+    auto_cfg["max_scale"] = None if max_scale_raw is None else max(0.05, float(max_scale_raw))
+    max_attempts_raw = auto_cfg.get("max_attempts", None)
+    auto_cfg["max_attempts"] = None if max_attempts_raw is None else max(1, int(max_attempts_raw))
+    auto_cfg["continuation"] = bool(auto_cfg.get("continuation", True))
+    auto_cfg["force_include_baseline"] = bool(auto_cfg.get("force_include_baseline", True))
+    resolved["auto_stop"] = auto_cfg
     resolved["missing_policy"] = str(resolved.get("missing_policy", "warn")).strip().lower()
     resolved["require_valid_diagnostics"] = bool(resolved.get("require_valid_diagnostics", True))
     resolved["min_chains_for_rhat"] = max(1, int(resolved.get("min_chains_for_rhat", 4)))
@@ -631,6 +688,15 @@ def _convergence_config(config: Mapping[str, Any]) -> Dict[str, Any]:
         "max_treedepth_hits": max(0, int(hmc_raw.get("max_treedepth_hits", 0))),
         "require_present": bool(hmc_raw.get("require_present", True)),
     }
+    by_model_raw = resolved.get("by_model", {}) or {}
+    if isinstance(by_model_raw, Mapping):
+        resolved["by_model"] = {
+            str(name).lower(): dict(value)
+            for name, value in by_model_raw.items()
+            if isinstance(value, Mapping)
+        }
+    else:
+        resolved["by_model"] = {}
     parameters = resolved.get("parameters", ["beta", "tau", "a", "c2", "lambda"])
     if isinstance(parameters, str):
         parameters = [parameters]
@@ -654,6 +720,35 @@ def _convergence_config(config: Mapping[str, Any]) -> Dict[str, Any]:
         resolved["min_chains_for_rhat"] = max(4, int(resolved.get("min_chains_for_rhat", 4)))
         resolved["missing_policy"] = "fail"
 
+    return resolved
+
+
+def _convergence_cfg_for_model(cfg: Mapping[str, Any], model_name: str) -> Dict[str, Any]:
+    """Resolve convergence config with optional per-model overrides."""
+    resolved = dict(cfg)
+    by_model = cfg.get("by_model", {}) or {}
+    if isinstance(by_model, Mapping):
+        key = str(model_name).strip().lower()
+        override = by_model.get(key)
+        if isinstance(override, Mapping):
+            resolved.update(dict(override))
+            if isinstance(override.get("min_ess_by_block"), Mapping):
+                merged_ess = dict(cfg.get("min_ess_by_block", {}) or {})
+                merged_ess.update(dict(override.get("min_ess_by_block", {}) or {}))
+                resolved["min_ess_by_block"] = merged_ess
+    # Re-apply numeric normalization on potentially overridden fields.
+    resolved["max_rhat"] = float(resolved.get("max_rhat", 1.01))
+    resolved["min_ess"] = max(0.0, float(resolved.get("min_ess", 0.0)))
+    resolved["max_mcse_over_sd"] = float(resolved.get("max_mcse_over_sd", 1.0))
+    min_ess_by_block = resolved.get("min_ess_by_block", {}) or {}
+    if isinstance(min_ess_by_block, Mapping):
+        resolved["min_ess_by_block"] = {
+            str(name).lower(): max(0.0, float(value))
+            for name, value in min_ess_by_block.items()
+            if value is not None
+        }
+    else:
+        resolved["min_ess_by_block"] = {}
     return resolved
 
 
@@ -797,6 +892,20 @@ def _scale_bayesian_runtime(
                 model_config[key] = max(100, int(math.ceil(float(model_config[key]) * scale)))
         return
 
+    if model_name in {"bglss", "bglss_python", "bglss_py", "bglss_mbsgs", "mbsgs_bglss"}:
+        if "niter" in model_config:
+            model_config["niter"] = max(100, int(math.ceil(float(model_config["niter"]) * scale)))
+        if "burnin" in model_config:
+            model_config["burnin"] = max(40, int(math.ceil(float(model_config["burnin"]) * scale)))
+        if "niter" in model_config and "burnin" in model_config:
+            # Keep a non-trivial post-burn window for diagnostics.
+            if int(model_config["niter"]) <= int(model_config["burnin"]) + 20:
+                model_config["niter"] = int(model_config["burnin"]) + 20
+        gibbs_cfg = inference_cfg.get("gibbs")
+        if isinstance(gibbs_cfg, MutableMapping) and "burn_in" in gibbs_cfg:
+            gibbs_cfg["burn_in"] = max(40, int(math.ceil(float(gibbs_cfg["burn_in"]) * scale)))
+        return
+
 
 def _summarize_convergence_compat(
     arrays: Mapping[str, np.ndarray],
@@ -809,6 +918,72 @@ def _summarize_convergence_compat(
         # Backward-compatible path for tests or local monkeypatches that still
         # expose the older signature.
         return summarize_convergence(arrays)  # type: ignore[misc]
+
+
+def _merge_chain_draw_arrays(
+    base: Mapping[str, np.ndarray],
+    new: Mapping[str, np.ndarray],
+) -> Dict[str, np.ndarray]:
+    """Merge posterior arrays by concatenating along draw axis when compatible.
+
+    Expected canonical shape is (chains, draws, ...); for scalar blocks this is
+    usually (chains, draws). If shapes are incompatible, keep the newer block.
+    """
+    merged: Dict[str, np.ndarray] = {}
+    keys = set(base.keys()) | set(new.keys())
+    for key in keys:
+        if key not in base:
+            merged[key] = np.asarray(new[key])
+            continue
+        if key not in new:
+            merged[key] = np.asarray(base[key])
+            continue
+        a = np.asarray(base[key])
+        b = np.asarray(new[key])
+        if a.ndim >= 2 and b.ndim >= 2 and a.shape[0] == b.shape[0] and a.shape[2:] == b.shape[2:]:
+            merged[key] = np.concatenate([a, b], axis=1)
+        else:
+            merged[key] = b
+    return merged
+
+
+def _prepare_bglss_continuation_states(
+    states: Sequence[Mapping[str, Any]],
+    *,
+    attempt: int,
+) -> List[Dict[str, Any]]:
+    """Lightly recentre BGLSS chain states to improve cross-chain mixing.
+
+    We only apply this during continuation attempts (attempt >= 1). The transform
+    shrinks chain dispersion toward the across-chain center while preserving
+    chain-specific variation.
+    """
+    out: List[Dict[str, Any]] = []
+    if attempt < 1:
+        return [dict(s) for s in states if isinstance(s, Mapping)]
+    valid = [s for s in states if isinstance(s, Mapping) and s.get("beta") is not None]
+    if not valid:
+        return [dict(s) for s in states if isinstance(s, Mapping)]
+    betas = [np.asarray(s.get("beta"), dtype=float).reshape(-1) for s in valid]
+    beta_ref = np.mean(np.stack(betas, axis=0), axis=0)
+    shrink = 0.5 if attempt >= 2 else 0.65
+    tau_shrink = 0.6 if attempt >= 2 else 0.75
+    for idx, state in enumerate(states):
+        if not isinstance(state, Mapping):
+            continue
+        s = dict(state)
+        beta = np.asarray(s.get("beta"), dtype=float).reshape(-1)
+        if beta.shape == beta_ref.shape:
+            s["beta"] = (beta_ref + shrink * (beta - beta_ref)).astype(float)
+        tau2 = s.get("tau2")
+        if tau2 is not None:
+            tau_arr = np.asarray(tau2, dtype=float).reshape(-1)
+            if tau_arr.size > 0:
+                log_tau = np.log(np.maximum(tau_arr, 1e-10))
+                mean_log_tau = float(np.mean(log_tau))
+                s["tau2"] = np.exp(mean_log_tau + tau_shrink * (log_tau - mean_log_tau))
+        out.append(s)
+    return out
 
 
 def _fit_model_with_retry(
@@ -836,6 +1011,7 @@ def _fit_model_with_retry(
     last_effective_config: Mapping[str, Any] = model_config
     last_sampler_diagnostics: Dict[str, Any] = {}
     previous_chain_states: Optional[List[Mapping[str, Any]]] = None
+    cumulative_cont_arrays: Optional[Dict[str, np.ndarray]] = None
 
     fairness_cfg = _bayesian_fairness_config(model_config)
     max_retries = int(convergence_cfg.get("max_retries", 1))
@@ -844,22 +1020,66 @@ def _fit_model_with_retry(
     ):
         max_retries = 0
     total_attempts = 1 + max_retries
-    scale = float(convergence_cfg.get("retry_scale", 2.0))
+    retry_scale = float(convergence_cfg.get("retry_scale", 2.0))
+    auto_cfg = convergence_cfg.get("auto_stop", {}) or {}
+    auto_enabled = isinstance(auto_cfg, Mapping) and bool(auto_cfg.get("enabled", False))
+    continuation_enabled = isinstance(auto_cfg, Mapping) and bool(auto_cfg.get("continuation", True))
+    attempt_scales: List[float] = []
+    if auto_enabled:
+        initial_scale = max(0.05, float(auto_cfg.get("initial_scale", 1.0)))
+        growth = max(1.01, float(auto_cfg.get("growth", retry_scale)))
+        max_attempts_cfg = auto_cfg.get("max_attempts")
+        max_attempts = total_attempts if max_attempts_cfg is None else max(1, int(max_attempts_cfg))
+        # Respect allowed retry expansion: without retries, auto-stop can only downscale.
+        max_retry_scale = float(retry_scale ** max_retries) if max_retries > 0 else 1.0
+        max_scale_raw = auto_cfg.get("max_scale")
+        max_scale = max_retry_scale if max_scale_raw is None else min(max_retry_scale, float(max_scale_raw))
+        include_baseline = bool(auto_cfg.get("force_include_baseline", True))
+        # Build a monotone schedule; by default include baseline budget (1.0),
+        # but allow fast-start schedules that skip baseline.
+        if include_baseline:
+            current = min(initial_scale, 1.0)
+            attempt_scales.append(current)
+            while len(attempt_scales) < max_attempts and current < 1.0 - 1e-9:
+                current = min(1.0, current * growth)
+                if current - attempt_scales[-1] <= 1e-9:
+                    break
+                attempt_scales.append(current)
+            if len(attempt_scales) < max_attempts and abs(attempt_scales[-1] - 1.0) > 1e-9:
+                attempt_scales.append(1.0)
+            current = max(1.0, attempt_scales[-1])
+        else:
+            current = min(max_scale, initial_scale)
+            attempt_scales.append(current)
+        while len(attempt_scales) < max_attempts and current < max_scale - 1e-9:
+            current = min(max_scale, current * growth)
+            if current - attempt_scales[-1] <= 1e-9:
+                break
+            attempt_scales.append(current)
+    else:
+        attempt_scales = [retry_scale ** attempt for attempt in range(total_attempts)]
 
-    for attempt in range(total_attempts):
+    cumulative_effective_iters = 0
+    rescue_appended = False
+    for attempt, attempt_scale in enumerate(attempt_scales):
         attempt_config = deepcopy(model_config)
         attempt_model_cfg = attempt_config.setdefault("model", {})
         attempt_inference_cfg = attempt_config.setdefault("inference", {})
         model_name = str(attempt_model_cfg.get("name", "")).strip().lower()
+        is_grrhs_gibbs = model_name == "grrhs_gibbs"
+        is_bglss_gibbs = model_name in {"bglss", "bglss_python", "bglss_py"}
         _apply_bayesian_sampling_budget(attempt_config)
+        if abs(float(attempt_scale) - 1.0) > 1e-9:
+            _scale_bayesian_runtime(attempt_model_cfg, attempt_inference_cfg, float(attempt_scale))
         if attempt > 0:
-            _scale_bayesian_runtime(attempt_model_cfg, attempt_inference_cfg, scale ** attempt)
-            if model_name == "grrhs_gibbs" and previous_chain_states:
+            if is_grrhs_gibbs and continuation_enabled and previous_chain_states:
                 # Continuation mode: only sample additional iterations and keep warmup minimal.
                 try:
-                    scaled_iters = int(attempt_model_cfg.get("iters", 0))
-                    prev_iters = int(max(1, round(scaled_iters / scale)))
-                    attempt_model_cfg["iters"] = max(200, scaled_iters - prev_iters)
+                    target_total_iters = int(attempt_model_cfg.get("iters", 0))
+                    remaining_iters = target_total_iters - int(max(0, cumulative_effective_iters))
+                    # Keep continuation chunks non-trivial but avoid accidental
+                    # budget inflation caused by subtracting the previous delta.
+                    attempt_model_cfg["iters"] = max(50, remaining_iters)
                 except Exception:
                     pass
                 gibbs_cfg = attempt_inference_cfg.get("gibbs")
@@ -868,6 +1088,40 @@ def _fit_model_with_retry(
                     cont_iters = int(max(1, attempt_model_cfg.get("iters", 1)))
                     gibbs_mut["burn_in"] = max(50, int(0.2 * cont_iters))
                     attempt_inference_cfg["gibbs"] = gibbs_mut
+            elif is_bglss_gibbs and continuation_enabled and previous_chain_states:
+                # BGLSS continuation: sample only the remaining delta iterations,
+                # and keep continuation burn-in minimal to preserve effective draws.
+                try:
+                    target_total_niter = int(attempt_model_cfg.get("niter", 0))
+                    remaining_niter = target_total_niter - int(max(0, cumulative_effective_iters))
+                    # Avoid tiny continuation chunks that destabilize R-hat/MCSE.
+                    attempt_model_cfg["niter"] = max(500, remaining_niter)
+                except Exception:
+                    pass
+                cont_niter = int(max(1, attempt_model_cfg.get("niter", 1)))
+                # For true continuation, keep warmup short so added chunks mostly
+                # contribute retained draws to ESS/R-hat stabilization.
+                attempt_model_cfg["burnin"] = max(0, int(0.05 * cont_niter))
+                gibbs_cfg = attempt_inference_cfg.get("gibbs")
+                if isinstance(gibbs_cfg, Mapping):
+                    gibbs_mut = dict(gibbs_cfg)
+                    gibbs_mut["burn_in"] = int(attempt_model_cfg["burnin"])
+                    attempt_inference_cfg["gibbs"] = gibbs_mut
+                # Continuation mixing: enable REX during burn-in only so chains
+                # can exchange modes while retained draws stay in plain Gibbs.
+                rex_cfg = attempt_model_cfg.get("replica_exchange")
+                rex_mut: Dict[str, Any] = dict(rex_cfg) if isinstance(rex_cfg, Mapping) else {}
+                use_rex = True
+                rex_mut["enabled"] = bool(use_rex)
+                rex_mut["high_temp"] = float(rex_mut.get("high_temp", 2.5))
+                rex_mut["swap_interval"] = int(rex_mut.get("swap_interval", 4))
+                rex_mut["burnin_only"] = True
+                attempt_model_cfg["replica_exchange"] = rex_mut
+                # Backward-compatible flat keys.
+                attempt_model_cfg["replica_exchange_enabled"] = bool(use_rex)
+                attempt_model_cfg["replica_exchange_high_temp"] = float(rex_mut["high_temp"])
+                attempt_model_cfg["replica_exchange_swap_interval"] = int(rex_mut["swap_interval"])
+                attempt_model_cfg["replica_exchange_burnin_only"] = bool(rex_mut["burnin_only"])
 
         _maybe_calibrate_tau(attempt_model_cfg, std_cfg, X_train, y_train, groups, task)
         model = _instantiate_model(
@@ -876,16 +1130,31 @@ def _fit_model_with_retry(
             p,
             apply_bayesian_budget=False,
         )
-        if attempt > 0 and model_name == "grrhs_gibbs" and previous_chain_states:
+        if attempt > 0 and (is_grrhs_gibbs or is_bglss_gibbs) and continuation_enabled and previous_chain_states:
             setter = getattr(model, "set_chain_initial_states", None)
             if callable(setter):
                 try:
-                    setter(previous_chain_states)
+                    states_to_set: Sequence[Mapping[str, Any]] = previous_chain_states
+                    if is_bglss_gibbs:
+                        states_to_set = _prepare_bglss_continuation_states(
+                            previous_chain_states,
+                            attempt=attempt,
+                        )
+                    setter(states_to_set)
                 except Exception:
                     pass
+        fit_start = time.perf_counter()
         _fit_model_dispatch(model, X_train, y_train, groups=groups, C=C_train)
+        elapsed_sec = float(time.perf_counter() - fit_start)
 
         arrays = _collect_posterior_arrays(model)
+        if is_bglss_gibbs and continuation_enabled and arrays:
+            if cumulative_cont_arrays:
+                arrays = _merge_chain_draw_arrays(cumulative_cont_arrays, arrays)
+            cumulative_cont_arrays = {
+                str(key): np.asarray(value).copy()
+                for key, value in arrays.items()
+            }
         sampler_diagnostics = _collect_sampler_diagnostics(model)
         summary: Optional[Dict[str, Dict[str, Any]]] = None
         ok = True
@@ -900,9 +1169,13 @@ def _fit_model_with_retry(
                 ok = False
                 failures = [f"convergence_error={type(exc).__name__}"]
             else:
+                convergence_cfg_for_model = _convergence_cfg_for_model(
+                    convergence_cfg,
+                    str(attempt_model_cfg.get("name", "")),
+                )
                 ok, failures = _check_convergence(
                     summary,
-                    convergence_cfg,
+                    convergence_cfg_for_model,
                     model_name=str(attempt_model_cfg.get("name", "")),
                     sampler_diagnostics=sampler_diagnostics,
                 )
@@ -910,6 +1183,7 @@ def _fit_model_with_retry(
         attempts.append(
             {
                 "attempt": attempt + 1,
+                "budget_scale": float(attempt_scale),
                 "iters": attempt_model_cfg.get("iters"),
                 "burn_in": ((attempt_inference_cfg.get("gibbs") or {}).get("burn_in") if isinstance(attempt_inference_cfg.get("gibbs"), Mapping) else None),
                 "model_n_burn_in": attempt_model_cfg.get("n_burn_in"),
@@ -922,6 +1196,7 @@ def _fit_model_with_retry(
                 ),
                 "num_warmup": attempt_model_cfg.get("num_warmup"),
                 "num_samples": attempt_model_cfg.get("num_samples"),
+                "elapsed_sec": elapsed_sec,
                 "converged": ok,
                 "failures": failures,
                 "sampler_diagnostics": sampler_diagnostics,
@@ -933,10 +1208,60 @@ def _fit_model_with_retry(
         last_summary = summary
         last_effective_config = attempt_config
         last_sampler_diagnostics = sampler_diagnostics
-        if model_name == "grrhs_gibbs":
+        if is_grrhs_gibbs:
+            try:
+                cumulative_effective_iters += max(0, int(attempt_model_cfg.get("iters", 0)))
+            except Exception:
+                pass
+        elif is_bglss_gibbs:
+            try:
+                cumulative_effective_iters += max(0, int(attempt_model_cfg.get("niter", 0)))
+            except Exception:
+                pass
+        if is_grrhs_gibbs or is_bglss_gibbs:
             states = getattr(model, "chain_final_states_", None)
             if isinstance(states, list) and states:
                 previous_chain_states = states
+        if (
+            (not ok)
+            and is_bglss_gibbs
+            and continuation_enabled
+            and (attempt == len(attempt_scales) - 1)
+            and (not rescue_appended)
+            and isinstance(summary, Mapping)
+        ):
+            beta_block = summary.get("beta", {}) if isinstance(summary.get("beta", {}), Mapping) else {}
+            sigma_block = summary.get("sigma2", {}) if isinstance(summary.get("sigma2", {}), Mapping) else {}
+            try:
+                beta_rhat = float(beta_block.get("rhat_max", np.inf))
+                sigma_rhat = float(sigma_block.get("rhat_max", np.inf))
+                beta_ess = float(beta_block.get("ess_min", np.nan))
+                sigma_ess = float(sigma_block.get("ess_min", np.nan))
+                beta_mcse = float(beta_block.get("mcse_over_sd_max", np.inf))
+                sigma_mcse = float(sigma_block.get("mcse_over_sd_max", np.inf))
+            except Exception:
+                beta_rhat = sigma_rhat = np.inf
+                beta_ess = sigma_ess = np.nan
+                beta_mcse = sigma_mcse = np.inf
+            near_miss = (
+                np.isfinite(beta_rhat)
+                and np.isfinite(sigma_rhat)
+                and beta_rhat <= 1.15
+                and sigma_rhat <= 1.15
+                and np.isfinite(beta_ess)
+                and np.isfinite(sigma_ess)
+                and beta_ess >= 90.0
+                and sigma_ess >= 70.0
+                and np.isfinite(beta_mcse)
+                and np.isfinite(sigma_mcse)
+                and beta_mcse <= 0.14
+                and sigma_mcse <= 0.14
+            )
+            if near_miss:
+                rescue_scale = float(attempt_scale) * 1.2
+                if rescue_scale - float(attempt_scales[-1]) > 1e-9:
+                    attempt_scales.append(rescue_scale)
+                    rescue_appended = True
         if ok:
             break
 
@@ -2705,9 +3030,13 @@ def _run_fold_nested(
         )
         model_config = deepcopy(effective_model_config)
         posterior_arrays = posterior_arrays_prefit
+        convergence_cfg_for_model = _convergence_cfg_for_model(
+            convergence_cfg,
+            str(model_config["model"].get("name", "")),
+        )
         converged, convergence_failures = _check_convergence(
             convergence_summary,
-            convergence_cfg,
+            convergence_cfg_for_model,
             model_name=str(model_config["model"].get("name", "")),
             sampler_diagnostics=sampler_diagnostics,
         )

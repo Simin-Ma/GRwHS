@@ -18,12 +18,35 @@ model:
   lambda_slab2: 0.5
   lambda_spike2: 25.0
   # Optional MC-EM style slab update
-  update_tau: true
+  update_tau: false
   num_update: 100
   niter_update: 100
-  store_beta_samples: false
+  store_beta_samples: true
+  num_chains: 4
+  thinning: 1
+  chain_method: auto
+  overdispersed_init: true
+  init_mode: ridge
+  init_ridge_lambda: 1.0
+  init_beta_scale: 0.15
+  init_tau2_log_sd: 0.7
+  tempering:
+    enabled: false
+    initial_temp: 2.5
+    fraction: 0.7
+  spike_annealing:
+    enabled: false
+    initial_spike2: 8.0
+    fraction: 0.7
+  replica_exchange:
+    enabled: false
+    high_temp: 2.0
+    swap_interval: 10
+    burnin_only: true
   verbose: false
 
 inference:
   gibbs:
     seed: 2025
+    num_chains: 4
+    thin: 1

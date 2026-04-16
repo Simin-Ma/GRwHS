@@ -11,6 +11,22 @@ variations:
   - name: "rhs"
     config_files:
       - "../methods/regularized_horseshoe.yaml"
+    overrides:
+      model:
+        target_accept_prob: 0.985
+      experiments:
+        bayesian_fairness:
+          enforce_shared_sampling_budget: true
+          disable_budget_retry: true
+          sampling_budget:
+            burn_in: 1200
+            kept_draws: 1200
+            thinning: 1
+            num_chains: 4
+        convergence:
+          max_retries: 1
+          auto_stop:
+            enabled: false
   - name: "grrhs_mwg"
     config_files:
       - "../methods/grrhs_regression.yaml"
@@ -20,3 +36,4 @@ variations:
   - name: "gigg"
     config_files:
       - "../methods/gigg.yaml"
+

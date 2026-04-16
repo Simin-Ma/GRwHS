@@ -565,6 +565,7 @@ class _BaseHorseshoeRegression:
     seed: Optional[int] = None
     target_accept_prob: float = 0.99
     max_tree_depth: int = 10
+    chain_method: str = "sequential"
     progress_bar: bool = False
     stan_file: Optional[str] = None
 
@@ -610,6 +611,10 @@ class _BaseHorseshoeRegression:
             raise ValueError("target_accept_prob must lie in (0, 1).")
         if self.max_tree_depth <= 0:
             raise ValueError("max_tree_depth must be a positive integer.")
+        chain_method = str(self.chain_method).strip().lower()
+        if chain_method not in {"sequential", "parallel", "vectorized"}:
+            raise ValueError("chain_method must be one of: sequential, parallel, vectorized.")
+        self.chain_method = chain_method
 
     def _numpyro_model(self, X: jnp.ndarray, y: jnp.ndarray) -> None:
         sigma = None
@@ -908,7 +913,7 @@ class _BaseHorseshoeRegression:
             num_samples=int(self.num_samples),
             num_chains=int(self.num_chains),
             progress_bar=self.progress_bar,
-            chain_method="sequential",
+            chain_method=self.chain_method,
         )
         mcmc.run(
             self._rng_key,

@@ -11,8 +11,8 @@ model:
   num_samples: 1000
   num_chains: 4
   thinning: 1
-  target_accept_prob: 0.999
-  max_tree_depth: 14
+  target_accept_prob: 0.995
+  max_tree_depth: 12
   progress_bar: false
   seed: 151
   tau:

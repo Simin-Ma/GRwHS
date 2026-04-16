@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 from jax.flatten_util import ravel_pytree
-from jax.nn import softplus
+from jax.nn import sigmoid, softplus
 from jax.scipy.sparse.linalg import cg
 import numpy as np
 import numpyro
@@ -57,8 +57,11 @@ class GRRHS_SVI_Numpyro:
     tau0: float = 0.1
     eta: float = 0.5
     s0: float = 1.0
-    alpha_c: float = 2.0
-    beta_c: float = 2.0
+    alpha_kappa: Optional[float] = None
+    beta_kappa: Optional[float] = None
+    # Legacy aliases kept for compatibility
+    alpha_c: Optional[float] = None
+    beta_c: Optional[float] = None
 
     num_steps: int = 3000
     lr: float = 1e-2
@@ -78,6 +81,7 @@ class GRRHS_SVI_Numpyro:
     tau_mean_: Optional[float] = field(default=None, init=False)
     a_mean_: Optional[np.ndarray] = field(default=None, init=False)
     c2_mean_: Optional[np.ndarray] = field(default=None, init=False)
+    kappa_mean_: Optional[np.ndarray] = field(default=None, init=False)
     phi_mean_: Optional[np.ndarray] = field(default=None, init=False)  # alias of a_mean_
     lambda_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
@@ -89,7 +93,20 @@ class GRRHS_SVI_Numpyro:
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     a_samples_: Optional[np.ndarray] = field(default=None, init=False)
     c2_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    kappa_samples_: Optional[np.ndarray] = field(default=None, init=False)
     phi_samples_: Optional[np.ndarray] = field(default=None, init=False)  # alias of a_samples_
+
+    def __post_init__(self) -> None:
+        if self.alpha_kappa is None:
+            self.alpha_kappa = 2.0 if self.alpha_c is None else float(self.alpha_c)
+        if self.beta_kappa is None:
+            self.beta_kappa = 2.0 if self.beta_c is None else float(self.beta_c)
+        if self.alpha_c is None:
+            self.alpha_c = float(self.alpha_kappa)
+        if self.beta_c is None:
+            self.beta_c = float(self.beta_kappa)
+        if float(self.alpha_kappa) <= 0.0 or float(self.beta_kappa) <= 0.0:
+            raise ValueError("alpha_kappa and beta_kappa must be positive")
 
     def _model(self, X: jnp.ndarray, y: jnp.ndarray, groups: List[List[int]]):
         n, p = X.shape
@@ -99,20 +116,26 @@ class GRRHS_SVI_Numpyro:
         sigma = numpyro.sample("sigma", dist.HalfCauchy(self.s0))
         tau = numpyro.sample("tau", dist.HalfCauchy(self.tau0))
         lam = numpyro.sample("lambda", dist.HalfCauchy(jnp.ones((p,))).to_event(1))
+        sigma2 = sigma * sigma
 
         beta_groups: List[jnp.ndarray] = []
         for g, idxs_raw in enumerate(groups):
             idxs = jnp.array(idxs_raw)
             lam_g = lam[idxs]
             a_g = numpyro.sample(f"a_g_{g}", dist.HalfNormal(eta_g[g]))
-            c2_g = numpyro.sample(f"c2_g_{g}", dist.InverseGamma(self.alpha_c, self.beta_c))
+            kappa_g = numpyro.sample(
+                f"kappa_g_{g}",
+                dist.Beta(float(self.alpha_kappa), float(self.beta_kappa)),
+            )
+            c2_g = numpyro.deterministic(f"c2_g_{g}", sigma2 * kappa_g / (1.0 - kappa_g + _EPS))
 
             lam2 = lam_g * lam_g
             a2 = a_g * a_g
-            num = c2_g * lam2 * a2
-            den = c2_g + (tau * tau) * lam2 * a2 + _EPS
-            tl2 = num / den
-            beta_scale = tau * jnp.sqrt(jnp.maximum(tl2, _EPS))
+            tau2 = tau * tau
+            num = sigma2 * kappa_g * tau2 * lam2 * a2
+            den = sigma2 * kappa_g + (1.0 - kappa_g) * tau2 * lam2 * a2 + _EPS
+            v = num / den
+            beta_scale = jnp.sqrt(jnp.maximum(v, _EPS))
             beta_g = numpyro.sample(f"beta_g_{g}", dist.Normal(jnp.zeros_like(beta_scale), beta_scale).to_event(1))
             beta_groups.append(beta_g)
 
@@ -193,14 +216,14 @@ class GRRHS_SVI_Numpyro:
             )
             numpyro.sample(f"a_g_{g}", dist.Delta(jnp.exp(log_a)))
 
-            mu_log_c2 = numpyro.param(f"mu_log_c2_g_{g}", jnp.array(0.0))
-            rho_log_c2 = numpyro.param(f"rho_log_c2_g_{g}", jnp.array(-1.0))
-            log_c2 = numpyro.sample(
-                f"log_c2_aux_g_{g}",
-                dist.Normal(mu_log_c2, softplus(rho_log_c2)),
+            mu_logit_kappa = numpyro.param(f"mu_logit_kappa_g_{g}", jnp.array(0.0))
+            rho_logit_kappa = numpyro.param(f"rho_logit_kappa_g_{g}", jnp.array(-1.0))
+            logit_kappa = numpyro.sample(
+                f"logit_kappa_aux_g_{g}",
+                dist.Normal(mu_logit_kappa, softplus(rho_logit_kappa)),
                 infer={"is_auxiliary": True},
             )
-            numpyro.sample(f"c2_g_{g}", dist.Delta(jnp.exp(log_c2)))
+            numpyro.sample(f"kappa_g_{g}", dist.Delta(sigmoid(logit_kappa)))
 
     def fit(
         self,
@@ -243,7 +266,7 @@ class GRRHS_SVI_Numpyro:
             "sigma",
             "lambda",
             *[f"a_g_{g}" for g in range(len(groups))],
-            *[f"c2_g_{g}" for g in range(len(groups))],
+            *[f"kappa_g_{g}" for g in range(len(groups))],
             *[f"beta_g_{g}" for g in range(len(groups))],
         ]
         post = Predictive(self._guide, params=params, num_samples=num_samples_export, return_sites=return_sites)(
@@ -273,11 +296,15 @@ class GRRHS_SVI_Numpyro:
         self.sigma_mean_ = float(sigma_samples.mean())
 
         a_mat = np.stack([np.asarray(post[f"a_g_{g}"]).reshape(-1) for g in range(len(groups))], axis=1)
-        c2_mat = np.stack([np.asarray(post[f"c2_g_{g}"]).reshape(-1) for g in range(len(groups))], axis=1)
+        kappa_mat = np.stack([np.asarray(post[f"kappa_g_{g}"]).reshape(-1) for g in range(len(groups))], axis=1)
+        sigma2_col = np.maximum(sigma_samples.reshape(-1, 1) ** 2, _EPS)
+        c2_mat = sigma2_col * kappa_mat / np.maximum(1.0 - kappa_mat, _EPS)
         self.a_samples_ = a_mat
         self.c2_samples_ = c2_mat
+        self.kappa_samples_ = kappa_mat
         self.a_mean_ = a_mat.mean(axis=0)
         self.c2_mean_ = c2_mat.mean(axis=0)
+        self.kappa_mean_ = kappa_mat.mean(axis=0)
 
         self.phi_samples_ = a_mat
         self.phi_mean_ = self.a_mean_
@@ -365,6 +392,7 @@ class GRRHS_SVI_Numpyro:
             "tau_mean": self.tau_mean_,
             "a_mean": self.a_mean_,
             "c2_mean": self.c2_mean_,
+            "kappa_mean": self.kappa_mean_,
             "phi_mean": self.phi_mean_,
             "lambda_mean": self.lambda_mean_,
         }

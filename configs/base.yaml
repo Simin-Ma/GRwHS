@@ -61,6 +61,12 @@ experiments:
     max_mcse_over_sd: 0.10
     max_retries: 3
     retry_scale: 2.0
+    auto_stop:
+      enabled: true
+      initial_scale: 0.35
+      growth: 1.6
+      max_scale: 2.0
+      max_attempts: 4
     parameters: ["beta", "tau"]
     expected_blocks:
       default: ["beta", "tau"]

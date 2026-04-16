@@ -116,6 +116,18 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
                 "mcse_over_sd_max": 0.02,
                 "diagnostic_valid": True,
             },
+            "a": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "c2": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
             "lambda": {
                 "rhat_max": 1.01,
                 "ess_min": 500.0,
@@ -138,6 +150,18 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
                 "diagnostic_valid": True,
             },
             "phi": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "a": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "c2": {
                 "rhat_max": 1.01,
                 "ess_min": 500.0,
                 "mcse_over_sd_max": 0.02,
@@ -204,6 +228,222 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
     assert len(result["convergence_attempts"]) == 2
     assert result["convergence_attempts"][0]["converged"] is False
     assert result["convergence_attempts"][1]["converged"] is True
+
+
+def test_run_fold_auto_stop_continuation_uses_cumulative_budget(monkeypatch, tmp_path):
+    class DummyModel:
+        def __init__(self):
+            self.coef_mean_ = np.zeros(2, dtype=np.float32)
+            self.coef_samples_ = np.zeros((8, 2), dtype=np.float32)
+            self.chain_final_states_ = [{"tau2": 1.0}]
+
+        def fit(self, X, y, groups=None):
+            return self
+
+        def predict(self, X):
+            return np.zeros(X.shape[0], dtype=np.float32)
+
+    monkeypatch.setattr(runner, "_instantiate_model", lambda *args, **kwargs: DummyModel())
+    monkeypatch.setattr(runner, "_perform_inner_cv", lambda *args, **kwargs: ({}, None))
+    monkeypatch.setattr(runner, "evaluate_model_metrics", lambda **kwargs: {"RMSE": 1.0})
+    monkeypatch.setattr(
+        runner,
+        "summarize_convergence",
+        lambda arrays: {
+            "beta": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "tau": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "phi": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "lambda": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+        },
+    )
+
+    base_config = {
+        "task": "regression",
+        "model": {"name": "grrhs_gibbs", "c": 1.0, "eta": 0.5, "tau0": 0.1, "iters": 1000},
+        "inference": {"gibbs": {"burn_in": 500, "thin": 1, "seed": 0}},
+        "experiments": {
+            "save_posterior": True,
+            "metrics": {"regression": ["RMSE"]},
+            "convergence": {
+                "enabled": True,
+                "max_rhat": 1.05,
+                "max_retries": 4,
+                "retry_scale": 2.0,
+                "auto_stop": {
+                    "enabled": True,
+                    "initial_scale": 0.35,
+                    "growth": 1.6,
+                    "max_scale": 2.0,
+                    "max_attempts": 4,
+                },
+            },
+            "bayesian_fairness": {
+                "enabled": False,
+            },
+        },
+        "splits": {"inner": {"n_splits": 2, "shuffle": True, "seed": 0}},
+    }
+    dataset = {
+        "X": np.array([[0.0, 1.0], [1.0, 0.0], [2.0, -1.0], [3.0, -2.0]], dtype=np.float32),
+        "y": np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+        "groups": [[0], [1]],
+    }
+    fold = OuterFold(
+        repeat=1,
+        fold=1,
+        train=np.array([0, 1, 2], dtype=int),
+        test=np.array([3], dtype=int),
+        hash="auto-stop-continue-fold",
+    )
+    std_cfg = StandardizationConfig(X="unit_variance", y_center=True)
+
+    result = _run_fold_nested(
+        base_config,
+        dataset,
+        fold,
+        fold_dir=tmp_path / "fold",
+        task="regression",
+        std_cfg=std_cfg,
+    )
+
+    assert result["status"] == "INVALID_CONVERGENCE"
+    iters = [int(item["iters"]) for item in result["convergence_attempts"]]
+    assert len(iters) == 4
+    assert iters == [350, 210, 336, 104]
+
+
+def test_run_fold_auto_stop_can_skip_baseline(monkeypatch, tmp_path):
+    class DummyModel:
+        def __init__(self):
+            self.coef_mean_ = np.zeros(2, dtype=np.float32)
+            self.coef_samples_ = np.zeros((8, 2), dtype=np.float32)
+            self.chain_final_states_ = [{"tau2": 1.0}]
+
+        def fit(self, X, y, groups=None):
+            return self
+
+        def predict(self, X):
+            return np.zeros(X.shape[0], dtype=np.float32)
+
+    monkeypatch.setattr(runner, "_instantiate_model", lambda *args, **kwargs: DummyModel())
+    monkeypatch.setattr(runner, "_perform_inner_cv", lambda *args, **kwargs: ({}, None))
+    monkeypatch.setattr(runner, "evaluate_model_metrics", lambda **kwargs: {"RMSE": 1.0})
+    monkeypatch.setattr(
+        runner,
+        "summarize_convergence",
+        lambda arrays: {
+            "beta": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "tau": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "a": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "c2": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "phi": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "lambda": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+        },
+    )
+
+    base_config = {
+        "task": "regression",
+        "model": {"name": "grrhs_gibbs", "c": 1.0, "eta": 0.5, "tau0": 0.1, "iters": 1000},
+        "inference": {"gibbs": {"burn_in": 500, "thin": 1, "seed": 0}},
+        "experiments": {
+            "save_posterior": True,
+            "metrics": {"regression": ["RMSE"]},
+            "convergence": {
+                "enabled": True,
+                "max_rhat": 1.05,
+                "max_retries": 4,
+                "retry_scale": 2.0,
+                "auto_stop": {
+                    "enabled": True,
+                    "initial_scale": 8.0,
+                    "growth": 2.0,
+                    "max_scale": 8.0,
+                    "max_attempts": 3,
+                    "force_include_baseline": False,
+                },
+            },
+            "bayesian_fairness": {"enabled": False},
+        },
+        "splits": {"inner": {"n_splits": 2, "shuffle": True, "seed": 0}},
+    }
+    dataset = {
+        "X": np.array([[0.0, 1.0], [1.0, 0.0], [2.0, -1.0], [3.0, -2.0]], dtype=np.float32),
+        "y": np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+        "groups": [[0], [1]],
+    }
+    fold = OuterFold(
+        repeat=1,
+        fold=1,
+        train=np.array([0, 1, 2], dtype=int),
+        test=np.array([3], dtype=int),
+        hash="auto-stop-skip-baseline-fold",
+    )
+    std_cfg = StandardizationConfig(X="unit_variance", y_center=True)
+
+    result = _run_fold_nested(
+        base_config,
+        dataset,
+        fold,
+        fold_dir=tmp_path / "fold",
+        task="regression",
+        std_cfg=std_cfg,
+    )
+
+    assert result["status"] == "INVALID_CONVERGENCE"
+    attempts = result["convergence_attempts"]
+    assert len(attempts) == 1
+    assert float(attempts[0]["budget_scale"]) == 8.0
+    assert int(attempts[0]["iters"]) == 8000
 
 
 def test_inner_cv_is_disabled_for_bayesian_models():

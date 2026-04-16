@@ -185,6 +185,13 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
             _get(cfg, "model.max_tree_depth", 10),
         )
     )
+    chain_method = str(
+        _get(
+            cfg,
+            "inference.nuts.chain_method",
+            _get(cfg, "model.chain_method", "sequential"),
+        )
+    ).strip().lower()
     progress_bar = bool(_get(cfg, "model.progress_bar", _get(cfg, "runtime.progress_bar", False)))
     backend = str(_get(cfg, "model.backend", _get(cfg, "model.rhs_backend", "cmdstan"))).strip().lower()
     seed_candidates = [
@@ -214,6 +221,7 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "thinning": thinning,
         "target_accept_prob": float(0.99 if target_accept is None else target_accept),
         "max_tree_depth": max(1, int(max_tree_depth)),
+        "chain_method": chain_method,
         "progress_bar": progress_bar,
         "backend": backend,
     }
@@ -526,10 +534,58 @@ def _build_bglss_python(cfg: Dict[str, Any]) -> Any:
     gamma = float(_get(cfg, "model.gamma", 0.1))
     lambda_slab2 = float(_get(cfg, "model.lambda_slab2", _get(cfg, "model.lambda2_slab", 0.5)))
     lambda_spike2 = float(_get(cfg, "model.lambda_spike2", _get(cfg, "model.lambda2_spike", 25.0)))
-    update_tau = bool(_get(cfg, "model.update_tau", True))
+    update_tau = bool(_get(cfg, "model.update_tau", False))
     num_update = int(_get(cfg, "model.num_update", 100))
     niter_update = int(_get(cfg, "model.niter.update", _get(cfg, "model.niter_update", 100)))
-    store_beta_samples = bool(_get(cfg, "model.store_beta_samples", False))
+    store_beta_samples = bool(_get(cfg, "model.store_beta_samples", True))
+    num_chains = max(1, int(_get(cfg, "inference.gibbs.num_chains", _get(cfg, "model.num_chains", 1))))
+    thinning = max(1, int(_get(cfg, "inference.gibbs.thin", _get(cfg, "model.thinning", 1))))
+    chain_method = str(_get(cfg, "inference.gibbs.chain_method", _get(cfg, "model.chain_method", "auto"))).strip().lower()
+    overdispersed_init = bool(_get(cfg, "model.overdispersed_init", True))
+    init_beta_scale = float(_get(cfg, "model.init_beta_scale", 0.1))
+    init_tau2_log_sd = float(_get(cfg, "model.init_tau2_log_sd", 0.5))
+    tempering_enabled = bool(_get(cfg, "model.tempering.enabled", _get(cfg, "model.tempering_enabled", False)))
+    tempering_initial_temp = float(_get(cfg, "model.tempering.initial_temp", _get(cfg, "model.tempering_initial_temp", 2.0)))
+    tempering_fraction = float(_get(cfg, "model.tempering.fraction", _get(cfg, "model.tempering_fraction", 0.6)))
+    spike_annealing_enabled = bool(
+        _get(cfg, "model.spike_annealing.enabled", _get(cfg, "model.spike_annealing_enabled", False))
+    )
+    spike_annealing_initial_spike2 = float(
+        _get(
+            cfg,
+            "model.spike_annealing.initial_spike2",
+            _get(cfg, "model.spike_annealing_initial_spike2", 6.0),
+        )
+    )
+    spike_annealing_fraction = float(
+        _get(
+            cfg,
+            "model.spike_annealing.fraction",
+            _get(cfg, "model.spike_annealing_fraction", 0.7),
+        )
+    )
+    init_mode = str(_get(cfg, "model.init_mode", "ridge")).strip().lower()
+    init_ridge_lambda = float(_get(cfg, "model.init_ridge_lambda", 1.0))
+    replica_exchange_enabled = bool(
+        _get(cfg, "model.replica_exchange.enabled", _get(cfg, "model.replica_exchange_enabled", False))
+    )
+    replica_exchange_high_temp = float(
+        _get(cfg, "model.replica_exchange.high_temp", _get(cfg, "model.replica_exchange_high_temp", 2.0))
+    )
+    replica_exchange_swap_interval = int(
+        _get(
+            cfg,
+            "model.replica_exchange.swap_interval",
+            _get(cfg, "model.replica_exchange_swap_interval", 10),
+        )
+    )
+    replica_exchange_burnin_only = bool(
+        _get(
+            cfg,
+            "model.replica_exchange.burnin_only",
+            _get(cfg, "model.replica_exchange_burnin_only", True),
+        )
+    )
     verbose = bool(_get(cfg, "model.verbose", False))
 
     return BGLSSPythonRegression(
@@ -550,6 +606,24 @@ def _build_bglss_python(cfg: Dict[str, Any]) -> Any:
         num_update=num_update,
         niter_update=niter_update,
         store_beta_samples=store_beta_samples,
+        num_chains=num_chains,
+        thinning=thinning,
+        chain_method=chain_method,
+        overdispersed_init=overdispersed_init,
+        init_beta_scale=init_beta_scale,
+        init_tau2_log_sd=init_tau2_log_sd,
+        tempering_enabled=tempering_enabled,
+        tempering_initial_temp=tempering_initial_temp,
+        tempering_fraction=tempering_fraction,
+        spike_annealing_enabled=spike_annealing_enabled,
+        spike_annealing_initial_spike2=spike_annealing_initial_spike2,
+        spike_annealing_fraction=spike_annealing_fraction,
+        init_mode=init_mode,
+        init_ridge_lambda=init_ridge_lambda,
+        replica_exchange_enabled=replica_exchange_enabled,
+        replica_exchange_high_temp=replica_exchange_high_temp,
+        replica_exchange_swap_interval=replica_exchange_swap_interval,
+        replica_exchange_burnin_only=replica_exchange_burnin_only,
         verbose=verbose,
     )
 
@@ -568,8 +642,8 @@ def _build_grrhs_svi(cfg: Dict[str, Any]) -> Any:
     tau0 = float(_get(cfg, "model.tau0", 0.1))
     eta = float(_get(cfg, "model.eta", 0.5))
     s0 = float(_get(cfg, "model.s0", 1.0))
-    alpha_c = float(_get(cfg, "model.alpha_c", 2.0))
-    beta_c = float(_get(cfg, "model.beta_c", 2.0))
+    alpha_kappa = float(_get(cfg, "model.alpha_kappa", _get(cfg, "model.alpha_c", 2.0)))
+    beta_kappa = float(_get(cfg, "model.beta_kappa", _get(cfg, "model.beta_c", 2.0)))
     svi_kwargs: Dict[str, Any] = {}
     steps = _get(cfg, "inference.svi.steps", None)
     if steps is not None:
@@ -604,8 +678,10 @@ def _build_grrhs_svi(cfg: Dict[str, Any]) -> Any:
         tau0=tau0,
         eta=eta,
         s0=s0,
-        alpha_c=alpha_c,
-        beta_c=beta_c,
+        alpha_kappa=alpha_kappa,
+        beta_kappa=beta_kappa,
+        alpha_c=alpha_kappa,
+        beta_c=beta_kappa,
         natural_gradient=natural_grad,
         use_hutchinson=use_hutch,
         hutchinson_samples=hutch_samples,
@@ -717,6 +793,12 @@ def _gibbs_runtime_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
     max_proposal_sd = _get(cfg, "inference.gibbs.max_proposal_sd", None)
     if max_proposal_sd is not None:
         overrides["max_proposal_sd"] = float(max_proposal_sd)
+    tau2_refresh_steps = _get(cfg, "inference.gibbs.tau2_refresh_steps", None)
+    if tau2_refresh_steps is not None:
+        overrides["tau2_refresh_steps"] = max(0, int(tau2_refresh_steps))
+    use_tau_slice_refresh = _get(cfg, "inference.gibbs.use_tau_slice_refresh", None)
+    if use_tau_slice_refresh is not None:
+        overrides["use_tau_slice_refresh"] = bool(use_tau_slice_refresh)
     return overrides
 
 
@@ -729,11 +811,11 @@ def _build_grrhs_gibbs(cfg: Dict[str, Any]) -> Any:
     eta = float(_get(cfg, "model.eta", 0.5))
     use_groups = bool(_get(cfg, "model.use_groups", True))
     s0 = float(_get(cfg, "model.s0", 1.0))
-    alpha_c = float(_get(cfg, "model.alpha_c", 2.0))
-    beta_c = float(_get(cfg, "model.beta_c", 2.0))
+    alpha_kappa = float(_get(cfg, "model.alpha_kappa", _get(cfg, "model.alpha_c", 2.0)))
+    beta_kappa = float(_get(cfg, "model.beta_kappa", _get(cfg, "model.beta_c", 2.0)))
     iters = int(_get(cfg, "model.iters", 2000))
     use_pcabs_lite = bool(_get(cfg, "model.use_pcabs_lite", True))
-    use_collapsed_scale_updates = bool(_get(cfg, "model.use_collapsed_scale_updates", True))
+    use_collapsed_scale_updates = bool(_get(cfg, "model.use_collapsed_scale_updates", False))
     seed = _get(
         cfg,
         "inference.gibbs.seed",
@@ -745,8 +827,10 @@ def _build_grrhs_gibbs(cfg: Dict[str, Any]) -> Any:
         tau0=tau0,
         eta=eta,
         s0=s0,
-        alpha_c=alpha_c,
-        beta_c=beta_c,
+        alpha_kappa=alpha_kappa,
+        beta_kappa=beta_kappa,
+        alpha_c=alpha_kappa,
+        beta_c=beta_kappa,
         iters=iters,
         seed=int(seed),
         use_groups=use_groups,

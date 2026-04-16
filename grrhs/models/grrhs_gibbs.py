@@ -32,8 +32,10 @@ def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         eta=float(payload["eta"]),
         s0=float(payload["s0"]),
         use_groups=bool(payload["use_groups"]),
-        alpha_c=float(payload["alpha_c"]),
-        beta_c=float(payload["beta_c"]),
+        alpha_kappa=float(payload["alpha_kappa"]),
+        beta_kappa=float(payload["beta_kappa"]),
+        alpha_c=float(payload.get("alpha_c", payload["alpha_kappa"])),
+        beta_c=float(payload.get("beta_c", payload["beta_kappa"])),
         iters=int(payload["iters"]),
         burnin=int(payload["burnin"]),
         thin=int(payload["thin"]),
@@ -49,10 +51,10 @@ def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         mh_sd_log_a=float(payload["mh_sd_log_a"]),
         mh_sd_log_c2=float(payload["mh_sd_log_c2"]),
         use_pcabs_lite=bool(payload.get("use_pcabs_lite", True)),
-        use_collapsed_scale_updates=bool(payload.get("use_collapsed_scale_updates", True)),
-        global_block_sd_u=float(payload.get("global_block_sd_u", 0.05)),
-        global_block_sd_alpha=float(payload.get("global_block_sd_alpha", 0.1)),
-        global_comp_sd=float(payload.get("global_comp_sd", 0.05)),
+        use_collapsed_scale_updates=bool(payload.get("use_collapsed_scale_updates", False)),
+        global_block_sd_u=float(payload.get("global_block_sd_u", 0.2)),
+        global_block_sd_alpha=float(payload.get("global_block_sd_alpha", 0.25)),
+        global_comp_sd=float(payload.get("global_comp_sd", 0.16)),
         group_ac2_block_sd_alpha=float(payload.get("group_ac2_block_sd_alpha", 0.1)),
         group_ac2_block_sd_xi=float(payload.get("group_ac2_block_sd_xi", 0.1)),
         group_comp_sd=float(payload.get("group_comp_sd", 0.08)),
@@ -65,10 +67,12 @@ def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         adapt_until_frac=float(payload.get("adapt_until_frac", 0.8)),
         adapt_target_accept=float(payload.get("adapt_target_accept", 0.30)),
         adapt_target_accept_by_block=payload.get("adapt_target_accept_by_block"),
-        adapt_step_size=float(payload.get("adapt_step_size", 0.05)),
+        adapt_step_size=float(payload.get("adapt_step_size", 0.08)),
         adapt_only_during_burnin=bool(payload.get("adapt_only_during_burnin", True)),
         min_proposal_sd=float(payload.get("min_proposal_sd", 1e-3)),
         max_proposal_sd=float(payload.get("max_proposal_sd", 2.5)),
+        tau2_refresh_steps=int(payload.get("tau2_refresh_steps", 6)),
+        use_tau_slice_refresh=bool(payload.get("use_tau_slice_refresh", True)),
     )
     fitted = model.fit(
         np.asarray(payload["X"], dtype=float),
@@ -86,6 +90,7 @@ def _fit_grrhs_chain_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         "lambda_samples": None if fitted.lambda_samples_ is None else np.asarray(fitted.lambda_samples_),
         "a_samples": None if fitted.a_samples_ is None else np.asarray(fitted.a_samples_),
         "c2_samples": None if fitted.c2_samples_ is None else np.asarray(fitted.c2_samples_),
+        "kappa_samples": None if fitted.kappa_samples_ is None else np.asarray(fitted.kappa_samples_),
         "coef_mean": None if fitted.coef_mean_ is None else np.asarray(fitted.coef_mean_),
         "intercept": float(fitted.intercept_),
         "final_state": fitted.get_continuation_state(),
@@ -98,14 +103,15 @@ class GRRHS_Gibbs:
     """
     Group Regularized Horseshoe (GR-RHS) Metropolis-within-Gibbs sampler.
 
-    Hierarchy implemented:
-      beta_j | lambda_j, a_g, c_g^2, tau ~ N(0, tau^2 * tilde_lambda_{j,g}^2)
-      tilde_lambda_{j,g}^2 = c_g^2 * lambda_j^2 * a_g^2 / (c_g^2 + tau^2 * lambda_j^2 * a_g^2)
+    Hierarchy implemented (allowance parameterization):
+      beta_j | lambda_j, a_g, kappa_g, tau, sigma^2 ~ N(0, v_{j,g})
+      v_{j,g} = (sigma^2*kappa_g*tau^2*lambda_j^2*a_g^2)
+                / (sigma^2*kappa_g + (1-kappa_g)*tau^2*lambda_j^2*a_g^2)
       lambda_j ~ HC(0, 1)
       a_g ~ HN(0, s_{a,g}^2), with s_{a,g} = eta / sqrt(p_g)
-      c_g^2 ~ IG(alpha_c, beta_c)
+      kappa_g ~ Beta(alpha_kappa, beta_kappa), c_g^2 = sigma^2*kappa_g/(1-kappa_g)
       tau ~ HC(0, tau0), via IG augmentation with nu
-      p(sigma^2) ∝ 1 / sigma^2
+      p(sigma^2) proportional to 1 / sigma^2
     """
 
     # Backward-compatible public hyperparameters
@@ -115,9 +121,12 @@ class GRRHS_Gibbs:
     s0: float = 1.0
     use_groups: bool = True
 
-    # New slab prior parameters
-    alpha_c: float = 2.0
-    beta_c: float = 2.0
+    # Allowance prior parameters (canonical)
+    alpha_kappa: Optional[float] = None
+    beta_kappa: Optional[float] = None
+    # Legacy aliases kept for compatibility with old configs/checkpoints
+    alpha_c: Optional[float] = None
+    beta_c: Optional[float] = None
 
     # Sampling controls
     iters: int = 2000
@@ -141,10 +150,10 @@ class GRRHS_Gibbs:
 
     # PCABS-lite controls (non-collapsed blocked/compensation moves)
     use_pcabs_lite: bool = True
-    use_collapsed_scale_updates: bool = True
-    global_block_sd_u: Optional[float] = None
-    global_block_sd_alpha: Optional[float] = None
-    global_comp_sd: Optional[float] = None
+    use_collapsed_scale_updates: bool = False
+    global_block_sd_u: Optional[float] = 0.2
+    global_block_sd_alpha: Optional[float] = 0.25
+    global_comp_sd: Optional[float] = 0.16
     group_ac2_block_sd_alpha: Optional[float] = None
     group_ac2_block_sd_xi: Optional[float] = None
     group_comp_sd: Optional[float] = None
@@ -157,10 +166,12 @@ class GRRHS_Gibbs:
     adapt_until_frac: float = 0.8
     adapt_target_accept: float = 0.30
     adapt_target_accept_by_block: Optional[Mapping[str, float]] = None
-    adapt_step_size: float = 0.05
+    adapt_step_size: float = 0.08
     adapt_only_during_burnin: bool = True
     min_proposal_sd: float = 1e-3
     max_proposal_sd: float = 2.5
+    tau2_refresh_steps: int = 6
+    use_tau_slice_refresh: bool = True
 
     rng: Generator = field(init=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -170,6 +181,7 @@ class GRRHS_Gibbs:
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
     a_samples_: Optional[np.ndarray] = field(default=None, init=False)
     c2_samples_: Optional[np.ndarray] = field(default=None, init=False)
+    kappa_samples_: Optional[np.ndarray] = field(default=None, init=False)
 
     coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
@@ -182,6 +194,14 @@ class GRRHS_Gibbs:
 
     def __post_init__(self) -> None:
         self.rng = default_rng(self.seed)
+        if self.alpha_kappa is None:
+            self.alpha_kappa = 2.0 if self.alpha_c is None else float(self.alpha_c)
+        if self.beta_kappa is None:
+            self.beta_kappa = 2.0 if self.beta_c is None else float(self.beta_c)
+        if self.alpha_c is None:
+            self.alpha_c = float(self.alpha_kappa)
+        if self.beta_c is None:
+            self.beta_c = float(self.beta_kappa)
         if self.burnin is None:
             self.burnin = self.iters // 2
         if self.burnin < 0 or self.burnin >= self.iters:
@@ -194,8 +214,8 @@ class GRRHS_Gibbs:
             raise ValueError("tau0 must be positive.")
         if self.eta <= 0.0:
             raise ValueError("eta must be positive.")
-        if self.alpha_c <= 0.0 or self.beta_c <= 0.0:
-            raise ValueError("alpha_c and beta_c must be positive.")
+        if float(self.alpha_kappa) <= 0.0 or float(self.beta_kappa) <= 0.0:
+            raise ValueError("alpha_kappa and beta_kappa must be positive.")
         if self.num_chains <= 0:
             raise ValueError("num_chains must be positive.")
         if self.jitter <= 0.0:
@@ -217,6 +237,8 @@ class GRRHS_Gibbs:
             raise ValueError("min_proposal_sd/max_proposal_sd must be positive.")
         if float(self.min_proposal_sd) > float(self.max_proposal_sd):
             raise ValueError("min_proposal_sd cannot exceed max_proposal_sd.")
+        if int(self.tau2_refresh_steps) < 0:
+            raise ValueError("tau2_refresh_steps must be >= 0.")
 
         if self.mh_sd_log_tau2 is None:
             self.mh_sd_log_tau2 = float(max(self.tau_slice_w, 1e-3))
@@ -369,6 +391,8 @@ class GRRHS_Gibbs:
                 "step_size": float(self.adapt_step_size),
                 "only_during_burnin": bool(self.adapt_only_during_burnin),
             },
+            "tau2_refresh_steps": int(self.tau2_refresh_steps),
+            "use_tau_slice_refresh": bool(self.use_tau_slice_refresh),
         }
 
     def get_continuation_state(self) -> Dict[str, Any]:
@@ -417,6 +441,8 @@ class GRRHS_Gibbs:
             eta=self.eta,
             s0=self.s0,
             use_groups=self.use_groups,
+            alpha_kappa=self.alpha_kappa,
+            beta_kappa=self.beta_kappa,
             alpha_c=self.alpha_c,
             beta_c=self.beta_c,
             iters=self.iters,
@@ -454,6 +480,8 @@ class GRRHS_Gibbs:
             adapt_only_during_burnin=self.adapt_only_during_burnin,
             min_proposal_sd=self.min_proposal_sd,
             max_proposal_sd=self.max_proposal_sd,
+            tau2_refresh_steps=self.tau2_refresh_steps,
+            use_tau_slice_refresh=self.use_tau_slice_refresh,
         )
 
     def _fit_multichain(self, X: np.ndarray, y: np.ndarray, groups: Optional[List[List[int]]] = None) -> "GRRHS_Gibbs":
@@ -471,6 +499,8 @@ class GRRHS_Gibbs:
                     "eta": self.eta,
                     "s0": self.s0,
                     "use_groups": self.use_groups,
+                    "alpha_kappa": self.alpha_kappa,
+                    "beta_kappa": self.beta_kappa,
                     "alpha_c": self.alpha_c,
                     "beta_c": self.beta_c,
                     "iters": self.iters,
@@ -507,6 +537,8 @@ class GRRHS_Gibbs:
                     "adapt_only_during_burnin": self.adapt_only_during_burnin,
                     "min_proposal_sd": self.min_proposal_sd,
                     "max_proposal_sd": self.max_proposal_sd,
+                    "tau2_refresh_steps": self.tau2_refresh_steps,
+                    "use_tau_slice_refresh": self.use_tau_slice_refresh,
                     "X": np.asarray(X, dtype=float),
                     "y": np.asarray(y, dtype=float),
                     "groups": groups_payload,
@@ -529,6 +561,7 @@ class GRRHS_Gibbs:
         self.lambda_samples_ = self._stack_chain_draws([item["lambda_samples"] for item in chain_results])
         self.a_samples_ = self._stack_chain_draws([item["a_samples"] for item in chain_results])
         self.c2_samples_ = self._stack_chain_draws([item["c2_samples"] for item in chain_results])
+        self.kappa_samples_ = self._stack_chain_draws([item["kappa_samples"] for item in chain_results])
         self.phi_samples_ = self._stack_chain_draws([item["phi_samples"] for item in chain_results])
         self.chain_final_states_ = [dict(item.get("final_state") or {}) for item in chain_results]
         chain_diags = [dict(item.get("sampler_diagnostics") or {}) for item in chain_results]
@@ -674,6 +707,12 @@ class GRRHS_Gibbs:
                 nu = max(float(state.get("nu", nu)), self.jitter)
             except Exception:
                 pass
+            try:
+                kappa_state = np.asarray(state.get("kappa"), dtype=float)
+                if kappa_state.shape == (G,):
+                    c2[:] = self._c2_from_kappa(kappa=np.clip(kappa_state, self.jitter, 1.0 - self.jitter), sigma2=sigma2)
+            except Exception:
+                pass
 
         kept = max(0, (self.iters - self.burnin + self.thin - 1) // self.thin)
         beta_draws = np.zeros((kept, p), dtype=float)
@@ -682,6 +721,7 @@ class GRRHS_Gibbs:
         lambda_draws = np.zeros((kept, p), dtype=float)
         a_draws = np.zeros((kept, G), dtype=float)
         c2_draws = np.zeros((kept, G), dtype=float)
+        kappa_draws = np.zeros((kept, G), dtype=float)
         keep_i = 0
 
         tau_trace: List[float] = []
@@ -760,6 +800,7 @@ class GRRHS_Gibbs:
                         c2_g=c2[g],
                         beta_g=beta[idx],
                         lam_g=lam[idx],
+                        sigma2=sigma2,
                         tau2=tau2,
                         s_a_g=s_a[g],
                     )
@@ -815,6 +856,7 @@ class GRRHS_Gibbs:
                         c2_g=c2[g],
                         beta_g=beta[idx],
                         lam_g=lam[idx],
+                        sigma2=sigma2,
                         tau2=tau2,
                         a_g=a[g],
                     )
@@ -822,6 +864,29 @@ class GRRHS_Gibbs:
             if self.use_pcabs_lite and self.use_collapsed_scale_updates:
                 d = self._prior_precision_vector(lam=lam, a=a, c2=c2, tau2=tau2, group_id=group_id)
                 beta = self._sample_beta_conditional(XtX=XtX, Xty=Xty, sigma2=sigma2, prior_prec=d, rng=self.rng)
+
+            # Extra scalar tau refresh moves improve global-scale mixing under PCABS blocks.
+            for _ in range(int(self.tau2_refresh_steps)):
+                if bool(self.use_tau_slice_refresh):
+                    tau2 = self._slice_update_tau2(
+                        tau2=tau2,
+                        nu=nu,
+                        beta=beta,
+                        lam=lam,
+                        a=a,
+                        c2=c2,
+                        group_id=group_id,
+                    )
+                else:
+                    tau2 = self._mh_update_tau2(
+                        tau2=tau2,
+                        nu=nu,
+                        beta=beta,
+                        lam=lam,
+                        a=a,
+                        c2=c2,
+                        group_id=group_id,
+                    )
 
             tau_trace.append(math.sqrt(max(tau2, self.jitter)))
             sigma_trace.append(math.sqrt(max(sigma2, self.jitter)))
@@ -833,6 +898,7 @@ class GRRHS_Gibbs:
                 lambda_draws[keep_i] = lam
                 a_draws[keep_i] = a
                 c2_draws[keep_i] = c2
+                kappa_draws[keep_i] = self._kappa_from_c2(c2=c2, sigma2=sigma2)
                 keep_i += 1
             self._adapt_proposals_if_needed(iteration=it)
 
@@ -842,6 +908,7 @@ class GRRHS_Gibbs:
         self.lambda_samples_ = lambda_draws
         self.a_samples_ = a_draws
         self.c2_samples_ = c2_draws
+        self.kappa_samples_ = kappa_draws
         self.phi_samples_ = a_draws
         self.coef_mean_ = beta_draws.mean(axis=0) if kept > 0 else np.zeros(p, dtype=float)
         self.intercept_ = 0.0
@@ -855,6 +922,7 @@ class GRRHS_Gibbs:
             "lam": np.asarray(lam, dtype=float).copy(),
             "a": np.asarray(a, dtype=float).copy(),
             "c2": np.asarray(c2, dtype=float).copy(),
+            "kappa": np.asarray(self._kappa_from_c2(c2=c2, sigma2=sigma2), dtype=float).copy(),
             "sigma2": float(sigma2),
             "tau2": float(tau2),
             "nu": float(nu),
@@ -886,6 +954,7 @@ class GRRHS_Gibbs:
         tau_draws = self._flatten_scalar_draws(self.tau_samples_)
         a_draws = self._flatten_param_draws(self.a_samples_)
         c2_draws = self._flatten_param_draws(self.c2_samples_)
+        kappa_draws = self._flatten_param_draws(self.kappa_samples_)
         if beta_draws is None:
             raise RuntimeError("Posterior coefficient draws are unavailable.")
         return {
@@ -897,6 +966,7 @@ class GRRHS_Gibbs:
             "phi_mean": a_draws.mean(axis=0) if a_draws is not None else None,
             "a_mean": a_draws.mean(axis=0) if a_draws is not None else None,
             "c2_mean": c2_draws.mean(axis=0) if c2_draws is not None else None,
+            "kappa_mean": kappa_draws.mean(axis=0) if kappa_draws is not None else None,
         }
 
     def _prior_precision_vector(
@@ -948,6 +1018,33 @@ class GRRHS_Gibbs:
         lp_old = self._beta_logprior_contrib(beta=beta, d=d_old) + self._log_prior_tau2_given_nu(tau2=tau2, nu=nu) + log_tau2
         lp_new = self._beta_logprior_contrib(beta=beta, d=d_new) + self._log_prior_tau2_given_nu(tau2=tau2_prop, nu=nu) + log_prop
         return tau2_prop if self._mh_accept(lp_new, lp_old, stat_key="tau2") else tau2
+
+    def _slice_update_tau2(
+        self,
+        *,
+        tau2: float,
+        nu: float,
+        beta: np.ndarray,
+        lam: np.ndarray,
+        a: np.ndarray,
+        c2: np.ndarray,
+        group_id: np.ndarray,
+    ) -> float:
+        log_t0 = math.log(max(tau2, self.jitter))
+
+        def log_target(log_t: float) -> float:
+            t2 = max(math.exp(log_t), self.jitter)
+            d = self._prior_precision_vector(lam=lam, a=a, c2=c2, tau2=t2, group_id=group_id)
+            return self._beta_logprior_contrib(beta=beta, d=d) + self._log_prior_tau2_given_nu(tau2=t2, nu=nu) + log_t
+
+        log_new = self._slice_sample_log_univariate(
+            log_x0=log_t0,
+            logf=log_target,
+            width=float(max(float(self.tau_slice_w), 1e-3)),
+            max_steps=int(max(int(self.tau_slice_m), 8)),
+        )
+        self._record_mh("tau2", True)
+        return max(math.exp(log_new), self.jitter)
 
     def _scale_block_log_target(
         self,
@@ -1332,6 +1429,7 @@ class GRRHS_Gibbs:
         c2_g: float,
         beta_g: np.ndarray,
         lam_g: np.ndarray,
+        sigma2: float,
         tau2: float,
         a_g: float,
     ) -> float:
@@ -1342,8 +1440,8 @@ class GRRHS_Gibbs:
         d_old = self._group_precision(lam_g=lam_g, a_g=a_g, c2_g=c2_g, tau2=tau2)
         d_new = self._group_precision(lam_g=lam_g, a_g=a_g, c2_g=c2_new, tau2=tau2)
 
-        lp_old = self._beta_logprior_contrib(beta=beta_g, d=d_old) + self._log_prior_c2(c2_g) + log_old
-        lp_new = self._beta_logprior_contrib(beta=beta_g, d=d_new) + self._log_prior_c2(c2_new) + log_new
+        lp_old = self._beta_logprior_contrib(beta=beta_g, d=d_old) + self._log_prior_c2(c2=c2_g, sigma2=sigma2) + log_old
+        lp_new = self._beta_logprior_contrib(beta=beta_g, d=d_new) + self._log_prior_c2(c2=c2_new, sigma2=sigma2) + log_new
         return c2_new if self._mh_accept(lp_new, lp_old, stat_key="c2") else c2_g
 
     def _mh_update_group_a_c2_block(
@@ -1353,6 +1451,7 @@ class GRRHS_Gibbs:
         c2_g: float,
         beta_g: np.ndarray,
         lam_g: np.ndarray,
+        sigma2: float,
         tau2: float,
         s_a_g: float,
     ) -> Tuple[float, float]:
@@ -1368,14 +1467,14 @@ class GRRHS_Gibbs:
         lp_old = (
             self._beta_logprior_contrib(beta=beta_g, d=d_old)
             + self._log_prior_a(a=a_g, s_a=s_a_g)
-            + self._log_prior_c2(c2_g)
+            + self._log_prior_c2(c2=c2_g, sigma2=sigma2)
             + alpha_old
             + xi_old
         )
         lp_new = (
             self._beta_logprior_contrib(beta=beta_g, d=d_new)
             + self._log_prior_a(a=a_new, s_a=s_a_g)
-            + self._log_prior_c2(c2_new)
+            + self._log_prior_c2(c2=c2_new, sigma2=sigma2)
             + alpha_new
             + xi_new
         )
@@ -1421,7 +1520,7 @@ class GRRHS_Gibbs:
             tau2=tau2,
             group_id=group_id,
         )
-        lp_old += self._log_prior_a(a=a_g, s_a=float(s_a[g])) + self._log_prior_c2(c2_g) + alpha_old + xi_old
+        lp_old += self._log_prior_a(a=a_g, s_a=float(s_a[g])) + self._log_prior_c2(c2=c2_g, sigma2=sigma2) + alpha_old + xi_old
         lp_new = self._collapsed_log_marginal_y(
             X=X,
             y=y,
@@ -1432,7 +1531,7 @@ class GRRHS_Gibbs:
             tau2=tau2,
             group_id=group_id,
         )
-        lp_new += self._log_prior_a(a=a_new, s_a=float(s_a[g])) + self._log_prior_c2(c2_new) + alpha_new + xi_new
+        lp_new += self._log_prior_a(a=a_new, s_a=float(s_a[g])) + self._log_prior_c2(c2=c2_new, sigma2=sigma2) + alpha_new + xi_new
         if self._mh_accept(lp_new, lp_old, stat_key="group_ac2_block"):
             return a_new, c2_new
         return a_g, c2_g
@@ -1556,13 +1655,30 @@ class GRRHS_Gibbs:
         ss = max(s_a, _MIN_POS)
         return -0.5 * (a * a) / (ss * ss)
 
-    def _log_prior_c2(self, c2: float) -> float:
+    @staticmethod
+    def _kappa_from_c2(c2: np.ndarray | float, sigma2: float) -> np.ndarray:
+        sigma2_safe = max(float(sigma2), _MIN_POS)
+        c2_arr = np.maximum(np.asarray(c2, dtype=float), _MIN_POS)
+        return c2_arr / np.maximum(sigma2_safe + c2_arr, _MIN_POS)
+
+    @staticmethod
+    def _c2_from_kappa(kappa: np.ndarray | float, sigma2: float) -> np.ndarray:
+        sigma2_safe = max(float(sigma2), _MIN_POS)
+        kappa_arr = np.clip(np.asarray(kappa, dtype=float), _MIN_POS, 1.0 - _MIN_POS)
+        return sigma2_safe * kappa_arr / np.maximum(1.0 - kappa_arr, _MIN_POS)
+
+    def _log_prior_c2(self, *, c2: float, sigma2: float) -> float:
         x = max(c2, self.jitter)
+        s2 = max(float(sigma2), self.jitter)
+        a = float(self.alpha_kappa)
+        b = float(self.beta_kappa)
+        # Induced density from kappa ~ Beta(a, b) under c2 = sigma2*kappa/(1-kappa):
+        # f(c2|sigma2) = sigma2^b / B(a,b) * c2^(a-1) * (sigma2 + c2)^-(a+b).
         return (
-            self.alpha_c * math.log(self.beta_c)
-            - math.lgamma(self.alpha_c)
-            - (self.alpha_c + 1.0) * math.log(x)
-            - self.beta_c / x
+            b * math.log(s2)
+            - (math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b))
+            + (a - 1.0) * math.log(x)
+            - (a + b) * math.log(s2 + x)
         )
 
     def _single_precision(self, lam: float, a_g: float, c2_g: float, tau2: float) -> float:
@@ -1597,3 +1713,4 @@ class GRRHS_Gibbs:
         else:
             noise = solve_triangular(chol, z, lower=False, check_finite=False)
         return mean + noise
+

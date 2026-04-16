@@ -666,6 +666,7 @@ class PosteriorSamples:
     tau: Optional[np.ndarray] = None  # (S,)
     a: Optional[np.ndarray] = None  # (S, G)
     c2: Optional[np.ndarray] = None  # (S, G)
+    kappa: Optional[np.ndarray] = None  # (S, G)
     phi: Optional[np.ndarray] = None  # (S, G)
 
 
@@ -698,6 +699,9 @@ def _prepare_posterior_samples(model: Any) -> PosteriorSamples:
     c2_samples = _as_numpy(getattr(model, "c2_samples_", None))
     if c2_samples is not None:
         c2_samples = _flatten_sample_axes(c2_samples, scalar_param=False)
+    kappa_samples = _as_numpy(getattr(model, "kappa_samples_", None))
+    if kappa_samples is not None:
+        kappa_samples = _flatten_sample_axes(kappa_samples, scalar_param=False)
 
     phi_samples = _as_numpy(getattr(model, "phi_samples_", None))
     if phi_samples is None:
@@ -716,6 +720,7 @@ def _prepare_posterior_samples(model: Any) -> PosteriorSamples:
         tau=tau_samples,
         a=a_samples,
         c2=c2_samples,
+        kappa=kappa_samples,
         phi=phi_samples,
     )
 
