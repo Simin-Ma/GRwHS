@@ -1,0 +1,18 @@
+{
+  "output_dir": "D:\\FilesP\\GR-RHS\\tmp\\rev_quick_theory_only",
+  "quick": true,
+  "seed": 123,
+  "methods": [
+    "grrhs"
+  ],
+  "theory": {
+    "null_contraction": "D:\\FilesP\\GR-RHS\\tmp\\rev_quick_theory_only\\theory\\theory_null_contraction.csv",
+    "adaptive_localization": "D:\\FilesP\\GR-RHS\\tmp\\rev_quick_theory_only\\theory\\theory_adaptive_localization.csv",
+    "adaptive_localization_appendix_band": "D:\\FilesP\\GR-RHS\\tmp\\rev_quick_theory_only\\theory\\theory_adaptive_localization_appendix_band.csv",
+    "strong_signal_phase": "D:\\FilesP\\GR-RHS\\tmp\\rev_quick_theory_only\\theory\\theory_strong_signal_phase.csv",
+    "phase_profile_vs_full_bridge": "D:\\FilesP\\GR-RHS\\tmp\\rev_quick_theory_only\\theory\\theory_phase_profile_vs_full_bridge.csv",
+    "manifest": "D:\\FilesP\\GR-RHS\\tmp\\rev_quick_theory_only\\theory\\theory_manifest.json",
+    "loglog_slope": -0.0002465524254461684,
+    "xi_crit": 0.041284403669724766
+  }
+}

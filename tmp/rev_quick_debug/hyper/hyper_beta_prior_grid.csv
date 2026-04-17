@@ -1,0 +1,5 @@
+rep,alpha_kappa,beta_kappa,status,p_g,alpha_gt_pg_over_2
+0,0.5,0.5,skipped_in_quick_mode,10,False
+0,1.0,1.0,skipped_in_quick_mode,10,False
+0,1.0,2.0,skipped_in_quick_mode,10,False
+0,0.5,1.0,skipped_in_quick_mode,10,False

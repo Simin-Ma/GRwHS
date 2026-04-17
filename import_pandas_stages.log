@@ -1,0 +1,11 @@
+BEGIN pandas.compat total=0.00s
+END   pandas.compat dt=1230.83s total=1230.83s
+BEGIN pandas._libs total=1230.83s
+END   pandas._libs dt=0.00s total=1230.83s
+BEGIN pandas.core total=1230.83s
+END   pandas.core dt=0.00s total=1230.83s
+BEGIN pandas.io total=1230.83s
+END   pandas.io dt=0.00s total=1230.83s
+BEGIN pandas total=1230.83s
+END   pandas dt=0.00s total=1230.83s
+DONE

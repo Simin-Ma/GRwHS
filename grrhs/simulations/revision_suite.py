@@ -1020,35 +1020,34 @@ def _run_theory_section(outdir: Path, *, quick: bool, seed: int) -> Dict[str, An
                         "xi_crit": float(xi_crit_tau),
                     }
                 )
-        for xi_inf in [0.04, 0.06]:
-            for p_g in [phase_pg[-1]]:
-                ds_profile = _sample_profile_signal_group(
-                    p_g,
-                    float(xi_inf) * float(p_g),
-                    seed=int(rng.integers(1_000_000)),
-                    sigma=1.0,
-                    signal_type="distributed",
-                )
-                obj = profile_kappa_log_posterior_grid(ds_profile["y_group"], tau=float(tau), sigma=1.0, alpha_kappa=1.0, beta_kappa=1.0)
-                mask = obj["kappa"] > u0
-                p_profile = float(np.trapezoid(obj["density"][mask], obj["kappa"][mask])) if np.any(mask) else 0.0
-                ds_full = _phase_signal_dataset(p_g=p_g, xi_inf=float(xi_inf), seed=int(rng.integers(1_000_000)), rho=min(float(rho), 0.95))
-                fit = _fit_method("grrhs", ds_full["X"], ds_full["y"], ds_full["groups"], task="gaussian", seed=int(rng.integers(1_000_000)), quick=True, p0=1)
-                if isinstance(fit, Exception):
-                    continue
-                post = _posterior_draws(fit)
-                kap_draws = _flatten_draws(post.get("kappa"), scalar=False)
-                p_full = float(np.mean(kap_draws[:, 0] > u0)) if kap_draws is not None else float("nan")
-                bridge_rows.append(
-                    {
-                        "tau": float(tau),
-                        "xi_inf": float(xi_inf),
-                        "p_g": float(p_g),
-                        "profile_prob_kappa_gt_u0": float(p_profile),
-                        "full_nuts_prob_kappa_gt_u0": float(p_full),
-                        "abs_gap": float(abs(p_profile - p_full)) if np.isfinite(p_full) else float("nan"),
-                    }
-                )
+        if not quick:
+            for xi_inf in [0.04, 0.06]:
+                for p_g in [phase_pg[-1]]:
+                    ds_profile = _sample_profile_signal_group(
+                        p_g,
+                        float(xi_inf) * float(p_g),
+                        seed=int(rng.integers(1_000_000)),
+                        sigma=1.0,
+                        signal_type="distributed",
+                    )
+                    obj = profile_kappa_log_posterior_grid(ds_profile["y_group"], tau=float(tau), sigma=1.0, alpha_kappa=1.0, beta_kappa=1.0)
+                    mask = obj["kappa"] > u0
+                    p_profile = float(np.trapezoid(obj["density"][mask], obj["kappa"][mask])) if np.any(mask) else 0.0
+                    ds_full = _phase_signal_dataset(p_g=p_g, xi_inf=float(xi_inf), seed=int(rng.integers(1_000_000)), rho=min(float(rho), 0.95))
+                    fit = _fit_method("grrhs", ds_full["X"], ds_full["y"], ds_full["groups"], task="gaussian", seed=int(rng.integers(1_000_000)), quick=True, p0=1)
+                    post = _posterior_draws(fit)
+                    kap_draws = _flatten_draws(post.get("kappa"), scalar=False)
+                    p_full = float(np.mean(kap_draws[:, 0] > u0)) if kap_draws is not None else float("nan")
+                    bridge_rows.append(
+                        {
+                            "tau": float(tau),
+                            "xi_inf": float(xi_inf),
+                            "p_g": float(p_g),
+                            "profile_prob_kappa_gt_u0": float(p_profile),
+                            "full_nuts_prob_kappa_gt_u0": float(p_full),
+                            "abs_gap": float(abs(p_profile - p_full)) if np.isfinite(p_full) else float("nan"),
+                        }
+                    )
     pd.DataFrame(phase_rows).to_csv(outdir / "theory_strong_signal_phase.csv", index=False)
     pd.DataFrame(bridge_rows).to_csv(outdir / "theory_phase_profile_vs_full_bridge.csv", index=False)
     manifest = {
@@ -1468,75 +1467,100 @@ def _run_hyperparameter_section(outdir: Path, *, quick: bool, seed: int) -> Dict
         "tau0_recommended": {"tau0_override": tau0_base, "auto_calibrate_tau": False},
         "tau0_wide": {"tau0_override": 2.0 * tau0_base, "auto_calibrate_tau": False},
     }
-    for rep in range(reps):
-        ds_null = _make_heterogeneity_dataset(seed=int(rng.integers(1_000_000)), group_width=10)
-        ds_sparse = _make_heterogeneity_dataset(seed=int(rng.integers(1_000_000)), group_width=50 if not quick else 10)
+    if quick:
         for label, opts in tau_strategies.items():
-            for ds_name, ds in [("heterogeneity_small", ds_null), ("heterogeneity_large", ds_sparse)]:
-                try:
-                    fit = _fit_method(
-                        "grrhs",
-                        ds["X"],
-                        ds["y"],
-                        ds["groups"],
-                        task="gaussian",
-                        seed=int(rng.integers(1_000_000)),
-                        quick=quick,
-                        p0=4,
-                        alpha_kappa=0.5,
-                        beta_kappa=1.0,
-                        tau0_override=float(opts["tau0_override"]),
-                        auto_calibrate_tau=bool(opts["auto_calibrate_tau"]),
+            tau_eval_rows.append(
+                {
+                    "rep": 0,
+                    "tau_strategy": label,
+                    "dataset": "quick_mode_placeholder",
+                    "status": "skipped_in_quick_mode",
+                    "tau0_override": float(opts["tau0_override"]),
+                }
+            )
+    else:
+        for rep in range(reps):
+            ds_null = _make_heterogeneity_dataset(seed=int(rng.integers(1_000_000)), group_width=10)
+            ds_sparse = _make_heterogeneity_dataset(seed=int(rng.integers(1_000_000)), group_width=50)
+            for label, opts in tau_strategies.items():
+                for ds_name, ds in [("heterogeneity_small", ds_null), ("heterogeneity_large", ds_sparse)]:
+                    try:
+                        fit = _fit_method(
+                            "grrhs",
+                            ds["X"],
+                            ds["y"],
+                            ds["groups"],
+                            task="gaussian",
+                            seed=int(rng.integers(1_000_000)),
+                            quick=quick,
+                            p0=4,
+                            alpha_kappa=0.5,
+                            beta_kappa=1.0,
+                            tau0_override=float(opts["tau0_override"]),
+                            auto_calibrate_tau=bool(opts["auto_calibrate_tau"]),
+                        )
+                    except Exception as exc:
+                        tau_eval_rows.append({"rep": rep, "tau_strategy": label, "dataset": ds_name, "status": "error", "error": type(exc).__name__})
+                        continue
+                    post = _posterior_draws(fit)
+                    beta_hat = _posterior_mean(post.get("beta"))
+                    mse = _mse_partition(ds["beta"], beta_hat)
+                    scores = _group_scores_from_model(fit, ds["groups"])
+                    tau_eval_rows.append(
+                        {
+                            "rep": rep,
+                            "tau_strategy": label,
+                            "dataset": ds_name,
+                            "status": "ok",
+                            "tau0_override": float(opts["tau0_override"]),
+                            **mse,
+                            "kappa_mean_null_groups": float(np.mean(np.asarray(scores.get("kappa_mean", np.nan))[:2])) if "kappa_mean" in scores else float("nan"),
+                        }
                     )
-                except Exception as exc:
-                    tau_eval_rows.append({"rep": rep, "tau_strategy": label, "dataset": ds_name, "status": "error", "error": type(exc).__name__})
-                    continue
-                post = _posterior_draws(fit)
-                beta_hat = _posterior_mean(post.get("beta"))
-                mse = _mse_partition(ds["beta"], beta_hat)
-                scores = _group_scores_from_model(fit, ds["groups"])
-                tau_eval_rows.append(
-                    {
-                        "rep": rep,
-                        "tau_strategy": label,
-                        "dataset": ds_name,
-                        "status": "ok",
-                        "tau0_override": float(opts["tau0_override"]),
-                        **mse,
-                        "kappa_mean_null_groups": float(np.mean(np.asarray(scores.get("kappa_mean", np.nan))[:2])) if "kappa_mean" in scores else float("nan"),
-                    }
-                )
     tau_eval_path = outdir / "hyper_tau_inference_comparison.csv"
     pd.DataFrame(tau_eval_rows).to_csv(tau_eval_path, index=False)
 
     rows: list[dict[str, Any]] = []
-    for rep in range(reps):
-        ds = _make_heterogeneity_dataset(seed=int(rng.integers(1_000_000)))
-        labels = np.asarray(ds["mu"] > 0.0, dtype=int)
+    if quick:
         for alpha_kappa, beta_kappa in [(0.5, 0.5), (1.0, 1.0), (1.0, 2.0), (0.5, 1.0)]:
-            try:
-                fit = _fit_method("grrhs", ds["X"], ds["y"], ds["groups"], task="gaussian", seed=int(rng.integers(1_000_000)), quick=quick, p0=4, alpha_kappa=alpha_kappa, beta_kappa=beta_kappa)
-            except Exception as exc:
-                rows.append({"rep": rep, "alpha_kappa": alpha_kappa, "beta_kappa": beta_kappa, "status": "error", "error": type(exc).__name__})
-                continue
-            conv = _convergence_gate(fit)
-            scores = _group_scores_from_model(fit, ds["groups"])
-            beta_hat = _posterior_mean(_posterior_draws(fit).get("beta"))
-            pg = len(ds["groups"][0])
             rows.append(
                 {
-                    "rep": rep,
+                    "rep": 0,
                     "alpha_kappa": alpha_kappa,
                     "beta_kappa": beta_kappa,
-                    "p_g": int(pg),
-                    "alpha_gt_pg_over_2": bool(float(alpha_kappa) > float(pg) / 2.0),
-                    **_mse_partition(ds["beta"], beta_hat),
-                    "kappa_auroc": float(roc_auc_score(labels, scores["kappa_mean"])) if "kappa_mean" in scores else float("nan"),
-                    "divergence_rate": conv["divergence_rate"],
-                    "max_rhat": conv["max_rhat"],
-                    "min_bulk_ess": conv["min_bulk_ess"],
+                    "status": "skipped_in_quick_mode",
+                    "p_g": 10,
+                    "alpha_gt_pg_over_2": bool(float(alpha_kappa) > 5.0),
                 }
             )
+    else:
+        for rep in range(reps):
+            ds = _make_heterogeneity_dataset(seed=int(rng.integers(1_000_000)))
+            labels = np.asarray(ds["mu"] > 0.0, dtype=int)
+            for alpha_kappa, beta_kappa in [(0.5, 0.5), (1.0, 1.0), (1.0, 2.0), (0.5, 1.0)]:
+                try:
+                    fit = _fit_method("grrhs", ds["X"], ds["y"], ds["groups"], task="gaussian", seed=int(rng.integers(1_000_000)), quick=quick, p0=4, alpha_kappa=alpha_kappa, beta_kappa=beta_kappa)
+                except Exception as exc:
+                    rows.append({"rep": rep, "alpha_kappa": alpha_kappa, "beta_kappa": beta_kappa, "status": "error", "error": type(exc).__name__})
+                    continue
+                conv = _convergence_gate(fit)
+                scores = _group_scores_from_model(fit, ds["groups"])
+                beta_hat = _posterior_mean(_posterior_draws(fit).get("beta"))
+                pg = len(ds["groups"][0])
+                rows.append(
+                    {
+                        "rep": rep,
+                        "alpha_kappa": alpha_kappa,
+                        "beta_kappa": beta_kappa,
+                        "p_g": int(pg),
+                        "alpha_gt_pg_over_2": bool(float(alpha_kappa) > float(pg) / 2.0),
+                        **_mse_partition(ds["beta"], beta_hat),
+                        "kappa_auroc": float(roc_auc_score(labels, scores["kappa_mean"])) if "kappa_mean" in scores else float("nan"),
+                        "divergence_rate": conv["divergence_rate"],
+                        "max_rhat": conv["max_rhat"],
+                        "min_bulk_ess": conv["min_bulk_ess"],
+                    }
+                )
     beta_grid_path = outdir / "hyper_beta_prior_grid.csv"
     pd.DataFrame(rows).to_csv(beta_grid_path, index=False)
 

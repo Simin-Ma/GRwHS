@@ -1,0 +1,18 @@
+{
+  "validation_layer": "profile_specialization_normal_means",
+  "null_uses_n": false,
+  "adaptive_appendix_band": {
+    "x_lower": 0.005716339298907187,
+    "x_upper": 0.01714901789672156
+  },
+  "adaptive_ratio_band_source": "lemma_3_28_parameterized_proxy",
+  "adaptive_ratio_band_inputs": {
+    "rho": 0.1,
+    "alpha_kappa": 1.0,
+    "beta_kappa": 1.0
+  },
+  "strong_signal_u0": 0.5,
+  "strong_signal_tau_grid": [
+    0.3
+  ]
+}
