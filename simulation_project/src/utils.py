@@ -55,6 +55,7 @@ def setup_logger(name: str, log_file: Path) -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
+    Path(log_file).parent.mkdir(parents=True, exist_ok=True)
     fh = logging.FileHandler(log_file, encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
     logger.addHandler(fh)
@@ -278,5 +279,6 @@ def method_display_name(name: str) -> str:
         "GR_RHS_no_ag": "GR-RHS (no a_g)",
         "GR_RHS_no_local_scales": "GR-RHS (lambda_j=1)",
         "GR_RHS_shared_kappa": "GR-RHS (shared kappa)",
+        "GR_RHS_no_kappa": "GR-RHS (no kappa)",
     }
     return mapping.get(name, name)

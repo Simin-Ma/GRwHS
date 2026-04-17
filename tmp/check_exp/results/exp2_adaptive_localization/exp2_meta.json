@@ -1,0 +1,12 @@
+{
+  "tau_list": [
+    0.5,
+    1.0
+  ],
+  "window_rule": "s_g * (1 ± C/sqrt(p_g))",
+  "c_window": 3.0,
+  "p_g_list": [
+    20
+  ],
+  "grid_size": 201
+}

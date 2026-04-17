@@ -1,0 +1,10 @@
+{
+  "tau_eval": 0.5,
+  "tail_M": 2.0,
+  "tail_threshold_formula": "M/sqrt(p_g)",
+  "p_g_list": [
+    10,
+    20
+  ],
+  "grid_size": 801
+}

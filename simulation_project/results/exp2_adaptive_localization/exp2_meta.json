@@ -1,9 +1,11 @@
 {
-  "tau_eval": 2.0,
-  "scale_window_multiplier": [
-    0.25,
-    4.0
+  "tau_list": [
+    0.5,
+    1.0,
+    2.0
   ],
+  "window_rule": "s_g * (1 ± C/sqrt(p_g))",
+  "c_window": 3.0,
   "p_g_list": [
     20,
     50,
