@@ -12,10 +12,6 @@ data {
   real<lower=0> slab_df;
 }
 
-transformed data {
-  real<lower=1e-9> y_sd = fmax(sd(y), 1e-9);
-}
-
 parameters {
   real beta0;
   vector[d] z;
@@ -64,7 +60,6 @@ model {
 
   caux ~ inv_gamma(0.5 * slab_df, 0.5 * slab_df);
   beta0 ~ normal(0, scale_icept);
-  logsigma ~ normal(log(y_sd), 1.0);
   y ~ normal(mu, sigma);
 }
 

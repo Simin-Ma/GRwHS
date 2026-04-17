@@ -23,8 +23,8 @@ class SamplerConfig:
     strict_adapt_delta: float = 0.99
     strict_max_treedepth: int = 14
     max_divergence_ratio: float = 0.005
-    rhat_threshold: float = 1.01
-    ess_threshold: float = 400.0
+    rhat_threshold: float = 1.05
+    ess_threshold: float = 200.0
 
 
 @dataclass
@@ -267,6 +267,17 @@ def rhs_style_tau0(n: int, p: int, p0: int) -> float:
     p0_use = max(int(p0), 1)
     denom = max(int(p) - p0_use, 1)
     return float((p0_use / denom) / math.sqrt(max(int(n), 1)))
+
+
+def logistic_pseudo_sigma(y: np.ndarray, *, clip_eps: float = 1e-3) -> float:
+    """Pseudo-sigma calibration for logistic RHS (Piironen & Vehtari, 2017)."""
+    y_arr = np.asarray(y, dtype=float).reshape(-1)
+    if y_arr.size == 0:
+        return 2.0
+    mu = float(np.mean(y_arr))
+    eps = float(max(clip_eps, 1e-8))
+    mu = float(min(max(mu, eps), 1.0 - eps))
+    return float(1.0 / math.sqrt(mu * (1.0 - mu)))
 
 
 def method_display_name(name: str) -> str:

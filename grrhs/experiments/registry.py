@@ -193,6 +193,7 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
             _get(cfg, "model.max_tree_depth", 10),
         )
     )
+    dense_mass = _get(cfg, "inference.nuts.dense_mass", _get(cfg, "model.dense_mass", False))
     chain_method = str(
         _get(
             cfg,
@@ -229,13 +230,14 @@ def _horseshoe_common_kwargs(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "thinning": thinning,
         "target_accept_prob": float(0.99 if target_accept is None else target_accept),
         "max_tree_depth": max(1, int(max_tree_depth)),
+        "dense_mass": dense_mass,
         "chain_method": chain_method,
         "progress_bar": progress_bar,
         "backend": backend,
     }
     if seed_val is not None:
         kwargs["seed"] = int(seed_val)
-    kwargs["likelihood"] = "gaussian"
+    kwargs["likelihood"] = str(_get(cfg, "model.likelihood", "gaussian")).strip().lower()
     return kwargs
 
 

@@ -565,6 +565,7 @@ class _BaseHorseshoeRegression:
     seed: Optional[int] = None
     target_accept_prob: float = 0.99
     max_tree_depth: int = 10
+    dense_mass: Any = False
     chain_method: str = "sequential"
     progress_bar: bool = False
     stan_file: Optional[str] = None
@@ -611,6 +612,8 @@ class _BaseHorseshoeRegression:
             raise ValueError("target_accept_prob must lie in (0, 1).")
         if self.max_tree_depth <= 0:
             raise ValueError("max_tree_depth must be a positive integer.")
+        if not isinstance(self.dense_mass, (bool, list, tuple)):
+            raise ValueError("dense_mass must be a bool or a list/tuple block specification.")
         chain_method = str(self.chain_method).strip().lower()
         if chain_method not in {"sequential", "parallel", "vectorized"}:
             raise ValueError("chain_method must be one of: sequential, parallel, vectorized.")
@@ -619,7 +622,9 @@ class _BaseHorseshoeRegression:
     def _numpyro_model(self, X: jnp.ndarray, y: jnp.ndarray) -> None:
         sigma = None
         if self.likelihood == "gaussian":
-            sigma = numpyro.sample("sigma", dist.HalfCauchy(self.sigma_scale))
+            logsigma_raw = numpyro.sample("logsigma_raw", dist.Normal(0.0, 1.0))
+            sigma = numpyro.deterministic("sigma", jnp.maximum(jnp.exp(logsigma_raw), 1e-9))
+            numpyro.factor("prior_logsigma", -dist.Normal(0.0, 1.0).log_prob(logsigma_raw))
             global_scale = self.scale_global * sigma
         else:
             global_scale = self.scale_global
@@ -904,7 +909,7 @@ class _BaseHorseshoeRegression:
         kernel = NUTS(
             self._numpyro_model,
             target_accept_prob=self.target_accept_prob,
-            dense_mass=True,
+            dense_mass=self.dense_mass,
             max_tree_depth=int(self.max_tree_depth),
         )
         mcmc = MCMC(

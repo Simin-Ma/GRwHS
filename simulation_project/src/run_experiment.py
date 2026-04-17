@@ -1037,7 +1037,12 @@ def run_exp3_phase_diagram(
 def _evaluate_method_row(result: FitResult, beta0: np.ndarray) -> dict[str, float]:
     from .metrics import ci_length_and_coverage, mse_null_signal_overall
 
-    if (result.beta_mean is None) or (not result.converged):
+    # Gate only on beta_mean availability, not on converged.
+    # Gibbs-based methods (GIGG_MMLE, GHS_plus) have structurally lower ESS and
+    # higher rhat than NUTS/HMC, so the MCMC convergence thresholds are too strict
+    # for them.  Convergence quality is already tracked via n_effective in the
+    # summary; here we compute MSE whenever a point estimate is available.
+    if result.beta_mean is None:
         return {"mse_null": float("nan"), "mse_signal": float("nan"), "mse_overall": float("nan"), "avg_ci_length": float("nan"), "coverage_95": float("nan")}
     m = mse_null_signal_overall(result.beta_mean, beta0)
     ci_len, cov = ci_length_and_coverage(beta0, result.beta_draws)

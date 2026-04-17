@@ -42,7 +42,7 @@ def _build_model(
         num_chains=int(sampler.chains),
         target_accept_prob=float(adapt_delta),
         max_tree_depth=int(max_treedepth),
-        dense_mass=True,
+        dense_mass=False,
         chain_method="sequential",
         progress_bar=False,
         seed=int(seed),
