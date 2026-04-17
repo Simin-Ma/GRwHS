@@ -5,10 +5,15 @@
   "rho": 0.3,
   "theta_u0_rho": 0.08256880733944953,
   "xi_crit": 0.041284403669724766,
+  "x_axis": "xi_over_xi_crit",
+  "alpha_kappa": 0.5,
+  "beta_kappa": 1.0,
   "p_g_list": [
     30,
     60,
-    120
+    120,
+    240,
+    480
   ],
   "tau_list": [
     0.1,

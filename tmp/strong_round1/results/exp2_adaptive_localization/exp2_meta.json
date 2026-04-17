@@ -1,0 +1,24 @@
+{
+  "tau_list": [
+    1.5,
+    2.0,
+    3.0
+  ],
+  "alpha_kappa": 0.5,
+  "beta_kappa": 1.0,
+  "window_rule": "[x_lo * s_g, x_hi * s_g]",
+  "mu_rule": "mu_g = mu_coef * p_g^0.75",
+  "mu_coef": 4.0,
+  "x_lo": 0.5,
+  "x_hi": 2.0,
+  "c_window_deprecated": null,
+  "p_g_list": [
+    20,
+    50,
+    100,
+    200,
+    500,
+    1000
+  ],
+  "grid_size": 801
+}

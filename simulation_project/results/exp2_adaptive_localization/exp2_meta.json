@@ -4,8 +4,14 @@
     1.0,
     2.0
   ],
-  "window_rule": "s_g * (1 ± C/sqrt(p_g))",
-  "c_window": 3.0,
+  "alpha_kappa": 0.5,
+  "beta_kappa": 1.0,
+  "window_rule": "[x_lo * s_g, x_hi * s_g]",
+  "mu_rule": "mu_g = mu_coef * p_g^0.75",
+  "mu_coef": 3.0,
+  "x_lo": 0.5,
+  "x_hi": 2.0,
+  "c_window_deprecated": null,
   "p_g_list": [
     20,
     50,

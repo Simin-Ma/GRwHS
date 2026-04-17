@@ -73,6 +73,7 @@ def _parallel_rows(
 
 
 def theta_u0_rho(u0: float, rho: float) -> float:
+    # θ(u₀, ρ) = u₀ρ² / (u₀ + (1−u₀)ρ²)  ——  定理 3.32 的关键量
     u = float(u0)
     rho2 = float(rho) ** 2
     den = u + (1.0 - u) * rho2
@@ -80,6 +81,8 @@ def theta_u0_rho(u0: float, rho: float) -> float:
 
 
 def xi_crit_u0_rho(u0: float, rho: float) -> float:
+    # ξ_crit = θ(u₀,ρ)/2  ——  相变临界值（定理 3.32/Corollary 3.33）
+    # ξ > ξ_crit → P(κ > u₀|Y) → 1；ξ < ξ_crit → P(κ > u₀|Y) → 0
     return 0.5 * theta_u0_rho(u0=u0, rho=rho)
 
 
@@ -635,6 +638,34 @@ def run_exp1_null_contraction(
     tail_M: float | None = None,
     grid_size: int = 801,
 ) -> Dict[str, str]:
+    # ============================================================
+    # EXP1 — 零收缩验证（Theorem 3.22）
+    #
+    # 【理论预测】
+    #   E[κ_g | Y_null] = O_{P₀}(p_g^{-1/2})
+    #   → log-log 斜率目标：-0.5
+    #   → 固定阈值尾概率 P(κ > ε) → 0（任意固定 ε > 0）
+    #
+    # 【参数选择说明】
+    #   pg_list  = [10,...,2000]：覆盖 pre-asymptotic 到 asymptotic 区域
+    #   tau_eval = 0.5：ρ = τ/√σ² = 0.5，居中选取以避免 ρ→0/∞ 的退化
+    #   alpha_kappa=0.5, beta_kappa=1.0：先验对 κ=0 有轻微倾向（比 Beta(1,1) 收缩快）
+    #   tail_eps_list=[0.1, 0.2]：固定阈值（不随 p_g 缩放），直接测零收缩
+    #
+    # 【若 log-log 斜率未达到 -0.5 的调整方向】
+    #   症状 A — 斜率 < -0.5（过快下降）：
+    #     → tau_eval 偏小（ρ 太小，先验对 κ 的约束很强），尝试 tau_eval=1.0
+    #     → alpha_kappa 偏小，先验对 κ 施加过强的下压，尝试 alpha_kappa=1.0
+    #
+    #   症状 B — 斜率 > -0.5（下降太慢，如 -0.30）：
+    #     → p_g 范围不够大，渐近区域未到达；扩展 pg_list 到 [500,1000,2000,5000]
+    #     → beta_kappa 偏小（先验均值 α/(α+β) 过大），尝试 beta_kappa=2.0
+    #     → repeats 不足导致 median 估计噪声大，增加到 1000
+    #
+    #   症状 C — 尾概率 P(κ > 0.1) 非单调（出现驼峰）：
+    #     → 检查 tau_eval：对于极小 τ，后验在小 p_g 时就很集中，大 p_g 时变化不大
+    #     → 增加 tail_eps_list 中的 ε 值（如 0.3, 0.5）以观察不同尾部行为
+    # ============================================================
     from .plotting import plot_exp1
 
     base = Path(save_dir)
@@ -689,6 +720,8 @@ def run_exp1_null_contraction(
         agg_rows.append(row)
     x = np.log(np.asarray([float(r["p_g"]) for r in agg_rows], dtype=float))
     y = np.log(np.asarray([float(r["median_post_mean_kappa"]) for r in agg_rows], dtype=float))
+    # 理论目标：slope ≈ -0.5（95% CI 覆盖 -0.5）
+    # 若斜率显著偏离，见函数头部注释的【症状 A/B】调整方向
     slope, slope_ci = _linreg_slope_ci(x, y)
     _save_rows_csv(rows, out / "raw_results.csv")
     _save_rows_csv(agg_rows, out / "summary.csv")
@@ -728,6 +761,40 @@ def run_exp2_adaptive_localization(
     c_window: float | None = None,
     grid_size: int = 801,
 ) -> Dict[str, str]:
+    # ============================================================
+    # EXP2 — 自适应局部化验证（Theorem 3.30）
+    #
+    # 【理论预测】
+    #   中间信号下（r_g = μ_g²/p_g → ∞），后验集中于 [x_- s_g, x_+ s_g]
+    #   其中 s_g = μ_g/p_g，x_-, x_+ 为固定常数（不依赖 p_g）
+    #   → ratio_R = E[κ|Y] / s_g → 1（后验均值收敛到 s_g）
+    #   → P(κ ∈ [x_lo·s_g, x_hi·s_g]) → 1
+    #
+    # 【参数选择说明】
+    #   mu_coef=3.0：μ_g = 3·p_g^{0.75}，使 r_g = 9·p_g^{0.5} → ∞（满足 Cond. 3.25）
+    #                 同时 s_g = 3·p_g^{-0.25} 使 s_g ∈ (0,1) 对所有设定的 p_g 成立
+    #   x_lo=0.5, x_hi=2.0：定理的"固定常数窗口"。窗口宽度 = 1.5·s_g（固定比例）
+    #                         注意：旧版曾错用 (1±C/√p_g) 的缩窄窗口，已修正为此
+    #   tau_list=[0.5,1.0,2.0]：跨越 ρ<1/ρ=1/ρ>1 三种区域测试普适性
+    #
+    # 【若 ratio_R 未收敛到 1 的调整方向】
+    #   症状 A — ratio_R 随 p_g 单调增加（> 1）：
+    #     → s_g 对所有大 p_g 都偏小（< 0.5），Beta 先验均值=α/(α+β) 将 κ 上推
+    #     → 尝试增大 mu_coef（如 mu_coef=5.0）使 s_g 更大，远离先验均值
+    #     → 或减小 beta_kappa（如 beta_kappa=0.5）使先验均值靠近 0
+    #
+    #   症状 B — ratio_R 随 p_g 单调减少（< 1）：
+    #     → s_g 偏大（接近 1），κ 空间边界效应（κ ∈ (0,1)）导致均值偏低
+    #     → 尝试减小 mu_coef（如 mu_coef=1.5）
+    #
+    #   症状 C — window_prob 不随 p_g 增大（局部化不成立）：
+    #     → 检查 r_g = mu_g²/p_g 是否足够大：打印 mu_g²/p_g 对各 p_g 的值
+    #     → 若 r_g 增长慢，尝试 mu_coef^2 > p_g^{0.5} 更快增长（如 mu_coef * p_g^{0.6}）
+    #     → 扩展 pg_list 到 [20,50,100,200,500,1000]
+    #
+    #   症状 D — 不同 tau 的 ratio_R 曲线差异很大（tau 依赖性强）：
+    #     → 这表明 pre-asymptotic 效应主导；增大 p_g 或检验 ρ 是否过于极端
+    # ============================================================
     from .plotting import plot_exp2
 
     base = Path(save_dir)
@@ -741,8 +808,11 @@ def run_exp2_adaptive_localization(
     for tau_eval in tau_vals:
         for pg in pg_vals:
             sid += 1
-            mu_g = float(mu_coef) * (pg ** 0.75)
-            scale = mu_g / pg
+            mu_g = float(mu_coef) * (pg ** 0.75)  # r_g = mu_g²/p_g = mu_coef²·p_g^0.5 → ∞
+            scale = mu_g / pg                       # s_g = μ_g/p_g，定理 3.30 的局部化中心
+            # 窗口为 [x_lo·s_g, x_hi·s_g]：x_lo/x_hi 是固定常数（不依赖 p_g）
+            # 旧设计错误：(1 ± C/√p_g)·s_g 是缩窄窗口，窗口概率必然趋向 0
+            # 正确：固定比例窗口使得 Theorem 3.30 的"集中于 [x_-·s_g, x_+·s_g]"可以被验证
             win_lo = max(float(x_lo) * scale, 1e-4)
             win_hi = min(float(x_hi) * scale, 1.0 - 1e-4)
             tasks.append(
@@ -823,6 +893,41 @@ def run_exp3_phase_diagram(
     beta_kappa: float = 1.0,
     grid_size: int = 801,
 ) -> Dict[str, str]:
+    # ============================================================
+    # EXP3 — 相变图（Theorem 3.32 / Corollary 3.33）
+    #
+    # 【理论预测】
+    #   ξ_crit = θ(u₀,ρ)/2 = u₀ρ²/(2(u₀+(1−u₀)ρ²))
+    #   当 ξ = μ_g/p_g > ξ_crit → P(κ_g > u₀ | Y) → 1（p_g → ∞）
+    #   当 ξ < ξ_crit            → P(κ_g > u₀ | Y) → 0
+    #   x 轴为 ξ/ξ_crit（已标准化），相变点固定在 1.0
+    #
+    # 【参数选择说明】
+    #   p_g_list=[30,60,120,240,480]：覆盖渐近趋势；480 是观察锐利跳跃的最小 p_g
+    #   xi_multiplier_list=[0.3,...,2.0]×ξ_crit：阈值两侧均匀采样
+    #   u0=0.5：κ_g 的判断阈值（可改变以测试不同 u₀ 下 ξ_crit 公式的正确性）
+    #   theory_check_tau=0.3：主图使用的 τ 参考值（不同 τ 由 τ-sweep 图展示）
+    #
+    # 【若相变曲线未表现出锐利跳跃的调整方向】
+    #   症状 A — 曲线平坦（无明显跳跃，各 p_g 差异小）：
+    #     → p_g 太小；将 p_g_list 最大值扩展到 960 或 1920
+    #     → 检查 xi_crit 计算是否正确：打印 xi_crit_u0_rho(u0, tau/sqrt(sigma2))
+    #     → 确认 mu_g = xi * pg（在 _exp3_worker 中），不要用 mu_g = xi
+    #
+    #   症状 B — 跳跃点不在 ξ/ξ_crit = 1.0 处（系统偏移）：
+    #     → tau 值极端（τ≈0.1 时 ξ_crit 极小，数值精度会影响），检查 ρ = τ/√σ²
+    #     → sigma2 参数与数据生成中的实际 σ² 不一致，确保两者相同
+    #     → u0 需与分析的阈值一致（更改 u0 会同时移动 ξ_crit 和测试统计量）
+    #
+    #   症状 C — 不同 τ 的 ξ/ξ_crit 曲线相互不重叠（标准化失败）：
+    #     → 标准化 x 轴的 ξ_crit 在代码中正确按 tau 计算（见 xi_by_tau 字典），
+    #       若曲线不重叠，说明有限样本下 ξ_crit 的有效值与理论值有偏差
+    #     → 增大 repeats 到 500 以减少噪声
+    #
+    #   症状 D — P(κ > u₀) 在 ξ >> ξ_crit 时无法达到 1：
+    #     → alpha_kappa/beta_kappa 的先验均值过低，先验压制 κ；尝试 alpha_kappa=1.0
+    #     → grid_size 太小导致后验积分精度低；增加到 1601
+    # ============================================================
     from .plotting import plot_exp3_curves, plot_exp3_heatmap, plot_exp3_tau_sweep
 
     base = Path(save_dir)
@@ -865,6 +970,8 @@ def run_exp3_phase_diagram(
     for r in rows:
         tau_now = float(r["tau"])
         xi_crit_now = xi_crit_u0_rho(u0=u0, rho=tau_now / math.sqrt(sigma2))
+        # xi_ratio = ξ/ξ_crit：标准化 x 轴，使不同 τ 的相变点均落在 1.0 处
+        # 若 xi_ratio=1.0 处 P(κ>u₀) ≠ 0.5，说明 finite-p_g 偏差或 ξ_crit 公式偏差
         r["xi_ratio"] = float(r["xi"]) / max(float(xi_crit_now), 1e-12)
     agg_rows: list[dict[str, Any]] = []
     keys = sorted({(float(r["xi"]), float(r["xi_ratio"]), int(r["p_g"]), float(r["tau"])) for r in rows}, key=lambda z: (z[3], z[2], z[1]))
@@ -938,6 +1045,32 @@ def _evaluate_method_row(result: FitResult, beta0: np.ndarray) -> dict[str, floa
 
 
 def run_exp4_benchmark_linear(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 100, save_dir: str = "simulation_project") -> Dict[str, str]:
+    # ============================================================
+    # EXP4 — 线性回归基准比较（GR_RHS vs RHS / GIGG_MMLE / GHS_plus）
+    #
+    # 【理想结果】
+    #   GR_RHS 在 mse_null（零组）上显著优于 RHS（强组间收缩）
+    #   GR_RHS 在 mse_signal（信号组）上与 RHS 相当或更好
+    #   GR_RHS coverage_95 ≈ 0.95（区间校准良好）
+    #   高相关场景（L3,L4）GR_RHS 的优势应更明显
+    #
+    # 【若 GR_RHS 不优于 RHS 的调整方向】
+    #   症状 A — mse_null 无改善（GR_RHS ≈ RHS）：
+    #     → 检查 alpha_kappa/beta_kappa 设置；增大 beta_kappa 使先验更倾向 κ→0
+    #     → 确认 GR_RHS 使用了 use_group_scale=True（组间尺度 a_g 是分离的关键）
+    #
+    #   症状 B — mse_signal 显著变差（GR_RHS 过度收缩信号组）：
+    #     → tau 设置可能过小；检查 grrhs_kwargs 中的 tau0
+    #     → 信号组的 μ_g 接近相变阈值，增大信号强度或改变 build_linear_beta 的设置
+    #
+    #   症状 C — coverage_95 远低于 0.95：
+    #     → MCMC 未收敛（检查 rhat_max < 1.05, bulk_ess_min > 100）
+    #     → 增加 chains/warmup 在 SamplerConfig 中
+    #
+    #   症状 D — n_effective 偏低（大量不收敛）：
+    #     → sampler 默认配置不足，需显式传入更多链数/步数
+    #     → repeats=100 勉强够用，若结果噪声大考虑 repeats=200
+    # ============================================================
     import pandas as pd
     from .dgp_grouped_linear import build_linear_beta
     from .plotting import plot_exp4_mse_partition, plot_exp4_overall_mse
@@ -1001,6 +1134,37 @@ def run_exp4_benchmark_linear(n_jobs: int = 1, seed: int = MASTER_SEED, repeats:
 
 
 def run_exp5_heterogeneity(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 100, save_dir: str = "simulation_project") -> Dict[str, str]:
+    # ============================================================
+    # EXP5 — 异质性组结构下的分组辨识（连接定理 3.34 的 simultaneous separation）
+    #
+    # 【数据生成设计说明】
+    #   group_sizes = [50, 50, 20, 10, 10, 10]，sigma2=1.0，tau_ref=0.1
+    #   mu = [0, 0,  mu_boundary,  2,  8,  25]
+    #         零  零  阈值附近       弱  中  强
+    #   mu_boundary = 1.2 × ξ_crit(0.5, 0.1) × 20  （比相变阈值高 20%）
+    #   → Group 1,2 (p_g=50)：应被强力收缩（κ≈0）
+    #   → Group 3   (p_g=20)：信号轻微超过阈值，κ 应处于过渡区（0.3~0.7）
+    #   → Group 4,5,6 (p_g=10)：强信号，κ≈1
+    #
+    # 【理想结果】
+    #   GR_RHS AUROC > 0.90（显著优于 RHS 的 ~0.60~0.70）
+    #   零组 κ 均值 < 0.05，强信号组 κ 均值 > 0.80
+    #   Group 3 的 κ 分布宽且居中（体现相变边界的不确定性）
+    #
+    # 【若辨识失败（AUROC 低）的调整方向】
+    #   症状 A — GR_RHS AUROC ≈ RHS（组结构未被利用）：
+    #     → 检查 use_group_scale=True 在 fit_gr_rhs 调用中是否有效
+    #     → tau_ref=0.1 使得 ξ_crit 极小，Group 3 的信号已超阈值较多；
+    #       若仍不收敛，尝试 tau_ref=0.3 使阈值更大，分离更难
+    #
+    #   症状 B — Group 3 的 κ 无差异（要么全 0 要么全 1）：
+    #     → mu_boundary 倍数从 1.2 调整为 1.0（恰好在阈值上）
+    #     → 增大 p_g=20 组到 30 或 50 以使相变更锐利
+    #
+    #   症状 C — 大零组（p_g=50）的 κ 不趋向 0：
+    #     → 与 EXP1 一致的问题：p_g=50 在 tau_ref=0.1 下可能仍未充分收缩
+    #     → 增大 n（当前 n=300），使数据对先验的支配力更强
+    # ============================================================
     import pandas as pd
     from .plotting import plot_exp5_group_ranking, plot_exp5_kappa_stratification, plot_exp5_null_signal_mse
     base = Path(save_dir)
@@ -1058,6 +1222,36 @@ def run_exp5_heterogeneity(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: in
 
 
 def run_exp6_grouped_logistic(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 50, save_dir: str = "simulation_project") -> Dict[str, str]:
+    # ============================================================
+    # EXP6 — 分组 Logistic 回归（二元结果的适用性验证）
+    #
+    # 【数据生成设计说明】
+    #   3 组各 5 个预测变量（p_g=5，注意 p_g 很小，不处于理论渐近区域）
+    #   beta0 = [1.5,1.5,0,0,0 | 0,0,0,0,0 | 0.5,0.5,0,0,0]
+    #            强信号组          零组          弱信号组
+    #   →  Group 1: ||β||²=4.5（强），Group 2: ||β||²=0（零），Group 3: ||β||²=0.5（弱）
+    #   n=200，min_separator_auc=0.8 过滤极难样本
+    #
+    # 【理想结果】
+    #   P(κ₁ > 0.5) ≈ 1.0（强信号组明确检测）
+    #   P(κ₂ > 0.5) ≈ 0.0（零组明确抑制）
+    #   P(κ₃ > 0.5) ∈ (0.3, 0.7)（弱信号组不确定，视为成功展示灵敏度）
+    #   β_{11}, β_{12} 后验均值接近 1.5
+    #
+    # 【若 κ 分组无法区分的调整方向】
+    #   症状 A — P(κ₁ > 0.5) 偏低（强信号也未被检测）：
+    #     → 检查 logistic 回归的 MCMC 收敛（divergence_ratio < 0.01）
+    #     → n=200 可能不足以支持 p_g=5 的信号；尝试 n=500
+    #     → beta0 中的 1.5 对 logistic 尺度是否合适（log-odds 为 1.5，AUC 约 0.85）
+    #
+    #   症状 B — Group 3（弱信号）与 Group 2（零组）的 κ 完全相同：
+    #     → 弱信号 ||β||²=0.5 在 n=200 下可能与零组无法区分（这本身是合理现象）
+    #     → 若希望区分，增大 beta0[10:12] 到 [0.8, 0.8] 或增大 n
+    #
+    #   症状 C — 收敛率（n_effective）低（< 0.8）：
+    #     → Logistic 模型容易出现发散；使用 SamplerConfig(adapt_delta=0.95)
+    #     → 降低 min_separator_auc 阈值（过滤太严导致样本量不足）
+    # ============================================================
     import pandas as pd
     from .plotting import plot_exp6_coefficients, plot_exp6_diagnostics, plot_exp6_kappa, plot_exp6_null_group
     base = Path(save_dir)
@@ -1102,6 +1296,43 @@ def run_exp6_grouped_logistic(n_jobs: int = 1, seed: int = MASTER_SEED, repeats:
 
 
 def run_exp7_ablation(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 100, save_dir: str = "simulation_project") -> Dict[str, str]:
+    # ============================================================
+    # EXP7 — 消融研究（组件价值分析）
+    #
+    # 【消融变体说明】
+    #   GR_RHS_full         ：完整模型（基准，应最优）
+    #   GR_RHS_no_ag        ：去除组尺度 a_g（无组间异质性校正）
+    #   GR_RHS_no_local_scales：去除组内局部尺度 λ_j（全组均匀收缩）
+    #   GR_RHS_shared_kappa ：所有组共享一个 κ（无组特异性收缩）
+    #   GR_RHS_no_kappa     ：退化为标准 RHS（无 κ 机制）
+    #   RHS                 ：纯 horseshoe 基准
+    #
+    # 【DGP 类型与预期差异】
+    #   dense_uniform：组内所有变量均有信号
+    #     → no_local_scales 影响应较小（组内同质）
+    #     → no_ag 影响应较大（组间强度差异需要 a_g 捕获）
+    #   sparse_within_group：组内仅 20% 变量有信号
+    #     → no_local_scales 应显著变差（λ_j 是组内稀疏性检测的关键）
+    #     → GR_RHS_full 优势体现在 mse_signal 上（精准定位活跃变量）
+    #
+    # 【理想结果】
+    #   GR_RHS_full 在两种 DGP 下都具有最低 null_group_mse 和最高 AUROC
+    #   GR_RHS_no_local_scales 在 sparse_within_group 下 signal_group_mse 明显更高
+    #   GR_RHS_shared_kappa 的 AUROC < GR_RHS_full（失去组特异性）
+    #
+    # 【若消融差异不显著的调整方向】
+    #   症状 A — 所有变体性能相近（消融无效果）：
+    #     → mu 中弱信号组（mu=2）可能已超出 ξ_crit，信号过强导致所有方法都能检测
+    #     → 将 mu[2] 降低至接近相变阈值（见 EXP5 的 mu_boundary 计算方法）
+    #     → rho_within=0.7 下组内变量高度相关，局部尺度作用可能被相关性掩盖
+    #
+    #   症状 B — GR_RHS_no_ag 与 GR_RHS_full 无差异：
+    #     → 组间信号强度差异不够大（mu=[0,0,2,8,25,80] 相差悬殊，但 a_g 的作用
+    #       体现在中等差异场景），考虑改为 [0,0,5,10,20,40]
+    #
+    #   症状 C — repeats=100 下置信区间过宽：
+    #     → 增加到 repeats=200，或使用 paired t-test 而非均值比较
+    # ============================================================
     import pandas as pd
     from .plotting import plot_exp7_ablation_bars
     base = Path(save_dir)
@@ -1156,6 +1387,36 @@ def run_exp7_ablation(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 1
 
 
 def run_exp8_tau_calibration(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 100, save_dir: str = "simulation_project") -> Dict[str, str]:
+    # ============================================================
+    # EXP8 — τ 自动校准验证
+    #
+    # 【理论基准】
+    #   Carvalho-Polson-Scott 推荐：τ_target = p₀ / ((p−p₀)√n)
+    #   自动校准后验均值应接近 τ_target（tau_rel_error < 0.20 视为成功）
+    #
+    # 【参数选择说明】
+    #   p0_list=[2,6,12,30]：覆盖稀疏（p₀/p=3%）到稠密（p₀/p=50%）
+    #   tau_scales=[0.5,1.0,2.0]：固定 τ 分别使用 0.5x/1x/2x τ_target
+    #   SamplerConfig(chains=4, warmup=600)：τ 是全局参数，混合较慢，需要足够预热
+    #
+    # 【若自动校准未能达到 tau_target 的调整方向】
+    #   症状 A — tau_post_mean 系统低于 tau_target（自动校准欠估计）：
+    #     → 检查 auto_calibrate_tau 的实现：是否用了正确的 p₀ 作为先验信息
+    #     → tau_target 本身计算：p0/((p-p0)*sqrt(n))，确认 p₀ 是活跃变量数而非组数
+    #     → 尝试 tau_prior_scale=2.0 给自动校准更宽的搜索范围
+    #
+    #   症状 B — tau_post_sd 很大（后验发散）：
+    #     → chains=4 但 warmup=600 可能对 tau 不足；增加到 warmup=1000
+    #     → 大 p₀（如 p₀=30/p=60）时先验信息弱，tau 后验天然更宽，属正常现象
+    #
+    #   症状 C — Fixed 1x tau 与 auto 表现相近但 0.5x/2x 差异不明显：
+    #     → beta0 全部设为 2.0（恒等信号），信号过强导致 tau 变化对估计影响小
+    #     → 考虑混合信号强度（部分 beta=0.5，部分 beta=2.0）以增强 tau 的影响力
+    #
+    #   症状 D — n_effective（收敛率）偏低：
+    #     → Logistic 版本或高相关设计会导致 tau 混合困难
+    #     → 确认 use_auto=True 时 tau0=None（不能同时指定起始值）
+    # ============================================================
     import pandas as pd
     from .plotting import plot_exp8_tau
     base = Path(save_dir)
@@ -1216,6 +1477,41 @@ def run_exp8_tau_calibration(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: 
 
 
 def run_exp9_beta_prior_sensitivity(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 120, save_dir: str = "simulation_project") -> Dict[str, str]:
+    # ============================================================
+    # EXP9 — Beta(α_κ, β_κ) 先验敏感性（Theorem 2.8）
+    #
+    # 【理论连接】
+    #   Theorem 2.8：β_κ 控制边际先验 π(β_j) 的尾部指数。
+    #   β_κ 越大 → 先验越保守（对大 |β_j| 惩罚更重） → 零组收缩更快
+    #   α_κ 越大 → 先验均值更高（κ 更倾向 1） → 信号检测更积极
+    #
+    # 【参数选择说明】
+    #   priors = [(0.5,0.5),(1,1),(1,2),(0.5,1),(2.5,1)]
+    #     (0.5,1.0)：默认推荐，轻微倾向 κ→0
+    #     (2.5,1.0)：更积极的信号检测（α 大）
+    #     (1.0,2.0)：更保守的收缩（β 大）
+    #   pg_levels=[20,50]：有限样本下先验影响应在小 p_g 时更大（大 p_g 似然主导）
+    #   scenarios：baseline（梯度信号）+ tail_extreme（单极端信号）
+    #
+    # 【理想结果】
+    #   结果对先验"稳健"：5 种先验的 AUROC 差异 < 0.05（鲁棒性）
+    #   null_group_kappa_mean：β_κ 增大时应更小（零组更好收缩）
+    #   null_group_prob_kappa_gt_0_1（κ_null > 0.1 的概率）：β_κ 增大时应降低
+    #   tail_extreme 场景：所有先验都应正确识别极强信号组（AUROC≈1）
+    #
+    # 【若先验敏感性过大的调整方向】
+    #   症状 A — AUROC 随先验剧烈变化（差距 > 0.1）：
+    #     → pg 太小（p_g=20,50 处于先验主导区域），增大至 pg_levels=[50,100]
+    #     → 或这是合理的结果，说明先验选择对小样本有实质影响，在论文中讨论
+    #
+    #   症状 B — (0.5,0.5) 先验的零组 κ 无法收缩（null_kappa_mean 偏大）：
+    #     → Beta(0.5,0.5) 是双模 U 形分布，大量质量在 0 和 1 附近，但也允许中间值
+    #     → 在这种先验下 p_g=20 的似然可能不足以压制先验，这是预期行为
+    #
+    #   症状 C — kappa_curve（按 p_g 分层的 κ 曲线）无分层差异：
+    #     → p_g=20 vs 50 的差距不够；增加 pg_levels=[20,50,100,200]
+    #     → 或者先验效应在所有 p_g 下都小，说明似然已主导 → 鲁棒性结论
+    # ============================================================
     import pandas as pd
     from .plotting import plot_exp9_prior_sensitivity
     base = Path(save_dir)
