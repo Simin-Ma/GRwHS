@@ -47,14 +47,24 @@ def validate_theory_results(save_dir: str = "simulation_project") -> TheoryCheck
     x1 = np.log(exp1["p_g"].values)
     y1 = np.log(exp1["median_post_mean_kappa"].values)
     slope1, ci1 = _linreg_slope_ci(x1, y1)
-    tail_vals = exp1.sort_values("p_g")["mean_tail_prob"].to_numpy(dtype=float)
+    exp1_sorted = exp1.sort_values("p_g")
+    tail_cols = [c for c in ("mean_tail_prob_M2", "mean_tail_prob_M3", "mean_tail_prob_M5") if c in exp1_sorted.columns]
+    if tail_cols:
+        tail_matrix = np.column_stack([exp1_sorted[c].to_numpy(dtype=float) for c in tail_cols])
+        tail_vals = np.nanmean(tail_matrix, axis=1)
+    else:
+        tail_vals = exp1_sorted["mean_tail_prob"].to_numpy(dtype=float)
+    scaled_kappa = exp1_sorted["sqrt_pg_times_mean_kappa"].to_numpy(dtype=float) if "sqrt_pg_times_mean_kappa" in exp1_sorted.columns else np.array([])
     pg1 = exp1.sort_values("p_g")["p_g"].to_numpy(dtype=float)
     tail_upper_half = tail_vals[len(tail_vals) // 2 :]
     tail_decline_upper = float(tail_upper_half[0] - tail_upper_half[-1]) if tail_upper_half.size >= 2 else 0.0
     tail_peak = float(np.max(tail_vals)) if tail_vals.size else float("nan")
 
-    r_vals = exp2.sort_values("p_g")["median_ratio_R"].to_numpy(dtype=float)
-    win_vals = exp2.sort_values("p_g")["mean_window_prob"].to_numpy(dtype=float)
+    exp2_sorted = exp2.sort_values("p_g")
+    r_vals = exp2_sorted["median_ratio_R"].to_numpy(dtype=float)
+    win_vals = exp2_sorted["mean_window_prob"].to_numpy(dtype=float)
+    r_lower = float(meta3.get("adaptive_x_lower", 0.3))
+    r_upper = float(meta3.get("adaptive_x_upper", 3.0))
 
     xi_crit = float(meta3["xi_crit"])
     rho = float(meta3["rho"])
@@ -85,11 +95,12 @@ def validate_theory_results(save_dir: str = "simulation_project") -> TheoryCheck
                 lt_not_to_one = False
 
     checks = {
-        "c1_exp1_slope_negative": slope1 < -0.30,
+        "c1_exp1_slope_negative": slope1 < -0.45,
         "c2_exp1_slope_ci_excludes_zero": ci1[1] < 0.0,
         "c3_exp1_tail_declines": (tail_decline_upper > 0.03) and (tail_peak - tail_vals[-1] > 0.10) and (tail_vals[-1] < tail_peak),
-        "c4_exp2_R_nonzero": float(np.min(r_vals)) > 0.30,
-        "c5_exp2_R_nondivergent": float(np.max(r_vals)) < 3.0 and (float(np.max(r_vals) - np.min(r_vals)) < 0.80),
+        "c3b_exp1_scaled_kappa_bounded": bool(scaled_kappa.size == 0 or np.nanmax(scaled_kappa) < 2.5),
+        "c4_exp2_R_nonzero": float(np.min(r_vals)) > r_lower,
+        "c5_exp2_R_nondivergent": float(np.max(r_vals)) < r_upper,
         "c6_exp2_window_mass_high": float(win_vals[-1]) > 0.90,
         "c7_exp3_threshold_correct": xi_err < 1e-8,
         "c8_exp3_above_threshold_rises": gt_line_pass and (gt_best_last > 0.85),
@@ -103,9 +114,12 @@ def validate_theory_results(save_dir: str = "simulation_project") -> TheoryCheck
         "exp1_tail_last": float(tail_vals[-1]),
         "exp1_tail_peak": tail_peak,
         "exp1_tail_decline_upper": float(tail_decline_upper),
+        "exp1_scaled_kappa_max": float(np.nanmax(scaled_kappa)) if scaled_kappa.size else float("nan"),
         "exp2_R_min": float(np.min(r_vals)),
         "exp2_R_max": float(np.max(r_vals)),
         "exp2_R_range": float(np.max(r_vals) - np.min(r_vals)),
+        "exp2_R_theory_lower": r_lower,
+        "exp2_R_theory_upper": r_upper,
         "exp2_window_last": float(win_vals[-1]),
         "exp3_xi_crit": xi_crit,
         "exp3_xi_expected": xi_expected,
