@@ -11,9 +11,31 @@ Methods included in the benchmark layer:
 - `GR_RHS`
 - `RHS`
 - `GIGG_MMLE`
+- `GIGG_b_small`
+- `GIGG_GHS`
+- `GIGG_b_large`
 - `GHS_plus`
+- `OLS`
+- `LASSO_CV`
 
-No pure HS, no GRASP, no OLS/Lasso as headline benchmark methods in this pipeline.
+`laptop` profile default method set is a cheaper subset:
+
+- `GR_RHS`, `RHS`, `GIGG_MMLE`, `GHS_plus`, `OLS`, `LASSO_CV`
+
+No pure HS and no GRASP as headline Bayesian methods in this pipeline.
+
+Recent protocol updates:
+
+- `exp4` supports SNR sweeps via `snr_list` and includes extra settings for unequal-group distributed signals (`L6`) and stronger cross-group coupling (`L4B20`).
+- `exp6` enforces `min_separator_auc` filtering by default (`0.8`).
+- `exp7` removes duplicated RHS-equivalent ablation labels.
+- `exp8` uses mixed strong/weak active coefficients (`2.0` / `0.5`) for tau-calibration robustness.
+- `exp8` now reuses the same synthetic dataset across tau modes within each `(p0, replicate)` block for paired comparison and lower compute overhead.
+- `exp9` now evaluates all `(alpha_kappa, beta_kappa)` priors on the same scenario-replicate dataset (paired prior sensitivity).
+- benchmark layer supports compute profiles: `full` and `laptop` (`--profile laptop` in CLI).
+- GIGG uses Bhattacharya fast beta draw (`btrick=True`) and profile-specific iteration budgets.
+- benchmark summaries now expose run-quality columns such as `n_total_runs`, `n_effective`, and `valid_rate`.
+- `exp4` writes both `summary_all.csv` and `summary_converged.csv` (plus matching tables) for dual reporting.
 
 ---
 
@@ -78,6 +100,11 @@ Default MCMC budget:
 - `adapt_delta = 0.95`
 - `max_treedepth = 12`
 
+Laptop profile budget (`--profile laptop`, exp8 slightly heavier than others):
+
+- most experiments: `chains=1`, `warmup=250`, `post_warmup_draws=250`
+- exp8: `chains=2`, `warmup=300`, `post_warmup_draws=300`
+
 Auto retry policy:
 
 - if divergence ratio `>= 0.5%`, rerun with
@@ -132,10 +159,37 @@ Run all 9 experiments:
 python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2
 ```
 
+Run all with laptop profile:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2 --profile laptop
+```
+
 Run a single experiment:
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --repeats 50 --n-jobs 2
+```
+
+Programmatic examples for new knobs:
+
+```python
+from simulation_project.src.run_experiment import run_exp4_benchmark_linear, run_exp6_grouped_logistic
+
+run_exp4_benchmark_linear(
+    save_dir="simulation_project",
+    repeats=30,
+    n_jobs=2,
+    snr_list=[0.2, 1.0, 5.0],
+    profile="laptop",
+)
+run_exp6_grouped_logistic(
+    save_dir="simulation_project",
+    repeats=50,
+    n_jobs=2,
+    min_separator_auc=0.8,
+    profile="laptop",
+)
 ```
 
 Select by id:
@@ -162,21 +216,22 @@ Assumption:
 - Python env warm already (no first-time heavy JIT delay)
 - `n_jobs=2` for heavier experiments
 
-Approximate duration:
+Approximate duration (very hardware-dependent):
 
-- Exp1 (`repeats=500`): ~1 to 5 sec
-- Exp2 (`repeats=500`): ~1 to 5 sec
-- Exp3 (`repeats=200`): ~2 to 8 sec
-- Exp4 (`repeats=50`): ~3 to 10 h
-- Exp5 (`repeats=100`): ~2 to 7 h
-- Exp6 (`repeats=50`): ~1 to 4 h
-- Exp7 (`repeats=50`): ~2 to 8 h
-- Exp8 (`repeats=5000`): < 1 min
-- Exp9 (`repeats=30`): ~1 to 4 h
+- Exp1 (`repeats=500`): seconds to minutes
+- Exp2 (`repeats=500`): seconds to minutes
+- Exp3 (`repeats=200`): seconds to minutes
+- Exp4 (`repeats=100`, full profile): hours
+- Exp5 (`repeats=100`, full profile): hours
+- Exp6 (`repeats=50`, full profile): hours
+- Exp7 (`repeats=100`, full profile): hours
+- Exp8 (`repeats=100`, full profile): hours
+- Exp9 (`repeats=120`, full profile): hours
 
-All 9 experiments together (default repeats):
+All 9 experiments together:
 
-- roughly ~10 to 35 h (`n_jobs=2`, laptop-level estimate)
+- `full` profile: roughly ~10 to 35 h (`n_jobs=2`, laptop-level estimate)
+- `laptop` profile: usually much shorter (pilot-grade); final tables should still be rerun under `full`
 
 If you need a faster pilot run, reduce `repeats` first for Exp4/5/6/7/9.
 
@@ -211,6 +266,7 @@ Each experiment writes:
 
 - `raw_results.csv`
 - `summary.csv` (or split summaries where appropriate)
+- quality counts (`n_total_runs`, `n_effective`, `valid_rate`) in benchmark-style summaries
 - figures into `simulation_project/figures/`
 - logs into `simulation_project/logs/`
 
@@ -233,6 +289,8 @@ Publication-target filenames currently generated include:
 Tables:
 
 - `table_benchmark_linear.csv`
+- `table_benchmark_linear_all.csv`
+- `table_benchmark_linear_converged.csv`
 - `table_heterogeneity_auroc.csv`
 - `table_ablation.csv`
 - `table_beta_prior_sensitivity.csv`

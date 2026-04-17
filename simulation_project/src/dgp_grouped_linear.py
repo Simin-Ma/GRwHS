@@ -35,6 +35,11 @@ def build_linear_beta(setting_name: str, group_sizes: Sequence[int]) -> np.ndarr
     elif name == "L5":
         for gid in [0, min(3, len(groups) - 1)]:
             beta[groups[gid][0]] = 1.0
+    elif name == "L6":
+        # Unequal-size grouped setting with distributed (dense within-group) signal.
+        for gid in [0, min(3, len(groups) - 1)]:
+            idx = np.asarray(groups[gid], dtype=int)
+            beta[idx] = 1.0 / math.sqrt(len(idx))
     else:
         raise ValueError(f"unknown linear setting: {setting_name}")
     return beta

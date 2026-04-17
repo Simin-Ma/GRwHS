@@ -27,7 +27,29 @@ Primary benchmark methods:
 - `GR_RHS`
 - `RHS`
 - `GIGG_MMLE`
+- `GIGG_b_small`
+- `GIGG_GHS`
+- `GIGG_b_large`
 - `GHS_plus`
+- `OLS`
+- `LASSO_CV`
+
+`laptop` profile default uses a reduced subset:
+
+- `GR_RHS`, `RHS`, `GIGG_MMLE`, `GHS_plus`, `OLS`, `LASSO_CV`
+
+Implementation notes for current revision:
+
+- `exp4` accepts `snr_list` and writes `target_snr` into `raw_results.csv` and `summary.csv`.
+- `exp4` includes extra design settings: `L6` (unequal groups with distributed within-group signal) and `L4B20` (higher cross-group correlation, `rho_between=0.2`).
+- `exp6` uses `min_separator_auc=0.8` by default (configurable in API).
+- `exp8` tau calibration uses mixed strong/weak active coefficients instead of a single fixed active magnitude.
+- `exp8` reuses one synthetic dataset per `(p0, replicate)` across all tau modes for paired comparisons and reduced duplicated compute.
+- `exp9` evaluates all prior pairs on one shared scenario-replicate dataset (paired prior sensitivity).
+- benchmark experiments (`exp4/5/6`) support method subsets and compute profiles (`full`, `laptop`).
+- GIGG fitting enables Bhattacharya fast beta draw (`btrick=True`) with profile-specific iteration budgets.
+- benchmark summaries include `n_total_runs`, `n_effective`, and `valid_rate`.
+- `exp4` emits both `summary_all.csv` and `summary_converged.csv` for all-runs vs converged-only reporting.
 
 ---
 
@@ -59,6 +81,12 @@ Within each replicate, all methods are fit on the same dataset draw.
 - posterior draws: `500`
 - adapt_delta: `0.95`
 - max_treedepth: `12`
+
+### 3.1.1 Laptop profile budget
+
+- non-`exp8`: `chains=1`, `warmup=250`, `post_warmup_draws=250`
+- `exp8`: `chains=2`, `warmup=300`, `post_warmup_draws=300`
+- relaxed convergence gate in laptop mode: `Rhat < 1.03`, `ESS > 120`, divergence ratio `< 1%`
 
 ### 3.2 Retry budget
 
@@ -147,6 +175,8 @@ Each experiment emits:
 Tables expected from the suite:
 
 - `table_benchmark_linear.csv`
+- `table_benchmark_linear_all.csv`
+- `table_benchmark_linear_converged.csv`
 - `table_heterogeneity_auroc.csv`
 - `table_ablation.csv`
 - `table_beta_prior_sensitivity.csv`
@@ -161,10 +191,37 @@ Run all:
 python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2
 ```
 
+Run all with laptop profile:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2 --profile laptop
+```
+
 Run one experiment:
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --repeats 100 --n-jobs 2
+```
+
+Programmatic calls for newly exposed controls:
+
+```python
+from simulation_project.src.run_experiment import run_exp4_benchmark_linear, run_exp6_grouped_logistic
+
+run_exp4_benchmark_linear(
+    save_dir="simulation_project",
+    repeats=30,
+    n_jobs=2,
+    snr_list=[0.2, 1.0, 5.0],
+    profile="laptop",
+)
+run_exp6_grouped_logistic(
+    save_dir="simulation_project",
+    repeats=50,
+    n_jobs=2,
+    min_separator_auc=0.8,
+    profile="laptop",
+)
 ```
 
 Experiment id mapping:

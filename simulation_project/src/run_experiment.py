@@ -19,7 +19,113 @@ from .dgp_normal_means import (
 from .utils import MASTER_SEED, FitResult, SamplerConfig, ensure_dir, experiment_seed, save_dataframe, save_json, setup_logger
 
 
-METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"]
+METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus", "OLS", "LASSO_CV"]
+LAPTOP_METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GHS_plus", "OLS", "LASSO_CV"]
+COMPUTE_PROFILES = ("full", "laptop")
+
+
+def _normalize_compute_profile(profile: str) -> str:
+    p = str(profile).strip().lower()
+    if p not in COMPUTE_PROFILES:
+        raise ValueError(f"unknown compute profile: {profile}; expected one of {COMPUTE_PROFILES}")
+    return p
+
+
+def _resolve_method_list(methods: Sequence[str] | None, *, profile: str) -> list[str]:
+    if methods is None:
+        base = METHODS if _normalize_compute_profile(profile) == "full" else LAPTOP_METHODS
+        return list(base)
+    requested = [str(m).strip() for m in methods]
+    unknown = sorted(set(requested) - set(METHODS))
+    if unknown:
+        raise ValueError(f"unknown methods requested: {unknown}")
+    # Keep canonical ordering for stable tables/plots.
+    return [m for m in METHODS if m in set(requested)]
+
+
+def _sampler_for_profile(profile: str, *, experiment: str) -> SamplerConfig:
+    p = _normalize_compute_profile(profile)
+    exp = str(experiment).strip().lower()
+    if p == "full":
+        if exp == "exp8":
+            return SamplerConfig(chains=4, warmup=600, post_warmup_draws=600)
+        return SamplerConfig()
+    if exp == "exp8":
+        # tau is the global calibration target; keep this experiment slightly heavier.
+        return SamplerConfig(
+            chains=2,
+            warmup=300,
+            post_warmup_draws=300,
+            adapt_delta=0.92,
+            max_treedepth=10,
+            strict_adapt_delta=0.97,
+            strict_max_treedepth=12,
+            max_divergence_ratio=0.01,
+            rhat_threshold=1.03,
+            ess_threshold=120.0,
+        )
+    return SamplerConfig(
+        chains=1,
+        warmup=250,
+        post_warmup_draws=250,
+        adapt_delta=0.92,
+        max_treedepth=10,
+        strict_adapt_delta=0.97,
+        strict_max_treedepth=12,
+        max_divergence_ratio=0.01,
+        rhat_threshold=1.03,
+        ess_threshold=120.0,
+    )
+
+
+def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
+    p = _normalize_compute_profile(profile)
+    if p == "full":
+        return {
+            "iter_mult": 4,
+            "iter_floor": 2000,
+            "iter_cap": 5000,
+            "btrick": True,
+            "mmle_burnin_only": True,
+        }
+    return {
+        "iter_mult": 2,
+        "iter_floor": 500,
+        "iter_cap": 1500,
+        "btrick": True,
+        "mmle_burnin_only": True,
+    }
+
+
+def _default_repeats(exp: str, profile: str) -> int:
+    p = _normalize_compute_profile(profile)
+    exp_key = str(exp).strip().lower()
+    full = {
+        "exp1": 500,
+        "exp2": 500,
+        "exp3": 200,
+        "exp4": 100,
+        "exp5": 100,
+        "exp6": 50,
+        "exp7": 100,
+        "exp8": 100,
+        "exp9": 120,
+    }
+    laptop = {
+        "exp1": 300,
+        "exp2": 300,
+        "exp3": 120,
+        "exp4": 15,
+        "exp5": 20,
+        "exp6": 20,
+        "exp7": 20,
+        "exp8": 30,
+        "exp9": 15,
+    }
+    table = full if p == "full" else laptop
+    if exp_key not in table:
+        raise ValueError(f"unknown experiment key: {exp}")
+    return int(table[exp_key])
 
 
 def _save_rows_csv(rows: list[dict[str, Any]], path: Path) -> None:
@@ -73,7 +179,7 @@ def _parallel_rows(
 
 
 def theta_u0_rho(u0: float, rho: float) -> float:
-    # θ(u₀, ρ) = u₀ρ² / (u₀ + (1−u₀)ρ²)  ——  定理 3.32 的关键量
+    # theta(u0, rho) = u0 * rho^2 / (u0 + (1-u0) * rho^2): key quantity in Theorem 3.32.
     u = float(u0)
     rho2 = float(rho) ** 2
     den = u + (1.0 - u) * rho2
@@ -81,8 +187,7 @@ def theta_u0_rho(u0: float, rho: float) -> float:
 
 
 def xi_crit_u0_rho(u0: float, rho: float) -> float:
-    # ξ_crit = θ(u₀,ρ)/2  ——  相变临界值（定理 3.32/Corollary 3.33）
-    # ξ > ξ_crit → P(κ > u₀|Y) → 1；ξ < ξ_crit → P(κ > u₀|Y) → 0
+    # xi_crit = theta(u0, rho) / 2. If xi > xi_crit then P(kappa > u0 | Y) increases.
     return 0.5 * theta_u0_rho(u0=u0, rho=rho)
 
 
@@ -255,12 +360,13 @@ def _exp3_setting_worker(task: tuple[int, int, int, float, int, int, float, floa
     return rows
 
 
-def _exp4_worker(task: tuple[int, str, dict[str, Any], int, int, SamplerConfig]) -> list[dict[str, Any]]:
+def _exp4_worker(task: tuple[int, str, dict[str, Any], float, int, int, SamplerConfig, list[str], dict[str, Any]]) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import build_linear_beta, generate_grouped_linear_dataset
 
-    sid, setting, spec, r, seed, sampler = task
+    sid, setting, spec, target_snr, r, seed, sampler, methods, gigg_config = task
     s = experiment_seed(4, sid, r, master_seed=seed)
-    beta_shape = build_linear_beta(setting, spec["group_sizes"])
+    beta_setting = str(spec.get("beta_setting", setting))
+    beta_shape = build_linear_beta(beta_setting, spec["group_sizes"])
     ds = generate_grouped_linear_dataset(
         n=500,
         group_sizes=spec["group_sizes"],
@@ -268,26 +374,64 @@ def _exp4_worker(task: tuple[int, str, dict[str, Any], int, int, SamplerConfig])
         rho_between=spec["rho_between"],
         beta_shape=beta_shape,
         seed=s,
-        target_snr=0.70,
+        target_snr=float(target_snr),
         design_type=str(spec.get("design_type", "correlated")),
     )
-    fits = _fit_all_methods(ds["X"], ds["y"], ds["groups"], task="gaussian", seed=s, p0=int(np.sum(np.abs(ds["beta0"]) > 0.0)), sampler=sampler)
+    fits = _fit_all_methods(
+        ds["X"],
+        ds["y"],
+        ds["groups"],
+        task="gaussian",
+        seed=s,
+        p0=int(np.sum(np.abs(ds["beta0"]) > 0.0)),
+        sampler=sampler,
+        methods=methods,
+        gigg_config=gigg_config,
+    )
     out_rows: list[dict[str, Any]] = []
     for method, result in fits.items():
         metrics = _evaluate_method_row(result, ds["beta0"])
-        out_rows.append({"setting": setting, "replicate_id": r, "method": method, "status": result.status, "converged": result.converged, "runtime_seconds": result.runtime_seconds, "rhat_max": result.rhat_max, "bulk_ess_min": result.bulk_ess_min, "divergence_ratio": result.divergence_ratio, "error": result.error, **metrics})
+        out_rows.append(
+            {
+                "setting": setting,
+                "beta_setting": beta_setting,
+                "target_snr": float(target_snr),
+                "replicate_id": r,
+                "method": method,
+                "status": result.status,
+                "converged": result.converged,
+                "runtime_seconds": result.runtime_seconds,
+                "rhat_max": result.rhat_max,
+                "bulk_ess_min": result.bulk_ess_min,
+                "divergence_ratio": result.divergence_ratio,
+                "error": result.error,
+                **metrics,
+            }
+        )
     return out_rows
 
 
-def _exp5_worker(task: tuple[int, int, list[int], list[float], SamplerConfig]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def _exp5_worker(
+    task: tuple[int, int, list[int], list[float], SamplerConfig, list[str], dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .metrics import group_auroc, group_l2_error, group_l2_score
 
-    r, seed, group_sizes, mu, sampler = task
+    r, seed, group_sizes, mu, sampler, methods, gigg_config = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     s = experiment_seed(5, 1, r, master_seed=seed)
     ds = generate_heterogeneity_dataset(n=300, group_sizes=group_sizes, rho_within=0.3, rho_between=0.05, sigma2=1.0, mu=mu, seed=s)
-    fits = _fit_all_methods(ds["X"], ds["y"], ds["groups"], task="gaussian", seed=s, p0=int(np.sum(labels)), sampler=sampler)
+    fits = _fit_all_methods(
+        ds["X"],
+        ds["y"],
+        ds["groups"],
+        task="gaussian",
+        seed=s,
+        p0=int(np.sum(labels)),
+        sampler=sampler,
+        methods=methods,
+        gigg_config=gigg_config,
+    )
     rep_rows: list[dict[str, Any]] = []
     group_rows: list[dict[str, Any]] = []
     kappa_rows: list[dict[str, Any]] = []
@@ -332,13 +476,31 @@ def _exp5_worker(task: tuple[int, int, list[int], list[float], SamplerConfig]) -
     return rep_rows, group_rows, kappa_rows
 
 
-def _exp6_worker(task: tuple[int, int, np.ndarray, SamplerConfig]) -> list[dict[str, Any]]:
+def _exp6_worker(task: tuple[int, int, np.ndarray, SamplerConfig, float, list[str], dict[str, Any]]) -> list[dict[str, Any]]:
     from .dgp_grouped_logistic import generate_grouped_logistic_dataset
 
-    r, seed, beta0, sampler = task
+    r, seed, beta0, sampler, min_separator_auc, methods, gigg_config = task
     s = experiment_seed(6, 1, r, master_seed=seed)
-    ds = generate_grouped_logistic_dataset(n=200, group_sizes=[5, 5, 5], rho_within=0.5, rho_between=0.05, beta0=beta0, seed=s, min_separator_auc=0.0)
-    fits = _fit_all_methods(ds["X"], ds["y"], ds["groups"], task="logistic", seed=s, p0=4, sampler=sampler)
+    ds = generate_grouped_logistic_dataset(
+        n=200,
+        group_sizes=[5, 5, 5],
+        rho_within=0.5,
+        rho_between=0.05,
+        beta0=beta0,
+        seed=s,
+        min_separator_auc=float(min_separator_auc),
+    )
+    fits = _fit_all_methods(
+        ds["X"],
+        ds["y"],
+        ds["groups"],
+        task="logistic",
+        seed=s,
+        p0=4,
+        sampler=sampler,
+        methods=methods,
+        gigg_config=gigg_config,
+    )
     out_rows: list[dict[str, Any]] = []
     for method, res in fits.items():
         is_valid = bool(res.converged and (res.beta_mean is not None))
@@ -455,72 +617,105 @@ def _exp7_worker(task: tuple[int, int, list[int], list[float], str, dict[str, An
     return out_rows
 
 
-def _exp9_worker(task: tuple[int, float, float, int, int, list[float], np.ndarray, list[int], str, str, int, SamplerConfig]) -> dict[str, Any]:
+def _exp9_worker(
+    task: tuple[int, int, str, str, list[float], list[int], int, SamplerConfig, list[tuple[float, float]]]
+) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .fit_gr_rhs import fit_gr_rhs
     from .metrics import group_auroc, group_l2_error, group_l2_score
 
-    pid, a, b, r, seed, mu, labels, group_sizes, scenario, scenario_base, p_g, sampler = task
-    s = experiment_seed(9, pid, r, master_seed=seed)
-    ds = generate_heterogeneity_dataset(n=300, group_sizes=group_sizes, rho_within=0.3, rho_between=0.05, sigma2=1.0, mu=mu, seed=s)
-    res = fit_gr_rhs(ds["X"], ds["y"], ds["groups"], task="gaussian", seed=s + 7, p0=int(np.sum(labels)), sampler=sampler, alpha_kappa=a, beta_kappa=b, use_group_scale=True, shared_kappa=False)
-    null_kappa_mean = float("nan")
-    signal_kappa_mean = float("nan")
-    null_prob_kappa_gt_0_1 = float("nan")
-    if res.kappa_draws is not None:
-        kd = np.asarray(res.kappa_draws, dtype=float)
-        if kd.ndim > 2:
-            kd = kd.reshape(-1, kd.shape[-1])
-        null_idx = np.where(labels == 0)[0]
-        sig_idx = np.where(labels == 1)[0]
-        if null_idx.size > 0:
-            null_kappa_mean = float(np.mean(kd[:, null_idx]))
-            null_prob_kappa_gt_0_1 = float(np.mean(kd[:, null_idx] > 0.1))
-        if sig_idx.size > 0:
-            signal_kappa_mean = float(np.mean(kd[:, sig_idx]))
-    is_valid = bool(res.converged and (res.beta_mean is not None))
-    if not is_valid:
-        return {
-            "alpha_kappa": a,
-            "beta_kappa": b,
-            "scenario": str(scenario),
-            "scenario_base": str(scenario_base),
-            "p_g": int(p_g),
-            "replicate_id": r,
-            "status": res.status,
-            "converged": bool(res.converged),
-            "null_group_mse_avg": float("nan"),
-            "signal_group_mse_avg": float("nan"),
-            "group_auroc": float("nan"),
-            "null_group_kappa_mean": null_kappa_mean,
-            "signal_group_kappa_mean": signal_kappa_mean,
-            "null_group_prob_kappa_gt_0_1": null_prob_kappa_gt_0_1,
-        }
-    score = group_l2_score(res.beta_mean, ds["groups"])
-    err = group_l2_error(res.beta_mean, ds["beta0"], ds["groups"])
-    return {
-        "alpha_kappa": a,
-        "beta_kappa": b,
-        "scenario": str(scenario),
-        "scenario_base": str(scenario_base),
-        "p_g": int(p_g),
-        "replicate_id": r,
-        "status": res.status,
-        "converged": bool(res.converged),
-        "null_group_mse_avg": float(np.mean(err[labels == 0])),
-        "signal_group_mse_avg": float(np.mean(err[labels == 1])),
-        "group_auroc": group_auroc(score, labels),
-        "null_group_kappa_mean": null_kappa_mean,
-        "signal_group_kappa_mean": signal_kappa_mean,
-        "null_group_prob_kappa_gt_0_1": null_prob_kappa_gt_0_1,
-    }
+    sid, r, scenario, scenario_base, mu, group_sizes, seed, sampler, priors = task
+    labels = (np.asarray(mu) > 0).astype(int)
+    p_g = int(group_sizes[0]) if group_sizes else 0
+    s = experiment_seed(9, sid, r, master_seed=seed)
+    ds = generate_heterogeneity_dataset(
+        n=300,
+        group_sizes=group_sizes,
+        rho_within=0.3,
+        rho_between=0.05,
+        sigma2=1.0,
+        mu=mu,
+        seed=s,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for pid, (a, b) in enumerate(priors, start=1):
+        res = fit_gr_rhs(
+            ds["X"],
+            ds["y"],
+            ds["groups"],
+            task="gaussian",
+            seed=s + 100 + pid,
+            p0=int(np.sum(labels)),
+            sampler=sampler,
+            alpha_kappa=float(a),
+            beta_kappa=float(b),
+            use_group_scale=True,
+            shared_kappa=False,
+        )
+        null_kappa_mean = float("nan")
+        signal_kappa_mean = float("nan")
+        null_prob_kappa_gt_0_1 = float("nan")
+        if res.kappa_draws is not None:
+            kd = np.asarray(res.kappa_draws, dtype=float)
+            if kd.ndim > 2:
+                kd = kd.reshape(-1, kd.shape[-1])
+            null_idx = np.where(labels == 0)[0]
+            sig_idx = np.where(labels == 1)[0]
+            if null_idx.size > 0:
+                null_kappa_mean = float(np.mean(kd[:, null_idx]))
+                null_prob_kappa_gt_0_1 = float(np.mean(kd[:, null_idx] > 0.1))
+            if sig_idx.size > 0:
+                signal_kappa_mean = float(np.mean(kd[:, sig_idx]))
+        is_valid = bool(res.converged and (res.beta_mean is not None))
+        if not is_valid:
+            rows.append(
+                {
+                    "alpha_kappa": float(a),
+                    "beta_kappa": float(b),
+                    "scenario": str(scenario),
+                    "scenario_base": str(scenario_base),
+                    "p_g": int(p_g),
+                    "replicate_id": int(r),
+                    "status": res.status,
+                    "converged": bool(res.converged),
+                    "null_group_mse_avg": float("nan"),
+                    "signal_group_mse_avg": float("nan"),
+                    "group_auroc": float("nan"),
+                    "null_group_kappa_mean": null_kappa_mean,
+                    "signal_group_kappa_mean": signal_kappa_mean,
+                    "null_group_prob_kappa_gt_0_1": null_prob_kappa_gt_0_1,
+                }
+            )
+            continue
+        score = group_l2_score(res.beta_mean, ds["groups"])
+        err = group_l2_error(res.beta_mean, ds["beta0"], ds["groups"])
+        rows.append(
+            {
+                "alpha_kappa": float(a),
+                "beta_kappa": float(b),
+                "scenario": str(scenario),
+                "scenario_base": str(scenario_base),
+                "p_g": int(p_g),
+                "replicate_id": int(r),
+                "status": res.status,
+                "converged": bool(res.converged),
+                "null_group_mse_avg": float(np.mean(err[labels == 0])),
+                "signal_group_mse_avg": float(np.mean(err[labels == 1])),
+                "group_auroc": group_auroc(score, labels),
+                "null_group_kappa_mean": null_kappa_mean,
+                "signal_group_kappa_mean": signal_kappa_mean,
+                "null_group_prob_kappa_gt_0_1": null_prob_kappa_gt_0_1,
+            }
+        )
+    return rows
 
 
-def _exp8_worker(task: tuple[int, int, int, list[int], SamplerConfig, float, float, bool]) -> dict[str, Any]:
+def _exp8_worker(task: tuple[int, int, int, list[int], SamplerConfig, float, list[float]]) -> list[dict[str, Any]]:
     from .fit_gr_rhs import fit_gr_rhs
     from .utils import canonical_groups, sample_correlated_design
 
-    p0, r, seed, group_sizes, sampler, tau_target, tau_prior_scale, use_auto = task
+    p0, r, seed, group_sizes, sampler, tau_target, tau_scales = task
     n = 500
     p = int(sum(group_sizes))
     s = experiment_seed(8, int(p0), int(r), master_seed=seed)
@@ -536,53 +731,68 @@ def _exp8_worker(task: tuple[int, int, int, list[int], SamplerConfig, float, flo
     rng = np.random.default_rng(s + 19)
     beta = np.zeros(p, dtype=float)
     active = rng.choice(np.arange(p), size=int(p0), replace=False)
-    beta[active] = 2.0
+    n_strong = max(1, int(math.ceil(0.5 * int(p0))))
+    strong_idx = active[:n_strong]
+    weak_idx = active[n_strong:]
+    beta[strong_idx] = 2.0
+    if weak_idx.size > 0:
+        beta[weak_idx] = 0.5
     y = X @ beta + np.random.default_rng(s + 23).normal(0.0, 1.0, size=n)
     p0_fit = int(np.sum(np.abs(beta) > 0.0))
-    tau0_use = float(tau_prior_scale) * float(tau_target)
+    rows: list[dict[str, Any]] = []
+    modes: list[tuple[str, float, bool]] = [("auto_calibrated", 1.0, True)]
+    for sc in tau_scales:
+        modes.append((f"fixed_{float(sc):.2f}x", float(sc), False))
 
-    res = fit_gr_rhs(
-        X,
-        y,
-        groups,
-        task="gaussian",
-        seed=s + 31,
-        p0=p0_fit,
-        sampler=sampler,
-        alpha_kappa=0.5,
-        beta_kappa=1.0,
-        use_group_scale=True,
-        use_local_scale=True,
-        shared_kappa=False,
-        auto_calibrate_tau=bool(use_auto),
-        tau0=None if use_auto else tau0_use,
-    )
+    for mode_idx, (mode_name, tau_prior_scale, use_auto) in enumerate(modes, start=1):
+        tau0_use = float(tau_prior_scale) * float(tau_target)
+        res = fit_gr_rhs(
+            X,
+            y,
+            groups,
+            task="gaussian",
+            seed=s + 31 + mode_idx,
+            p0=p0_fit,
+            sampler=sampler,
+            alpha_kappa=0.5,
+            beta_kappa=1.0,
+            use_group_scale=True,
+            use_local_scale=True,
+            shared_kappa=False,
+            auto_calibrate_tau=bool(use_auto),
+            tau0=None if use_auto else tau0_use,
+        )
 
-    valid_tau = bool(res.converged and (res.tau_draws is not None))
-    tau_mean = float(np.mean(np.asarray(res.tau_draws, dtype=float))) if valid_tau else float("nan")
-    tau_sd = float(np.std(np.asarray(res.tau_draws, dtype=float))) if valid_tau else float("nan")
-    kappa_eff = float("nan")
-    if bool(res.converged and (res.kappa_draws is not None)):
-        kd = np.asarray(res.kappa_draws, dtype=float)
-        if kd.ndim > 2:
-            kd = kd.reshape(-1, kd.shape[-1])
-        kappa_eff = float(np.mean(np.sum(kd, axis=1)))
+        valid_tau = bool(res.converged and (res.tau_draws is not None))
+        tau_mean = float(np.mean(np.asarray(res.tau_draws, dtype=float))) if valid_tau else float("nan")
+        tau_sd = float(np.std(np.asarray(res.tau_draws, dtype=float))) if valid_tau else float("nan")
+        kappa_eff = float("nan")
+        if bool(res.converged and (res.kappa_draws is not None)):
+            kd = np.asarray(res.kappa_draws, dtype=float)
+            if kd.ndim > 2:
+                kd = kd.reshape(-1, kd.shape[-1])
+            kappa_eff = float(np.mean(np.sum(kd, axis=1)))
 
-    return {
-        "p0": int(p0),
-        "p": int(p),
-        "n": int(n),
-        "replicate_id": int(r),
-        "tau_target": float(tau_target),
-        "tau_prior_scale": float(tau_prior_scale),
-        "tau_mode": "auto_calibrated" if bool(use_auto) else f"fixed_{tau_prior_scale:.2f}x",
-        "tau_post_mean": tau_mean,
-        "tau_post_sd": tau_sd,
-        "kappa_eff_sum_post_mean": kappa_eff,
-        "converged": bool(res.converged),
-        "status": str(res.status),
-        "signal_var_true": float(beta.T @ cov_x @ beta),
-    }
+        rows.append(
+            {
+                "p0": int(p0),
+                "p": int(p),
+                "n": int(n),
+                "replicate_id": int(r),
+                "tau_target": float(tau_target),
+                "tau_prior_scale": float(tau_prior_scale),
+                "tau_mode": mode_name,
+                "tau_post_mean": tau_mean,
+                "tau_post_sd": tau_sd,
+                "kappa_eff_sum_post_mean": kappa_eff,
+                "converged": bool(res.converged),
+                "status": str(res.status),
+                "signal_var_true": float(beta.T @ cov_x @ beta),
+                "n_strong_active": int(strong_idx.size),
+                "n_weak_active": int(weak_idx.size),
+            }
+        )
+    return rows
 
 
 def _fit_all_methods(
@@ -595,7 +805,10 @@ def _fit_all_methods(
     p0: int,
     sampler: SamplerConfig,
     grrhs_kwargs: dict[str, Any] | None = None,
+    methods: Sequence[str] | None = None,
+    gigg_config: dict[str, Any] | None = None,
 ) -> Dict[str, FitResult]:
+    from .fit_classical import fit_lasso_cv, fit_ols
     from .fit_gigg import fit_gigg_fixed, fit_gigg_mmle
     from .fit_ghs_plus import fit_ghs_plus
     from .fit_gr_rhs import fit_gr_rhs
@@ -603,35 +816,69 @@ def _fit_all_methods(
 
     n = X.shape[0]
     grrhs_kwargs = grrhs_kwargs or {}
+    methods_use = _resolve_method_list(methods, profile="full") if methods is not None else list(METHODS)
+    gigg_cfg = dict(gigg_config or {})
+    gigg_mmle_cfg = dict(gigg_cfg)
+    gigg_fixed_cfg = {k: v for k, v in gigg_cfg.items() if k != "mmle_burnin_only"}
     out: Dict[str, FitResult] = {}
 
-    out["GR_RHS"] = fit_gr_rhs(X, y, groups, task=task, seed=seed + 1, p0=p0, sampler=sampler, **grrhs_kwargs)
-    out["RHS"] = fit_rhs(X, y, groups, task=task, seed=seed + 2, p0=p0, sampler=sampler)
-
-    # ── GIGG variants (Boss et al. 2024) ─────────────────────────────────────
-    # MMLE: fixes a_g=1/n, estimates b_g adaptively — best overall (Table 2–4)
-    out["GIGG_MMLE"] = fit_gigg_mmle(X, y, groups, task=task, seed=seed + 3, sampler=sampler, p0=p0)
-
-    # Fixed b_g = 1/n  → near-individualistic shrinkage; best for concentrated signals
-    out["GIGG_b_small"] = fit_gigg_fixed(
-        X, y, groups, task=task, seed=seed + 5, sampler=sampler, p0=p0,
-        a_val=1.0 / n, b_val=1.0 / n,
-        method_label="GIGG_b_small",
-    )
-    # Fixed b_g = 1/2  → group horseshoe special case (a_g = b_g = 1/2, Section 2.1)
-    out["GIGG_GHS"] = fit_gigg_fixed(
-        X, y, groups, task=task, seed=seed + 6, sampler=sampler, p0=p0,
-        a_val=0.5, b_val=0.5,
-        method_label="GIGG_GHS",
-    )
-    # Fixed b_g = 1    → group-dependent shrinkage; best for distributed signals
-    out["GIGG_b_large"] = fit_gigg_fixed(
-        X, y, groups, task=task, seed=seed + 7, sampler=sampler, p0=p0,
-        a_val=1.0 / n, b_val=1.0,
-        method_label="GIGG_b_large",
-    )
-
-    out["GHS_plus"] = fit_ghs_plus(X, y, groups, task=task, seed=seed + 4, p0=p0, sampler=sampler)
+    for method in methods_use:
+        if method == "GR_RHS":
+            out["GR_RHS"] = fit_gr_rhs(X, y, groups, task=task, seed=seed + 1, p0=p0, sampler=sampler, **grrhs_kwargs)
+        elif method == "RHS":
+            out["RHS"] = fit_rhs(X, y, groups, task=task, seed=seed + 2, p0=p0, sampler=sampler)
+        elif method == "GIGG_MMLE":
+            out["GIGG_MMLE"] = fit_gigg_mmle(X, y, groups, task=task, seed=seed + 3, sampler=sampler, p0=p0, **gigg_mmle_cfg)
+        elif method == "GIGG_b_small":
+            out["GIGG_b_small"] = fit_gigg_fixed(
+                X,
+                y,
+                groups,
+                task=task,
+                seed=seed + 5,
+                sampler=sampler,
+                p0=p0,
+                a_val=1.0 / n,
+                b_val=1.0 / n,
+                method_label="GIGG_b_small",
+                **gigg_fixed_cfg,
+            )
+        elif method == "GIGG_GHS":
+            out["GIGG_GHS"] = fit_gigg_fixed(
+                X,
+                y,
+                groups,
+                task=task,
+                seed=seed + 6,
+                sampler=sampler,
+                p0=p0,
+                a_val=0.5,
+                b_val=0.5,
+                method_label="GIGG_GHS",
+                **gigg_fixed_cfg,
+            )
+        elif method == "GIGG_b_large":
+            out["GIGG_b_large"] = fit_gigg_fixed(
+                X,
+                y,
+                groups,
+                task=task,
+                seed=seed + 7,
+                sampler=sampler,
+                p0=p0,
+                a_val=1.0 / n,
+                b_val=1.0,
+                method_label="GIGG_b_large",
+                **gigg_fixed_cfg,
+            )
+        elif method == "GHS_plus":
+            out["GHS_plus"] = fit_ghs_plus(X, y, groups, task=task, seed=seed + 4, p0=p0, sampler=sampler)
+        elif method == "OLS":
+            out["OLS"] = fit_ols(X, y, task=task, seed=seed + 8)
+        elif method == "LASSO_CV":
+            out["LASSO_CV"] = fit_lasso_cv(X, y, task=task, seed=seed + 9)
+        else:
+            raise ValueError(f"Unsupported method: {method}")
     return out
 
 
@@ -664,32 +911,32 @@ def run_exp1_null_contraction(
     grid_size: int = 801,
 ) -> Dict[str, str]:
     # ============================================================
-    # EXP1 — 零收缩验证（Theorem 3.22）
+    # EXP1 鈥?闆舵敹缂╅獙璇侊紙Theorem 3.22锛?
     #
-    # 【理论预测】
-    #   E[κ_g | Y_null] = O_{P₀}(p_g^{-1/2})
-    #   → log-log 斜率目标：-0.5
-    #   → 固定阈值尾概率 P(κ > ε) → 0（任意固定 ε > 0）
+    # 銆愮悊璁洪娴嬨€?
+    #   E[魏_g | Y_null] = O_{P鈧€}(p_g^{-1/2})
+    #   鈫?log-log 鏂滅巼鐩爣锛?0.5
+    #   鈫?鍥哄畾闃堝€煎熬姒傜巼 P(魏 > 蔚) 鈫?0锛堜换鎰忓浐瀹?蔚 > 0锛?
     #
-    # 【参数选择说明】
-    #   pg_list  = [10,...,2000]：覆盖 pre-asymptotic 到 asymptotic 区域
-    #   tau_eval = 0.5：ρ = τ/√σ² = 0.5，居中选取以避免 ρ→0/∞ 的退化
-    #   alpha_kappa=0.5, beta_kappa=1.0：先验对 κ=0 有轻微倾向（比 Beta(1,1) 收缩快）
-    #   tail_eps_list=[0.1, 0.2]：固定阈值（不随 p_g 缩放），直接测零收缩
+    # 銆愬弬鏁伴€夋嫨璇存槑銆?
+    #   pg_list  = [10,...,2000]锛氳鐩?pre-asymptotic 鍒?asymptotic 鍖哄煙
+    #   tau_eval = 0.5锛毾?= 蟿/鈭毾兟?= 0.5锛屽眳涓€夊彇浠ラ伩鍏?蟻鈫?/鈭?鐨勯€€鍖?
+    #   alpha_kappa=0.5, beta_kappa=1.0锛氬厛楠屽 魏=0 鏈夎交寰€惧悜锛堟瘮 Beta(1,1) 鏀剁缉蹇級
+    #   tail_eps_list=[0.1, 0.2]锛氬浐瀹氶槇鍊硷紙涓嶉殢 p_g 缂╂斁锛夛紝鐩存帴娴嬮浂鏀剁缉
     #
-    # 【若 log-log 斜率未达到 -0.5 的调整方向】
-    #   症状 A — 斜率 < -0.5（过快下降）：
-    #     → tau_eval 偏小（ρ 太小，先验对 κ 的约束很强），尝试 tau_eval=1.0
-    #     → alpha_kappa 偏小，先验对 κ 施加过强的下压，尝试 alpha_kappa=1.0
+    # 銆愯嫢 log-log 鏂滅巼鏈揪鍒?-0.5 鐨勮皟鏁存柟鍚戙€?
+    #   鐥囩姸 A 鈥?鏂滅巼 < -0.5锛堣繃蹇笅闄嶏級锛?
+    #     鈫?tau_eval 鍋忓皬锛埾?澶皬锛屽厛楠屽 魏 鐨勭害鏉熷緢寮猴級锛屽皾璇?tau_eval=1.0
+    #     鈫?alpha_kappa 鍋忓皬锛屽厛楠屽 魏 鏂藉姞杩囧己鐨勪笅鍘嬶紝灏濊瘯 alpha_kappa=1.0
     #
-    #   症状 B — 斜率 > -0.5（下降太慢，如 -0.30）：
-    #     → p_g 范围不够大，渐近区域未到达；扩展 pg_list 到 [500,1000,2000,5000]
-    #     → beta_kappa 偏小（先验均值 α/(α+β) 过大），尝试 beta_kappa=2.0
-    #     → repeats 不足导致 median 估计噪声大，增加到 1000
+    #   鐥囩姸 B 鈥?鏂滅巼 > -0.5锛堜笅闄嶅お鎱紝濡?-0.30锛夛細
+    #     鈫?p_g 鑼冨洿涓嶅澶э紝娓愯繎鍖哄煙鏈埌杈撅紱鎵╁睍 pg_list 鍒?[500,1000,2000,5000]
+    #     鈫?beta_kappa 鍋忓皬锛堝厛楠屽潎鍊?伪/(伪+尾) 杩囧ぇ锛夛紝灏濊瘯 beta_kappa=2.0
+    #     鈫?repeats 涓嶈冻瀵艰嚧 median 浼拌鍣０澶э紝澧炲姞鍒?1000
     #
-    #   症状 C — 尾概率 P(κ > 0.1) 非单调（出现驼峰）：
-    #     → 检查 tau_eval：对于极小 τ，后验在小 p_g 时就很集中，大 p_g 时变化不大
-    #     → 增加 tail_eps_list 中的 ε 值（如 0.3, 0.5）以观察不同尾部行为
+    #   鐥囩姸 C 鈥?灏炬鐜?P(魏 > 0.1) 闈炲崟璋冿紙鍑虹幇椹煎嘲锛夛細
+    #     鈫?妫€鏌?tau_eval锛氬浜庢瀬灏?蟿锛屽悗楠屽湪灏?p_g 鏃跺氨寰堥泦涓紝澶?p_g 鏃跺彉鍖栦笉澶?
+    #     鈫?澧炲姞 tail_eps_list 涓殑 蔚 鍊硷紙濡?0.3, 0.5锛変互瑙傚療涓嶅悓灏鹃儴琛屼负
     # ============================================================
     from .plotting import plot_exp1
 
@@ -745,8 +992,8 @@ def run_exp1_null_contraction(
         agg_rows.append(row)
     x = np.log(np.asarray([float(r["p_g"]) for r in agg_rows], dtype=float))
     y = np.log(np.asarray([float(r["median_post_mean_kappa"]) for r in agg_rows], dtype=float))
-    # 理论目标：slope ≈ -0.5（95% CI 覆盖 -0.5）
-    # 若斜率显著偏离，见函数头部注释的【症状 A/B】调整方向
+    # 鐞嗚鐩爣锛歴lope 鈮?-0.5锛?5% CI 瑕嗙洊 -0.5锛?
+    # 鑻ユ枩鐜囨樉钁楀亸绂伙紝瑙佸嚱鏁板ご閮ㄦ敞閲婄殑銆愮棁鐘?A/B銆戣皟鏁存柟鍚?
     slope, slope_ci = _linreg_slope_ci(x, y)
     _save_rows_csv(rows, out / "raw_results.csv")
     _save_rows_csv(agg_rows, out / "summary.csv")
@@ -787,38 +1034,38 @@ def run_exp2_adaptive_localization(
     grid_size: int = 801,
 ) -> Dict[str, str]:
     # ============================================================
-    # EXP2 — 自适应局部化验证（Theorem 3.30）
+    # EXP2 鈥?鑷€傚簲灞€閮ㄥ寲楠岃瘉锛圱heorem 3.30锛?
     #
-    # 【理论预测】
-    #   中间信号下（r_g = μ_g²/p_g → ∞），后验集中于 [x_- s_g, x_+ s_g]
-    #   其中 s_g = μ_g/p_g，x_-, x_+ 为固定常数（不依赖 p_g）
-    #   → ratio_R = E[κ|Y] / s_g → 1（后验均值收敛到 s_g）
-    #   → P(κ ∈ [x_lo·s_g, x_hi·s_g]) → 1
+    # 銆愮悊璁洪娴嬨€?
+    #   涓棿淇″彿涓嬶紙r_g = 渭_g虏/p_g 鈫?鈭烇級锛屽悗楠岄泦涓簬 [x_- s_g, x_+ s_g]
+    #   鍏朵腑 s_g = 渭_g/p_g锛寈_-, x_+ 涓哄浐瀹氬父鏁帮紙涓嶄緷璧?p_g锛?
+    #   鈫?ratio_R = E[魏|Y] / s_g 鈫?1锛堝悗楠屽潎鍊兼敹鏁涘埌 s_g锛?
+    #   鈫?P(魏 鈭?[x_lo路s_g, x_hi路s_g]) 鈫?1
     #
-    # 【参数选择说明】
-    #   mu_coef=3.0：μ_g = 3·p_g^{0.75}，使 r_g = 9·p_g^{0.5} → ∞（满足 Cond. 3.25）
-    #                 同时 s_g = 3·p_g^{-0.25} 使 s_g ∈ (0,1) 对所有设定的 p_g 成立
-    #   x_lo=0.5, x_hi=2.0：定理的"固定常数窗口"。窗口宽度 = 1.5·s_g（固定比例）
-    #                         注意：旧版曾错用 (1±C/√p_g) 的缩窄窗口，已修正为此
-    #   tau_list=[0.5,1.0,2.0]：跨越 ρ<1/ρ=1/ρ>1 三种区域测试普适性
+    # 銆愬弬鏁伴€夋嫨璇存槑銆?
+    #   mu_coef=3.0锛毼糭g = 3路p_g^{0.75}锛屼娇 r_g = 9路p_g^{0.5} 鈫?鈭烇紙婊¤冻 Cond. 3.25锛?
+    #                 鍚屾椂 s_g = 3路p_g^{-0.25} 浣?s_g 鈭?(0,1) 瀵规墍鏈夎瀹氱殑 p_g 鎴愮珛
+    #   x_lo=0.5, x_hi=2.0锛氬畾鐞嗙殑"鍥哄畾甯告暟绐楀彛"銆傜獥鍙ｅ搴?= 1.5路s_g锛堝浐瀹氭瘮渚嬶級
+    #                         娉ㄦ剰锛氭棫鐗堟浘閿欑敤 (1卤C/鈭歱_g) 鐨勭缉绐勭獥鍙ｏ紝宸蹭慨姝ｄ负姝?
+    #   tau_list=[0.5,1.0,2.0]锛氳法瓒?蟻<1/蟻=1/蟻>1 涓夌鍖哄煙娴嬭瘯鏅€傛€?
     #
-    # 【若 ratio_R 未收敛到 1 的调整方向】
-    #   症状 A — ratio_R 随 p_g 单调增加（> 1）：
-    #     → s_g 对所有大 p_g 都偏小（< 0.5），Beta 先验均值=α/(α+β) 将 κ 上推
-    #     → 尝试增大 mu_coef（如 mu_coef=5.0）使 s_g 更大，远离先验均值
-    #     → 或减小 beta_kappa（如 beta_kappa=0.5）使先验均值靠近 0
+    # 銆愯嫢 ratio_R 鏈敹鏁涘埌 1 鐨勮皟鏁存柟鍚戙€?
+    #   鐥囩姸 A 鈥?ratio_R 闅?p_g 鍗曡皟澧炲姞锛? 1锛夛細
+    #     鈫?s_g 瀵规墍鏈夊ぇ p_g 閮藉亸灏忥紙< 0.5锛夛紝Beta 鍏堥獙鍧囧€?伪/(伪+尾) 灏?魏 涓婃帹
+    #     鈫?灏濊瘯澧炲ぇ mu_coef锛堝 mu_coef=5.0锛変娇 s_g 鏇村ぇ锛岃繙绂诲厛楠屽潎鍊?
+    #     鈫?鎴栧噺灏?beta_kappa锛堝 beta_kappa=0.5锛変娇鍏堥獙鍧囧€奸潬杩?0
     #
-    #   症状 B — ratio_R 随 p_g 单调减少（< 1）：
-    #     → s_g 偏大（接近 1），κ 空间边界效应（κ ∈ (0,1)）导致均值偏低
-    #     → 尝试减小 mu_coef（如 mu_coef=1.5）
+    #   鐥囩姸 B 鈥?ratio_R 闅?p_g 鍗曡皟鍑忓皯锛? 1锛夛細
+    #     鈫?s_g 鍋忓ぇ锛堟帴杩?1锛夛紝魏 绌洪棿杈圭晫鏁堝簲锛埼?鈭?(0,1)锛夊鑷村潎鍊煎亸浣?
+    #     鈫?灏濊瘯鍑忓皬 mu_coef锛堝 mu_coef=1.5锛?
     #
-    #   症状 C — window_prob 不随 p_g 增大（局部化不成立）：
-    #     → 检查 r_g = mu_g²/p_g 是否足够大：打印 mu_g²/p_g 对各 p_g 的值
-    #     → 若 r_g 增长慢，尝试 mu_coef^2 > p_g^{0.5} 更快增长（如 mu_coef * p_g^{0.6}）
-    #     → 扩展 pg_list 到 [20,50,100,200,500,1000]
+    #   鐥囩姸 C 鈥?window_prob 涓嶉殢 p_g 澧炲ぇ锛堝眬閮ㄥ寲涓嶆垚绔嬶級锛?
+    #     鈫?妫€鏌?r_g = mu_g虏/p_g 鏄惁瓒冲澶э細鎵撳嵃 mu_g虏/p_g 瀵瑰悇 p_g 鐨勫€?
+    #     鈫?鑻?r_g 澧為暱鎱紝灏濊瘯 mu_coef^2 > p_g^{0.5} 鏇村揩澧為暱锛堝 mu_coef * p_g^{0.6}锛?
+    #     鈫?鎵╁睍 pg_list 鍒?[20,50,100,200,500,1000]
     #
-    #   症状 D — 不同 tau 的 ratio_R 曲线差异很大（tau 依赖性强）：
-    #     → 这表明 pre-asymptotic 效应主导；增大 p_g 或检验 ρ 是否过于极端
+    #   鐥囩姸 D 鈥?涓嶅悓 tau 鐨?ratio_R 鏇茬嚎宸紓寰堝ぇ锛坱au 渚濊禆鎬у己锛夛細
+    #     鈫?杩欒〃鏄?pre-asymptotic 鏁堝簲涓诲锛涘澶?p_g 鎴栨楠?蟻 鏄惁杩囦簬鏋佺
     # ============================================================
     from .plotting import plot_exp2
 
@@ -833,11 +1080,11 @@ def run_exp2_adaptive_localization(
     for tau_eval in tau_vals:
         for pg in pg_vals:
             sid += 1
-            mu_g = float(mu_coef) * (pg ** 0.75)  # r_g = mu_g²/p_g = mu_coef²·p_g^0.5 → ∞
-            scale = mu_g / pg                       # s_g = μ_g/p_g，定理 3.30 的局部化中心
-            # 窗口为 [x_lo·s_g, x_hi·s_g]：x_lo/x_hi 是固定常数（不依赖 p_g）
-            # 旧设计错误：(1 ± C/√p_g)·s_g 是缩窄窗口，窗口概率必然趋向 0
-            # 正确：固定比例窗口使得 Theorem 3.30 的"集中于 [x_-·s_g, x_+·s_g]"可以被验证
+            mu_g = float(mu_coef) * (pg ** 0.75)  # r_g = mu_g虏/p_g = mu_coef虏路p_g^0.5 鈫?鈭?
+            scale = mu_g / pg                       # s_g = 渭_g/p_g锛屽畾鐞?3.30 鐨勫眬閮ㄥ寲涓績
+            # 绐楀彛涓?[x_lo路s_g, x_hi路s_g]锛歺_lo/x_hi 鏄浐瀹氬父鏁帮紙涓嶄緷璧?p_g锛?
+            # 鏃ц璁￠敊璇細(1 卤 C/鈭歱_g)路s_g 鏄缉绐勭獥鍙ｏ紝绐楀彛姒傜巼蹇呯劧瓒嬪悜 0
+            # 姝ｇ‘锛氬浐瀹氭瘮渚嬬獥鍙ｄ娇寰?Theorem 3.30 鐨?闆嗕腑浜?[x_-路s_g, x_+路s_g]"鍙互琚獙璇?
             win_lo = max(float(x_lo) * scale, 1e-4)
             win_hi = min(float(x_hi) * scale, 1.0 - 1e-4)
             tasks.append(
@@ -919,39 +1166,39 @@ def run_exp3_phase_diagram(
     grid_size: int = 801,
 ) -> Dict[str, str]:
     # ============================================================
-    # EXP3 — 相变图（Theorem 3.32 / Corollary 3.33）
+    # EXP3 鈥?鐩稿彉鍥撅紙Theorem 3.32 / Corollary 3.33锛?
     #
-    # 【理论预测】
-    #   ξ_crit = θ(u₀,ρ)/2 = u₀ρ²/(2(u₀+(1−u₀)ρ²))
-    #   当 ξ = μ_g/p_g > ξ_crit → P(κ_g > u₀ | Y) → 1（p_g → ∞）
-    #   当 ξ < ξ_crit            → P(κ_g > u₀ | Y) → 0
-    #   x 轴为 ξ/ξ_crit（已标准化），相变点固定在 1.0
+    # 銆愮悊璁洪娴嬨€?
+    #   尉_crit = 胃(u鈧€,蟻)/2 = u鈧€蟻虏/(2(u鈧€+(1鈭抲鈧€)蟻虏))
+    #   褰?尉 = 渭_g/p_g > 尉_crit 鈫?P(魏_g > u鈧€ | Y) 鈫?1锛坧_g 鈫?鈭烇級
+    #   褰?尉 < 尉_crit            鈫?P(魏_g > u鈧€ | Y) 鈫?0
+    #   x 杞翠负 尉/尉_crit锛堝凡鏍囧噯鍖栵級锛岀浉鍙樼偣鍥哄畾鍦?1.0
     #
-    # 【参数选择说明】
-    #   p_g_list=[30,60,120,240,480]：覆盖渐近趋势；480 是观察锐利跳跃的最小 p_g
-    #   xi_multiplier_list=[0.3,...,2.0]×ξ_crit：阈值两侧均匀采样
-    #   u0=0.5：κ_g 的判断阈值（可改变以测试不同 u₀ 下 ξ_crit 公式的正确性）
-    #   theory_check_tau=0.3：主图使用的 τ 参考值（不同 τ 由 τ-sweep 图展示）
+    # 銆愬弬鏁伴€夋嫨璇存槑銆?
+    #   p_g_list=[30,60,120,240,480]锛氳鐩栨笎杩戣秼鍔匡紱480 鏄瀵熼攼鍒╄烦璺冪殑鏈€灏?p_g
+    #   xi_multiplier_list=[0.3,...,2.0]脳尉_crit锛氶槇鍊间袱渚у潎鍖€閲囨牱
+    #   u0=0.5锛毼篲g 鐨勫垽鏂槇鍊硷紙鍙敼鍙樹互娴嬭瘯涓嶅悓 u鈧€ 涓?尉_crit 鍏紡鐨勬纭€э級
+    #   theory_check_tau=0.3锛氫富鍥句娇鐢ㄧ殑 蟿 鍙傝€冨€硷紙涓嶅悓 蟿 鐢?蟿-sweep 鍥惧睍绀猴級
     #
-    # 【若相变曲线未表现出锐利跳跃的调整方向】
-    #   症状 A — 曲线平坦（无明显跳跃，各 p_g 差异小）：
-    #     → p_g 太小；将 p_g_list 最大值扩展到 960 或 1920
-    #     → 检查 xi_crit 计算是否正确：打印 xi_crit_u0_rho(u0, tau/sqrt(sigma2))
-    #     → 确认 mu_g = xi * pg（在 _exp3_worker 中），不要用 mu_g = xi
+    # 銆愯嫢鐩稿彉鏇茬嚎鏈〃鐜板嚭閿愬埄璺宠穬鐨勮皟鏁存柟鍚戙€?
+    #   鐥囩姸 A 鈥?鏇茬嚎骞冲潶锛堟棤鏄庢樉璺宠穬锛屽悇 p_g 宸紓灏忥級锛?
+    #     鈫?p_g 澶皬锛涘皢 p_g_list 鏈€澶у€兼墿灞曞埌 960 鎴?1920
+    #     鈫?妫€鏌?xi_crit 璁＄畻鏄惁姝ｇ‘锛氭墦鍗?xi_crit_u0_rho(u0, tau/sqrt(sigma2))
+    #     鈫?纭 mu_g = xi * pg锛堝湪 _exp3_worker 涓級锛屼笉瑕佺敤 mu_g = xi
     #
-    #   症状 B — 跳跃点不在 ξ/ξ_crit = 1.0 处（系统偏移）：
-    #     → tau 值极端（τ≈0.1 时 ξ_crit 极小，数值精度会影响），检查 ρ = τ/√σ²
-    #     → sigma2 参数与数据生成中的实际 σ² 不一致，确保两者相同
-    #     → u0 需与分析的阈值一致（更改 u0 会同时移动 ξ_crit 和测试统计量）
+    #   鐥囩姸 B 鈥?璺宠穬鐐逛笉鍦?尉/尉_crit = 1.0 澶勶紙绯荤粺鍋忕Щ锛夛細
+    #     鈫?tau 鍊兼瀬绔紙蟿鈮?.1 鏃?尉_crit 鏋佸皬锛屾暟鍊肩簿搴︿細褰卞搷锛夛紝妫€鏌?蟻 = 蟿/鈭毾兟?
+    #     鈫?sigma2 鍙傛暟涓庢暟鎹敓鎴愪腑鐨勫疄闄?蟽虏 涓嶄竴鑷达紝纭繚涓よ€呯浉鍚?
+    #     鈫?u0 闇€涓庡垎鏋愮殑闃堝€间竴鑷达紙鏇存敼 u0 浼氬悓鏃剁Щ鍔?尉_crit 鍜屾祴璇曠粺璁￠噺锛?
     #
-    #   症状 C — 不同 τ 的 ξ/ξ_crit 曲线相互不重叠（标准化失败）：
-    #     → 标准化 x 轴的 ξ_crit 在代码中正确按 tau 计算（见 xi_by_tau 字典），
-    #       若曲线不重叠，说明有限样本下 ξ_crit 的有效值与理论值有偏差
-    #     → 增大 repeats 到 500 以减少噪声
+    #   鐥囩姸 C 鈥?涓嶅悓 蟿 鐨?尉/尉_crit 鏇茬嚎鐩镐簰涓嶉噸鍙狅紙鏍囧噯鍖栧け璐ワ級锛?
+    #     鈫?鏍囧噯鍖?x 杞寸殑 尉_crit 鍦ㄤ唬鐮佷腑姝ｇ‘鎸?tau 璁＄畻锛堣 xi_by_tau 瀛楀吀锛夛紝
+    #       鑻ユ洸绾夸笉閲嶅彔锛岃鏄庢湁闄愭牱鏈笅 尉_crit 鐨勬湁鏁堝€间笌鐞嗚鍊兼湁鍋忓樊
+    #     鈫?澧炲ぇ repeats 鍒?500 浠ュ噺灏戝櫔澹?
     #
-    #   症状 D — P(κ > u₀) 在 ξ >> ξ_crit 时无法达到 1：
-    #     → alpha_kappa/beta_kappa 的先验均值过低，先验压制 κ；尝试 alpha_kappa=1.0
-    #     → grid_size 太小导致后验积分精度低；增加到 1601
+    #   鐥囩姸 D 鈥?P(魏 > u鈧€) 鍦?尉 >> 尉_crit 鏃舵棤娉曡揪鍒?1锛?
+    #     鈫?alpha_kappa/beta_kappa 鐨勫厛楠屽潎鍊艰繃浣庯紝鍏堥獙鍘嬪埗 魏锛涘皾璇?alpha_kappa=1.0
+    #     鈫?grid_size 澶皬瀵艰嚧鍚庨獙绉垎绮惧害浣庯紱澧炲姞鍒?1601
     # ============================================================
     from .plotting import plot_exp3_curves, plot_exp3_heatmap, plot_exp3_tau_sweep
 
@@ -995,8 +1242,8 @@ def run_exp3_phase_diagram(
     for r in rows:
         tau_now = float(r["tau"])
         xi_crit_now = xi_crit_u0_rho(u0=u0, rho=tau_now / math.sqrt(sigma2))
-        # xi_ratio = ξ/ξ_crit：标准化 x 轴，使不同 τ 的相变点均落在 1.0 处
-        # 若 xi_ratio=1.0 处 P(κ>u₀) ≠ 0.5，说明 finite-p_g 偏差或 ξ_crit 公式偏差
+        # xi_ratio = 尉/尉_crit锛氭爣鍑嗗寲 x 杞达紝浣夸笉鍚?蟿 鐨勭浉鍙樼偣鍧囪惤鍦?1.0 澶?
+        # 鑻?xi_ratio=1.0 澶?P(魏>u鈧€) 鈮?0.5锛岃鏄?finite-p_g 鍋忓樊鎴?尉_crit 鍏紡鍋忓樊
         r["xi_ratio"] = float(r["xi"]) / max(float(xi_crit_now), 1e-12)
     agg_rows: list[dict[str, Any]] = []
     keys = sorted({(float(r["xi"]), float(r["xi_ratio"]), int(r["p_g"]), float(r["tau"])) for r in rows}, key=lambda z: (z[3], z[2], z[1]))
@@ -1074,32 +1321,41 @@ def _evaluate_method_row(result: FitResult, beta0: np.ndarray) -> dict[str, floa
     return {"mse_null": m["mse_null"], "mse_signal": m["mse_signal"], "mse_overall": m["mse_overall"], "avg_ci_length": ci_len, "coverage_95": cov}
 
 
-def run_exp4_benchmark_linear(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 100, save_dir: str = "simulation_project") -> Dict[str, str]:
+def run_exp4_benchmark_linear(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 100,
+    save_dir: str = "simulation_project",
+    *,
+    snr_list: Sequence[float] | None = None,
+    profile: str = "full",
+    methods: Sequence[str] | None = None,
+) -> Dict[str, str]:
     # ============================================================
-    # EXP4 — 线性回归基准比较（GR_RHS vs RHS / GIGG_MMLE / GHS_plus）
+    # EXP4 鈥?绾挎€у洖褰掑熀鍑嗘瘮杈冿紙GR_RHS vs RHS / GIGG_MMLE / GHS_plus锛?
     #
-    # 【理想结果】
-    #   GR_RHS 在 mse_null（零组）上显著优于 RHS（强组间收缩）
-    #   GR_RHS 在 mse_signal（信号组）上与 RHS 相当或更好
-    #   GR_RHS coverage_95 ≈ 0.95（区间校准良好）
-    #   高相关场景（L3,L4）GR_RHS 的优势应更明显
+    # 銆愮悊鎯崇粨鏋溿€?
+    #   GR_RHS 鍦?mse_null锛堥浂缁勶級涓婃樉钁椾紭浜?RHS锛堝己缁勯棿鏀剁缉锛?
+    #   GR_RHS 鍦?mse_signal锛堜俊鍙风粍锛変笂涓?RHS 鐩稿綋鎴栨洿濂?
+    #   GR_RHS coverage_95 鈮?0.95锛堝尯闂存牎鍑嗚壇濂斤級
+    #   楂樼浉鍏冲満鏅紙L3,L4锛塆R_RHS 鐨勪紭鍔垮簲鏇存槑鏄?
     #
-    # 【若 GR_RHS 不优于 RHS 的调整方向】
-    #   症状 A — mse_null 无改善（GR_RHS ≈ RHS）：
-    #     → 检查 alpha_kappa/beta_kappa 设置；增大 beta_kappa 使先验更倾向 κ→0
-    #     → 确认 GR_RHS 使用了 use_group_scale=True（组间尺度 a_g 是分离的关键）
+    # 銆愯嫢 GR_RHS 涓嶄紭浜?RHS 鐨勮皟鏁存柟鍚戙€?
+    #   鐥囩姸 A 鈥?mse_null 鏃犳敼鍠勶紙GR_RHS 鈮?RHS锛夛細
+    #     鈫?妫€鏌?alpha_kappa/beta_kappa 璁剧疆锛涘澶?beta_kappa 浣垮厛楠屾洿鍊惧悜 魏鈫?
+    #     鈫?纭 GR_RHS 浣跨敤浜?use_group_scale=True锛堢粍闂村昂搴?a_g 鏄垎绂荤殑鍏抽敭锛?
     #
-    #   症状 B — mse_signal 显著变差（GR_RHS 过度收缩信号组）：
-    #     → tau 设置可能过小；检查 grrhs_kwargs 中的 tau0
-    #     → 信号组的 μ_g 接近相变阈值，增大信号强度或改变 build_linear_beta 的设置
+    #   鐥囩姸 B 鈥?mse_signal 鏄捐憲鍙樺樊锛圙R_RHS 杩囧害鏀剁缉淇″彿缁勶級锛?
+    #     鈫?tau 璁剧疆鍙兘杩囧皬锛涙鏌?grrhs_kwargs 涓殑 tau0
+    #     鈫?淇″彿缁勭殑 渭_g 鎺ヨ繎鐩稿彉闃堝€硷紝澧炲ぇ淇″彿寮哄害鎴栨敼鍙?build_linear_beta 鐨勮缃?
     #
-    #   症状 C — coverage_95 远低于 0.95：
-    #     → MCMC 未收敛（检查 rhat_max < 1.05, bulk_ess_min > 100）
-    #     → 增加 chains/warmup 在 SamplerConfig 中
+    #   鐥囩姸 C 鈥?coverage_95 杩滀綆浜?0.95锛?
+    #     鈫?MCMC 鏈敹鏁涳紙妫€鏌?rhat_max < 1.05, bulk_ess_min > 100锛?
+    #     鈫?澧炲姞 chains/warmup 鍦?SamplerConfig 涓?
     #
-    #   症状 D — n_effective 偏低（大量不收敛）：
-    #     → sampler 默认配置不足，需显式传入更多链数/步数
-    #     → repeats=100 勉强够用，若结果噪声大考虑 repeats=200
+    #   鐥囩姸 D 鈥?n_effective 鍋忎綆锛堝ぇ閲忎笉鏀舵暃锛夛細
+    #     鈫?sampler 榛樿閰嶇疆涓嶈冻锛岄渶鏄惧紡浼犲叆鏇村閾炬暟/姝ユ暟
+    #     鈫?repeats=100 鍕夊己澶熺敤锛岃嫢缁撴灉鍣０澶ц€冭檻 repeats=200
     # ============================================================
     import pandas as pd
     from .dgp_grouped_linear import build_linear_beta
@@ -1110,7 +1366,11 @@ def run_exp4_benchmark_linear(n_jobs: int = 1, seed: int = MASTER_SEED, repeats:
     fig_dir = ensure_dir(base / "figures")
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp4", base / "logs" / "exp4_benchmark_linear.log")
-    sampler = SamplerConfig()
+    profile_name = _normalize_compute_profile(profile)
+    sampler = _sampler_for_profile(profile_name, experiment="exp4")
+    methods_use = _resolve_method_list(methods, profile=profile_name)
+    gigg_cfg = _gigg_config_for_profile(profile_name)
+    snr_vals = [float(v) for v in (snr_list or [0.70])]
     settings = {
         "L0": {"group_sizes": [10, 10, 10, 10, 10], "rho_within": 0.0, "rho_between": 0.0, "design_type": "orthonormal"},
         "L1": {"group_sizes": [10, 10, 10, 10, 10], "rho_within": 0.3, "rho_between": 0.10, "design_type": "correlated"},
@@ -1118,26 +1378,68 @@ def run_exp4_benchmark_linear(n_jobs: int = 1, seed: int = MASTER_SEED, repeats:
         "L3": {"group_sizes": [10, 10, 10, 10, 10], "rho_within": 0.8, "rho_between": 0.10, "design_type": "correlated"},
         "L4": {"group_sizes": [10, 10, 10, 10, 10], "rho_within": 0.8, "rho_between": 0.10, "design_type": "correlated"},
         "L5": {"group_sizes": [30, 10, 5, 3, 2], "rho_within": 0.3, "rho_between": 0.10, "design_type": "correlated"},
+        "L6": {"group_sizes": [30, 10, 5, 3, 2], "rho_within": 0.3, "rho_between": 0.10, "design_type": "correlated"},
+        "L4B20": {"group_sizes": [10, 10, 10, 10, 10], "rho_within": 0.8, "rho_between": 0.20, "design_type": "correlated", "beta_setting": "L4"},
     }
-    tasks: list[tuple[int, str, dict[str, Any], int, int, SamplerConfig]] = []
-    for sid, (setting, spec) in enumerate(settings.items(), start=1):
-        for r in range(1, int(repeats) + 1):
-            tasks.append((sid, setting, spec, r, seed, sampler))
+    tasks: list[tuple[int, str, dict[str, Any], float, int, int, SamplerConfig, list[str], dict[str, Any]]] = []
+    sid = 0
+    for target_snr in snr_vals:
+        for setting, spec in settings.items():
+            sid += 1
+            for r in range(1, int(repeats) + 1):
+                tasks.append((sid, setting, spec, float(target_snr), r, seed, sampler, methods_use, gigg_cfg))
 
     rows = []
     for chunk in _parallel_rows(tasks, _exp4_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp4 Benchmark Linear"):
         rows.extend(chunk)
     raw = pd.DataFrame(rows)
-    summary = raw.groupby(["setting", "method"], as_index=False).agg(mse_null=("mse_null", "mean"), mse_signal=("mse_signal", "mean"), mse_overall=("mse_overall", "mean"), avg_ci_length=("avg_ci_length", "mean"), coverage_95=("coverage_95", "mean"), n_effective=("converged", "sum"))
+    raw["estimate_available"] = raw["mse_overall"].notna()
+
+    run_counts = raw.groupby(["target_snr", "setting", "method"], as_index=False).agg(n_total_runs=("replicate_id", "count"))
+
+    summary_all = raw.loc[raw["estimate_available"]].groupby(["target_snr", "setting", "method"], as_index=False).agg(
+        mse_null=("mse_null", "mean"),
+        mse_signal=("mse_signal", "mean"),
+        mse_overall=("mse_overall", "mean"),
+        avg_ci_length=("avg_ci_length", "mean"),
+        coverage_95=("coverage_95", "mean"),
+        n_effective=("converged", "sum"),
+        n_estimate_available=("replicate_id", "count"),
+    )
+    summary_all = summary_all.merge(run_counts, on=["target_snr", "setting", "method"], how="left")
+    summary_all["valid_rate"] = summary_all["n_effective"] / summary_all["n_total_runs"].clip(lower=1)
+
+    summary_conv = raw.loc[raw["estimate_available"] & raw["converged"]].groupby(["target_snr", "setting", "method"], as_index=False).agg(
+        mse_null=("mse_null", "mean"),
+        mse_signal=("mse_signal", "mean"),
+        mse_overall=("mse_overall", "mean"),
+        avg_ci_length=("avg_ci_length", "mean"),
+        coverage_95=("coverage_95", "mean"),
+        n_effective=("converged", "sum"),
+        n_estimate_available=("replicate_id", "count"),
+    )
+    summary_conv = summary_conv.merge(run_counts, on=["target_snr", "setting", "method"], how="left")
+    summary_conv["valid_rate"] = summary_conv["n_effective"] / summary_conv["n_total_runs"].clip(lower=1)
+
+    summary = summary_all
+    snr_ref = 0.70 if any(abs(v - 0.70) < 1e-12 for v in snr_vals) else snr_vals[0]
+    summary_plot = summary_conv.loc[np.isclose(summary_conv["target_snr"], snr_ref)].copy()
+    if summary_plot.empty:
+        summary_plot = summary_all.loc[np.isclose(summary_all["target_snr"], snr_ref)].copy()
     save_dataframe(raw, out / "raw_results.csv")
     save_dataframe(summary, out / "summary.csv")
-    save_dataframe(summary, tab_dir / "table_benchmark_linear.csv")
-    plot_exp4_overall_mse(summary, out_path=fig_dir / "fig4_benchmark_overall_mse.png")
-    plot_exp4_mse_partition(summary, out_path=fig_dir / "fig4_benchmark_mse_partition.png")
+    save_dataframe(summary_all, out / "summary_all.csv")
+    save_dataframe(summary_conv, out / "summary_converged.csv")
+    save_dataframe(summary_conv, tab_dir / "table_benchmark_linear.csv")
+    save_dataframe(summary_all, tab_dir / "table_benchmark_linear_all.csv")
+    save_dataframe(summary_conv, tab_dir / "table_benchmark_linear_converged.csv")
+    plot_exp4_overall_mse(summary_plot, out_path=fig_dir / "fig4_benchmark_overall_mse.png")
+    plot_exp4_mse_partition(summary_plot, out_path=fig_dir / "fig4_benchmark_mse_partition.png")
     design_rows: list[dict[str, Any]] = []
     for setting, spec in settings.items():
         groups = canonical_groups(spec["group_sizes"])
-        beta0 = build_linear_beta(setting, spec["group_sizes"])
+        beta_setting = str(spec.get("beta_setting", setting))
+        beta0 = build_linear_beta(beta_setting, spec["group_sizes"])
         active_groups = []
         group_nonzero_counts = []
         for gid, g in enumerate(groups):
@@ -1153,47 +1455,67 @@ def run_exp4_benchmark_linear(n_jobs: int = 1, seed: int = MASTER_SEED, repeats:
                 "rho_within": float(spec["rho_within"]),
                 "rho_between": float(spec["rho_between"]),
                 "design_type": str(spec.get("design_type", "correlated")),
+                "beta_setting": beta_setting,
                 "active_groups_1_based": active_groups,
                 "group_nonzero_counts": group_nonzero_counts,
                 "nonzero_total": int(np.sum(np.abs(beta0) > 0.0)),
             }
         )
-    save_json({"settings": design_rows, "repeats": int(repeats)}, out / "exp4_design_meta.json")
-    log.info("Completed exp4 with repeats=%d", repeats)
+    save_json(
+        {
+            "settings": design_rows,
+            "repeats": int(repeats),
+            "snr_list": snr_vals,
+            "plot_snr_reference": float(snr_ref),
+            "profile": profile_name,
+            "methods": methods_use,
+            "gigg_config": gigg_cfg,
+        },
+        out / "exp4_design_meta.json",
+    )
+    log.info("Completed exp4 with repeats=%d, snr_list=%s, profile=%s", repeats, snr_vals, profile_name)
     return {"raw": str(out / "raw_results.csv"), "table": str(tab_dir / "table_benchmark_linear.csv")}
 
 
-def run_exp5_heterogeneity(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 100, save_dir: str = "simulation_project") -> Dict[str, str]:
+def run_exp5_heterogeneity(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 100,
+    save_dir: str = "simulation_project",
+    *,
+    profile: str = "full",
+    methods: Sequence[str] | None = None,
+) -> Dict[str, str]:
     # ============================================================
-    # EXP5 — 异质性组结构下的分组辨识（连接定理 3.34 的 simultaneous separation）
+    # EXP5 鈥?寮傝川鎬х粍缁撴瀯涓嬬殑鍒嗙粍杈ㄨ瘑锛堣繛鎺ュ畾鐞?3.34 鐨?simultaneous separation锛?
     #
-    # 【数据生成设计说明】
-    #   group_sizes = [50, 50, 20, 10, 10, 10]，sigma2=1.0，tau_ref=0.1
+    # 銆愭暟鎹敓鎴愯璁¤鏄庛€?
+    #   group_sizes = [50, 50, 20, 10, 10, 10]锛宻igma2=1.0锛宼au_ref=0.1
     #   mu = [0, 0,  mu_boundary,  2,  8,  25]
-    #         零  零  阈值附近       弱  中  强
-    #   mu_boundary = 1.2 × ξ_crit(0.5, 0.1) × 20  （比相变阈值高 20%）
-    #   → Group 1,2 (p_g=50)：应被强力收缩（κ≈0）
-    #   → Group 3   (p_g=20)：信号轻微超过阈值，κ 应处于过渡区（0.3~0.7）
-    #   → Group 4,5,6 (p_g=10)：强信号，κ≈1
+    #         闆? 闆? 闃堝€奸檮杩?      寮? 涓? 寮?
+    #   mu_boundary = 1.2 脳 尉_crit(0.5, 0.1) 脳 20  锛堟瘮鐩稿彉闃堝€奸珮 20%锛?
+    #   鈫?Group 1,2 (p_g=50)锛氬簲琚己鍔涙敹缂╋紙魏鈮?锛?
+    #   鈫?Group 3   (p_g=20)锛氫俊鍙疯交寰秴杩囬槇鍊硷紝魏 搴斿浜庤繃娓″尯锛?.3~0.7锛?
+    #   鈫?Group 4,5,6 (p_g=10)锛氬己淇″彿锛屛衡増1
     #
-    # 【理想结果】
-    #   GR_RHS AUROC > 0.90（显著优于 RHS 的 ~0.60~0.70）
-    #   零组 κ 均值 < 0.05，强信号组 κ 均值 > 0.80
-    #   Group 3 的 κ 分布宽且居中（体现相变边界的不确定性）
+    # 銆愮悊鎯崇粨鏋溿€?
+    #   GR_RHS AUROC > 0.90锛堟樉钁椾紭浜?RHS 鐨?~0.60~0.70锛?
+    #   闆剁粍 魏 鍧囧€?< 0.05锛屽己淇″彿缁?魏 鍧囧€?> 0.80
+    #   Group 3 鐨?魏 鍒嗗竷瀹戒笖灞呬腑锛堜綋鐜扮浉鍙樿竟鐣岀殑涓嶇‘瀹氭€э級
     #
-    # 【若辨识失败（AUROC 低）的调整方向】
-    #   症状 A — GR_RHS AUROC ≈ RHS（组结构未被利用）：
-    #     → 检查 use_group_scale=True 在 fit_gr_rhs 调用中是否有效
-    #     → tau_ref=0.1 使得 ξ_crit 极小，Group 3 的信号已超阈值较多；
-    #       若仍不收敛，尝试 tau_ref=0.3 使阈值更大，分离更难
+    # 銆愯嫢杈ㄨ瘑澶辫触锛圓UROC 浣庯級鐨勮皟鏁存柟鍚戙€?
+    #   鐥囩姸 A 鈥?GR_RHS AUROC 鈮?RHS锛堢粍缁撴瀯鏈鍒╃敤锛夛細
+    #     鈫?妫€鏌?use_group_scale=True 鍦?fit_gr_rhs 璋冪敤涓槸鍚︽湁鏁?
+    #     鈫?tau_ref=0.1 浣垮緱 尉_crit 鏋佸皬锛孏roup 3 鐨勪俊鍙峰凡瓒呴槇鍊艰緝澶氾紱
+    #       鑻ヤ粛涓嶆敹鏁涳紝灏濊瘯 tau_ref=0.3 浣块槇鍊兼洿澶э紝鍒嗙鏇撮毦
     #
-    #   症状 B — Group 3 的 κ 无差异（要么全 0 要么全 1）：
-    #     → mu_boundary 倍数从 1.2 调整为 1.0（恰好在阈值上）
-    #     → 增大 p_g=20 组到 30 或 50 以使相变更锐利
+    #   鐥囩姸 B 鈥?Group 3 鐨?魏 鏃犲樊寮傦紙瑕佷箞鍏?0 瑕佷箞鍏?1锛夛細
+    #     鈫?mu_boundary 鍊嶆暟浠?1.2 璋冩暣涓?1.0锛堟伆濂藉湪闃堝€间笂锛?
+    #     鈫?澧炲ぇ p_g=20 缁勫埌 30 鎴?50 浠ヤ娇鐩稿彉鏇撮攼鍒?
     #
-    #   症状 C — 大零组（p_g=50）的 κ 不趋向 0：
-    #     → 与 EXP1 一致的问题：p_g=50 在 tau_ref=0.1 下可能仍未充分收缩
-    #     → 增大 n（当前 n=300），使数据对先验的支配力更强
+    #   鐥囩姸 C 鈥?澶ч浂缁勶紙p_g=50锛夌殑 魏 涓嶈秼鍚?0锛?
+    #     鈫?涓?EXP1 涓€鑷寸殑闂锛歱_g=50 鍦?tau_ref=0.1 涓嬪彲鑳戒粛鏈厖鍒嗘敹缂?
+    #     鈫?澧炲ぇ n锛堝綋鍓?n=300锛夛紝浣挎暟鎹鍏堥獙鐨勬敮閰嶅姏鏇村己
     # ============================================================
     import pandas as pd
     from .plotting import plot_exp5_group_ranking, plot_exp5_kappa_stratification, plot_exp5_null_signal_mse
@@ -1202,7 +1524,10 @@ def run_exp5_heterogeneity(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: in
     fig_dir = ensure_dir(base / "figures")
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp5", base / "logs" / "exp5_heterogeneity.log")
-    sampler = SamplerConfig()
+    profile_name = _normalize_compute_profile(profile)
+    sampler = _sampler_for_profile(profile_name, experiment="exp5")
+    methods_use = _resolve_method_list(methods, profile=profile_name)
+    gigg_cfg = _gigg_config_for_profile(profile_name)
     sigma2 = 1.0
     tau_ref = 0.1
     group_sizes = [50, 50, 20, 10, 10, 10]
@@ -1210,7 +1535,7 @@ def run_exp5_heterogeneity(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: in
     mu_boundary = 1.2 * xi_boundary * group_sizes[2]
     mu = [0.0, 0.0, float(mu_boundary), 2.0, 8.0, 25.0]
     labels = (np.asarray(mu) > 0.0).astype(int)
-    tasks = [(r, seed, group_sizes, mu, sampler) for r in range(1, int(repeats) + 1)]
+    tasks = [(r, seed, group_sizes, mu, sampler, methods_use, gigg_cfg) for r in range(1, int(repeats) + 1)]
 
     row_rep, row_group, row_grrhs_kappa = [], [], []
     for rep_rows, group_rows, kappa_rows in _parallel_rows(tasks, _exp5_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp5 Heterogeneity"):
@@ -1221,12 +1546,16 @@ def run_exp5_heterogeneity(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: in
     raw_group = pd.DataFrame(row_group)
     raw_kappa = pd.DataFrame(row_grrhs_kappa)
     raw = raw_rep.merge(raw_group, on=["replicate_id", "method"], how="left")
+    run_counts = raw_rep.groupby("method", as_index=False).agg(n_total_runs=("replicate_id", "count"))
     auroc_table = raw_rep.groupby("method", as_index=False).agg(
         group_auroc=("group_auroc_score", "mean"),
         avg_null_group_mse=("null_group_mse_avg", "mean"),
         avg_signal_group_mse=("signal_group_mse_avg", "mean"),
         n_effective=("converged", "sum"),
+        n_valid_metrics=("group_auroc_score", lambda s: int(s.notna().sum())),
     )
+    auroc_table = auroc_table.merge(run_counts, on="method", how="left")
+    auroc_table["valid_rate"] = auroc_table["n_effective"] / auroc_table["n_total_runs"].clip(lower=1)
     save_dataframe(raw, out / "raw_results.csv")
     save_dataframe(raw_rep, out / "summary_replicate.csv")
     save_dataframe(raw_kappa, out / "summary_kappa.csv")
@@ -1240,47 +1569,62 @@ def run_exp5_heterogeneity(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: in
             "mu_boundary": float(mu_boundary),
             "boundary_multiplier_vs_xi_crit": 1.2,
             "repeats": int(repeats),
+            "profile": profile_name,
+            "methods": methods_use,
+            "gigg_config": gigg_cfg,
         },
         out / "exp5_meta.json",
     )
+    plot_methods = [m for m in METHODS if m in set(methods_use)]
+    if not plot_methods:
+        plot_methods = sorted(set(auroc_table["method"].astype(str).tolist()))
     if not raw_kappa.empty:
         plot_exp5_kappa_stratification(raw_kappa, out_path=fig_dir / "fig5_kappa_stratification.png")
-        plot_exp5_group_ranking(raw_kappa, auroc_table.loc[auroc_table["method"].isin(METHODS)], out_path=fig_dir / "fig5_group_ranking.png")
-    plot_exp5_null_signal_mse(auroc_table.loc[auroc_table["method"].isin(METHODS)], out_path=fig_dir / "fig5_null_signal_mse.png")
-    log.info("Completed exp5 with repeats=%d", repeats)
+        plot_exp5_group_ranking(raw_kappa, auroc_table.loc[auroc_table["method"].isin(plot_methods)], out_path=fig_dir / "fig5_group_ranking.png")
+    plot_exp5_null_signal_mse(auroc_table.loc[auroc_table["method"].isin(plot_methods)], out_path=fig_dir / "fig5_null_signal_mse.png")
+    log.info("Completed exp5 with repeats=%d, profile=%s", repeats, profile_name)
     return {"raw": str(out / "raw_results.csv"), "table": str(tab_dir / "table_heterogeneity_auroc.csv")}
 
 
-def run_exp6_grouped_logistic(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 50, save_dir: str = "simulation_project") -> Dict[str, str]:
+def run_exp6_grouped_logistic(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 50,
+    save_dir: str = "simulation_project",
+    *,
+    min_separator_auc: float = 0.8,
+    profile: str = "full",
+    methods: Sequence[str] | None = None,
+) -> Dict[str, str]:
     # ============================================================
-    # EXP6 — 分组 Logistic 回归（二元结果的适用性验证）
+    # EXP6 鈥?鍒嗙粍 Logistic 鍥炲綊锛堜簩鍏冪粨鏋滅殑閫傜敤鎬ч獙璇侊級
     #
-    # 【数据生成设计说明】
-    #   3 组各 5 个预测变量（p_g=5，注意 p_g 很小，不处于理论渐近区域）
+    # 銆愭暟鎹敓鎴愯璁¤鏄庛€?
+    #   3 缁勫悇 5 涓娴嬪彉閲忥紙p_g=5锛屾敞鎰?p_g 寰堝皬锛屼笉澶勪簬鐞嗚娓愯繎鍖哄煙锛?
     #   beta0 = [1.5,1.5,0,0,0 | 0,0,0,0,0 | 0.5,0.5,0,0,0]
-    #            强信号组          零组          弱信号组
-    #   →  Group 1: ||β||²=4.5（强），Group 2: ||β||²=0（零），Group 3: ||β||²=0.5（弱）
-    #   n=200，min_separator_auc=0.8 过滤极难样本
+    #            寮轰俊鍙风粍          闆剁粍          寮变俊鍙风粍
+    #   鈫? Group 1: ||尾||虏=4.5锛堝己锛夛紝Group 2: ||尾||虏=0锛堥浂锛夛紝Group 3: ||尾||虏=0.5锛堝急锛?
+    #   n=200锛宮in_separator_auc=0.8 杩囨护鏋侀毦鏍锋湰
     #
-    # 【理想结果】
-    #   P(κ₁ > 0.5) ≈ 1.0（强信号组明确检测）
-    #   P(κ₂ > 0.5) ≈ 0.0（零组明确抑制）
-    #   P(κ₃ > 0.5) ∈ (0.3, 0.7)（弱信号组不确定，视为成功展示灵敏度）
-    #   β_{11}, β_{12} 后验均值接近 1.5
+    # 銆愮悊鎯崇粨鏋溿€?
+    #   P(魏鈧?> 0.5) 鈮?1.0锛堝己淇″彿缁勬槑纭娴嬶級
+    #   P(魏鈧?> 0.5) 鈮?0.0锛堥浂缁勬槑纭姂鍒讹級
+    #   P(魏鈧?> 0.5) 鈭?(0.3, 0.7)锛堝急淇″彿缁勪笉纭畾锛岃涓烘垚鍔熷睍绀虹伒鏁忓害锛?
+    #   尾_{11}, 尾_{12} 鍚庨獙鍧囧€兼帴杩?1.5
     #
-    # 【若 κ 分组无法区分的调整方向】
-    #   症状 A — P(κ₁ > 0.5) 偏低（强信号也未被检测）：
-    #     → 检查 logistic 回归的 MCMC 收敛（divergence_ratio < 0.01）
-    #     → n=200 可能不足以支持 p_g=5 的信号；尝试 n=500
-    #     → beta0 中的 1.5 对 logistic 尺度是否合适（log-odds 为 1.5，AUC 约 0.85）
+    # 銆愯嫢 魏 鍒嗙粍鏃犳硶鍖哄垎鐨勮皟鏁存柟鍚戙€?
+    #   鐥囩姸 A 鈥?P(魏鈧?> 0.5) 鍋忎綆锛堝己淇″彿涔熸湭琚娴嬶級锛?
+    #     鈫?妫€鏌?logistic 鍥炲綊鐨?MCMC 鏀舵暃锛坉ivergence_ratio < 0.01锛?
+    #     鈫?n=200 鍙兘涓嶈冻浠ユ敮鎸?p_g=5 鐨勪俊鍙凤紱灏濊瘯 n=500
+    #     鈫?beta0 涓殑 1.5 瀵?logistic 灏哄害鏄惁鍚堥€傦紙log-odds 涓?1.5锛孉UC 绾?0.85锛?
     #
-    #   症状 B — Group 3（弱信号）与 Group 2（零组）的 κ 完全相同：
-    #     → 弱信号 ||β||²=0.5 在 n=200 下可能与零组无法区分（这本身是合理现象）
-    #     → 若希望区分，增大 beta0[10:12] 到 [0.8, 0.8] 或增大 n
+    #   鐥囩姸 B 鈥?Group 3锛堝急淇″彿锛変笌 Group 2锛堥浂缁勶級鐨?魏 瀹屽叏鐩稿悓锛?
+    #     鈫?寮变俊鍙?||尾||虏=0.5 鍦?n=200 涓嬪彲鑳戒笌闆剁粍鏃犳硶鍖哄垎锛堣繖鏈韩鏄悎鐞嗙幇璞★級
+    #     鈫?鑻ュ笇鏈涘尯鍒嗭紝澧炲ぇ beta0[10:12] 鍒?[0.8, 0.8] 鎴栧澶?n
     #
-    #   症状 C — 收敛率（n_effective）低（< 0.8）：
-    #     → Logistic 模型容易出现发散；使用 SamplerConfig(adapt_delta=0.95)
-    #     → 降低 min_separator_auc 阈值（过滤太严导致样本量不足）
+    #   鐥囩姸 C 鈥?鏀舵暃鐜囷紙n_effective锛変綆锛? 0.8锛夛細
+    #     鈫?Logistic 妯″瀷瀹规槗鍑虹幇鍙戞暎锛涗娇鐢?SamplerConfig(adapt_delta=0.95)
+    #     鈫?闄嶄綆 min_separator_auc 闃堝€硷紙杩囨护澶弗瀵艰嚧鏍锋湰閲忎笉瓒筹級
     # ============================================================
     import pandas as pd
     from .plotting import plot_exp6_coefficients, plot_exp6_diagnostics, plot_exp6_kappa, plot_exp6_null_group
@@ -1288,15 +1632,19 @@ def run_exp6_grouped_logistic(n_jobs: int = 1, seed: int = MASTER_SEED, repeats:
     out = ensure_dir(base / "results" / "exp6_grouped_logistic")
     fig_dir = ensure_dir(base / "figures")
     log = setup_logger("exp6", base / "logs" / "exp6_grouped_logistic.log")
-    sampler = SamplerConfig()
+    profile_name = _normalize_compute_profile(profile)
+    sampler = _sampler_for_profile(profile_name, experiment="exp6")
+    methods_use = _resolve_method_list(methods, profile=profile_name)
+    gigg_cfg = _gigg_config_for_profile(profile_name)
     beta0 = np.array([1.5, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 0.5, 0, 0, 0], dtype=float)
-    tasks = [(r, seed, beta0, sampler) for r in range(1, int(repeats) + 1)]
+    tasks = [(r, seed, beta0, sampler, float(min_separator_auc), methods_use, gigg_cfg) for r in range(1, int(repeats) + 1)]
 
     rows = []
     for chunk in _parallel_rows(tasks, _exp6_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp6 Grouped Logistic"):
         rows.extend(chunk)
     raw = pd.DataFrame(rows)
     save_dataframe(raw, out / "raw_results.csv")
+    run_counts = raw.groupby("method", as_index=False).agg(n_total_runs=("replicate_id", "count"))
     summary = raw.groupby("method", as_index=False).agg(
         beta11_post_mean=("beta11_post_mean", "mean"),
         beta12_post_mean=("beta12_post_mean", "mean"),
@@ -1313,7 +1661,10 @@ def run_exp6_grouped_logistic(n_jobs: int = 1, seed: int = MASTER_SEED, repeats:
         post_mean_kappa_group2=("post_mean_kappa_group2", "mean"),
         post_mean_kappa_group3=("post_mean_kappa_group3", "mean"),
         n_effective=("converged", "sum"),
+        n_valid_metrics=("beta_group1_l2_norm", lambda s: int(s.notna().sum())),
     )
+    summary = summary.merge(run_counts, on="method", how="left")
+    summary["valid_rate"] = summary["n_effective"] / summary["n_total_runs"].clip(lower=1)
     save_dataframe(summary, out / "summary.csv")
     ok = raw.loc[raw["converged"] == True].copy()
     if not ok.empty:
@@ -1321,47 +1672,64 @@ def run_exp6_grouped_logistic(n_jobs: int = 1, seed: int = MASTER_SEED, repeats:
         plot_exp6_null_group(ok, out_path=fig_dir / "fig6_logistic_null_group.png")
         plot_exp6_diagnostics(ok, out_path=fig_dir / "fig6_logistic_diagnostics.png")
         plot_exp6_kappa(ok, out_path=fig_dir / "fig6_kappa_logistic.png")
-    log.info("Completed exp6 with repeats=%d", repeats)
+    save_json(
+        {
+            "repeats": int(repeats),
+            "min_separator_auc": float(min_separator_auc),
+            "profile": profile_name,
+            "methods": methods_use,
+            "gigg_config": gigg_cfg,
+        },
+        out / "exp6_meta.json",
+    )
+    log.info("Completed exp6 with repeats=%d, min_separator_auc=%.3f, profile=%s", repeats, float(min_separator_auc), profile_name)
     return {"raw": str(out / "raw_results.csv")}
 
 
-def run_exp7_ablation(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 100, save_dir: str = "simulation_project") -> Dict[str, str]:
+def run_exp7_ablation(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 100,
+    save_dir: str = "simulation_project",
+    *,
+    profile: str = "full",
+) -> Dict[str, str]:
     # ============================================================
-    # EXP7 — 消融研究（组件价值分析）
+    # EXP7 鈥?娑堣瀺鐮旂┒锛堢粍浠朵环鍊煎垎鏋愶級
     #
-    # 【消融变体说明】
-    #   GR_RHS_full         ：完整模型（基准，应最优）
-    #   GR_RHS_no_ag        ：去除组尺度 a_g（无组间异质性校正）
-    #   GR_RHS_no_local_scales：去除组内局部尺度 λ_j（全组均匀收缩）
-    #   GR_RHS_shared_kappa ：所有组共享一个 κ（无组特异性收缩）
-    #   GR_RHS_no_kappa     ：退化为标准 RHS（无 κ 机制）
-    #   RHS                 ：纯 horseshoe 基准
+    # 銆愭秷铻嶅彉浣撹鏄庛€?
+    #   GR_RHS_full         锛氬畬鏁存ā鍨嬶紙鍩哄噯锛屽簲鏈€浼橈級
+    #   GR_RHS_no_ag        锛氬幓闄ょ粍灏哄害 a_g锛堟棤缁勯棿寮傝川鎬ф牎姝ｏ級
+    #   GR_RHS_no_local_scales锛氬幓闄ょ粍鍐呭眬閮ㄥ昂搴?位_j锛堝叏缁勫潎鍖€鏀剁缉锛?
+    #   GR_RHS_shared_kappa 锛氭墍鏈夌粍鍏变韩涓€涓?魏锛堟棤缁勭壒寮傛€ф敹缂╋級
+    #   GR_RHS_no_kappa     锛氶€€鍖栦负鏍囧噯 RHS锛堟棤 魏 鏈哄埗锛?
+    #   RHS                 锛氱函 horseshoe 鍩哄噯
     #
-    # 【DGP 类型与预期差异】
-    #   dense_uniform：组内所有变量均有信号
-    #     → no_local_scales 影响应较小（组内同质）
-    #     → no_ag 影响应较大（组间强度差异需要 a_g 捕获）
-    #   sparse_within_group：组内仅 20% 变量有信号
-    #     → no_local_scales 应显著变差（λ_j 是组内稀疏性检测的关键）
-    #     → GR_RHS_full 优势体现在 mse_signal 上（精准定位活跃变量）
+    # 銆怐GP 绫诲瀷涓庨鏈熷樊寮傘€?
+    #   dense_uniform锛氱粍鍐呮墍鏈夊彉閲忓潎鏈変俊鍙?
+    #     鈫?no_local_scales 褰卞搷搴旇緝灏忥紙缁勫唴鍚岃川锛?
+    #     鈫?no_ag 褰卞搷搴旇緝澶э紙缁勯棿寮哄害宸紓闇€瑕?a_g 鎹曡幏锛?
+    #   sparse_within_group锛氱粍鍐呬粎 20% 鍙橀噺鏈変俊鍙?
+    #     鈫?no_local_scales 搴旀樉钁楀彉宸紙位_j 鏄粍鍐呯█鐤忔€ф娴嬬殑鍏抽敭锛?
+    #     鈫?GR_RHS_full 浼樺娍浣撶幇鍦?mse_signal 涓婏紙绮惧噯瀹氫綅娲昏穬鍙橀噺锛?
     #
-    # 【理想结果】
-    #   GR_RHS_full 在两种 DGP 下都具有最低 null_group_mse 和最高 AUROC
-    #   GR_RHS_no_local_scales 在 sparse_within_group 下 signal_group_mse 明显更高
-    #   GR_RHS_shared_kappa 的 AUROC < GR_RHS_full（失去组特异性）
+    # 銆愮悊鎯崇粨鏋溿€?
+    #   GR_RHS_full 鍦ㄤ袱绉?DGP 涓嬮兘鍏锋湁鏈€浣?null_group_mse 鍜屾渶楂?AUROC
+    #   GR_RHS_no_local_scales 鍦?sparse_within_group 涓?signal_group_mse 鏄庢樉鏇撮珮
+    #   GR_RHS_shared_kappa 鐨?AUROC < GR_RHS_full锛堝け鍘荤粍鐗瑰紓鎬э級
     #
-    # 【若消融差异不显著的调整方向】
-    #   症状 A — 所有变体性能相近（消融无效果）：
-    #     → mu 中弱信号组（mu=2）可能已超出 ξ_crit，信号过强导致所有方法都能检测
-    #     → 将 mu[2] 降低至接近相变阈值（见 EXP5 的 mu_boundary 计算方法）
-    #     → rho_within=0.7 下组内变量高度相关，局部尺度作用可能被相关性掩盖
+    # 銆愯嫢娑堣瀺宸紓涓嶆樉钁楃殑璋冩暣鏂瑰悜銆?
+    #   鐥囩姸 A 鈥?鎵€鏈夊彉浣撴€ц兘鐩歌繎锛堟秷铻嶆棤鏁堟灉锛夛細
+    #     鈫?mu 涓急淇″彿缁勶紙mu=2锛夊彲鑳藉凡瓒呭嚭 尉_crit锛屼俊鍙疯繃寮哄鑷存墍鏈夋柟娉曢兘鑳芥娴?
+    #     鈫?灏?mu[2] 闄嶄綆鑷虫帴杩戠浉鍙橀槇鍊硷紙瑙?EXP5 鐨?mu_boundary 璁＄畻鏂规硶锛?
+    #     鈫?rho_within=0.7 涓嬬粍鍐呭彉閲忛珮搴︾浉鍏筹紝灞€閮ㄥ昂搴︿綔鐢ㄥ彲鑳借鐩稿叧鎬ф帺鐩?
     #
-    #   症状 B — GR_RHS_no_ag 与 GR_RHS_full 无差异：
-    #     → 组间信号强度差异不够大（mu=[0,0,2,8,25,80] 相差悬殊，但 a_g 的作用
-    #       体现在中等差异场景），考虑改为 [0,0,5,10,20,40]
+    #   鐥囩姸 B 鈥?GR_RHS_no_ag 涓?GR_RHS_full 鏃犲樊寮傦細
+    #     鈫?缁勯棿淇″彿寮哄害宸紓涓嶅澶э紙mu=[0,0,2,8,25,80] 鐩稿樊鎮畩锛屼絾 a_g 鐨勪綔鐢?
+    #       浣撶幇鍦ㄤ腑绛夊樊寮傚満鏅級锛岃€冭檻鏀逛负 [0,0,5,10,20,40]
     #
-    #   症状 C — repeats=100 下置信区间过宽：
-    #     → 增加到 repeats=200，或使用 paired t-test 而非均值比较
+    #   鐥囩姸 C 鈥?repeats=100 涓嬬疆淇″尯闂磋繃瀹斤細
+    #     鈫?澧炲姞鍒?repeats=200锛屾垨浣跨敤 paired t-test 鑰岄潪鍧囧€兼瘮杈?
     # ============================================================
     import pandas as pd
     from .plotting import plot_exp7_ablation_bars
@@ -1370,14 +1738,14 @@ def run_exp7_ablation(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 1
     fig_dir = ensure_dir(base / "figures")
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp7", base / "logs" / "exp7_ablation.log")
-    sampler = SamplerConfig()
+    profile_name = _normalize_compute_profile(profile)
+    sampler = _sampler_for_profile(profile_name, experiment="exp7")
     mu = [0.0, 0.0, 2.0, 8.0, 25.0, 80.0]
     variants = {
         "GR_RHS_full": {"grrhs_kwargs": {"alpha_kappa": 0.5, "beta_kappa": 1.0, "use_group_scale": True, "shared_kappa": False}, "method": "GR_RHS"},
         "GR_RHS_no_ag": {"grrhs_kwargs": {"alpha_kappa": 0.5, "beta_kappa": 1.0, "use_group_scale": False, "shared_kappa": False}, "method": "GR_RHS"},
         "GR_RHS_no_local_scales": {"grrhs_kwargs": {"alpha_kappa": 0.5, "beta_kappa": 1.0, "use_group_scale": True, "use_local_scale": False, "shared_kappa": False}, "method": "GR_RHS"},
         "GR_RHS_shared_kappa": {"grrhs_kwargs": {"alpha_kappa": 0.5, "beta_kappa": 1.0, "use_group_scale": True, "shared_kappa": True}, "method": "GR_RHS"},
-        "GR_RHS_no_kappa": {"grrhs_kwargs": {}, "method": "RHS"},
         "RHS": {"grrhs_kwargs": {}, "method": "RHS"},
     }
     dgp_types = ["dense_uniform", "sparse_within_group"]
@@ -1391,13 +1759,17 @@ def run_exp7_ablation(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 1
     for chunk in _parallel_rows(tasks, _exp7_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp7 Ablation"):
         rows.extend(chunk)
     raw = pd.DataFrame(rows)
+    run_counts = raw.groupby(["dgp_type", "variant"], as_index=False).agg(n_total_runs=("replicate_id", "count"))
     table = raw.groupby(["dgp_type", "variant"], as_index=False).agg(
         null_group_mse_avg=("null_group_mse_avg", "mean"),
         signal_group_mse_avg=("signal_group_mse_avg", "mean"),
         overall_mse=("overall_mse", "mean"),
         group_auroc=("group_auroc", "mean"),
         n_effective=("converged", "sum"),
+        n_valid_metrics=("group_auroc", lambda s: int(s.notna().sum())),
     )
+    table = table.merge(run_counts, on=["dgp_type", "variant"], how="left")
+    table["valid_rate"] = table["n_effective"] / table["n_total_runs"].clip(lower=1)
     save_dataframe(raw, out / "raw_results.csv")
     save_dataframe(table, tab_dir / "table_ablation.csv")
     save_dataframe(table, out / "summary.csv")
@@ -1409,43 +1781,51 @@ def run_exp7_ablation(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 1
             "variants": list(variants.keys()),
             "repeats": int(repeats),
             "sparse_within_group_rho_within": 0.3,
+            "profile": profile_name,
         },
         out / "exp7_meta.json",
     )
-    log.info("Completed exp7 with repeats=%d", repeats)
+    log.info("Completed exp7 with repeats=%d, profile=%s", repeats, profile_name)
     return {"raw": str(out / "raw_results.csv"), "table": str(tab_dir / "table_ablation.csv")}
 
 
-def run_exp8_tau_calibration(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 100, save_dir: str = "simulation_project") -> Dict[str, str]:
+def run_exp8_tau_calibration(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 100,
+    save_dir: str = "simulation_project",
+    *,
+    profile: str = "full",
+) -> Dict[str, str]:
     # ============================================================
-    # EXP8 — τ 自动校准验证
+    # EXP8 鈥?蟿 鑷姩鏍″噯楠岃瘉
     #
-    # 【理论基准】
-    #   Carvalho-Polson-Scott 推荐：τ_target = p₀ / ((p−p₀)√n)
-    #   自动校准后验均值应接近 τ_target（tau_rel_error < 0.20 视为成功）
+    # 銆愮悊璁哄熀鍑嗐€?
+    #   Carvalho-Polson-Scott 鎺ㄨ崘锛毾刜target = p鈧€ / ((p鈭抪鈧€)鈭歯)
+    #   鑷姩鏍″噯鍚庨獙鍧囧€煎簲鎺ヨ繎 蟿_target锛坱au_rel_error < 0.20 瑙嗕负鎴愬姛锛?
     #
-    # 【参数选择说明】
-    #   p0_list=[2,6,12,30]：覆盖稀疏（p₀/p=3%）到稠密（p₀/p=50%）
-    #   tau_scales=[0.5,1.0,2.0]：固定 τ 分别使用 0.5x/1x/2x τ_target
-    #   SamplerConfig(chains=4, warmup=600)：τ 是全局参数，混合较慢，需要足够预热
+    # 銆愬弬鏁伴€夋嫨璇存槑銆?
+    #   p0_list=[2,6,12,30]锛氳鐩栫█鐤忥紙p鈧€/p=3%锛夊埌绋犲瘑锛坧鈧€/p=50%锛?
+    #   tau_scales=[0.5,1.0,2.0]锛氬浐瀹?蟿 鍒嗗埆浣跨敤 0.5x/1x/2x 蟿_target
+    #   SamplerConfig(chains=4, warmup=600)锛毾?鏄叏灞€鍙傛暟锛屾贩鍚堣緝鎱紝闇€瑕佽冻澶熼鐑?
     #
-    # 【若自动校准未能达到 tau_target 的调整方向】
-    #   症状 A — tau_post_mean 系统低于 tau_target（自动校准欠估计）：
-    #     → 检查 auto_calibrate_tau 的实现：是否用了正确的 p₀ 作为先验信息
-    #     → tau_target 本身计算：p0/((p-p0)*sqrt(n))，确认 p₀ 是活跃变量数而非组数
-    #     → 尝试 tau_prior_scale=2.0 给自动校准更宽的搜索范围
+    # 銆愯嫢鑷姩鏍″噯鏈兘杈惧埌 tau_target 鐨勮皟鏁存柟鍚戙€?
+    #   鐥囩姸 A 鈥?tau_post_mean 绯荤粺浣庝簬 tau_target锛堣嚜鍔ㄦ牎鍑嗘瑺浼拌锛夛細
+    #     鈫?妫€鏌?auto_calibrate_tau 鐨勫疄鐜帮細鏄惁鐢ㄤ簡姝ｇ‘鐨?p鈧€ 浣滀负鍏堥獙淇℃伅
+    #     鈫?tau_target 鏈韩璁＄畻锛歱0/((p-p0)*sqrt(n))锛岀‘璁?p鈧€ 鏄椿璺冨彉閲忔暟鑰岄潪缁勬暟
+    #     鈫?灏濊瘯 tau_prior_scale=2.0 缁欒嚜鍔ㄦ牎鍑嗘洿瀹界殑鎼滅储鑼冨洿
     #
-    #   症状 B — tau_post_sd 很大（后验发散）：
-    #     → chains=4 但 warmup=600 可能对 tau 不足；增加到 warmup=1000
-    #     → 大 p₀（如 p₀=30/p=60）时先验信息弱，tau 后验天然更宽，属正常现象
+    #   鐥囩姸 B 鈥?tau_post_sd 寰堝ぇ锛堝悗楠屽彂鏁ｏ級锛?
+    #     鈫?chains=4 浣?warmup=600 鍙兘瀵?tau 涓嶈冻锛涘鍔犲埌 warmup=1000
+    #     鈫?澶?p鈧€锛堝 p鈧€=30/p=60锛夋椂鍏堥獙淇℃伅寮憋紝tau 鍚庨獙澶╃劧鏇村锛屽睘姝ｅ父鐜拌薄
     #
-    #   症状 C — Fixed 1x tau 与 auto 表现相近但 0.5x/2x 差异不明显：
-    #     → beta0 全部设为 2.0（恒等信号），信号过强导致 tau 变化对估计影响小
-    #     → 考虑混合信号强度（部分 beta=0.5，部分 beta=2.0）以增强 tau 的影响力
+    #   鐥囩姸 C 鈥?Fixed 1x tau 涓?auto 琛ㄧ幇鐩歌繎浣?0.5x/2x 宸紓涓嶆槑鏄撅細
+    #     鈫?beta0 鍏ㄩ儴璁句负 2.0锛堟亽绛変俊鍙凤級锛屼俊鍙疯繃寮哄鑷?tau 鍙樺寲瀵逛及璁″奖鍝嶅皬
+    #     鈫?鑰冭檻娣峰悎淇″彿寮哄害锛堥儴鍒?beta=0.5锛岄儴鍒?beta=2.0锛変互澧炲己 tau 鐨勫奖鍝嶅姏
     #
-    #   症状 D — n_effective（收敛率）偏低：
-    #     → Logistic 版本或高相关设计会导致 tau 混合困难
-    #     → 确认 use_auto=True 时 tau0=None（不能同时指定起始值）
+    #   鐥囩姸 D 鈥?n_effective锛堟敹鏁涚巼锛夊亸浣庯細
+    #     鈫?Logistic 鐗堟湰鎴栭珮鐩稿叧璁捐浼氬鑷?tau 娣峰悎鍥伴毦
+    #     鈫?纭 use_auto=True 鏃?tau0=None锛堜笉鑳藉悓鏃舵寚瀹氳捣濮嬪€硷級
     # ============================================================
     import pandas as pd
     from .plotting import plot_exp8_tau
@@ -1453,25 +1833,28 @@ def run_exp8_tau_calibration(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: 
     out = ensure_dir(base / "results" / "exp8_tau_calibration")
     fig_dir = ensure_dir(base / "figures")
     log = setup_logger("exp8", base / "logs" / "exp8_tau_calibration.log")
-    sampler = SamplerConfig(chains=4, warmup=600, post_warmup_draws=600)
+    profile_name = _normalize_compute_profile(profile)
+    sampler = _sampler_for_profile(profile_name, experiment="exp8")
 
     n = 500
     group_sizes = [10, 10, 10, 10, 10, 10]
     p = int(sum(group_sizes))
     p0_list = [2, 6, 12, 30]
     tau_scales = [0.5, 1.0, 2.0]
-    tasks: list[tuple[int, int, int, list[int], SamplerConfig, float, float, bool]] = []
+    tasks: list[tuple[int, int, int, list[int], SamplerConfig, float, list[float]]] = []
     for p0 in p0_list:
         tau_target = p0 / ((p - p0) * math.sqrt(n))
         for r in range(1, int(repeats) + 1):
-            tasks.append((int(p0), int(r), seed, group_sizes, sampler, float(tau_target), 1.0, True))
-            for sc in tau_scales:
-                tasks.append((int(p0), int(r), seed, group_sizes, sampler, float(tau_target), float(sc), False))
+            tasks.append((int(p0), int(r), seed, group_sizes, sampler, float(tau_target), [float(sc) for sc in tau_scales]))
 
-    rows = _parallel_rows(tasks, _exp8_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp8 Tau Calibration")
+    rows_nested = _parallel_rows(tasks, _exp8_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp8 Tau Calibration")
+    rows: list[dict[str, Any]] = []
+    for chunk in rows_nested:
+        rows.extend(chunk)
     raw = pd.DataFrame(rows)
     raw["tau_abs_error"] = (raw["tau_post_mean"] - raw["tau_target"]).abs()
     raw["tau_rel_error"] = raw["tau_abs_error"] / raw["tau_target"].clip(lower=1e-12)
+    run_counts = raw.groupby(["p0", "tau_mode"], as_index=False).agg(n_total_runs=("replicate_id", "count"))
     summary = raw.groupby(["p0", "tau_mode"], as_index=False).agg(
         tau_target=("tau_target", "mean"),
         tau_post_mean=("tau_post_mean", "mean"),
@@ -1480,7 +1863,10 @@ def run_exp8_tau_calibration(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: 
         tau_rel_error=("tau_rel_error", "mean"),
         kappa_eff_sum_post_mean=("kappa_eff_sum_post_mean", "mean"),
         n_effective=("converged", "sum"),
+        n_valid_metrics=("tau_post_mean", lambda s: int(s.notna().sum())),
     )
+    summary = summary.merge(run_counts, on=["p0", "tau_mode"], how="left")
+    summary["valid_rate"] = summary["n_effective"] / summary["n_total_runs"].clip(lower=1)
     save_dataframe(raw, out / "raw_results.csv")
     save_dataframe(summary, out / "summary.csv")
     plot_exp8_tau(raw, out_path=fig_dir / "fig8_tau_calibration.png")
@@ -1493,54 +1879,63 @@ def run_exp8_tau_calibration(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: 
             "group_sizes": list(group_sizes),
             "p0_list": list(p0_list),
             "tau_scales_fixed": list(tau_scales),
+            "signal_profile": {"strong_value": 2.0, "weak_value": 0.5, "strong_share": 0.5},
             "sampler": {
                 "chains": int(sampler.chains),
                 "warmup": int(sampler.warmup),
                 "post_warmup_draws": int(sampler.post_warmup_draws),
             },
+            "profile": profile_name,
             "primary_error_metric": "tau_rel_error",
         },
         out / "exp8_meta.json",
     )
-    log.info("Completed exp8 with repeats=%d", repeats)
+    log.info("Completed exp8 with repeats=%d, profile=%s", repeats, profile_name)
     return {"raw": str(out / "raw_results.csv"), "summary": str(out / "summary.csv"), "figure": str(fig_dir / "fig8_tau_calibration.png")}
 
 
-def run_exp9_beta_prior_sensitivity(n_jobs: int = 1, seed: int = MASTER_SEED, repeats: int = 120, save_dir: str = "simulation_project") -> Dict[str, str]:
+def run_exp9_beta_prior_sensitivity(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 120,
+    save_dir: str = "simulation_project",
+    *,
+    profile: str = "full",
+) -> Dict[str, str]:
     # ============================================================
-    # EXP9 — Beta(α_κ, β_κ) 先验敏感性（Theorem 2.8）
+    # EXP9 鈥?Beta(伪_魏, 尾_魏) 鍏堥獙鏁忔劅鎬э紙Theorem 2.8锛?
     #
-    # 【理论连接】
-    #   Theorem 2.8：β_κ 控制边际先验 π(β_j) 的尾部指数。
-    #   β_κ 越大 → 先验越保守（对大 |β_j| 惩罚更重） → 零组收缩更快
-    #   α_κ 越大 → 先验均值更高（κ 更倾向 1） → 信号检测更积极
+    # 銆愮悊璁鸿繛鎺ャ€?
+    #   Theorem 2.8锛毼瞋魏 鎺у埗杈归檯鍏堥獙 蟺(尾_j) 鐨勫熬閮ㄦ寚鏁般€?
+    #   尾_魏 瓒婂ぇ 鈫?鍏堥獙瓒婁繚瀹堬紙瀵瑰ぇ |尾_j| 鎯╃綒鏇撮噸锛?鈫?闆剁粍鏀剁缉鏇村揩
+    #   伪_魏 瓒婂ぇ 鈫?鍏堥獙鍧囧€兼洿楂橈紙魏 鏇村€惧悜 1锛?鈫?淇″彿妫€娴嬫洿绉瀬
     #
-    # 【参数选择说明】
+    # 銆愬弬鏁伴€夋嫨璇存槑銆?
     #   priors = [(0.5,0.5),(1,1),(1,2),(0.5,1),(2.5,1)]
-    #     (0.5,1.0)：默认推荐，轻微倾向 κ→0
-    #     (2.5,1.0)：更积极的信号检测（α 大）
-    #     (1.0,2.0)：更保守的收缩（β 大）
-    #   pg_levels=[20,50]：有限样本下先验影响应在小 p_g 时更大（大 p_g 似然主导）
-    #   scenarios：baseline（梯度信号）+ tail_extreme（单极端信号）
+    #     (0.5,1.0)锛氶粯璁ゆ帹鑽愶紝杞诲井鍊惧悜 魏鈫?
+    #     (2.5,1.0)锛氭洿绉瀬鐨勪俊鍙锋娴嬶紙伪 澶э級
+    #     (1.0,2.0)锛氭洿淇濆畧鐨勬敹缂╋紙尾 澶э級
+    #   pg_levels=[20,50]锛氭湁闄愭牱鏈笅鍏堥獙褰卞搷搴斿湪灏?p_g 鏃舵洿澶э紙澶?p_g 浼肩劧涓诲锛?
+    #   scenarios锛歜aseline锛堟搴︿俊鍙凤級+ tail_extreme锛堝崟鏋佺淇″彿锛?
     #
-    # 【理想结果】
-    #   结果对先验"稳健"：5 种先验的 AUROC 差异 < 0.05（鲁棒性）
-    #   null_group_kappa_mean：β_κ 增大时应更小（零组更好收缩）
-    #   null_group_prob_kappa_gt_0_1（κ_null > 0.1 的概率）：β_κ 增大时应降低
-    #   tail_extreme 场景：所有先验都应正确识别极强信号组（AUROC≈1）
+    # 銆愮悊鎯崇粨鏋溿€?
+    #   缁撴灉瀵瑰厛楠?绋冲仴"锛? 绉嶅厛楠岀殑 AUROC 宸紓 < 0.05锛堥瞾妫掓€э級
+    #   null_group_kappa_mean锛毼瞋魏 澧炲ぇ鏃跺簲鏇村皬锛堥浂缁勬洿濂芥敹缂╋級
+    #   null_group_prob_kappa_gt_0_1锛埼篲null > 0.1 鐨勬鐜囷級锛毼瞋魏 澧炲ぇ鏃跺簲闄嶄綆
+    #   tail_extreme 鍦烘櫙锛氭墍鏈夊厛楠岄兘搴旀纭瘑鍒瀬寮轰俊鍙风粍锛圓UROC鈮?锛?
     #
-    # 【若先验敏感性过大的调整方向】
-    #   症状 A — AUROC 随先验剧烈变化（差距 > 0.1）：
-    #     → pg 太小（p_g=20,50 处于先验主导区域），增大至 pg_levels=[50,100]
-    #     → 或这是合理的结果，说明先验选择对小样本有实质影响，在论文中讨论
+    # 銆愯嫢鍏堥獙鏁忔劅鎬ц繃澶х殑璋冩暣鏂瑰悜銆?
+    #   鐥囩姸 A 鈥?AUROC 闅忓厛楠屽墽鐑堝彉鍖栵紙宸窛 > 0.1锛夛細
+    #     鈫?pg 澶皬锛坧_g=20,50 澶勪簬鍏堥獙涓诲鍖哄煙锛夛紝澧炲ぇ鑷?pg_levels=[50,100]
+    #     鈫?鎴栬繖鏄悎鐞嗙殑缁撴灉锛岃鏄庡厛楠岄€夋嫨瀵瑰皬鏍锋湰鏈夊疄璐ㄥ奖鍝嶏紝鍦ㄨ鏂囦腑璁ㄨ
     #
-    #   症状 B — (0.5,0.5) 先验的零组 κ 无法收缩（null_kappa_mean 偏大）：
-    #     → Beta(0.5,0.5) 是双模 U 形分布，大量质量在 0 和 1 附近，但也允许中间值
-    #     → 在这种先验下 p_g=20 的似然可能不足以压制先验，这是预期行为
+    #   鐥囩姸 B 鈥?(0.5,0.5) 鍏堥獙鐨勯浂缁?魏 鏃犳硶鏀剁缉锛坣ull_kappa_mean 鍋忓ぇ锛夛細
+    #     鈫?Beta(0.5,0.5) 鏄弻妯?U 褰㈠垎甯冿紝澶ч噺璐ㄩ噺鍦?0 鍜?1 闄勮繎锛屼絾涔熷厑璁镐腑闂村€?
+    #     鈫?鍦ㄨ繖绉嶅厛楠屼笅 p_g=20 鐨勪技鐒跺彲鑳戒笉瓒充互鍘嬪埗鍏堥獙锛岃繖鏄鏈熻涓?
     #
-    #   症状 C — kappa_curve（按 p_g 分层的 κ 曲线）无分层差异：
-    #     → p_g=20 vs 50 的差距不够；增加 pg_levels=[20,50,100,200]
-    #     → 或者先验效应在所有 p_g 下都小，说明似然已主导 → 鲁棒性结论
+    #   鐥囩姸 C 鈥?kappa_curve锛堟寜 p_g 鍒嗗眰鐨?魏 鏇茬嚎锛夋棤鍒嗗眰宸紓锛?
+    #     鈫?p_g=20 vs 50 鐨勫樊璺濅笉澶燂紱澧炲姞 pg_levels=[20,50,100,200]
+    #     鈫?鎴栬€呭厛楠屾晥搴斿湪鎵€鏈?p_g 涓嬮兘灏忥紝璇存槑浼肩劧宸蹭富瀵?鈫?椴佹鎬х粨璁?
     # ============================================================
     import pandas as pd
     from .plotting import plot_exp9_prior_sensitivity
@@ -1549,7 +1944,8 @@ def run_exp9_beta_prior_sensitivity(n_jobs: int = 1, seed: int = MASTER_SEED, re
     fig_dir = ensure_dir(base / "figures")
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp9", base / "logs" / "exp9_beta_prior_sensitivity.log")
-    sampler = SamplerConfig()
+    profile_name = _normalize_compute_profile(profile)
+    sampler = _sampler_for_profile(profile_name, experiment="exp9")
     scenario_templates = [
         ("baseline", [0.0, 0.0, 2.0, 8.0, 25.0, 80.0]),
         ("tail_extreme", [0.0, 0.0, 0.0, 0.0, 0.0, 200.0]),
@@ -1560,15 +1956,18 @@ def run_exp9_beta_prior_sensitivity(n_jobs: int = 1, seed: int = MASTER_SEED, re
         for pg in pg_levels:
             scenarios.append((f"{base_name}_pg{pg}", base_name, list(mu), [int(pg)] * len(mu), int(pg)))
     priors = [(0.5, 0.5), (1.0, 1.0), (1.0, 2.0), (0.5, 1.0), (2.5, 1.0)]
-    tasks: list[tuple[int, float, float, int, int, list[float], np.ndarray, list[int], str, str, int, SamplerConfig]] = []
+    tasks: list[tuple[int, int, str, str, list[float], list[int], int, SamplerConfig, list[tuple[float, float]]]] = []
     for sid, (scenario, scenario_base, mu, group_sizes, p_g) in enumerate(scenarios, start=1):
-        labels = (np.asarray(mu) > 0).astype(int)
-        for pid, (a, b) in enumerate(priors, start=1):
-            for r in range(1, int(repeats) + 1):
-                task_id = sid * 100 + pid
-                tasks.append((task_id, a, b, r, seed, mu, labels, group_sizes, scenario, scenario_base, int(p_g), sampler))
-    rows = _parallel_rows(tasks, _exp9_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp9 Beta Prior Sensitivity")
+        for r in range(1, int(repeats) + 1):
+            tasks.append((sid, r, scenario, scenario_base, list(mu), list(group_sizes), seed, sampler, list(priors)))
+    rows_nested = _parallel_rows(tasks, _exp9_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp9 Beta Prior Sensitivity")
+    rows: list[dict[str, Any]] = []
+    for chunk in rows_nested:
+        rows.extend(chunk)
     raw = pd.DataFrame(rows)
+    run_counts = raw.groupby(["scenario", "scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(
+        n_total_runs=("replicate_id", "count")
+    )
     table = raw.groupby(["scenario", "scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(
         null_group_mse_avg=("null_group_mse_avg", "mean"),
         signal_group_mse_avg=("signal_group_mse_avg", "mean"),
@@ -1577,12 +1976,20 @@ def run_exp9_beta_prior_sensitivity(n_jobs: int = 1, seed: int = MASTER_SEED, re
         signal_group_kappa_mean=("signal_group_kappa_mean", "mean"),
         null_group_prob_kappa_gt_0_1=("null_group_prob_kappa_gt_0_1", "mean"),
         n_effective=("converged", "sum"),
+        n_valid_metrics=("group_auroc", lambda s: int(s.notna().sum())),
     )
+    table = table.merge(run_counts, on=["scenario", "scenario_base", "p_g", "alpha_kappa", "beta_kappa"], how="left")
+    table["valid_rate"] = table["n_effective"] / table["n_total_runs"].clip(lower=1)
+
+    kappa_counts = raw.groupby(["scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(n_total_runs=("replicate_id", "count"))
     kappa_curve = raw.groupby(["scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(
         null_group_kappa_mean=("null_group_kappa_mean", "mean"),
         null_group_prob_kappa_gt_0_1=("null_group_prob_kappa_gt_0_1", "mean"),
         n_effective=("converged", "sum"),
+        n_valid_metrics=("null_group_kappa_mean", lambda s: int(s.notna().sum())),
     )
+    kappa_curve = kappa_curve.merge(kappa_counts, on=["scenario_base", "p_g", "alpha_kappa", "beta_kappa"], how="left")
+    kappa_curve["valid_rate"] = kappa_curve["n_effective"] / kappa_curve["n_total_runs"].clip(lower=1)
     save_dataframe(raw, out / "raw_results.csv")
     save_dataframe(table, out / "summary.csv")
     save_dataframe(kappa_curve, out / "summary_kappa_curve.csv")
@@ -1594,29 +2001,37 @@ def run_exp9_beta_prior_sensitivity(n_jobs: int = 1, seed: int = MASTER_SEED, re
             "pg_levels": pg_levels,
             "scenario_templates": [{"name": name, "mu": mu} for name, mu in scenario_templates],
             "priors": [{"alpha_kappa": float(a), "beta_kappa": float(b)} for a, b in priors],
+            "profile": profile_name,
         },
         out / "exp9_meta.json",
     )
-    log.info("Completed exp9 with repeats=%d", repeats)
+    log.info("Completed exp9 with repeats=%d, profile=%s", repeats, profile_name)
     return {"raw": str(out / "raw_results.csv"), "table": str(tab_dir / "table_beta_prior_sensitivity.csv")}
 
 
-def run_all(save_dir: str = "simulation_project", seed: int = MASTER_SEED, n_jobs: int = 1) -> Dict[str, Dict[str, str]]:
+def run_all(
+    save_dir: str = "simulation_project",
+    seed: int = MASTER_SEED,
+    n_jobs: int = 1,
+    *,
+    profile: str = "full",
+) -> Dict[str, Dict[str, str]]:
+    profile_name = _normalize_compute_profile(profile)
     out: Dict[str, Dict[str, str]] = {}
     jobs = [
-        ("exp1", run_exp1_null_contraction),
-        ("exp2", run_exp2_adaptive_localization),
-        ("exp3", run_exp3_phase_diagram),
-        ("exp4", run_exp4_benchmark_linear),
-        ("exp5", run_exp5_heterogeneity),
-        ("exp6", run_exp6_grouped_logistic),
-        ("exp7", run_exp7_ablation),
-        ("exp8", run_exp8_tau_calibration),
-        ("exp9", run_exp9_beta_prior_sensitivity),
+        ("exp1", lambda: run_exp1_null_contraction(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp1", profile_name))),
+        ("exp2", lambda: run_exp2_adaptive_localization(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp2", profile_name))),
+        ("exp3", lambda: run_exp3_phase_diagram(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp3", profile_name))),
+        ("exp4", lambda: run_exp4_benchmark_linear(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp4", profile_name), profile=profile_name)),
+        ("exp5", lambda: run_exp5_heterogeneity(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp5", profile_name), profile=profile_name)),
+        ("exp6", lambda: run_exp6_grouped_logistic(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp6", profile_name), profile=profile_name)),
+        ("exp7", lambda: run_exp7_ablation(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp7", profile_name), profile=profile_name)),
+        ("exp8", lambda: run_exp8_tau_calibration(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp8", profile_name), profile=profile_name)),
+        ("exp9", lambda: run_exp9_beta_prior_sensitivity(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp9", profile_name), profile=profile_name)),
     ]
-    for name, fn in tqdm(jobs, total=len(jobs), desc="All Experiments", leave=True):
-        out[name] = fn(save_dir=save_dir, seed=seed, n_jobs=n_jobs)
-    save_json(out, Path(save_dir) / "results" / "run_manifest.json")
+    for name, runner in tqdm(jobs, total=len(jobs), desc="All Experiments", leave=True):
+        out[name] = runner()
+    save_json({"profile": profile_name, "results": out}, Path(save_dir) / "results" / "run_manifest.json")
     return out
 
 
@@ -1713,29 +2128,82 @@ def _cli() -> None:
     parser.add_argument("--seed", type=int, default=MASTER_SEED)
     parser.add_argument("--repeats", type=int, default=None)
     parser.add_argument("--n-jobs", type=int, default=1)
+    parser.add_argument("--profile", type=str, default="full", choices=list(COMPUTE_PROFILES))
     parser.add_argument("--max-attempts", type=int, default=8)
     args = parser.parse_args()
+    profile_name = _normalize_compute_profile(args.profile)
 
     if args.experiment == "all":
-        run_all(save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_all(save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs, profile=profile_name)
     elif args.experiment == "1":
-        run_exp1_null_contraction(repeats=args.repeats or 500, save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_exp1_null_contraction(
+            repeats=args.repeats or _default_repeats("exp1", profile_name),
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+        )
     elif args.experiment == "2":
-        run_exp2_adaptive_localization(repeats=args.repeats or 500, save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_exp2_adaptive_localization(
+            repeats=args.repeats or _default_repeats("exp2", profile_name),
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+        )
     elif args.experiment == "3":
-        run_exp3_phase_diagram(repeats=args.repeats or 200, save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_exp3_phase_diagram(
+            repeats=args.repeats or _default_repeats("exp3", profile_name),
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+        )
     elif args.experiment == "4":
-        run_exp4_benchmark_linear(repeats=args.repeats or 100, save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_exp4_benchmark_linear(
+            repeats=args.repeats or _default_repeats("exp4", profile_name),
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+            profile=profile_name,
+        )
     elif args.experiment == "5":
-        run_exp5_heterogeneity(repeats=args.repeats or 100, save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_exp5_heterogeneity(
+            repeats=args.repeats or _default_repeats("exp5", profile_name),
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+            profile=profile_name,
+        )
     elif args.experiment == "6":
-        run_exp6_grouped_logistic(repeats=args.repeats or 50, save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_exp6_grouped_logistic(
+            repeats=args.repeats or _default_repeats("exp6", profile_name),
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+            profile=profile_name,
+        )
     elif args.experiment == "7":
-        run_exp7_ablation(repeats=args.repeats or 100, save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_exp7_ablation(
+            repeats=args.repeats or _default_repeats("exp7", profile_name),
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+            profile=profile_name,
+        )
     elif args.experiment == "8":
-        run_exp8_tau_calibration(repeats=args.repeats or 100, save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_exp8_tau_calibration(
+            repeats=args.repeats or _default_repeats("exp8", profile_name),
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+            profile=profile_name,
+        )
     elif args.experiment == "9":
-        run_exp9_beta_prior_sensitivity(repeats=args.repeats or 120, save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs)
+        run_exp9_beta_prior_sensitivity(
+            repeats=args.repeats or _default_repeats("exp9", profile_name),
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+            profile=profile_name,
+        )
     elif args.experiment == "theory-check":
         run_theory_check(save_dir=args.save_dir)
     elif args.experiment == "theory-auto":

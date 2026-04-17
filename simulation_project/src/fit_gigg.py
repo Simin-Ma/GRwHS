@@ -12,14 +12,23 @@ from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs
 # Boss et al. (2024) use 10 000 burn-in + 10 000 draws in all simulations.
 # We use 4× the HMC warmup (floor 2 000, cap 5 000) so MMLE has enough
 # steps to converge b_g from b_init = 0.5, keeping wall-time manageable.
-_GIGG_BURNIN_MULT = 4
-_GIGG_BURNIN_FLOOR = 2000
-_GIGG_BURNIN_CAP = 5000
+_DEFAULT_GIGG_ITER_MULT = 4
+_DEFAULT_GIGG_ITER_FLOOR = 2000
+_DEFAULT_GIGG_ITER_CAP = 5000
 
 
-def _gigg_iters(sampler: SamplerConfig) -> tuple[int, int]:
-    burnin = min(max(int(sampler.warmup) * _GIGG_BURNIN_MULT, _GIGG_BURNIN_FLOOR), _GIGG_BURNIN_CAP)
-    draws = min(max(int(sampler.post_warmup_draws) * _GIGG_BURNIN_MULT, _GIGG_BURNIN_FLOOR), _GIGG_BURNIN_CAP)
+def _gigg_iters(
+    sampler: SamplerConfig,
+    *,
+    iter_mult: int = _DEFAULT_GIGG_ITER_MULT,
+    iter_floor: int = _DEFAULT_GIGG_ITER_FLOOR,
+    iter_cap: int = _DEFAULT_GIGG_ITER_CAP,
+) -> tuple[int, int]:
+    mult = max(1, int(iter_mult))
+    floor = max(10, int(iter_floor))
+    cap = max(floor, int(iter_cap))
+    burnin = min(max(int(sampler.warmup) * mult, floor), cap)
+    draws = min(max(int(sampler.post_warmup_draws) * mult, floor), cap)
     return burnin, draws
 
 
@@ -85,6 +94,11 @@ def fit_gigg_mmle(
     seed: int,
     sampler: SamplerConfig,
     p0: int = 0,
+    iter_mult: int = _DEFAULT_GIGG_ITER_MULT,
+    iter_floor: int = _DEFAULT_GIGG_ITER_FLOOR,
+    iter_cap: int = _DEFAULT_GIGG_ITER_CAP,
+    btrick: bool = True,
+    mmle_burnin_only: bool = True,
 ) -> FitResult:
     """GIGG with MMLE hyperparameter estimation (Boss et al. 2024, Section 4.2).
 
@@ -103,7 +117,12 @@ def fit_gigg_mmle(
     n, p = X.shape
     # CPS τ₀ calibration — same formula used for RHS / GR_RHS
     tau0 = rhs_style_tau0(n=n, p=p, p0=max(int(p0), 1))
-    gigg_burnin, gigg_draws = _gigg_iters(sampler)
+    gigg_burnin, gigg_draws = _gigg_iters(
+        sampler,
+        iter_mult=iter_mult,
+        iter_floor=iter_floor,
+        iter_cap=iter_cap,
+    )
 
     try:
         model = GIGGRegression(
@@ -117,6 +136,9 @@ def fit_gigg_mmle(
             store_lambda=True,
             # a_g = 1/n enforced inside GIGGRegression when force_a_1_over_n=True (default)
             tau_sq_init=float(tau0 ** 2),
+            btrick=bool(btrick),
+            stable_solve=True,
+            mmle_burnin_only=bool(mmle_burnin_only),
         )
         model, runtime = timed_call(model.fit, X, y, groups=[list(map(int, g)) for g in groups])
         return _extract_and_diagnose(model, "GIGG_MMLE", sampler, runtime)
@@ -138,6 +160,10 @@ def fit_gigg_fixed(
     a_val: float | None = None,
     b_val: float,
     method_label: str,
+    iter_mult: int = _DEFAULT_GIGG_ITER_MULT,
+    iter_floor: int = _DEFAULT_GIGG_ITER_FLOOR,
+    iter_cap: int = _DEFAULT_GIGG_ITER_CAP,
+    btrick: bool = True,
 ) -> FitResult:
     """GIGG with fixed hyperparameters (Boss et al. 2024, Table 2 ablation variants).
 
@@ -158,7 +184,12 @@ def fit_gigg_fixed(
     n, p = X.shape
     a_fixed = float(a_val) if a_val is not None else 1.0 / max(n, 1)
     tau0 = rhs_style_tau0(n=n, p=p, p0=max(int(p0), 1))
-    gigg_burnin, gigg_draws = _gigg_iters(sampler)
+    gigg_burnin, gigg_draws = _gigg_iters(
+        sampler,
+        iter_mult=iter_mult,
+        iter_floor=iter_floor,
+        iter_cap=iter_cap,
+    )
     G = len(list(groups))
 
     try:
@@ -175,6 +206,8 @@ def fit_gigg_fixed(
             b_init=float(b_val),
             force_a_1_over_n=False,
             tau_sq_init=float(tau0 ** 2),
+            btrick=bool(btrick),
+            stable_solve=True,
         )
         a_arr = [a_fixed] * G
         b_arr = [float(b_val)] * G

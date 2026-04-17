@@ -23,8 +23,8 @@ class SamplerConfig:
     strict_adapt_delta: float = 0.99
     strict_max_treedepth: int = 14
     max_divergence_ratio: float = 0.005
-    rhat_threshold: float = 1.05
-    ess_threshold: float = 200.0
+    rhat_threshold: float = 1.01
+    ess_threshold: float = 400.0
 
 
 @dataclass
@@ -226,13 +226,15 @@ def diagnostics_summary_for_method(
     if np.isfinite(hmc_ess):
         ess_min = float(hmc_ess)
 
+    # Divergence diagnostics are HMC-specific. For samplers without this signal,
+    # we gate convergence on R-hat/ESS only.
+    div_ok = (not np.isfinite(div_ratio)) or (div_ratio < float(config.max_divergence_ratio))
     converged = bool(
         np.isfinite(rhat_max)
         and (rhat_max < float(config.rhat_threshold))
         and np.isfinite(ess_min)
         and (ess_min > float(config.ess_threshold))
-        and np.isfinite(div_ratio)
-        and (div_ratio < float(config.max_divergence_ratio))
+        and div_ok
     )
 
     merged = {
@@ -289,6 +291,8 @@ def method_display_name(name: str) -> str:
         "GIGG_GHS": "GIGG-GHS (b=1/2)",
         "GIGG_b_large": "GIGG (b=1)",
         "GHS_plus": "Grouped Horseshoe+",
+        "OLS": "OLS",
+        "LASSO_CV": "Lasso (CV)",
         "GR_RHS_full": "GR-RHS (full)",
         "GR_RHS_no_ag": "GR-RHS (no a_g)",
         "GR_RHS_no_local_scales": "GR-RHS (lambda_j=1)",
