@@ -197,7 +197,7 @@ def diagnostics_summary_for_method(
     beta_draws: Optional[np.ndarray],
     config: SamplerConfig,
 ) -> tuple[float, float, float, bool, Dict[str, Any]]:
-    from grrhs.diagnostics.convergence import summarize_convergence
+    from simulation_project.src.core.diagnostics.convergence import summarize_convergence
 
     draws = collect_model_draws(model)
     subset = {k: v for k, v in draws.items() if k in set(tracked_params) and v is not None}

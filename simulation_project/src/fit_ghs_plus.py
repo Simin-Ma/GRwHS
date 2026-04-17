@@ -4,7 +4,7 @@ from typing import Sequence
 
 import numpy as np
 
-from grrhs.models.baselines import GroupedHorseshoePlus
+from simulation_project.src.core.models.baselines import GroupedHorseshoePlus
 
 from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
 

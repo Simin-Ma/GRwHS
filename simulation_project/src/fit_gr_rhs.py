@@ -4,7 +4,7 @@ from typing import Sequence
 
 import numpy as np
 
-from grrhs.models.grrhs_nuts import GRRHS_NUTS
+from simulation_project.src.core.models.grrhs_nuts import GRRHS_NUTS
 
 from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
 

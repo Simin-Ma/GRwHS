@@ -1582,7 +1582,7 @@ def run_all_experiments(
 # ---------------------------------------------------------------------------
 
 def _cli() -> None:
-    parser = argparse.ArgumentParser(description="Run GR-RHS 5-experiment simulation pipeline")
+    parser = argparse.ArgumentParser(description="Run the unified 5-experiment simulation pipeline")
     parser.add_argument("--experiment", default="all", choices=["all", "1", "2", "3", "4", "5"])
     parser.add_argument("--save-dir", default="simulation_project")
     parser.add_argument("--seed", type=int, default=MASTER_SEED)

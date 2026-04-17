@@ -3,14 +3,14 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "grrhs"
+name = "simulation-project"
 version = "0.1.0"
-description = "Generalized regularized horseshoe experimentation toolkit"
+description = "Simulation-first grouped shrinkage experimentation toolkit"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [
-  { name = "GRRHS Team" }
+  { name = "Simulation Project Team" }
 ]
 dependencies = [
   "numpy>=1.24",
@@ -37,6 +37,9 @@ dev = [
   "ruff>=0.5"
 ]
 
+[project.scripts]
+run-simulation = "simulation_project.src.run_experiment:_cli"
+
 [tool.setuptools.packages.find]
-# Discover packages from repository root so top-level 'grrhs' is included
+# Discover packages from repository root
 where = ["."]

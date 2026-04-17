@@ -4,7 +4,7 @@ from typing import Sequence
 
 import numpy as np
 
-from grrhs.models.baselines import RegularizedHorseshoeRegression
+from simulation_project.src.core.models.baselines import RegularizedHorseshoeRegression
 
 from .utils import (
     FitResult,
