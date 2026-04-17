@@ -186,6 +186,26 @@ def plot_exp6_kappa(df: Any, out_path: Path) -> None:
 
 
 def plot_exp8_tau(df: Any, out_path: Path) -> None:
+    if "tau_post_mean" in df.columns and "tau_target" in df.columns and "tau_mode" in df.columns:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))
+        for mode, sub in df.groupby("tau_mode"):
+            axes[0].scatter(sub["tau_target"], sub["tau_post_mean"], alpha=0.5, s=16, label=mode)
+        lo = float(min(df["tau_target"].min(), df["tau_post_mean"].min()))
+        hi = float(max(df["tau_target"].max(), df["tau_post_mean"].max()))
+        axes[0].plot([lo, hi], [lo, hi], "--", color="black", linewidth=1.0)
+        axes[0].set_xlabel("tau target")
+        axes[0].set_ylabel("posterior mean tau")
+        axes[0].legend(fontsize=8)
+
+        for mode, sub in df.groupby("tau_mode"):
+            vals = (sub["tau_post_mean"] - sub["tau_target"]).to_numpy()
+            axes[1].hist(vals, bins=30, alpha=0.35, label=mode)
+        axes[1].set_xlabel("tau posterior error")
+        axes[1].set_ylabel("Count")
+        axes[1].legend(fontsize=8)
+        _save(fig, out_path)
+        return
+
     fig, ax = plt.subplots(figsize=(8, 4.2))
     for name, sub in df.groupby("tau_prior"):
         vals = sub["m_eff"].to_numpy()

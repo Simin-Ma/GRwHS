@@ -40,6 +40,7 @@ class FitResult:
     bulk_ess_min: float
     divergence_ratio: float
     converged: bool
+    tau_draws: Optional[np.ndarray] = None
     error: str = ""
     diagnostics: Optional[Dict[str, Any]] = None
 
@@ -275,6 +276,7 @@ def method_display_name(name: str) -> str:
         "GHS_plus": "GHS+",
         "GR_RHS_full": "GR-RHS (full)",
         "GR_RHS_no_ag": "GR-RHS (no a_g)",
+        "GR_RHS_no_local_scales": "GR-RHS (lambda_j=1)",
         "GR_RHS_shared_kappa": "GR-RHS (shared kappa)",
     }
     return mapping.get(name, name)
