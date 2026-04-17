@@ -48,8 +48,15 @@ Implementation notes for current revision:
 - `exp9` evaluates all prior pairs on one shared scenario-replicate dataset (paired prior sensitivity).
 - benchmark experiments (`exp4/5/6`) support method subsets and compute profiles (`full`, `laptop`).
 - GIGG fitting enables Bhattacharya fast beta draw (`btrick=True`) with profile-specific iteration budgets.
+- convergence-enforced mode retries Bayesian fits with expanded sampling budgets.
+- optional "until converged" mode (`--until-bayes-converged`) keeps adding budget until convergence, with internal safety hard cap (currently 12 retries) to avoid infinite loops.
+- current CLI default for `exp4-9`: when convergence enforcement is active and `--max-convergence-retries` is omitted, it runs in until-converged mode.
+- non-converged fits after the retry budget/hard-cap are marked failed and excluded from posterior-trust metrics.
 - benchmark summaries include `n_total_runs`, `n_effective`, and `valid_rate`.
 - `exp4` emits both `summary_all.csv` and `summary_converged.csv` for all-runs vs converged-only reporting.
+- `exp4-9` emit paired-converged summaries using the common replicate intersection across compared methods/configs.
+- default table outputs (`table_*.csv`) now prefer paired-converged summaries when available.
+- `exp4-9` emit convergence audit files: per-method `convergence_audit.csv` and intersection-level `paired_convergence_audit.csv`.
 
 ---
 
@@ -94,6 +101,16 @@ If divergence ratio exceeds 0.5%, rerun with:
 
 - adapt_delta: `0.99`
 - max_treedepth: `14`
+
+### 3.2.1 Convergence-enforced retries
+
+- Available for Bayesian methods in `exp4-9`.
+- Controlled by CLI:
+  - `--max-convergence-retries K`
+  - `--until-bayes-converged`
+  - `--no-enforce-bayes-convergence` (default is enforce).
+- Retry strategy scales warmup/draws and increases NUTS controls (`adapt_delta`, `max_treedepth`) per attempt.
+- If still not converged after all attempts (or safety cap in until-converged mode), that fit is marked as failed (posterior deemed not trustworthy).
 
 ### 3.3 Convergence gate
 
@@ -177,9 +194,16 @@ Tables expected from the suite:
 - `table_benchmark_linear.csv`
 - `table_benchmark_linear_all.csv`
 - `table_benchmark_linear_converged.csv`
+- `table_benchmark_linear_paired_converged.csv`
 - `table_heterogeneity_auroc.csv`
+- `table_heterogeneity_auroc_all.csv`
+- `table_heterogeneity_auroc_paired_converged.csv`
 - `table_ablation.csv`
+- `table_ablation_all.csv`
+- `table_ablation_paired_converged.csv`
 - `table_beta_prior_sensitivity.csv`
+- `table_beta_prior_sensitivity_all.csv`
+- `table_beta_prior_sensitivity_paired_converged.csv`
 
 ---
 
@@ -195,6 +219,18 @@ Run all with laptop profile:
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2 --profile laptop
+```
+
+Run with stricter convergence retries:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2 --profile full --max-convergence-retries 3
+```
+
+Run in until-converged mode:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2 --profile full --until-bayes-converged
 ```
 
 Run one experiment:

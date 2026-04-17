@@ -34,8 +34,11 @@ Recent protocol updates:
 - `exp9` now evaluates all `(alpha_kappa, beta_kappa)` priors on the same scenario-replicate dataset (paired prior sensitivity).
 - benchmark layer supports compute profiles: `full` and `laptop` (`--profile laptop` in CLI).
 - GIGG uses Bhattacharya fast beta draw (`btrick=True`) and profile-specific iteration budgets.
+- Bayesian methods support convergence-enforced retries. In current CLI defaults, if convergence enforcement is on and `--max-convergence-retries` is not set, the runner uses "until converged" mode (bounded by internal safety cap, currently 12 retries, to avoid infinite loops).
 - benchmark summaries now expose run-quality columns such as `n_total_runs`, `n_effective`, and `valid_rate`.
 - `exp4` writes both `summary_all.csv` and `summary_converged.csv` (plus matching tables) for dual reporting.
+- `exp4-9` now additionally write paired-converged summaries (common replicate intersection across compared methods/configs), and default table files prefer this paired-converged view when available.
+- `exp4-9` now write convergence audits: per-method `convergence_audit.csv` and intersection-level `paired_convergence_audit.csv`.
 
 ---
 
@@ -165,6 +168,24 @@ Run all with laptop profile:
 python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2 --profile laptop
 ```
 
+Run with strict convergence enforcement and extra retry budget:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2 --profile full --max-convergence-retries 3
+```
+
+Force "until converged" mode explicitly (auto-add budget until convergence, with internal hard cap):
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2 --profile full --until-bayes-converged
+```
+
+Disable convergence enforcement (not recommended for final reporting):
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2 --no-enforce-bayes-convergence
+```
+
 Run a single experiment:
 
 ```bash
@@ -291,9 +312,16 @@ Tables:
 - `table_benchmark_linear.csv`
 - `table_benchmark_linear_all.csv`
 - `table_benchmark_linear_converged.csv`
+- `table_benchmark_linear_paired_converged.csv`
 - `table_heterogeneity_auroc.csv`
+- `table_heterogeneity_auroc_all.csv`
+- `table_heterogeneity_auroc_paired_converged.csv`
 - `table_ablation.csv`
+- `table_ablation_all.csv`
+- `table_ablation_paired_converged.csv`
 - `table_beta_prior_sensitivity.csv`
+- `table_beta_prior_sensitivity_all.csv`
+- `table_beta_prior_sensitivity_paired_converged.csv`
 
 ---
 

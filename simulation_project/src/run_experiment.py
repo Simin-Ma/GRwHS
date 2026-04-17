@@ -128,6 +128,241 @@ def _default_repeats(exp: str, profile: str) -> int:
     return int(table[exp_key])
 
 
+_BAYESIAN_METHODS = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
+_UNTIL_CONVERGED_RETRY_HARD_CAP = 12
+_RETRY_MAX_WARMUP = 8000
+_RETRY_MAX_POST_DRAWS = 8000
+_RETRY_MAX_GIGG_ITER = 50000
+
+
+def _is_bayesian_method(method: str) -> bool:
+    return str(method) in _BAYESIAN_METHODS
+
+
+def _default_convergence_retries(profile: str) -> int:
+    return 2 if _normalize_compute_profile(profile) == "full" else 1
+
+
+def _resolve_convergence_retry_limit(
+    profile: str,
+    max_convergence_retries: int | None,
+    *,
+    until_bayes_converged: bool,
+) -> int:
+    if max_convergence_retries is not None:
+        return int(max_convergence_retries)
+    if bool(until_bayes_converged):
+        # Negative value means "until converged" mode with an internal hard cap.
+        return -1
+    return _default_convergence_retries(profile)
+
+
+def _retry_budget_from_limit(max_convergence_retries: int) -> tuple[int, bool]:
+    retry_raw = int(max_convergence_retries)
+    if retry_raw >= 0:
+        return retry_raw, False
+    return int(_UNTIL_CONVERGED_RETRY_HARD_CAP), True
+
+
+def _scale_sampler_for_retry(base: SamplerConfig, attempt: int) -> SamplerConfig:
+    k = max(0, int(attempt))
+    if k == 0:
+        return base
+    mul = int(2 ** k)
+    return SamplerConfig(
+        chains=max(1, int(base.chains)),
+        warmup=min(_RETRY_MAX_WARMUP, max(50, int(base.warmup) * mul)),
+        post_warmup_draws=min(_RETRY_MAX_POST_DRAWS, max(50, int(base.post_warmup_draws) * mul)),
+        adapt_delta=min(0.995, float(base.adapt_delta) + 0.02 * k),
+        max_treedepth=min(15, int(base.max_treedepth) + k),
+        strict_adapt_delta=min(0.999, float(base.strict_adapt_delta) + 0.01 * k),
+        strict_max_treedepth=min(16, int(base.strict_max_treedepth) + k),
+        max_divergence_ratio=float(base.max_divergence_ratio),
+        rhat_threshold=float(base.rhat_threshold),
+        ess_threshold=float(base.ess_threshold),
+    )
+
+
+def _scale_gigg_config_for_retry(cfg: dict[str, Any], attempt: int) -> dict[str, Any]:
+    k = max(0, int(attempt))
+    if k == 0:
+        return dict(cfg)
+    out = dict(cfg)
+    mul = int(2 ** k)
+    iter_mult = int(out.get("iter_mult", 1))
+    iter_floor = int(out.get("iter_floor", 500))
+    iter_cap = int(out.get("iter_cap", 1500))
+    out["iter_mult"] = max(1, iter_mult * mul)
+    out["iter_floor"] = min(_RETRY_MAX_GIGG_ITER, max(10, iter_floor * mul))
+    out["iter_cap"] = min(_RETRY_MAX_GIGG_ITER, max(out["iter_floor"], iter_cap * mul))
+    return out
+
+
+def _invalidate_unconverged_result(res: FitResult, *, method: str, attempts: int) -> FitResult:
+    # Enforce posterior-trust policy: non-converged Bayesian fits are kept as failed.
+    msg = f"ConvergenceError: {method} did not converge after {attempts} attempt(s)"
+    if str(res.error).strip():
+        msg = f"{msg}; last_error={res.error}"
+    res.status = "error"
+    res.error = msg
+    res.converged = False
+    res.beta_mean = None
+    res.beta_draws = None
+    res.kappa_draws = None
+    res.group_scale_draws = None
+    res.tau_draws = None
+    return res
+
+
+def _fit_with_convergence_retry(
+    fit_fn,
+    *,
+    method: str,
+    sampler: SamplerConfig,
+    max_convergence_retries: int,
+    enforce_bayes_convergence: bool,
+) -> FitResult:
+    retry_max, until_mode = _retry_budget_from_limit(int(max_convergence_retries))
+    res: FitResult | None = None
+    attempts = 1
+    for attempt in range(retry_max + 1):
+        attempts = attempt + 1
+        sampler_try = _scale_sampler_for_retry(sampler, attempt)
+        res = fit_fn(sampler_try, attempt)
+        if not bool(enforce_bayes_convergence):
+            break
+        if bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
+            break
+    assert res is not None
+    if bool(enforce_bayes_convergence) and _is_bayesian_method(method):
+        if not bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
+            res = _invalidate_unconverged_result(res, method=method, attempts=attempts)
+    res = _attach_retry_diagnostics(
+        res,
+        method=method,
+        attempts=attempts,
+        retry_max=retry_max,
+        until_mode=until_mode,
+        enforce_bayes_convergence=bool(enforce_bayes_convergence),
+    )
+    return res
+
+
+def _attach_retry_diagnostics(
+    res: FitResult,
+    *,
+    method: str,
+    attempts: int,
+    retry_max: int,
+    until_mode: bool,
+    enforce_bayes_convergence: bool,
+) -> FitResult:
+    diag = dict(res.diagnostics or {})
+    diag["convergence_retry"] = {
+        "method": str(method),
+        "attempts_used": int(max(1, attempts)),
+        "max_attempts": int(max(1, retry_max + 1)),
+        "until_converged_mode": bool(until_mode),
+        "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+        "status": str(res.status),
+        "converged": bool(res.converged),
+    }
+    res.diagnostics = diag
+    return res
+
+
+def _attempts_used(res: FitResult) -> int:
+    diag = res.diagnostics if isinstance(res.diagnostics, dict) else {}
+    retry = diag.get("convergence_retry", {}) if isinstance(diag, dict) else {}
+    try:
+        return int(retry.get("attempts_used", 1))
+    except Exception:
+        return 1
+
+
+def _paired_converged_subset(
+    raw,
+    *,
+    group_cols: Sequence[str],
+    method_col: str,
+    replicate_col: str,
+    converged_col: str,
+    required_cols: Sequence[str],
+    method_levels: Sequence[str] | None = None,
+):
+    import pandas as pd
+
+    group_cols_use = [str(c) for c in group_cols]
+    if raw.empty:
+        stats_cols = list(group_cols_use) + [
+            "n_total_replicates",
+            "n_common_replicates",
+            "common_rate",
+            "methods_required",
+            "methods_list",
+        ]
+        return raw.copy(), pd.DataFrame(columns=stats_cols)
+
+    work = raw.copy()
+    work[method_col] = work[method_col].astype(str)
+    methods_present = sorted(set(work[method_col].tolist()))
+    if method_levels is not None:
+        methods_target = [str(m) for m in method_levels if str(m) in set(methods_present)]
+    else:
+        methods_target = methods_present
+    if not methods_target:
+        stats_cols = list(group_cols_use) + [
+            "n_total_replicates",
+            "n_common_replicates",
+            "common_rate",
+            "methods_required",
+            "methods_list",
+        ]
+        return work.iloc[0:0].copy(), pd.DataFrame(columns=stats_cols)
+
+    work = work.loc[work[method_col].isin(methods_target)].copy()
+    valid = work[converged_col].fillna(False).astype(bool)
+    for c in required_cols:
+        valid &= work[c].notna()
+    work["_pair_valid"] = valid
+
+    key_cols = list(group_cols_use) + [str(replicate_col)]
+    pivot = work.pivot_table(index=key_cols, columns=method_col, values="_pair_valid", aggfunc="max")
+    for m in methods_target:
+        if m not in pivot.columns:
+            pivot[m] = False
+    common_idx = pivot[methods_target].fillna(False).all(axis=1)
+    common_keys = pivot.loc[common_idx].reset_index()[key_cols]
+
+    paired = work.merge(common_keys, on=key_cols, how="inner")
+    paired = paired.drop(columns=["_pair_valid"], errors="ignore")
+
+    if group_cols_use:
+        total = work.groupby(group_cols_use, as_index=False).agg(n_total_replicates=(replicate_col, "nunique"))
+        if common_keys.empty:
+            common = total[group_cols_use].copy()
+            common["n_common_replicates"] = 0
+        else:
+            common = common_keys.groupby(group_cols_use, as_index=False).agg(n_common_replicates=(replicate_col, "nunique"))
+        stats = total.merge(common, on=group_cols_use, how="left")
+    else:
+        stats = pd.DataFrame(
+            [
+                {
+                    "n_total_replicates": int(work[replicate_col].nunique()),
+                    "n_common_replicates": int(common_keys[replicate_col].nunique()) if not common_keys.empty else 0,
+                }
+            ]
+        )
+
+    stats["n_common_replicates"] = stats["n_common_replicates"].fillna(0).astype(int)
+    stats["n_total_replicates"] = stats["n_total_replicates"].fillna(0).astype(int)
+    stats["common_rate"] = stats["n_common_replicates"] / stats["n_total_replicates"].clip(lower=1)
+    stats["methods_required"] = int(len(methods_target))
+    stats["methods_list"] = "|".join(methods_target)
+    return paired, stats
+
+
 def _save_rows_csv(rows: list[dict[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -360,10 +595,12 @@ def _exp3_setting_worker(task: tuple[int, int, int, float, int, int, float, floa
     return rows
 
 
-def _exp4_worker(task: tuple[int, str, dict[str, Any], float, int, int, SamplerConfig, list[str], dict[str, Any]]) -> list[dict[str, Any]]:
+def _exp4_worker(
+    task: tuple[int, str, dict[str, Any], float, int, int, SamplerConfig, list[str], dict[str, Any], bool, int]
+) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import build_linear_beta, generate_grouped_linear_dataset
 
-    sid, setting, spec, target_snr, r, seed, sampler, methods, gigg_config = task
+    sid, setting, spec, target_snr, r, seed, sampler, methods, gigg_config, enforce_bayes_convergence, max_convergence_retries = task
     s = experiment_seed(4, sid, r, master_seed=seed)
     beta_setting = str(spec.get("beta_setting", setting))
     beta_shape = build_linear_beta(beta_setting, spec["group_sizes"])
@@ -387,6 +624,8 @@ def _exp4_worker(task: tuple[int, str, dict[str, Any], float, int, int, SamplerC
         sampler=sampler,
         methods=methods,
         gigg_config=gigg_config,
+        enforce_bayes_convergence=bool(enforce_bayes_convergence),
+        max_convergence_retries=int(max_convergence_retries),
     )
     out_rows: list[dict[str, Any]] = []
     for method, result in fits.items():
@@ -405,6 +644,7 @@ def _exp4_worker(task: tuple[int, str, dict[str, Any], float, int, int, SamplerC
                 "bulk_ess_min": result.bulk_ess_min,
                 "divergence_ratio": result.divergence_ratio,
                 "error": result.error,
+                "fit_attempts": _attempts_used(result),
                 **metrics,
             }
         )
@@ -412,12 +652,12 @@ def _exp4_worker(task: tuple[int, str, dict[str, Any], float, int, int, SamplerC
 
 
 def _exp5_worker(
-    task: tuple[int, int, list[int], list[float], SamplerConfig, list[str], dict[str, Any]]
+    task: tuple[int, int, list[int], list[float], SamplerConfig, list[str], dict[str, Any], bool, int]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .metrics import group_auroc, group_l2_error, group_l2_score
 
-    r, seed, group_sizes, mu, sampler, methods, gigg_config = task
+    r, seed, group_sizes, mu, sampler, methods, gigg_config, enforce_bayes_convergence, max_convergence_retries = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     s = experiment_seed(5, 1, r, master_seed=seed)
     ds = generate_heterogeneity_dataset(n=300, group_sizes=group_sizes, rho_within=0.3, rho_between=0.05, sigma2=1.0, mu=mu, seed=s)
@@ -431,6 +671,8 @@ def _exp5_worker(
         sampler=sampler,
         methods=methods,
         gigg_config=gigg_config,
+        enforce_bayes_convergence=bool(enforce_bayes_convergence),
+        max_convergence_retries=int(max_convergence_retries),
     )
     rep_rows: list[dict[str, Any]] = []
     group_rows: list[dict[str, Any]] = []
@@ -444,6 +686,7 @@ def _exp5_worker(
                     "method": method,
                     "status": res.status,
                     "converged": bool(res.converged),
+                    "fit_attempts": _attempts_used(res),
                     "null_group_mse_avg": float("nan"),
                     "signal_group_mse_avg": float("nan"),
                     "overall_mse": float("nan"),
@@ -459,6 +702,7 @@ def _exp5_worker(
                 "method": method,
                 "status": res.status,
                 "converged": bool(res.converged),
+                "fit_attempts": _attempts_used(res),
                 "null_group_mse_avg": float(np.mean(err[labels == 0])),
                 "signal_group_mse_avg": float(np.mean(err[labels == 1])),
                 "overall_mse": float(np.mean((res.beta_mean - ds["beta0"]) ** 2)),
@@ -476,10 +720,12 @@ def _exp5_worker(
     return rep_rows, group_rows, kappa_rows
 
 
-def _exp6_worker(task: tuple[int, int, np.ndarray, SamplerConfig, float, list[str], dict[str, Any]]) -> list[dict[str, Any]]:
+def _exp6_worker(
+    task: tuple[int, int, np.ndarray, SamplerConfig, float, list[str], dict[str, Any], bool, int]
+) -> list[dict[str, Any]]:
     from .dgp_grouped_logistic import generate_grouped_logistic_dataset
 
-    r, seed, beta0, sampler, min_separator_auc, methods, gigg_config = task
+    r, seed, beta0, sampler, min_separator_auc, methods, gigg_config, enforce_bayes_convergence, max_convergence_retries = task
     s = experiment_seed(6, 1, r, master_seed=seed)
     ds = generate_grouped_logistic_dataset(
         n=200,
@@ -500,6 +746,8 @@ def _exp6_worker(task: tuple[int, int, np.ndarray, SamplerConfig, float, list[st
         sampler=sampler,
         methods=methods,
         gigg_config=gigg_config,
+        enforce_bayes_convergence=bool(enforce_bayes_convergence),
+        max_convergence_retries=int(max_convergence_retries),
     )
     out_rows: list[dict[str, Any]] = []
     for method, res in fits.items():
@@ -526,6 +774,7 @@ def _exp6_worker(task: tuple[int, int, np.ndarray, SamplerConfig, float, list[st
                 "method": method,
                 "status": res.status,
                 "converged": bool(res.converged),
+                "fit_attempts": _attempts_used(res),
                 "error": res.error,
                 "beta11_post_mean": float(b[0]) if is_valid and b is not None else float("nan"),
                 "beta12_post_mean": float(b[1]) if is_valid and b is not None else float("nan"),
@@ -547,13 +796,15 @@ def _exp6_worker(task: tuple[int, int, np.ndarray, SamplerConfig, float, list[st
     return out_rows
 
 
-def _exp7_worker(task: tuple[int, int, list[int], list[float], str, dict[str, Any], SamplerConfig]) -> list[dict[str, Any]]:
+def _exp7_worker(
+    task: tuple[int, int, list[int], list[float], str, dict[str, Any], SamplerConfig, bool, int]
+) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset, generate_sparse_within_group_dataset
     from .fit_gr_rhs import fit_gr_rhs
     from .fit_rhs import fit_rhs
     from .metrics import group_auroc, group_l2_error, group_l2_score
 
-    r, seed, group_sizes, mu, dgp_type, variants, sampler = task
+    r, seed, group_sizes, mu, dgp_type, variants, sampler, enforce_bayes_convergence, max_convergence_retries = task
     labels = (np.asarray(mu) > 0).astype(int)
     s = experiment_seed(7, 1, r, master_seed=seed)
     if str(dgp_type).lower() == "sparse_within_group":
@@ -580,9 +831,38 @@ def _exp7_worker(task: tuple[int, int, list[int], list[float], str, dict[str, An
     out_rows: list[dict[str, Any]] = []
     for vname, spec in variants.items():
         if spec["method"] == "GR_RHS":
-            res = fit_gr_rhs(ds["X"], ds["y"], ds["groups"], task="gaussian", seed=s + 11, p0=int(np.sum(labels)), sampler=sampler, **spec["grrhs_kwargs"])
+            res = _fit_with_convergence_retry(
+                lambda sampler_try, attempt: fit_gr_rhs(
+                    ds["X"],
+                    ds["y"],
+                    ds["groups"],
+                    task="gaussian",
+                    seed=s + 11 + 100 * attempt,
+                    p0=int(np.sum(labels)),
+                    sampler=sampler_try,
+                    **spec["grrhs_kwargs"],
+                ),
+                method="GR_RHS",
+                sampler=sampler,
+                max_convergence_retries=int(max_convergence_retries),
+                enforce_bayes_convergence=bool(enforce_bayes_convergence),
+            )
         else:
-            res = fit_rhs(ds["X"], ds["y"], ds["groups"], task="gaussian", seed=s + 12, p0=int(np.sum(labels)), sampler=sampler)
+            res = _fit_with_convergence_retry(
+                lambda sampler_try, attempt: fit_rhs(
+                    ds["X"],
+                    ds["y"],
+                    ds["groups"],
+                    task="gaussian",
+                    seed=s + 12 + 100 * attempt,
+                    p0=int(np.sum(labels)),
+                    sampler=sampler_try,
+                ),
+                method="RHS",
+                sampler=sampler,
+                max_convergence_retries=int(max_convergence_retries),
+                enforce_bayes_convergence=bool(enforce_bayes_convergence),
+            )
         is_valid = bool(res.converged and (res.beta_mean is not None))
         if not is_valid:
             out_rows.append(
@@ -592,6 +872,7 @@ def _exp7_worker(task: tuple[int, int, list[int], list[float], str, dict[str, An
                     "variant": vname,
                     "status": res.status,
                     "converged": bool(res.converged),
+                    "fit_attempts": _attempts_used(res),
                     "null_group_mse_avg": float("nan"),
                     "signal_group_mse_avg": float("nan"),
                     "overall_mse": float("nan"),
@@ -608,6 +889,7 @@ def _exp7_worker(task: tuple[int, int, list[int], list[float], str, dict[str, An
                 "variant": vname,
                 "status": res.status,
                 "converged": bool(res.converged),
+                "fit_attempts": _attempts_used(res),
                 "null_group_mse_avg": float(np.mean(err[labels == 0])),
                 "signal_group_mse_avg": float(np.mean(err[labels == 1])),
                 "overall_mse": float(np.mean((res.beta_mean - ds["beta0"]) ** 2)),
@@ -618,13 +900,13 @@ def _exp7_worker(task: tuple[int, int, list[int], list[float], str, dict[str, An
 
 
 def _exp9_worker(
-    task: tuple[int, int, str, str, list[float], list[int], int, SamplerConfig, list[tuple[float, float]]]
+    task: tuple[int, int, str, str, list[float], list[int], int, SamplerConfig, list[tuple[float, float]], bool, int]
 ) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .fit_gr_rhs import fit_gr_rhs
     from .metrics import group_auroc, group_l2_error, group_l2_score
 
-    sid, r, scenario, scenario_base, mu, group_sizes, seed, sampler, priors = task
+    sid, r, scenario, scenario_base, mu, group_sizes, seed, sampler, priors, enforce_bayes_convergence, max_convergence_retries = task
     labels = (np.asarray(mu) > 0).astype(int)
     p_g = int(group_sizes[0]) if group_sizes else 0
     s = experiment_seed(9, sid, r, master_seed=seed)
@@ -640,18 +922,24 @@ def _exp9_worker(
 
     rows: list[dict[str, Any]] = []
     for pid, (a, b) in enumerate(priors, start=1):
-        res = fit_gr_rhs(
-            ds["X"],
-            ds["y"],
-            ds["groups"],
-            task="gaussian",
-            seed=s + 100 + pid,
-            p0=int(np.sum(labels)),
+        res = _fit_with_convergence_retry(
+            lambda sampler_try, attempt: fit_gr_rhs(
+                ds["X"],
+                ds["y"],
+                ds["groups"],
+                task="gaussian",
+                seed=s + 100 + pid + 100 * attempt,
+                p0=int(np.sum(labels)),
+                sampler=sampler_try,
+                alpha_kappa=float(a),
+                beta_kappa=float(b),
+                use_group_scale=True,
+                shared_kappa=False,
+            ),
+            method="GR_RHS",
             sampler=sampler,
-            alpha_kappa=float(a),
-            beta_kappa=float(b),
-            use_group_scale=True,
-            shared_kappa=False,
+            max_convergence_retries=int(max_convergence_retries),
+            enforce_bayes_convergence=bool(enforce_bayes_convergence),
         )
         null_kappa_mean = float("nan")
         signal_kappa_mean = float("nan")
@@ -679,6 +967,7 @@ def _exp9_worker(
                     "replicate_id": int(r),
                     "status": res.status,
                     "converged": bool(res.converged),
+                    "fit_attempts": _attempts_used(res),
                     "null_group_mse_avg": float("nan"),
                     "signal_group_mse_avg": float("nan"),
                     "group_auroc": float("nan"),
@@ -700,6 +989,7 @@ def _exp9_worker(
                 "replicate_id": int(r),
                 "status": res.status,
                 "converged": bool(res.converged),
+                "fit_attempts": _attempts_used(res),
                 "null_group_mse_avg": float(np.mean(err[labels == 0])),
                 "signal_group_mse_avg": float(np.mean(err[labels == 1])),
                 "group_auroc": group_auroc(score, labels),
@@ -711,11 +1001,13 @@ def _exp9_worker(
     return rows
 
 
-def _exp8_worker(task: tuple[int, int, int, list[int], SamplerConfig, float, list[float]]) -> list[dict[str, Any]]:
+def _exp8_worker(
+    task: tuple[int, int, int, list[int], SamplerConfig, float, list[float], bool, int]
+) -> list[dict[str, Any]]:
     from .fit_gr_rhs import fit_gr_rhs
     from .utils import canonical_groups, sample_correlated_design
 
-    p0, r, seed, group_sizes, sampler, tau_target, tau_scales = task
+    p0, r, seed, group_sizes, sampler, tau_target, tau_scales, enforce_bayes_convergence, max_convergence_retries = task
     n = 500
     p = int(sum(group_sizes))
     s = experiment_seed(8, int(p0), int(r), master_seed=seed)
@@ -746,21 +1038,27 @@ def _exp8_worker(task: tuple[int, int, int, list[int], SamplerConfig, float, lis
 
     for mode_idx, (mode_name, tau_prior_scale, use_auto) in enumerate(modes, start=1):
         tau0_use = float(tau_prior_scale) * float(tau_target)
-        res = fit_gr_rhs(
-            X,
-            y,
-            groups,
-            task="gaussian",
-            seed=s + 31 + mode_idx,
-            p0=p0_fit,
+        res = _fit_with_convergence_retry(
+            lambda sampler_try, attempt: fit_gr_rhs(
+                X,
+                y,
+                groups,
+                task="gaussian",
+                seed=s + 31 + mode_idx + 100 * attempt,
+                p0=p0_fit,
+                sampler=sampler_try,
+                alpha_kappa=0.5,
+                beta_kappa=1.0,
+                use_group_scale=True,
+                use_local_scale=True,
+                shared_kappa=False,
+                auto_calibrate_tau=bool(use_auto),
+                tau0=None if use_auto else tau0_use,
+            ),
+            method="GR_RHS",
             sampler=sampler,
-            alpha_kappa=0.5,
-            beta_kappa=1.0,
-            use_group_scale=True,
-            use_local_scale=True,
-            shared_kappa=False,
-            auto_calibrate_tau=bool(use_auto),
-            tau0=None if use_auto else tau0_use,
+            max_convergence_retries=int(max_convergence_retries),
+            enforce_bayes_convergence=bool(enforce_bayes_convergence),
         )
 
         valid_tau = bool(res.converged and (res.tau_draws is not None))
@@ -787,6 +1085,7 @@ def _exp8_worker(task: tuple[int, int, int, list[int], SamplerConfig, float, lis
                 "kappa_eff_sum_post_mean": kappa_eff,
                 "converged": bool(res.converged),
                 "status": str(res.status),
+                "fit_attempts": _attempts_used(res),
                 "signal_var_true": float(beta.T @ cov_x @ beta),
                 "n_strong_active": int(strong_idx.size),
                 "n_weak_active": int(weak_idx.size),
@@ -807,6 +1106,8 @@ def _fit_all_methods(
     grrhs_kwargs: dict[str, Any] | None = None,
     methods: Sequence[str] | None = None,
     gigg_config: dict[str, Any] | None = None,
+    enforce_bayes_convergence: bool = True,
+    max_convergence_retries: int = 2,
 ) -> Dict[str, FitResult]:
     from .fit_classical import fit_lasso_cv, fit_ols
     from .fit_gigg import fit_gigg_fixed, fit_gigg_mmle
@@ -822,63 +1123,92 @@ def _fit_all_methods(
     gigg_fixed_cfg = {k: v for k, v in gigg_cfg.items() if k != "mmle_burnin_only"}
     out: Dict[str, FitResult] = {}
 
-    for method in methods_use:
+    def _fit_once(method: str, attempt: int) -> FitResult:
+        sampler_try = _scale_sampler_for_retry(sampler, attempt)
+        gigg_try = _scale_gigg_config_for_retry(gigg_cfg, attempt)
+        gigg_mmle_try = dict(gigg_try)
+        gigg_fixed_try = {k: v for k, v in gigg_try.items() if k != "mmle_burnin_only"}
+
         if method == "GR_RHS":
-            out["GR_RHS"] = fit_gr_rhs(X, y, groups, task=task, seed=seed + 1, p0=p0, sampler=sampler, **grrhs_kwargs)
-        elif method == "RHS":
-            out["RHS"] = fit_rhs(X, y, groups, task=task, seed=seed + 2, p0=p0, sampler=sampler)
-        elif method == "GIGG_MMLE":
-            out["GIGG_MMLE"] = fit_gigg_mmle(X, y, groups, task=task, seed=seed + 3, sampler=sampler, p0=p0, **gigg_mmle_cfg)
-        elif method == "GIGG_b_small":
-            out["GIGG_b_small"] = fit_gigg_fixed(
+            return fit_gr_rhs(X, y, groups, task=task, seed=seed + 1 + 100 * attempt, p0=p0, sampler=sampler_try, **grrhs_kwargs)
+        if method == "RHS":
+            return fit_rhs(X, y, groups, task=task, seed=seed + 2 + 100 * attempt, p0=p0, sampler=sampler_try)
+        if method == "GIGG_MMLE":
+            return fit_gigg_mmle(X, y, groups, task=task, seed=seed + 3 + 100 * attempt, sampler=sampler_try, p0=p0, **gigg_mmle_try)
+        if method == "GIGG_b_small":
+            return fit_gigg_fixed(
                 X,
                 y,
                 groups,
                 task=task,
-                seed=seed + 5,
-                sampler=sampler,
+                seed=seed + 5 + 100 * attempt,
+                sampler=sampler_try,
                 p0=p0,
                 a_val=1.0 / n,
                 b_val=1.0 / n,
                 method_label="GIGG_b_small",
-                **gigg_fixed_cfg,
+                **gigg_fixed_try,
             )
-        elif method == "GIGG_GHS":
-            out["GIGG_GHS"] = fit_gigg_fixed(
+        if method == "GIGG_GHS":
+            return fit_gigg_fixed(
                 X,
                 y,
                 groups,
                 task=task,
-                seed=seed + 6,
-                sampler=sampler,
+                seed=seed + 6 + 100 * attempt,
+                sampler=sampler_try,
                 p0=p0,
                 a_val=0.5,
                 b_val=0.5,
                 method_label="GIGG_GHS",
-                **gigg_fixed_cfg,
+                **gigg_fixed_try,
             )
-        elif method == "GIGG_b_large":
-            out["GIGG_b_large"] = fit_gigg_fixed(
+        if method == "GIGG_b_large":
+            return fit_gigg_fixed(
                 X,
                 y,
                 groups,
                 task=task,
-                seed=seed + 7,
-                sampler=sampler,
+                seed=seed + 7 + 100 * attempt,
+                sampler=sampler_try,
                 p0=p0,
                 a_val=1.0 / n,
                 b_val=1.0,
                 method_label="GIGG_b_large",
-                **gigg_fixed_cfg,
+                **gigg_fixed_try,
             )
-        elif method == "GHS_plus":
-            out["GHS_plus"] = fit_ghs_plus(X, y, groups, task=task, seed=seed + 4, p0=p0, sampler=sampler)
-        elif method == "OLS":
-            out["OLS"] = fit_ols(X, y, task=task, seed=seed + 8)
-        elif method == "LASSO_CV":
-            out["LASSO_CV"] = fit_lasso_cv(X, y, task=task, seed=seed + 9)
+        if method == "GHS_plus":
+            return fit_ghs_plus(X, y, groups, task=task, seed=seed + 4 + 100 * attempt, p0=p0, sampler=sampler_try)
+        if method == "OLS":
+            return fit_ols(X, y, task=task, seed=seed + 8)
+        if method == "LASSO_CV":
+            return fit_lasso_cv(X, y, task=task, seed=seed + 9)
+        raise ValueError(f"Unsupported method: {method}")
+
+    retry_max, until_mode = _retry_budget_from_limit(int(max_convergence_retries))
+    for method in methods_use:
+        res: FitResult | None = None
+        attempts = 1
+        if bool(enforce_bayes_convergence) and _is_bayesian_method(method):
+            for attempt in range(retry_max + 1):
+                attempts = attempt + 1
+                res = _fit_once(method, attempt)
+                if bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
+                    break
+            assert res is not None
+            if not bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
+                res = _invalidate_unconverged_result(res, method=method, attempts=attempts)
         else:
-            raise ValueError(f"Unsupported method: {method}")
+            res = _fit_once(method, 0)
+        res = _attach_retry_diagnostics(
+            res,
+            method=str(method),
+            attempts=int(attempts),
+            retry_max=retry_max,
+            until_mode=until_mode,
+            enforce_bayes_convergence=bool(enforce_bayes_convergence),
+        )
+        out[str(method)] = res
     return out
 
 
@@ -1309,11 +1639,8 @@ def run_exp3_phase_diagram(
 def _evaluate_method_row(result: FitResult, beta0: np.ndarray) -> dict[str, float]:
     from .metrics import ci_length_and_coverage, mse_null_signal_overall
 
-    # Gate only on beta_mean availability, not on converged.
-    # Gibbs-based methods (GIGG_MMLE, GHS_plus) have structurally lower ESS and
-    # higher rhat than NUTS/HMC, so the MCMC convergence thresholds are too strict
-    # for them.  Convergence quality is already tracked via n_effective in the
-    # summary; here we compute MSE whenever a point estimate is available.
+    # Convergence gating is enforced upstream in fit wrappers when enabled.
+    # Here we still guard on beta_mean availability for robustness.
     if result.beta_mean is None:
         return {"mse_null": float("nan"), "mse_signal": float("nan"), "mse_overall": float("nan"), "avg_ci_length": float("nan"), "coverage_95": float("nan")}
     m = mse_null_signal_overall(result.beta_mean, beta0)
@@ -1330,6 +1657,9 @@ def run_exp4_benchmark_linear(
     snr_list: Sequence[float] | None = None,
     profile: str = "full",
     methods: Sequence[str] | None = None,
+    enforce_bayes_convergence: bool = True,
+    max_convergence_retries: int | None = None,
+    until_bayes_converged: bool = True,
 ) -> Dict[str, str]:
     # ============================================================
     # EXP4 鈥?绾挎€у洖褰掑熀鍑嗘瘮杈冿紙GR_RHS vs RHS / GIGG_MMLE / GHS_plus锛?
@@ -1370,6 +1700,11 @@ def run_exp4_benchmark_linear(
     sampler = _sampler_for_profile(profile_name, experiment="exp4")
     methods_use = _resolve_method_list(methods, profile=profile_name)
     gigg_cfg = _gigg_config_for_profile(profile_name)
+    retry_limit = _resolve_convergence_retry_limit(
+        profile_name,
+        max_convergence_retries,
+        until_bayes_converged=bool(until_bayes_converged),
+    )
     snr_vals = [float(v) for v in (snr_list or [0.70])]
     settings = {
         "L0": {"group_sizes": [10, 10, 10, 10, 10], "rho_within": 0.0, "rho_between": 0.0, "design_type": "orthonormal"},
@@ -1381,13 +1716,13 @@ def run_exp4_benchmark_linear(
         "L6": {"group_sizes": [30, 10, 5, 3, 2], "rho_within": 0.3, "rho_between": 0.10, "design_type": "correlated"},
         "L4B20": {"group_sizes": [10, 10, 10, 10, 10], "rho_within": 0.8, "rho_between": 0.20, "design_type": "correlated", "beta_setting": "L4"},
     }
-    tasks: list[tuple[int, str, dict[str, Any], float, int, int, SamplerConfig, list[str], dict[str, Any]]] = []
+    tasks: list[tuple[int, str, dict[str, Any], float, int, int, SamplerConfig, list[str], dict[str, Any], bool, int]] = []
     sid = 0
     for target_snr in snr_vals:
         for setting, spec in settings.items():
             sid += 1
             for r in range(1, int(repeats) + 1):
-                tasks.append((sid, setting, spec, float(target_snr), r, seed, sampler, methods_use, gigg_cfg))
+                tasks.append((sid, setting, spec, float(target_snr), r, seed, sampler, methods_use, gigg_cfg, bool(enforce_bayes_convergence), int(retry_limit)))
 
     rows = []
     for chunk in _parallel_rows(tasks, _exp4_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp4 Benchmark Linear"):
@@ -1396,6 +1731,13 @@ def run_exp4_benchmark_linear(
     raw["estimate_available"] = raw["mse_overall"].notna()
 
     run_counts = raw.groupby(["target_snr", "setting", "method"], as_index=False).agg(n_total_runs=("replicate_id", "count"))
+    convergence_audit = raw.groupby(["target_snr", "setting", "method"], as_index=False).agg(
+        n_total_runs=("replicate_id", "count"),
+        n_converged=("converged", "sum"),
+        convergence_rate=("converged", "mean"),
+        fit_attempts_mean=("fit_attempts", "mean"),
+        fit_attempts_max=("fit_attempts", "max"),
+    )
 
     summary_all = raw.loc[raw["estimate_available"]].groupby(["target_snr", "setting", "method"], as_index=False).agg(
         mse_null=("mse_null", "mean"),
@@ -1421,18 +1763,46 @@ def run_exp4_benchmark_linear(
     summary_conv = summary_conv.merge(run_counts, on=["target_snr", "setting", "method"], how="left")
     summary_conv["valid_rate"] = summary_conv["n_effective"] / summary_conv["n_total_runs"].clip(lower=1)
 
-    summary = summary_all
+    paired_raw, paired_stats = _paired_converged_subset(
+        raw,
+        group_cols=["target_snr", "setting"],
+        method_col="method",
+        replicate_col="replicate_id",
+        converged_col="converged",
+        required_cols=["mse_null", "mse_signal", "mse_overall", "avg_ci_length", "coverage_95"],
+        method_levels=methods_use,
+    )
+    summary_paired = paired_raw.groupby(["target_snr", "setting", "method"], as_index=False).agg(
+        mse_null=("mse_null", "mean"),
+        mse_signal=("mse_signal", "mean"),
+        mse_overall=("mse_overall", "mean"),
+        avg_ci_length=("avg_ci_length", "mean"),
+        coverage_95=("coverage_95", "mean"),
+        n_effective=("converged", "sum"),
+        n_paired=("replicate_id", "nunique"),
+    )
+    if not summary_paired.empty:
+        summary_paired = summary_paired.merge(paired_stats, on=["target_snr", "setting"], how="left")
+        summary_paired["paired_rate"] = summary_paired["n_paired"] / summary_paired["n_total_replicates"].clip(lower=1)
+
+    summary = summary_paired if not summary_paired.empty else (summary_conv if not summary_conv.empty else summary_all)
     snr_ref = 0.70 if any(abs(v - 0.70) < 1e-12 for v in snr_vals) else snr_vals[0]
-    summary_plot = summary_conv.loc[np.isclose(summary_conv["target_snr"], snr_ref)].copy()
+    summary_plot = summary.loc[np.isclose(summary["target_snr"], snr_ref)].copy()
+    if summary_plot.empty:
+        summary_plot = summary_conv.loc[np.isclose(summary_conv["target_snr"], snr_ref)].copy()
     if summary_plot.empty:
         summary_plot = summary_all.loc[np.isclose(summary_all["target_snr"], snr_ref)].copy()
     save_dataframe(raw, out / "raw_results.csv")
     save_dataframe(summary, out / "summary.csv")
     save_dataframe(summary_all, out / "summary_all.csv")
     save_dataframe(summary_conv, out / "summary_converged.csv")
-    save_dataframe(summary_conv, tab_dir / "table_benchmark_linear.csv")
+    save_dataframe(summary_paired, out / "summary_paired_converged.csv")
+    save_dataframe(convergence_audit, out / "convergence_audit.csv")
+    save_dataframe(paired_stats, out / "paired_convergence_audit.csv")
+    save_dataframe(summary, tab_dir / "table_benchmark_linear.csv")
     save_dataframe(summary_all, tab_dir / "table_benchmark_linear_all.csv")
     save_dataframe(summary_conv, tab_dir / "table_benchmark_linear_converged.csv")
+    save_dataframe(summary_paired, tab_dir / "table_benchmark_linear_paired_converged.csv")
     plot_exp4_overall_mse(summary_plot, out_path=fig_dir / "fig4_benchmark_overall_mse.png")
     plot_exp4_mse_partition(summary_plot, out_path=fig_dir / "fig4_benchmark_mse_partition.png")
     design_rows: list[dict[str, Any]] = []
@@ -1470,6 +1840,11 @@ def run_exp4_benchmark_linear(
             "profile": profile_name,
             "methods": methods_use,
             "gigg_config": gigg_cfg,
+            "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+            "max_convergence_retries": int(retry_limit),
+            "until_bayes_converged": bool(until_bayes_converged),
+            "until_converged_retry_hard_cap": int(_UNTIL_CONVERGED_RETRY_HARD_CAP),
+            "comparison_table_policy": "paired_converged_if_available",
         },
         out / "exp4_design_meta.json",
     )
@@ -1485,6 +1860,9 @@ def run_exp5_heterogeneity(
     *,
     profile: str = "full",
     methods: Sequence[str] | None = None,
+    enforce_bayes_convergence: bool = True,
+    max_convergence_retries: int | None = None,
+    until_bayes_converged: bool = True,
 ) -> Dict[str, str]:
     # ============================================================
     # EXP5 鈥?寮傝川鎬х粍缁撴瀯涓嬬殑鍒嗙粍杈ㄨ瘑锛堣繛鎺ュ畾鐞?3.34 鐨?simultaneous separation锛?
@@ -1528,6 +1906,11 @@ def run_exp5_heterogeneity(
     sampler = _sampler_for_profile(profile_name, experiment="exp5")
     methods_use = _resolve_method_list(methods, profile=profile_name)
     gigg_cfg = _gigg_config_for_profile(profile_name)
+    retry_limit = _resolve_convergence_retry_limit(
+        profile_name,
+        max_convergence_retries,
+        until_bayes_converged=bool(until_bayes_converged),
+    )
     sigma2 = 1.0
     tau_ref = 0.1
     group_sizes = [50, 50, 20, 10, 10, 10]
@@ -1535,7 +1918,10 @@ def run_exp5_heterogeneity(
     mu_boundary = 1.2 * xi_boundary * group_sizes[2]
     mu = [0.0, 0.0, float(mu_boundary), 2.0, 8.0, 25.0]
     labels = (np.asarray(mu) > 0.0).astype(int)
-    tasks = [(r, seed, group_sizes, mu, sampler, methods_use, gigg_cfg) for r in range(1, int(repeats) + 1)]
+    tasks = [
+        (r, seed, group_sizes, mu, sampler, methods_use, gigg_cfg, bool(enforce_bayes_convergence), int(retry_limit))
+        for r in range(1, int(repeats) + 1)
+    ]
 
     row_rep, row_group, row_grrhs_kappa = [], [], []
     for rep_rows, group_rows, kappa_rows in _parallel_rows(tasks, _exp5_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp5 Heterogeneity"):
@@ -1547,6 +1933,13 @@ def run_exp5_heterogeneity(
     raw_kappa = pd.DataFrame(row_grrhs_kappa)
     raw = raw_rep.merge(raw_group, on=["replicate_id", "method"], how="left")
     run_counts = raw_rep.groupby("method", as_index=False).agg(n_total_runs=("replicate_id", "count"))
+    convergence_audit = raw_rep.groupby("method", as_index=False).agg(
+        n_total_runs=("replicate_id", "count"),
+        n_converged=("converged", "sum"),
+        convergence_rate=("converged", "mean"),
+        fit_attempts_mean=("fit_attempts", "mean"),
+        fit_attempts_max=("fit_attempts", "max"),
+    )
     auroc_table = raw_rep.groupby("method", as_index=False).agg(
         group_auroc=("group_auroc_score", "mean"),
         avg_null_group_mse=("null_group_mse_avg", "mean"),
@@ -1556,10 +1949,43 @@ def run_exp5_heterogeneity(
     )
     auroc_table = auroc_table.merge(run_counts, on="method", how="left")
     auroc_table["valid_rate"] = auroc_table["n_effective"] / auroc_table["n_total_runs"].clip(lower=1)
+
+    paired_rep, paired_stats = _paired_converged_subset(
+        raw_rep,
+        group_cols=[],
+        method_col="method",
+        replicate_col="replicate_id",
+        converged_col="converged",
+        required_cols=["group_auroc_score", "null_group_mse_avg", "signal_group_mse_avg", "overall_mse"],
+        method_levels=methods_use,
+    )
+    auroc_table_paired = paired_rep.groupby("method", as_index=False).agg(
+        group_auroc=("group_auroc_score", "mean"),
+        avg_null_group_mse=("null_group_mse_avg", "mean"),
+        avg_signal_group_mse=("signal_group_mse_avg", "mean"),
+        n_effective=("converged", "sum"),
+        n_paired=("replicate_id", "nunique"),
+    )
+    if not auroc_table_paired.empty:
+        auroc_table_paired = auroc_table_paired.merge(run_counts, on="method", how="left")
+        if not paired_stats.empty:
+            stats_row = paired_stats.iloc[0].to_dict()
+            for k, v in stats_row.items():
+                auroc_table_paired[k] = v
+        auroc_table_paired["paired_rate"] = auroc_table_paired["n_paired"] / auroc_table_paired["n_total_runs"].clip(lower=1)
+
+    table_main = auroc_table_paired if not auroc_table_paired.empty else auroc_table
     save_dataframe(raw, out / "raw_results.csv")
     save_dataframe(raw_rep, out / "summary_replicate.csv")
+    save_dataframe(paired_rep, out / "summary_replicate_paired_converged.csv")
     save_dataframe(raw_kappa, out / "summary_kappa.csv")
-    save_dataframe(auroc_table, tab_dir / "table_heterogeneity_auroc.csv")
+    save_dataframe(auroc_table, out / "summary_all.csv")
+    save_dataframe(auroc_table_paired, out / "summary_paired_converged.csv")
+    save_dataframe(convergence_audit, out / "convergence_audit.csv")
+    save_dataframe(paired_stats, out / "paired_convergence_audit.csv")
+    save_dataframe(table_main, tab_dir / "table_heterogeneity_auroc.csv")
+    save_dataframe(auroc_table, tab_dir / "table_heterogeneity_auroc_all.csv")
+    save_dataframe(auroc_table_paired, tab_dir / "table_heterogeneity_auroc_paired_converged.csv")
     save_json(
         {
             "group_sizes": [int(v) for v in group_sizes],
@@ -1572,16 +1998,21 @@ def run_exp5_heterogeneity(
             "profile": profile_name,
             "methods": methods_use,
             "gigg_config": gigg_cfg,
+            "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+            "max_convergence_retries": int(retry_limit),
+            "until_bayes_converged": bool(until_bayes_converged),
+            "until_converged_retry_hard_cap": int(_UNTIL_CONVERGED_RETRY_HARD_CAP),
+            "comparison_table_policy": "paired_converged_if_available",
         },
         out / "exp5_meta.json",
     )
     plot_methods = [m for m in METHODS if m in set(methods_use)]
     if not plot_methods:
-        plot_methods = sorted(set(auroc_table["method"].astype(str).tolist()))
+        plot_methods = sorted(set(table_main["method"].astype(str).tolist()))
     if not raw_kappa.empty:
         plot_exp5_kappa_stratification(raw_kappa, out_path=fig_dir / "fig5_kappa_stratification.png")
-        plot_exp5_group_ranking(raw_kappa, auroc_table.loc[auroc_table["method"].isin(plot_methods)], out_path=fig_dir / "fig5_group_ranking.png")
-    plot_exp5_null_signal_mse(auroc_table.loc[auroc_table["method"].isin(plot_methods)], out_path=fig_dir / "fig5_null_signal_mse.png")
+        plot_exp5_group_ranking(raw_kappa, table_main.loc[table_main["method"].isin(plot_methods)], out_path=fig_dir / "fig5_group_ranking.png")
+    plot_exp5_null_signal_mse(table_main.loc[table_main["method"].isin(plot_methods)], out_path=fig_dir / "fig5_null_signal_mse.png")
     log.info("Completed exp5 with repeats=%d, profile=%s", repeats, profile_name)
     return {"raw": str(out / "raw_results.csv"), "table": str(tab_dir / "table_heterogeneity_auroc.csv")}
 
@@ -1595,6 +2026,9 @@ def run_exp6_grouped_logistic(
     min_separator_auc: float = 0.8,
     profile: str = "full",
     methods: Sequence[str] | None = None,
+    enforce_bayes_convergence: bool = True,
+    max_convergence_retries: int | None = None,
+    until_bayes_converged: bool = True,
 ) -> Dict[str, str]:
     # ============================================================
     # EXP6 鈥?鍒嗙粍 Logistic 鍥炲綊锛堜簩鍏冪粨鏋滅殑閫傜敤鎬ч獙璇侊級
@@ -1636,8 +2070,26 @@ def run_exp6_grouped_logistic(
     sampler = _sampler_for_profile(profile_name, experiment="exp6")
     methods_use = _resolve_method_list(methods, profile=profile_name)
     gigg_cfg = _gigg_config_for_profile(profile_name)
+    retry_limit = _resolve_convergence_retry_limit(
+        profile_name,
+        max_convergence_retries,
+        until_bayes_converged=bool(until_bayes_converged),
+    )
     beta0 = np.array([1.5, 1.5, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 0.5, 0, 0, 0], dtype=float)
-    tasks = [(r, seed, beta0, sampler, float(min_separator_auc), methods_use, gigg_cfg) for r in range(1, int(repeats) + 1)]
+    tasks = [
+        (
+            r,
+            seed,
+            beta0,
+            sampler,
+            float(min_separator_auc),
+            methods_use,
+            gigg_cfg,
+            bool(enforce_bayes_convergence),
+            int(retry_limit),
+        )
+        for r in range(1, int(repeats) + 1)
+    ]
 
     rows = []
     for chunk in _parallel_rows(tasks, _exp6_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp6 Grouped Logistic"):
@@ -1645,6 +2097,13 @@ def run_exp6_grouped_logistic(
     raw = pd.DataFrame(rows)
     save_dataframe(raw, out / "raw_results.csv")
     run_counts = raw.groupby("method", as_index=False).agg(n_total_runs=("replicate_id", "count"))
+    convergence_audit = raw.groupby("method", as_index=False).agg(
+        n_total_runs=("replicate_id", "count"),
+        n_converged=("converged", "sum"),
+        convergence_rate=("converged", "mean"),
+        fit_attempts_mean=("fit_attempts", "mean"),
+        fit_attempts_max=("fit_attempts", "max"),
+    )
     summary = raw.groupby("method", as_index=False).agg(
         beta11_post_mean=("beta11_post_mean", "mean"),
         beta12_post_mean=("beta12_post_mean", "mean"),
@@ -1665,7 +2124,55 @@ def run_exp6_grouped_logistic(
     )
     summary = summary.merge(run_counts, on="method", how="left")
     summary["valid_rate"] = summary["n_effective"] / summary["n_total_runs"].clip(lower=1)
-    save_dataframe(summary, out / "summary.csv")
+
+    paired_raw, paired_stats = _paired_converged_subset(
+        raw,
+        group_cols=[],
+        method_col="method",
+        replicate_col="replicate_id",
+        converged_col="converged",
+        required_cols=[
+            "beta11_post_mean",
+            "beta12_post_mean",
+            "beta_group1_l2_norm",
+            "beta_group2_l2_norm",
+            "beta_group3_l2_norm",
+            "overall_runtime",
+        ],
+        method_levels=methods_use,
+    )
+    summary_paired = paired_raw.groupby("method", as_index=False).agg(
+        beta11_post_mean=("beta11_post_mean", "mean"),
+        beta12_post_mean=("beta12_post_mean", "mean"),
+        beta_group1_l2_norm=("beta_group1_l2_norm", "mean"),
+        beta_group2_l2_norm=("beta_group2_l2_norm", "mean"),
+        beta_group3_l2_norm=("beta_group3_l2_norm", "mean"),
+        overall_runtime=("overall_runtime", "mean"),
+        divergence_ratio=("divergence_ratio", "mean"),
+        bulk_ess_min=("bulk_ess_min", "mean"),
+        post_prob_kappa_group1_gt_0_5=("post_prob_kappa_group1_gt_0_5", "mean"),
+        post_prob_kappa_group2_gt_0_5=("post_prob_kappa_group2_gt_0_5", "mean"),
+        post_prob_kappa_group3_gt_0_5=("post_prob_kappa_group3_gt_0_5", "mean"),
+        post_mean_kappa_group1=("post_mean_kappa_group1", "mean"),
+        post_mean_kappa_group2=("post_mean_kappa_group2", "mean"),
+        post_mean_kappa_group3=("post_mean_kappa_group3", "mean"),
+        n_effective=("converged", "sum"),
+        n_paired=("replicate_id", "nunique"),
+    )
+    if not summary_paired.empty:
+        summary_paired = summary_paired.merge(run_counts, on="method", how="left")
+        if not paired_stats.empty:
+            stats_row = paired_stats.iloc[0].to_dict()
+            for k, v in stats_row.items():
+                summary_paired[k] = v
+        summary_paired["paired_rate"] = summary_paired["n_paired"] / summary_paired["n_total_runs"].clip(lower=1)
+
+    summary_main = summary_paired if not summary_paired.empty else summary
+    save_dataframe(summary_main, out / "summary.csv")
+    save_dataframe(summary, out / "summary_all.csv")
+    save_dataframe(summary_paired, out / "summary_paired_converged.csv")
+    save_dataframe(convergence_audit, out / "convergence_audit.csv")
+    save_dataframe(paired_stats, out / "paired_convergence_audit.csv")
     ok = raw.loc[raw["converged"] == True].copy()
     if not ok.empty:
         plot_exp6_coefficients(ok, out_path=fig_dir / "fig6_logistic_coefficients.png")
@@ -1679,6 +2186,11 @@ def run_exp6_grouped_logistic(
             "profile": profile_name,
             "methods": methods_use,
             "gigg_config": gigg_cfg,
+            "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+            "max_convergence_retries": int(retry_limit),
+            "until_bayes_converged": bool(until_bayes_converged),
+            "until_converged_retry_hard_cap": int(_UNTIL_CONVERGED_RETRY_HARD_CAP),
+            "comparison_table_policy": "paired_converged_if_available",
         },
         out / "exp6_meta.json",
     )
@@ -1693,6 +2205,9 @@ def run_exp7_ablation(
     save_dir: str = "simulation_project",
     *,
     profile: str = "full",
+    enforce_bayes_convergence: bool = True,
+    max_convergence_retries: int | None = None,
+    until_bayes_converged: bool = True,
 ) -> Dict[str, str]:
     # ============================================================
     # EXP7 鈥?娑堣瀺鐮旂┒锛堢粍浠朵环鍊煎垎鏋愶級
@@ -1740,6 +2255,11 @@ def run_exp7_ablation(
     log = setup_logger("exp7", base / "logs" / "exp7_ablation.log")
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_profile(profile_name, experiment="exp7")
+    retry_limit = _resolve_convergence_retry_limit(
+        profile_name,
+        max_convergence_retries,
+        until_bayes_converged=bool(until_bayes_converged),
+    )
     mu = [0.0, 0.0, 2.0, 8.0, 25.0, 80.0]
     variants = {
         "GR_RHS_full": {"grrhs_kwargs": {"alpha_kappa": 0.5, "beta_kappa": 1.0, "use_group_scale": True, "shared_kappa": False}, "method": "GR_RHS"},
@@ -1750,7 +2270,17 @@ def run_exp7_ablation(
     }
     dgp_types = ["dense_uniform", "sparse_within_group"]
     tasks = [
-        (r, seed, [10, 10, 10, 10, 10, 10], mu, dgp_type, variants, sampler)
+        (
+            r,
+            seed,
+            [10, 10, 10, 10, 10, 10],
+            mu,
+            dgp_type,
+            variants,
+            sampler,
+            bool(enforce_bayes_convergence),
+            int(retry_limit),
+        )
         for dgp_type in dgp_types
         for r in range(1, int(repeats) + 1)
     ]
@@ -1760,6 +2290,13 @@ def run_exp7_ablation(
         rows.extend(chunk)
     raw = pd.DataFrame(rows)
     run_counts = raw.groupby(["dgp_type", "variant"], as_index=False).agg(n_total_runs=("replicate_id", "count"))
+    convergence_audit = raw.groupby(["dgp_type", "variant"], as_index=False).agg(
+        n_total_runs=("replicate_id", "count"),
+        n_converged=("converged", "sum"),
+        convergence_rate=("converged", "mean"),
+        fit_attempts_mean=("fit_attempts", "mean"),
+        fit_attempts_max=("fit_attempts", "max"),
+    )
     table = raw.groupby(["dgp_type", "variant"], as_index=False).agg(
         null_group_mse_avg=("null_group_mse_avg", "mean"),
         signal_group_mse_avg=("signal_group_mse_avg", "mean"),
@@ -1770,10 +2307,40 @@ def run_exp7_ablation(
     )
     table = table.merge(run_counts, on=["dgp_type", "variant"], how="left")
     table["valid_rate"] = table["n_effective"] / table["n_total_runs"].clip(lower=1)
+
+    paired_raw, paired_stats = _paired_converged_subset(
+        raw,
+        group_cols=["dgp_type"],
+        method_col="variant",
+        replicate_col="replicate_id",
+        converged_col="converged",
+        required_cols=["null_group_mse_avg", "signal_group_mse_avg", "overall_mse", "group_auroc"],
+        method_levels=list(variants.keys()),
+    )
+    table_paired = paired_raw.groupby(["dgp_type", "variant"], as_index=False).agg(
+        null_group_mse_avg=("null_group_mse_avg", "mean"),
+        signal_group_mse_avg=("signal_group_mse_avg", "mean"),
+        overall_mse=("overall_mse", "mean"),
+        group_auroc=("group_auroc", "mean"),
+        n_effective=("converged", "sum"),
+        n_paired=("replicate_id", "nunique"),
+    )
+    if not table_paired.empty:
+        table_paired = table_paired.merge(run_counts, on=["dgp_type", "variant"], how="left")
+        table_paired = table_paired.merge(paired_stats, on=["dgp_type"], how="left")
+        table_paired["paired_rate"] = table_paired["n_paired"] / table_paired["n_total_runs"].clip(lower=1)
+
+    table_main = table_paired if not table_paired.empty else table
     save_dataframe(raw, out / "raw_results.csv")
-    save_dataframe(table, tab_dir / "table_ablation.csv")
-    save_dataframe(table, out / "summary.csv")
-    plot_exp7_ablation_bars(table, out_path=fig_dir / "fig7_ablation_metrics.png")
+    save_dataframe(table_main, tab_dir / "table_ablation.csv")
+    save_dataframe(table_main, out / "summary.csv")
+    save_dataframe(table, out / "summary_all.csv")
+    save_dataframe(table_paired, out / "summary_paired_converged.csv")
+    save_dataframe(table, tab_dir / "table_ablation_all.csv")
+    save_dataframe(table_paired, tab_dir / "table_ablation_paired_converged.csv")
+    save_dataframe(convergence_audit, out / "convergence_audit.csv")
+    save_dataframe(paired_stats, out / "paired_convergence_audit.csv")
+    plot_exp7_ablation_bars(table_main, out_path=fig_dir / "fig7_ablation_metrics.png")
     save_json(
         {
             "mu": [float(v) for v in mu],
@@ -1782,6 +2349,11 @@ def run_exp7_ablation(
             "repeats": int(repeats),
             "sparse_within_group_rho_within": 0.3,
             "profile": profile_name,
+            "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+            "max_convergence_retries": int(retry_limit),
+            "until_bayes_converged": bool(until_bayes_converged),
+            "until_converged_retry_hard_cap": int(_UNTIL_CONVERGED_RETRY_HARD_CAP),
+            "comparison_table_policy": "paired_converged_if_available",
         },
         out / "exp7_meta.json",
     )
@@ -1796,6 +2368,9 @@ def run_exp8_tau_calibration(
     save_dir: str = "simulation_project",
     *,
     profile: str = "full",
+    enforce_bayes_convergence: bool = True,
+    max_convergence_retries: int | None = None,
+    until_bayes_converged: bool = True,
 ) -> Dict[str, str]:
     # ============================================================
     # EXP8 鈥?蟿 鑷姩鏍″噯楠岃瘉
@@ -1835,17 +2410,34 @@ def run_exp8_tau_calibration(
     log = setup_logger("exp8", base / "logs" / "exp8_tau_calibration.log")
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_profile(profile_name, experiment="exp8")
+    retry_limit = _resolve_convergence_retry_limit(
+        profile_name,
+        max_convergence_retries,
+        until_bayes_converged=bool(until_bayes_converged),
+    )
 
     n = 500
     group_sizes = [10, 10, 10, 10, 10, 10]
     p = int(sum(group_sizes))
     p0_list = [2, 6, 12, 30]
     tau_scales = [0.5, 1.0, 2.0]
-    tasks: list[tuple[int, int, int, list[int], SamplerConfig, float, list[float]]] = []
+    tasks: list[tuple[int, int, int, list[int], SamplerConfig, float, list[float], bool, int]] = []
     for p0 in p0_list:
         tau_target = p0 / ((p - p0) * math.sqrt(n))
         for r in range(1, int(repeats) + 1):
-            tasks.append((int(p0), int(r), seed, group_sizes, sampler, float(tau_target), [float(sc) for sc in tau_scales]))
+            tasks.append(
+                (
+                    int(p0),
+                    int(r),
+                    seed,
+                    group_sizes,
+                    sampler,
+                    float(tau_target),
+                    [float(sc) for sc in tau_scales],
+                    bool(enforce_bayes_convergence),
+                    int(retry_limit),
+                )
+            )
 
     rows_nested = _parallel_rows(tasks, _exp8_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp8 Tau Calibration")
     rows: list[dict[str, Any]] = []
@@ -1855,6 +2447,13 @@ def run_exp8_tau_calibration(
     raw["tau_abs_error"] = (raw["tau_post_mean"] - raw["tau_target"]).abs()
     raw["tau_rel_error"] = raw["tau_abs_error"] / raw["tau_target"].clip(lower=1e-12)
     run_counts = raw.groupby(["p0", "tau_mode"], as_index=False).agg(n_total_runs=("replicate_id", "count"))
+    convergence_audit = raw.groupby(["p0", "tau_mode"], as_index=False).agg(
+        n_total_runs=("replicate_id", "count"),
+        n_converged=("converged", "sum"),
+        convergence_rate=("converged", "mean"),
+        fit_attempts_mean=("fit_attempts", "mean"),
+        fit_attempts_max=("fit_attempts", "max"),
+    )
     summary = raw.groupby(["p0", "tau_mode"], as_index=False).agg(
         tau_target=("tau_target", "mean"),
         tau_post_mean=("tau_post_mean", "mean"),
@@ -1867,8 +2466,39 @@ def run_exp8_tau_calibration(
     )
     summary = summary.merge(run_counts, on=["p0", "tau_mode"], how="left")
     summary["valid_rate"] = summary["n_effective"] / summary["n_total_runs"].clip(lower=1)
+
+    mode_levels = ["auto_calibrated"] + [f"fixed_{float(sc):.2f}x" for sc in tau_scales]
+    paired_raw, paired_stats = _paired_converged_subset(
+        raw,
+        group_cols=["p0"],
+        method_col="tau_mode",
+        replicate_col="replicate_id",
+        converged_col="converged",
+        required_cols=["tau_post_mean", "tau_post_sd", "kappa_eff_sum_post_mean", "tau_abs_error", "tau_rel_error"],
+        method_levels=mode_levels,
+    )
+    summary_paired = paired_raw.groupby(["p0", "tau_mode"], as_index=False).agg(
+        tau_target=("tau_target", "mean"),
+        tau_post_mean=("tau_post_mean", "mean"),
+        tau_post_sd=("tau_post_sd", "mean"),
+        tau_abs_error=("tau_abs_error", "mean"),
+        tau_rel_error=("tau_rel_error", "mean"),
+        kappa_eff_sum_post_mean=("kappa_eff_sum_post_mean", "mean"),
+        n_effective=("converged", "sum"),
+        n_paired=("replicate_id", "nunique"),
+    )
+    if not summary_paired.empty:
+        summary_paired = summary_paired.merge(run_counts, on=["p0", "tau_mode"], how="left")
+        summary_paired = summary_paired.merge(paired_stats, on=["p0"], how="left")
+        summary_paired["paired_rate"] = summary_paired["n_paired"] / summary_paired["n_total_runs"].clip(lower=1)
+
+    summary_main = summary_paired if not summary_paired.empty else summary
     save_dataframe(raw, out / "raw_results.csv")
-    save_dataframe(summary, out / "summary.csv")
+    save_dataframe(summary_main, out / "summary.csv")
+    save_dataframe(summary, out / "summary_all.csv")
+    save_dataframe(summary_paired, out / "summary_paired_converged.csv")
+    save_dataframe(convergence_audit, out / "convergence_audit.csv")
+    save_dataframe(paired_stats, out / "paired_convergence_audit.csv")
     plot_exp8_tau(raw, out_path=fig_dir / "fig8_tau_calibration.png")
     # Keep a legacy filename for downstream references.
     plot_exp8_tau(raw, out_path=fig_dir / "fig7_tau_calibration.png")
@@ -1886,7 +2516,12 @@ def run_exp8_tau_calibration(
                 "post_warmup_draws": int(sampler.post_warmup_draws),
             },
             "profile": profile_name,
+            "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+            "max_convergence_retries": int(retry_limit),
+            "until_bayes_converged": bool(until_bayes_converged),
+            "until_converged_retry_hard_cap": int(_UNTIL_CONVERGED_RETRY_HARD_CAP),
             "primary_error_metric": "tau_rel_error",
+            "comparison_table_policy": "paired_converged_if_available",
         },
         out / "exp8_meta.json",
     )
@@ -1901,6 +2536,9 @@ def run_exp9_beta_prior_sensitivity(
     save_dir: str = "simulation_project",
     *,
     profile: str = "full",
+    enforce_bayes_convergence: bool = True,
+    max_convergence_retries: int | None = None,
+    until_bayes_converged: bool = True,
 ) -> Dict[str, str]:
     # ============================================================
     # EXP9 鈥?Beta(伪_魏, 尾_魏) 鍏堥獙鏁忔劅鎬э紙Theorem 2.8锛?
@@ -1946,6 +2584,11 @@ def run_exp9_beta_prior_sensitivity(
     log = setup_logger("exp9", base / "logs" / "exp9_beta_prior_sensitivity.log")
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_profile(profile_name, experiment="exp9")
+    retry_limit = _resolve_convergence_retry_limit(
+        profile_name,
+        max_convergence_retries,
+        until_bayes_converged=bool(until_bayes_converged),
+    )
     scenario_templates = [
         ("baseline", [0.0, 0.0, 2.0, 8.0, 25.0, 80.0]),
         ("tail_extreme", [0.0, 0.0, 0.0, 0.0, 0.0, 200.0]),
@@ -1956,15 +2599,38 @@ def run_exp9_beta_prior_sensitivity(
         for pg in pg_levels:
             scenarios.append((f"{base_name}_pg{pg}", base_name, list(mu), [int(pg)] * len(mu), int(pg)))
     priors = [(0.5, 0.5), (1.0, 1.0), (1.0, 2.0), (0.5, 1.0), (2.5, 1.0)]
-    tasks: list[tuple[int, int, str, str, list[float], list[int], int, SamplerConfig, list[tuple[float, float]]]] = []
+    tasks: list[tuple[int, int, str, str, list[float], list[int], int, SamplerConfig, list[tuple[float, float]], bool, int]] = []
     for sid, (scenario, scenario_base, mu, group_sizes, p_g) in enumerate(scenarios, start=1):
         for r in range(1, int(repeats) + 1):
-            tasks.append((sid, r, scenario, scenario_base, list(mu), list(group_sizes), seed, sampler, list(priors)))
+            tasks.append(
+                (
+                    sid,
+                    r,
+                    scenario,
+                    scenario_base,
+                    list(mu),
+                    list(group_sizes),
+                    seed,
+                    sampler,
+                    list(priors),
+                    bool(enforce_bayes_convergence),
+                    int(retry_limit),
+                )
+            )
     rows_nested = _parallel_rows(tasks, _exp9_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp9 Beta Prior Sensitivity")
     rows: list[dict[str, Any]] = []
     for chunk in rows_nested:
         rows.extend(chunk)
     raw = pd.DataFrame(rows)
+    raw["prior_id"] = raw.apply(lambda r: f"a={float(r['alpha_kappa']):.3g}|b={float(r['beta_kappa']):.3g}", axis=1)
+    prior_levels = [f"a={float(a):.3g}|b={float(b):.3g}" for a, b in priors]
+    convergence_audit = raw.groupby(["scenario", "scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(
+        n_total_runs=("replicate_id", "count"),
+        n_converged=("converged", "sum"),
+        convergence_rate=("converged", "mean"),
+        fit_attempts_mean=("fit_attempts", "mean"),
+        fit_attempts_max=("fit_attempts", "max"),
+    )
     run_counts = raw.groupby(["scenario", "scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(
         n_total_runs=("replicate_id", "count")
     )
@@ -1981,6 +2647,36 @@ def run_exp9_beta_prior_sensitivity(
     table = table.merge(run_counts, on=["scenario", "scenario_base", "p_g", "alpha_kappa", "beta_kappa"], how="left")
     table["valid_rate"] = table["n_effective"] / table["n_total_runs"].clip(lower=1)
 
+    paired_raw, paired_stats = _paired_converged_subset(
+        raw,
+        group_cols=["scenario", "scenario_base", "p_g"],
+        method_col="prior_id",
+        replicate_col="replicate_id",
+        converged_col="converged",
+        required_cols=[
+            "null_group_mse_avg",
+            "signal_group_mse_avg",
+            "group_auroc",
+            "null_group_kappa_mean",
+            "null_group_prob_kappa_gt_0_1",
+        ],
+        method_levels=prior_levels,
+    )
+    table_paired = paired_raw.groupby(["scenario", "scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(
+        null_group_mse_avg=("null_group_mse_avg", "mean"),
+        signal_group_mse_avg=("signal_group_mse_avg", "mean"),
+        group_auroc=("group_auroc", "mean"),
+        null_group_kappa_mean=("null_group_kappa_mean", "mean"),
+        signal_group_kappa_mean=("signal_group_kappa_mean", "mean"),
+        null_group_prob_kappa_gt_0_1=("null_group_prob_kappa_gt_0_1", "mean"),
+        n_effective=("converged", "sum"),
+        n_paired=("replicate_id", "nunique"),
+    )
+    if not table_paired.empty:
+        table_paired = table_paired.merge(run_counts, on=["scenario", "scenario_base", "p_g", "alpha_kappa", "beta_kappa"], how="left")
+        table_paired = table_paired.merge(paired_stats, on=["scenario", "scenario_base", "p_g"], how="left")
+        table_paired["paired_rate"] = table_paired["n_paired"] / table_paired["n_total_runs"].clip(lower=1)
+
     kappa_counts = raw.groupby(["scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(n_total_runs=("replicate_id", "count"))
     kappa_curve = raw.groupby(["scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(
         null_group_kappa_mean=("null_group_kappa_mean", "mean"),
@@ -1990,11 +2686,33 @@ def run_exp9_beta_prior_sensitivity(
     )
     kappa_curve = kappa_curve.merge(kappa_counts, on=["scenario_base", "p_g", "alpha_kappa", "beta_kappa"], how="left")
     kappa_curve["valid_rate"] = kappa_curve["n_effective"] / kappa_curve["n_total_runs"].clip(lower=1)
+
+    kappa_curve_paired = paired_raw.groupby(["scenario_base", "p_g", "alpha_kappa", "beta_kappa"], as_index=False).agg(
+        null_group_kappa_mean=("null_group_kappa_mean", "mean"),
+        null_group_prob_kappa_gt_0_1=("null_group_prob_kappa_gt_0_1", "mean"),
+        n_effective=("converged", "sum"),
+        n_paired=("replicate_id", "nunique"),
+    )
+    if not kappa_curve_paired.empty:
+        kappa_curve_paired = kappa_curve_paired.merge(kappa_counts, on=["scenario_base", "p_g", "alpha_kappa", "beta_kappa"], how="left")
+        kappa_curve_paired["paired_rate"] = kappa_curve_paired["n_paired"] / kappa_curve_paired["n_total_runs"].clip(lower=1)
+
+    table_main = table_paired if not table_paired.empty else table
+    kappa_main = kappa_curve_paired if not kappa_curve_paired.empty else kappa_curve
     save_dataframe(raw, out / "raw_results.csv")
-    save_dataframe(table, out / "summary.csv")
-    save_dataframe(kappa_curve, out / "summary_kappa_curve.csv")
-    save_dataframe(table, tab_dir / "table_beta_prior_sensitivity.csv")
-    plot_exp9_prior_sensitivity(table, kappa_curve, out_path=fig_dir / "fig9_beta_prior_sensitivity.png")
+    save_dataframe(paired_raw, out / "raw_results_paired_converged.csv")
+    save_dataframe(table_main, out / "summary.csv")
+    save_dataframe(kappa_main, out / "summary_kappa_curve.csv")
+    save_dataframe(table, out / "summary_all.csv")
+    save_dataframe(table_paired, out / "summary_paired_converged.csv")
+    save_dataframe(kappa_curve, out / "summary_kappa_curve_all.csv")
+    save_dataframe(kappa_curve_paired, out / "summary_kappa_curve_paired_converged.csv")
+    save_dataframe(convergence_audit, out / "convergence_audit.csv")
+    save_dataframe(paired_stats, out / "paired_convergence_audit.csv")
+    save_dataframe(table_main, tab_dir / "table_beta_prior_sensitivity.csv")
+    save_dataframe(table, tab_dir / "table_beta_prior_sensitivity_all.csv")
+    save_dataframe(table_paired, tab_dir / "table_beta_prior_sensitivity_paired_converged.csv")
+    plot_exp9_prior_sensitivity(table_main, kappa_main, out_path=fig_dir / "fig9_beta_prior_sensitivity.png")
     save_json(
         {
             "repeats": int(repeats),
@@ -2002,6 +2720,11 @@ def run_exp9_beta_prior_sensitivity(
             "scenario_templates": [{"name": name, "mu": mu} for name, mu in scenario_templates],
             "priors": [{"alpha_kappa": float(a), "beta_kappa": float(b)} for a, b in priors],
             "profile": profile_name,
+            "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+            "max_convergence_retries": int(retry_limit),
+            "until_bayes_converged": bool(until_bayes_converged),
+            "until_converged_retry_hard_cap": int(_UNTIL_CONVERGED_RETRY_HARD_CAP),
+            "comparison_table_policy": "paired_converged_if_available",
         },
         out / "exp9_meta.json",
     )
@@ -2015,6 +2738,9 @@ def run_all(
     n_jobs: int = 1,
     *,
     profile: str = "full",
+    enforce_bayes_convergence: bool = True,
+    max_convergence_retries: int | None = None,
+    until_bayes_converged: bool = True,
 ) -> Dict[str, Dict[str, str]]:
     profile_name = _normalize_compute_profile(profile)
     out: Dict[str, Dict[str, str]] = {}
@@ -2022,16 +2748,98 @@ def run_all(
         ("exp1", lambda: run_exp1_null_contraction(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp1", profile_name))),
         ("exp2", lambda: run_exp2_adaptive_localization(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp2", profile_name))),
         ("exp3", lambda: run_exp3_phase_diagram(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp3", profile_name))),
-        ("exp4", lambda: run_exp4_benchmark_linear(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp4", profile_name), profile=profile_name)),
-        ("exp5", lambda: run_exp5_heterogeneity(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp5", profile_name), profile=profile_name)),
-        ("exp6", lambda: run_exp6_grouped_logistic(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp6", profile_name), profile=profile_name)),
-        ("exp7", lambda: run_exp7_ablation(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp7", profile_name), profile=profile_name)),
-        ("exp8", lambda: run_exp8_tau_calibration(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp8", profile_name), profile=profile_name)),
-        ("exp9", lambda: run_exp9_beta_prior_sensitivity(save_dir=save_dir, seed=seed, n_jobs=n_jobs, repeats=_default_repeats("exp9", profile_name), profile=profile_name)),
+        (
+            "exp4",
+            lambda: run_exp4_benchmark_linear(
+                save_dir=save_dir,
+                seed=seed,
+                n_jobs=n_jobs,
+                repeats=_default_repeats("exp4", profile_name),
+                profile=profile_name,
+                enforce_bayes_convergence=bool(enforce_bayes_convergence),
+                max_convergence_retries=max_convergence_retries,
+                until_bayes_converged=bool(until_bayes_converged),
+            ),
+        ),
+        (
+            "exp5",
+            lambda: run_exp5_heterogeneity(
+                save_dir=save_dir,
+                seed=seed,
+                n_jobs=n_jobs,
+                repeats=_default_repeats("exp5", profile_name),
+                profile=profile_name,
+                enforce_bayes_convergence=bool(enforce_bayes_convergence),
+                max_convergence_retries=max_convergence_retries,
+                until_bayes_converged=bool(until_bayes_converged),
+            ),
+        ),
+        (
+            "exp6",
+            lambda: run_exp6_grouped_logistic(
+                save_dir=save_dir,
+                seed=seed,
+                n_jobs=n_jobs,
+                repeats=_default_repeats("exp6", profile_name),
+                profile=profile_name,
+                enforce_bayes_convergence=bool(enforce_bayes_convergence),
+                max_convergence_retries=max_convergence_retries,
+                until_bayes_converged=bool(until_bayes_converged),
+            ),
+        ),
+        (
+            "exp7",
+            lambda: run_exp7_ablation(
+                save_dir=save_dir,
+                seed=seed,
+                n_jobs=n_jobs,
+                repeats=_default_repeats("exp7", profile_name),
+                profile=profile_name,
+                enforce_bayes_convergence=bool(enforce_bayes_convergence),
+                max_convergence_retries=max_convergence_retries,
+                until_bayes_converged=bool(until_bayes_converged),
+            ),
+        ),
+        (
+            "exp8",
+            lambda: run_exp8_tau_calibration(
+                save_dir=save_dir,
+                seed=seed,
+                n_jobs=n_jobs,
+                repeats=_default_repeats("exp8", profile_name),
+                profile=profile_name,
+                enforce_bayes_convergence=bool(enforce_bayes_convergence),
+                max_convergence_retries=max_convergence_retries,
+                until_bayes_converged=bool(until_bayes_converged),
+            ),
+        ),
+        (
+            "exp9",
+            lambda: run_exp9_beta_prior_sensitivity(
+                save_dir=save_dir,
+                seed=seed,
+                n_jobs=n_jobs,
+                repeats=_default_repeats("exp9", profile_name),
+                profile=profile_name,
+                enforce_bayes_convergence=bool(enforce_bayes_convergence),
+                max_convergence_retries=max_convergence_retries,
+                until_bayes_converged=bool(until_bayes_converged),
+            ),
+        ),
     ]
     for name, runner in tqdm(jobs, total=len(jobs), desc="All Experiments", leave=True):
         out[name] = runner()
-    save_json({"profile": profile_name, "results": out}, Path(save_dir) / "results" / "run_manifest.json")
+    save_json(
+        {
+            "profile": profile_name,
+            "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+            "max_convergence_retries": None if max_convergence_retries is None else int(max_convergence_retries),
+            "until_bayes_converged": bool(until_bayes_converged),
+            "until_converged_retry_hard_cap": int(_UNTIL_CONVERGED_RETRY_HARD_CAP),
+            "results": out,
+        },
+        Path(save_dir) / "results" / "run_manifest.json",
+    )
     return out
 
 
@@ -2129,12 +2937,25 @@ def _cli() -> None:
     parser.add_argument("--repeats", type=int, default=None)
     parser.add_argument("--n-jobs", type=int, default=1)
     parser.add_argument("--profile", type=str, default="full", choices=list(COMPUTE_PROFILES))
+    parser.add_argument("--no-enforce-bayes-convergence", action="store_true")
+    parser.add_argument("--max-convergence-retries", type=int, default=None)
+    parser.add_argument("--until-bayes-converged", action="store_true")
     parser.add_argument("--max-attempts", type=int, default=8)
     args = parser.parse_args()
     profile_name = _normalize_compute_profile(args.profile)
+    enforce_conv = not bool(args.no_enforce_bayes_convergence)
+    until_conv = bool(args.until_bayes_converged) or (enforce_conv and args.max_convergence_retries is None)
 
     if args.experiment == "all":
-        run_all(save_dir=args.save_dir, seed=args.seed, n_jobs=args.n_jobs, profile=profile_name)
+        run_all(
+            save_dir=args.save_dir,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+            profile=profile_name,
+            enforce_bayes_convergence=enforce_conv,
+            max_convergence_retries=args.max_convergence_retries,
+            until_bayes_converged=until_conv,
+        )
     elif args.experiment == "1":
         run_exp1_null_contraction(
             repeats=args.repeats or _default_repeats("exp1", profile_name),
@@ -2163,6 +2984,9 @@ def _cli() -> None:
             seed=args.seed,
             n_jobs=args.n_jobs,
             profile=profile_name,
+            enforce_bayes_convergence=enforce_conv,
+            max_convergence_retries=args.max_convergence_retries,
+            until_bayes_converged=until_conv,
         )
     elif args.experiment == "5":
         run_exp5_heterogeneity(
@@ -2171,6 +2995,9 @@ def _cli() -> None:
             seed=args.seed,
             n_jobs=args.n_jobs,
             profile=profile_name,
+            enforce_bayes_convergence=enforce_conv,
+            max_convergence_retries=args.max_convergence_retries,
+            until_bayes_converged=until_conv,
         )
     elif args.experiment == "6":
         run_exp6_grouped_logistic(
@@ -2179,6 +3006,9 @@ def _cli() -> None:
             seed=args.seed,
             n_jobs=args.n_jobs,
             profile=profile_name,
+            enforce_bayes_convergence=enforce_conv,
+            max_convergence_retries=args.max_convergence_retries,
+            until_bayes_converged=until_conv,
         )
     elif args.experiment == "7":
         run_exp7_ablation(
@@ -2187,6 +3017,9 @@ def _cli() -> None:
             seed=args.seed,
             n_jobs=args.n_jobs,
             profile=profile_name,
+            enforce_bayes_convergence=enforce_conv,
+            max_convergence_retries=args.max_convergence_retries,
+            until_bayes_converged=until_conv,
         )
     elif args.experiment == "8":
         run_exp8_tau_calibration(
@@ -2195,6 +3028,9 @@ def _cli() -> None:
             seed=args.seed,
             n_jobs=args.n_jobs,
             profile=profile_name,
+            enforce_bayes_convergence=enforce_conv,
+            max_convergence_retries=args.max_convergence_retries,
+            until_bayes_converged=until_conv,
         )
     elif args.experiment == "9":
         run_exp9_beta_prior_sensitivity(
@@ -2203,6 +3039,9 @@ def _cli() -> None:
             seed=args.seed,
             n_jobs=args.n_jobs,
             profile=profile_name,
+            enforce_bayes_convergence=enforce_conv,
+            max_convergence_retries=args.max_convergence_retries,
+            until_bayes_converged=until_conv,
         )
     elif args.experiment == "theory-check":
         run_theory_check(save_dir=args.save_dir)
