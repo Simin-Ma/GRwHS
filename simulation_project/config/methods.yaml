@@ -1,0 +1,11 @@
+﻿GR_RHS:
+  alpha_kappa: 0.5
+  beta_kappa: 1.0
+  s_a: 1.0
+  tau_calibration: rhs_style
+RHS:
+  tau_calibration: rhs_style
+GIGG_MMLE:
+  variant: mmle_main
+GHS_plus:
+  variant: xu_group_horseshoe_plus

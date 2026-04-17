@@ -1,0 +1,18 @@
+﻿exp1_null_contraction:
+  repeats: 500
+exp2_adaptive_localization:
+  repeats: 500
+exp3_phase_diagram:
+  repeats: 200
+exp4_benchmark_linear:
+  repeats: 50
+exp5_heterogeneity:
+  repeats: 100
+exp6_grouped_logistic:
+  repeats: 50
+exp7_ablation:
+  repeats: 50
+exp8_tau_calibration:
+  repeats: 5000
+exp9_beta_prior_sensitivity:
+  repeats: 30

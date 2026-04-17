@@ -187,9 +187,10 @@ class GRRHS_NUTS:
 
         log_tau = numpyro.sample("log_tau_raw", dist.Normal(0.0, 1.0))
         tau = numpyro.deterministic("tau", jnp.exp(log_tau))
+        tau_scale = jnp.maximum(jnp.asarray(tau0_eff, dtype=X.dtype) * sigma, _EPS)
         numpyro.factor(
             "prior_log_tau",
-            self._log_half_cauchy_on_log(log_tau, tau0_eff) - dist.Normal(0.0, 1.0).log_prob(log_tau),
+            self._log_half_cauchy_on_log(log_tau, tau_scale) - dist.Normal(0.0, 1.0).log_prob(log_tau),
         )
 
         log_lambda = numpyro.sample("log_lambda_raw", dist.Normal(jnp.zeros((p,)), jnp.ones((p,))).to_event(1))

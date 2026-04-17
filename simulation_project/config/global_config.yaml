@@ -1,0 +1,17 @@
+﻿master_seed: 20260415
+methods:
+  - GR_RHS
+  - RHS
+  - GIGG_MMLE
+  - GHS_plus
+sampler:
+  chains: 2
+  warmup: 500
+  post_warmup_draws: 500
+  adapt_delta: 0.95
+  max_treedepth: 12
+  strict_adapt_delta: 0.99
+  strict_max_treedepth: 14
+  max_divergence_ratio: 0.005
+  rhat_threshold: 1.01
+  ess_threshold: 400
