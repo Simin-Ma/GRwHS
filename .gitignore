@@ -20,3 +20,7 @@ dist/
 
 # Experiment outputs
 outputs/
+tmp/
+simulation_project/figures/
+simulation_project/logs/
+simulation_project/results/
