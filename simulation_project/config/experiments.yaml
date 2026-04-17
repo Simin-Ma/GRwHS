@@ -1,18 +1,43 @@
-﻿exp1_null_contraction:
-  repeats: 500
-exp2_adaptive_localization:
-  repeats: 500
-exp3_phase_diagram:
-  repeats: 200
-exp4_benchmark_linear:
-  repeats: 50
-exp5_heterogeneity:
-  repeats: 100
-exp6_grouped_logistic:
-  repeats: 50
-exp7_ablation:
-  repeats: 50
-exp8_tau_calibration:
-  repeats: 5000
-exp9_beta_prior_sensitivity:
-  repeats: 30
+exp1_kappa_profile_regimes:
+  repeats_full: 500
+  repeats_laptop: 200
+  description: >
+    Exp1 — kappa_g profile regimes (Theorems 3.22, 3.32, Corollary 3.33).
+    Panel A: null contraction E[kappa_g|Y] = O(p_g^{-1/2}) log-log slope check.
+    Panel B: phase diagram P(kappa_g > u0 | Y) vs xi/xi_crit sweep.
+
+exp2_group_separation:
+  repeats_full: 100
+  repeats_laptop: 30
+  description: >
+    Exp2 — full-model group separation (Theorem 3.34).
+    6-group gradient DGP calibrated at xi_crit(u0=0.5, rho_ref=0.1).
+    Validates GR-RHS null shrinkage, signal retention, group AUROC, MLPD.
+
+exp3_linear_benchmark:
+  repeats_full: 100
+  repeats_laptop: 30
+  description: >
+    Exp3 — linear regression benchmark across signal types and correlation levels.
+    signal_types: concentrated, distributed, boundary (calibrated at 1.2*xi_crit).
+    rho_within: 0.0, 0.3, 0.8; snr: 0.3, 0.7, 2.0 (not for boundary).
+    Methods: GR_RHS, RHS, GIGG_MMLE, GIGG_b_small, GIGG_GHS, GIGG_b_large, GHS_plus, OLS, LASSO_CV.
+    Metrics: mse_null, mse_signal, mse_overall, lpd_test (MLPD), coverage_95.
+
+exp4_variant_ablation:
+  repeats_full: 50
+  repeats_laptop: 20
+  description: >
+    Exp4 — GR-RHS variant ablation: tau calibration study.
+    Variants: oracle tau0, auto-calibrated, under-shrinkage (0.1x), over-shrinkage (10x), RHS baseline.
+    DGP: 4-group, 20 vars/group, p0 in {2, 8, 20}.
+    Validates that the 0415 tau0 calibration formula recovers oracle-level MSE.
+
+exp5_prior_sensitivity:
+  repeats_full: 30
+  repeats_laptop: 15
+  description: >
+    Exp5 — Beta prior sensitivity for kappa_g: (alpha_kappa, beta_kappa) grid.
+    5 priors tested on the same DGP replicate (paired evaluation).
+    2 scenarios: equal-group (6x20) and unequal-group (50,30,10,5,3).
+    Shows practical robustness of GR-RHS to reasonable prior choices.

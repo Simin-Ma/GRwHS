@@ -1223,7 +1223,7 @@ class GRRHS_CollapsedNUTS:
             if key not in samples:
                 return None
             arr = np.asarray(samples[key], dtype=np.float64)
-            return arr.reshape(-1, *arr.shape[2:]) if arr.ndim >= 3 else arr
+            return arr.reshape(-1, *arr.shape[2:]) if arr.ndim >= 2 else arr
 
         sigma_flat = _get_flat("sigma")          # (S,)
         tau_flat = _get_flat("tau")              # (S,)

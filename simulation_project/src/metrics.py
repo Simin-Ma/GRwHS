@@ -60,3 +60,25 @@ def prob_above(draws: Optional[np.ndarray], threshold: float) -> float:
     if flat is None:
         return float("nan")
     return float(np.mean(flat > float(threshold)))
+
+
+def compute_test_lpd(
+    beta_hat: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    *,
+    sigma2_hat: float,
+) -> float:
+    """Plug-in log predictive density on a held-out test set.
+
+    Uses the posterior mean (or OLS/LASSO estimate) for beta and the training
+    residual variance as a plug-in for sigma^2.  Valid for all methods.
+    """
+    if beta_hat is None:
+        return float("nan")
+    b = np.asarray(beta_hat, dtype=float).reshape(-1)
+    Xt = np.asarray(X_test, dtype=float)
+    yt = np.asarray(y_test, dtype=float).reshape(-1)
+    s2 = max(float(sigma2_hat), 1e-8)
+    resid = yt - Xt @ b
+    return float(-0.5 * np.log(2.0 * np.pi * s2) - 0.5 * float(np.mean(resid ** 2)) / s2)
