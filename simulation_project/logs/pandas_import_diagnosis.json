@@ -1,0 +1,43 @@
+{
+  "python": "D:\\python\\python.exe",
+  "checks": {
+    "python_version": {
+      "ok": true,
+      "returncode": 0,
+      "seconds": 0.031135499993979465,
+      "stdout": "3.13.12 (tags/v3.13.12:1cbe481, Feb  3 2026, 18:22:25) [MSC v.1944 64 bit (AMD64)]",
+      "stderr": "",
+      "timeout": false
+    },
+    "import_numpy": {
+      "ok": true,
+      "returncode": 0,
+      "seconds": 0.09008049999829382,
+      "stdout": "2.4.2",
+      "stderr": "",
+      "timeout": false
+    },
+    "import_pandas_libs": {
+      "ok": false,
+      "returncode": null,
+      "seconds": 40.0197812999977,
+      "stdout": "",
+      "stderr": "",
+      "timeout": true
+    },
+    "import_pandas": {
+      "ok": false,
+      "returncode": null,
+      "seconds": 60.0167947000009,
+      "stdout": "",
+      "stderr": "",
+      "timeout": true
+    }
+  },
+  "summary": {
+    "numpy_ok": true,
+    "pandas_libs_ok": false,
+    "pandas_ok": false,
+    "pandas_seconds": 60.0167947000009
+  }
+}

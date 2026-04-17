@@ -93,17 +93,14 @@ Failed fits are logged and kept missing (no dataset replacement).
 
 ---
 
-## 4. Parallel Execution (Now Process-Based)
+## 4. Parallel Execution
 
-`n_jobs` is active and runs replicate-level parallelism using process pools.
+`n_jobs` is active with mixed strategy:
 
-- `n_jobs=1`: sequential
-- `n_jobs>1`: `ProcessPoolExecutor` worker fan-out
+- `exp1/2/3` (theory layer): setting-level thread parallelism (fast startup, low overhead)
+- `exp4+` (full model layer): process/thread fallback controlled in runner
 
-Implementation note:
-
-- worker functions are module-top-level (Windows-safe pickling)
-- computationally heavy experiments (`exp4/5/6/7/9`) now run with true multi-process task distribution
+This avoids Windows startup overhead and avoids forcing `pandas` import on cheap experiments.
 
 ---
 
@@ -167,9 +164,9 @@ Assumption:
 
 Approximate duration:
 
-- Exp1 (`repeats=500`): ~1 to 4 min
-- Exp2 (`repeats=500`): ~1 to 5 min
-- Exp3 (`repeats=200`): ~2 to 8 min
+- Exp1 (`repeats=500`): ~1 to 5 sec
+- Exp2 (`repeats=500`): ~1 to 5 sec
+- Exp3 (`repeats=200`): ~2 to 8 sec
 - Exp4 (`repeats=50`): ~3 to 10 h
 - Exp5 (`repeats=100`): ~2 to 7 h
 - Exp6 (`repeats=50`): ~1 to 4 h
@@ -182,6 +179,29 @@ All 9 experiments together (default repeats):
 - roughly ~10 to 35 h (`n_jobs=2`, laptop-level estimate)
 
 If you need a faster pilot run, reduce `repeats` first for Exp4/5/6/7/9.
+
+---
+
+## 9. Pandas Import Hang (Windows) - Permanent Workaround
+
+If your system Python has very slow/blocked `import pandas`, theory experiments still run fast because `exp1/2/3` no longer depend on pandas for core execution.
+
+Quick diagnosis:
+
+```bash
+python scripts/diagnose_pandas_import.py
+```
+
+Output file:
+
+- `simulation_project/logs/pandas_import_diagnosis.json`
+
+If diagnosis shows `import_pandas` timeout:
+
+1. Keep running `exp1/2/3` normally (they are isolated from pandas).
+2. For `exp4+`, run in a clean Python environment (recommended) or fix the system Python install.
+3. Before long runs, clean stale python workers:
+   - PowerShell: `Get-Process | ? {$_.ProcessName -like 'python*'} | Stop-Process -Force`
 
 ---
 
