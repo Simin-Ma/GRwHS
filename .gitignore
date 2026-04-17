@@ -24,3 +24,28 @@ tmp/
 simulation_project/figures/
 simulation_project/logs/
 simulation_project/results/
+
+# Generic generated outputs (any depth)
+**/output/
+**/outputs/
+**/result/
+**/results/
+**/log/
+**/logs/
+**/figure/
+**/figures/
+**/table/
+**/tables/
+**/artifact/
+**/artifacts/
+**/run/
+**/runs/
+**/checkpoint/
+**/checkpoints/
+**/cache/
+**/caches/
+
+# Generated files
+*.log
+*.out
+*.err
