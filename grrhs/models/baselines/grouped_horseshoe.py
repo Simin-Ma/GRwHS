@@ -9,6 +9,8 @@ import numpy as np
 from numpy.random import Generator, default_rng
 from scipy.linalg import cho_factor, cho_solve, solve_triangular
 
+from grrhs.inference.woodbury import beta_sample_woodbury, beta_sample_cholesky
+
 
 _MIN_POS = 1e-10
 
@@ -62,6 +64,8 @@ def _flatten_param_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
 
 def _sample_beta_conditional(
     *,
+    X: Optional[np.ndarray] = None,
+    y: Optional[np.ndarray] = None,
     XtX: np.ndarray,
     Xty: np.ndarray,
     sigma2: float,
@@ -69,13 +73,36 @@ def _sample_beta_conditional(
     jitter: float,
     rng: Generator,
 ) -> np.ndarray:
-    prior_prec = 1.0 / np.maximum(np.asarray(prior_var, dtype=float), jitter)
+    """Sample β from its Gaussian full conditional.
+
+    Uses Bhattacharya (2016) Woodbury path (O(n²p)) when X and y are supplied
+    and n < p; falls back to Cholesky on the p×p precision otherwise.
+
+    The HBGHS prior is β_j ~ N(0, σ²·prior_var_j), so the posterior is
+    N((XᵀX + diag(prior_prec))⁻¹ Xᵀy, σ²·(XᵀX + diag(prior_prec))⁻¹).
+    The Woodbury path works in the equivalent scaled space (X' = X, y' = y,
+    prior D = prior_var), recovering the same distribution.
+    """
+    p = int(Xty.shape[0])
+    pv = np.asarray(prior_var, dtype=float)
+    if X is not None and y is not None and int(y.shape[0]) < p:
+        return beta_sample_woodbury(
+            np.asarray(X, dtype=float),
+            np.asarray(y, dtype=float),
+            float(sigma2),
+            pv,
+            rng,
+            jitter=float(jitter),
+        )
+    # Cholesky on p×p precision: precision = XᵀX + diag(1/prior_var)
+    # (σ² factored out; noise scaled by √σ² to match N(μ, σ²·precision⁻¹))
+    prior_prec = 1.0 / np.maximum(pv, jitter)
     precision = np.asarray(XtX, dtype=float) + np.diag(prior_prec)
     if jitter > 0.0:
-        precision = precision + float(jitter) * np.eye(precision.shape[0], dtype=float)
+        precision += float(jitter) * np.eye(precision.shape[0], dtype=float)
     chol = cho_factor(precision, lower=True, check_finite=False)
     mean = cho_solve(chol, np.asarray(Xty, dtype=float), check_finite=False)
-    z = rng.normal(size=precision.shape[0])
+    z = rng.standard_normal(precision.shape[0])
     noise = solve_triangular(chol[0], z, lower=bool(chol[1]), check_finite=False)
     return np.asarray(mean + math.sqrt(max(float(sigma2), jitter)) * noise, dtype=float)
 
@@ -223,6 +250,8 @@ class GroupedHorseshoePlus:
             # beta | sigma^2, tau^2, lambda_g, delta_j
             prior_var = tau2 * group_lambda2[group_id] * local_delta2
             beta = _sample_beta_conditional(
+                X=X_std,
+                y=y_ctr,
                 XtX=XtX,
                 Xty=Xty,
                 sigma2=sigma2,
@@ -246,28 +275,41 @@ class GroupedHorseshoePlus:
             tau2 = _sample_invgamma(alpha=0.5 * (p + 1), beta=max(tau_rate + (1.0 / max(tau_aux, self.jitter)), self.jitter), rng=rng)
             tau_aux = _sample_invgamma(alpha=1.0, beta=(1.0 / tau2) + (1.0 / (float(self.tau0) ** 2)), rng=rng)
 
-            # lambda_g^2 | beta, sigma^2, tau^2, delta_j  [group shrinkage]
-            for gid, members in enumerate(groups_norm):
-                idx = np.asarray(members, dtype=int)
-                group_quad = float(np.sum((beta[idx] * beta[idx]) / np.maximum(local_delta2[idx], self.jitter)))
-                rate = 0.5 * group_quad / max(sigma2 * tau2, self.jitter) + (1.0 / max(group_aux[gid], self.jitter))
-                group_lambda2[gid] = _sample_invgamma(alpha=0.5 * (idx.size + 1), beta=max(rate, self.jitter), rng=rng)
-                group_aux[gid] = _sample_invgamma(
-                    alpha=1.0,
-                    beta=(1.0 / max(group_lambda2[gid], self.jitter)) + (1.0 / (float(self.group_scale_prior) ** 2)),
-                    rng=rng,
-                )
+            # lambda_g^2 | beta, sigma^2, tau^2, delta_j  [group shrinkage — vectorized]
+            weighted_b2 = beta ** 2 / np.maximum(local_delta2, self.jitter)
+            group_beta_sq = np.bincount(group_id, weights=weighted_b2, minlength=G)
+            rates_g = (0.5 * group_beta_sq / max(sigma2 * tau2, self.jitter)
+                       + 1.0 / np.maximum(group_aux, self.jitter))
+            alphas_g = 0.5 * (group_sizes + 1)
+            group_lambda2 = 1.0 / rng.gamma(
+                shape=np.maximum(alphas_g, self.jitter),
+                scale=1.0 / np.maximum(rates_g, self.jitter),
+            )
+            group_aux = 1.0 / rng.gamma(
+                shape=np.ones(G),
+                scale=1.0 / np.maximum(
+                    1.0 / np.maximum(group_lambda2, self.jitter)
+                    + 1.0 / float(self.group_scale_prior) ** 2,
+                    self.jitter,
+                ),
+            )
 
-            # delta_j^2 | beta, sigma^2, tau^2, lambda_g  [within-group shrinkage]
-            for j in range(p):
-                group_scale = group_lambda2[group_id[j]]
-                rate = 0.5 * float(beta[j] ** 2) / max(sigma2 * tau2 * group_scale, self.jitter) + (1.0 / max(local_aux[j], self.jitter))
-                local_delta2[j] = _sample_invgamma(alpha=1.0, beta=max(rate, self.jitter), rng=rng)
-                local_aux[j] = _sample_invgamma(
-                    alpha=1.0,
-                    beta=(1.0 / max(local_delta2[j], self.jitter)) + (1.0 / (float(self.local_scale_prior) ** 2)),
-                    rng=rng,
-                )
+            # delta_j^2 | beta, sigma^2, tau^2, lambda_g  [within-group — vectorized]
+            group_scales_j = group_lambda2[group_id]
+            rates_j = (0.5 * beta ** 2 / np.maximum(sigma2 * tau2 * group_scales_j, self.jitter)
+                       + 1.0 / np.maximum(local_aux, self.jitter))
+            local_delta2 = 1.0 / rng.gamma(
+                shape=np.ones(p),
+                scale=1.0 / np.maximum(rates_j, self.jitter),
+            )
+            local_aux = 1.0 / rng.gamma(
+                shape=np.ones(p),
+                scale=1.0 / np.maximum(
+                    1.0 / np.maximum(local_delta2, self.jitter)
+                    + 1.0 / float(self.local_scale_prior) ** 2,
+                    self.jitter,
+                ),
+            )
 
             if it >= int(self.burnin) and ((it - int(self.burnin)) % int(self.thin) == 0):
                 beta_orig = beta / x_scale
