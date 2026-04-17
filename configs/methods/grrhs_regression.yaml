@@ -1,15 +1,11 @@
 name: "grrhs_regression"
 
 model:
-  name: "grrhs_gibbs"
-  c: 1.0
-  eta: 0.5
-  alpha_kappa: 2.0
-  beta_kappa: 2.0
+  name: "grrhs_nuts"
+  eta: 1.0
+  alpha_kappa: 0.5
+  beta_kappa: 1.0
   s0: 1.0
-  iters: 2000
-  use_pcabs_lite: true
-  use_collapsed_scale_updates: false
   tau:
     mode: "calibrated"
     target: "coefficients"
@@ -18,46 +14,15 @@ model:
     sigma_reference: 1.0
 
 inference:
-  gibbs:
-    burn_in: 1000
-    thin: 1
+  nuts:
+    num_warmup: 1000
+    num_samples: 1000
     num_chains: 4
-    tau_slice_w: 0.2
-    tau_slice_m: 1200
-    slice_w: 0.25
-    mh_sd_log_tau2: 0.2
-    mh_sd_log_lambda: 0.25
-    mh_sd_log_a: 0.2
-    mh_sd_log_c2: 0.2
-    global_block_sd_u: 0.20
-    global_block_sd_alpha: 0.25
-    global_comp_sd: 0.16
-    group_ac2_block_sd_alpha: 0.15
-    group_ac2_block_sd_xi: 0.15
-    group_comp_sd: 0.10
-    use_lambda_slice: false
-    lambda_slice_w: 0.12
-    lambda_slice_m: 20
-    adapt_proposals: true
-    adapt_interval: 50
-    adapt_until_frac: 0.8
-    adapt_target_accept: 0.3
-    adapt_target_accept_by_block:
-      tau2: 0.35
-      lambda: 0.40
-      a: 0.32
-      c2: 0.32
-      global_block: 0.28
-      global_comp: 0.28
-      group_ac2_block: 0.30
-      group_comp: 0.30
-    adapt_step_size: 0.08
-    adapt_only_during_burnin: true
-    min_proposal_sd: 1.0e-3
-    max_proposal_sd: 2.5
-    tau2_refresh_steps: 6
-    use_tau_slice_refresh: true
-    jitter: 1.0e-08
+    thinning: 1
+    target_accept_prob: 0.95
+    max_tree_depth: 12
+    dense_mass: false
+    chain_method: "sequential"
     seed: 321
 
 experiments:

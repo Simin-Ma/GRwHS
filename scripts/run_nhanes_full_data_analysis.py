@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -122,9 +122,9 @@ def _model_label(cfg: Mapping[str, Any]) -> str:
     name = str(model_cfg.get("name", "model"))
     aliases = {
         "gigg": "GIGG",
-        "grrhs_gibbs": "GR-RHS",
+        "grrhs_nuts": "GR-RHS",
     }
-    if name == "grrhs_gibbs" and model_cfg.get("use_groups") is False:
+    if name == "grrhs_nuts" and model_cfg.get("use_groups") is False:
         return "RHS"
     return aliases.get(name, name)
 
@@ -578,3 +578,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

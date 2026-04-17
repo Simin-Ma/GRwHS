@@ -13,7 +13,6 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 from sklearn.linear_model import LogisticRegression as _SklearnLogisticRegression
 from sklearn.linear_model import LinearRegression as _SklearnLinearRegression
-from grrhs.models.grrhs_gibbs import GRRHS_Gibbs
 try:
     from cmdstanpy import CmdStanModel as _CmdStanModel
 except Exception:  # pragma: no cover - optional dependency
@@ -690,7 +689,7 @@ class _BaseHorseshoeRegression:
         return jnp.sqrt(lambda_tilde_sq)
 
     def _use_gibbs_backend(self) -> bool:
-        return self.likelihood == "gaussian"
+        return False
 
     def _use_cmdstan_backend(self) -> bool:
         return False
@@ -930,48 +929,6 @@ class _BaseHorseshoeRegression:
         self.sampler_diagnostics_ = self._extract_hmc_diagnostics(mcmc)
         self._store_samples(samples)
         return self
-
-    def _fit_with_gibbs(
-        self,
-        X: np.ndarray,
-        y: np.ndarray,
-        *,
-        groups: Optional[list[list[int]]] = None,
-    ) -> None:
-        use_groups = False
-        group_scale = 1.0
-        gibbs_groups = None
-        total_iters = int(self.num_warmup + self.num_samples)
-        sampler = GRRHS_Gibbs(
-            c=float(self.slab_scale if self.slab_scale is not None else 1.0),
-            tau0=float(self.scale_global),
-            eta=group_scale,
-            s0=float(self.sigma_scale),
-            iters=total_iters,
-            burnin=int(self.num_warmup),
-            thin=int(self.thinning),
-            seed=0 if self.seed is None else int(self.seed),
-            use_groups=use_groups,
-        )
-        fitted = sampler.fit(X, y, groups=gibbs_groups)
-
-        self.coef_samples_ = None if fitted.coef_samples_ is None else fitted.coef_samples_.copy()
-        if self.coef_samples_ is None:
-            raise RuntimeError("Gibbs sampler did not return coefficient draws.")
-        self.coef_ = fitted.coef_mean_.copy() if fitted.coef_mean_ is not None else self.coef_samples_.mean(axis=0)
-        self.intercept_ = float(fitted.intercept_)
-
-        if fitted.sigma2_samples_ is not None:
-            self.sigma_samples_ = np.sqrt(np.maximum(fitted.sigma2_samples_, 0.0))
-        else:
-            self.sigma_samples_ = None
-        self.tau_samples_ = None if fitted.tau_samples_ is None else fitted.tau_samples_.copy()
-        self.lambda_samples_ = None if fitted.lambda_samples_ is None else fitted.lambda_samples_.copy()
-        self.intercept_samples_ = None
-        self.sampler_diagnostics_ = {
-            "backend": "gibbs",
-            "hmc": None,
-        }
 
     def _extract_hmc_diagnostics(self, mcmc: MCMC) -> Dict[str, Any]:
         diagnostics: Dict[str, Any] = {"backend": "hmc"}

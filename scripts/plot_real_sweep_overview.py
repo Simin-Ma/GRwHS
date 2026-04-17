@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -41,7 +41,7 @@ def _resolve_model_label(row: pd.Series) -> str:
     variation = str(row.get("variation", ""))
     model = str(row.get("model", ""))
     alias_by_model = {
-        "grrhs_gibbs": "GR-RHS",
+        "grrhs_nuts": "GR-RHS",
         "regularized_horseshoe": "RHS",
         "rhs": "RHS",
         "gigg": "GIGG",
@@ -137,3 +137,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

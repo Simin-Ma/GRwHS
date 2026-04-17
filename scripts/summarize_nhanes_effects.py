@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -81,14 +81,14 @@ def _model_label(run_dir: Path) -> str:
     model_cfg = cfg.get("model", {})
     name = str(model_cfg.get("name", run_dir.name))
     aliases = {
-        "grrhs_gibbs": "GR-RHS",
+        "grrhs_nuts": "GR-RHS",
         "gigg": "GIGG",
         "ridge": "Ridge",
         "lasso": "Lasso",
         "sparse_group_lasso": "Sparse Group Lasso",
         "logistic_regression": "Logistic regression",
     }
-    if name == "grrhs_gibbs" and model_cfg.get("use_groups") is False:
+    if name == "grrhs_nuts" and model_cfg.get("use_groups") is False:
         return "RHS"
     return aliases.get(name, name)
 
@@ -300,3 +300,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

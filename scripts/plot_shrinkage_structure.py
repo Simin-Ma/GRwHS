@@ -1,4 +1,4 @@
-"""CLI utility to visualize shrinkage structure for RHS and GRRHS runs."""
+﻿"""CLI utility to visualize shrinkage structure for RHS and GRRHS runs."""
 from __future__ import annotations
 
 import argparse
@@ -45,7 +45,7 @@ def _resolve_label(model_name: Optional[str]) -> str:
     name = model_name.lower()
     if name in {"regularized_horseshoe", "rhs", "rhs_gibbs"}:
         return "RHS"
-    if name in {"grrhs", "grrhs_gibbs"}:
+    if name in {"grrhs", "grrhs_nuts"}:
         return "GRRHS"
     if name == "horseshoe":
         return "HS"
@@ -253,3 +253,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

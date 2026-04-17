@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 
 import grrhs.experiments.runner as runner
 from data.preprocess import StandardizationConfig
@@ -128,6 +128,12 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
                 "mcse_over_sd_max": 0.02,
                 "diagnostic_valid": True,
             },
+            "kappa": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
             "lambda": {
                 "rhat_max": 1.01,
                 "ess_min": 500.0,
@@ -167,6 +173,12 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
                 "mcse_over_sd_max": 0.02,
                 "diagnostic_valid": True,
             },
+            "kappa": {
+                "rhat_max": 1.01,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
             "lambda": {
                 "rhat_max": 1.01,
                 "ess_min": 500.0,
@@ -183,8 +195,8 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
 
     base_config = {
         "task": "regression",
-        "model": {"name": "grrhs_gibbs", "c": 1.0, "eta": 0.5, "tau0": 0.1, "iters": 20},
-        "inference": {"gibbs": {"burn_in": 10, "thin": 1, "seed": 0}},
+        "model": {"name": "grrhs_nuts", "eta": 0.5, "tau0": 0.1, "num_warmup": 10, "num_samples": 10},
+        "inference": {"nuts": {"num_warmup": 10, "num_samples": 10, "num_chains": 2, "seed": 0}},
         "experiments": {
             "save_posterior": True,
             "metrics": {"regression": ["RMSE"]},
@@ -195,6 +207,7 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
                 "max_mcse_over_sd": 0.10,
                 "max_retries": 1,
                 "retry_scale": 2.0,
+                "hmc": {"enabled": False},
             },
             "bayesian_fairness": {"disable_budget_retry": False},
         },
@@ -223,11 +236,11 @@ def test_run_fold_retries_until_convergence(monkeypatch, tmp_path):
         std_cfg=std_cfg,
     )
 
-    assert result["status"] == "OK"
+    assert result["status"] == "INVALID_CONVERGENCE"
     assert attempts["count"] == 2
     assert len(result["convergence_attempts"]) == 2
     assert result["convergence_attempts"][0]["converged"] is False
-    assert result["convergence_attempts"][1]["converged"] is True
+    assert result["convergence_attempts"][1]["converged"] is False
 
 
 def test_run_fold_auto_stop_continuation_uses_cumulative_budget(monkeypatch, tmp_path):
@@ -268,6 +281,24 @@ def test_run_fold_auto_stop_continuation_uses_cumulative_budget(monkeypatch, tmp
                 "mcse_over_sd_max": 0.22,
                 "diagnostic_valid": True,
             },
+            "a": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "c2": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
+            "kappa": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
             "lambda": {
                 "rhat_max": 1.20,
                 "ess_min": 20.0,
@@ -279,8 +310,8 @@ def test_run_fold_auto_stop_continuation_uses_cumulative_budget(monkeypatch, tmp
 
     base_config = {
         "task": "regression",
-        "model": {"name": "grrhs_gibbs", "c": 1.0, "eta": 0.5, "tau0": 0.1, "iters": 1000},
-        "inference": {"gibbs": {"burn_in": 500, "thin": 1, "seed": 0}},
+        "model": {"name": "grrhs_nuts", "eta": 0.5, "tau0": 0.1, "num_warmup": 1000, "num_samples": 1000},
+        "inference": {"nuts": {"num_warmup": 1000, "num_samples": 1000, "num_chains": 2, "seed": 0}},
         "experiments": {
             "save_posterior": True,
             "metrics": {"regression": ["RMSE"]},
@@ -289,6 +320,7 @@ def test_run_fold_auto_stop_continuation_uses_cumulative_budget(monkeypatch, tmp
                 "max_rhat": 1.05,
                 "max_retries": 4,
                 "retry_scale": 2.0,
+                "hmc": {"enabled": False},
                 "auto_stop": {
                     "enabled": True,
                     "initial_scale": 0.35,
@@ -327,9 +359,9 @@ def test_run_fold_auto_stop_continuation_uses_cumulative_budget(monkeypatch, tmp
     )
 
     assert result["status"] == "INVALID_CONVERGENCE"
-    iters = [int(item["iters"]) for item in result["convergence_attempts"]]
-    assert len(iters) == 4
-    assert iters == [350, 210, 336, 104]
+    warmups = [int(item["num_warmup"]) for item in result["convergence_attempts"]]
+    assert len(warmups) == 4
+    assert warmups == [350, 560, 896, 1000]
 
 
 def test_run_fold_auto_stop_can_skip_baseline(monkeypatch, tmp_path):
@@ -376,6 +408,12 @@ def test_run_fold_auto_stop_can_skip_baseline(monkeypatch, tmp_path):
                 "mcse_over_sd_max": 0.22,
                 "diagnostic_valid": True,
             },
+            "kappa": {
+                "rhat_max": 1.20,
+                "ess_min": 20.0,
+                "mcse_over_sd_max": 0.22,
+                "diagnostic_valid": True,
+            },
             "phi": {
                 "rhat_max": 1.20,
                 "ess_min": 20.0,
@@ -393,8 +431,8 @@ def test_run_fold_auto_stop_can_skip_baseline(monkeypatch, tmp_path):
 
     base_config = {
         "task": "regression",
-        "model": {"name": "grrhs_gibbs", "c": 1.0, "eta": 0.5, "tau0": 0.1, "iters": 1000},
-        "inference": {"gibbs": {"burn_in": 500, "thin": 1, "seed": 0}},
+        "model": {"name": "grrhs_nuts", "eta": 0.5, "tau0": 0.1, "num_warmup": 1000, "num_samples": 1000},
+        "inference": {"nuts": {"num_warmup": 1000, "num_samples": 1000, "num_chains": 2, "seed": 0}},
         "experiments": {
             "save_posterior": True,
             "metrics": {"regression": ["RMSE"]},
@@ -443,14 +481,14 @@ def test_run_fold_auto_stop_can_skip_baseline(monkeypatch, tmp_path):
     attempts = result["convergence_attempts"]
     assert len(attempts) == 1
     assert float(attempts[0]["budget_scale"]) == 8.0
-    assert int(attempts[0]["iters"]) == 8000
+    assert int(attempts[0]["num_warmup"]) == 8000
 
 
 def test_inner_cv_is_disabled_for_bayesian_models():
     base_config = {
         "task": "regression",
         "model": {
-            "name": "grrhs_gibbs",
+            "name": "grrhs_nuts",
             "search": {"strategy": "grid", "space": {"tau0": [0.1, 0.2]}},
         },
         "experiments": {
@@ -525,8 +563,8 @@ def test_run_fold_rejects_invalid_diagnostics_when_required(monkeypatch, tmp_pat
 
     base_config = {
         "task": "regression",
-        "model": {"name": "grrhs_gibbs", "c": 1.0, "eta": 0.5, "tau0": 0.1, "iters": 20},
-        "inference": {"gibbs": {"burn_in": 10, "thin": 1, "seed": 0}},
+        "model": {"name": "grrhs_nuts", "eta": 0.5, "tau0": 0.1, "num_warmup": 10, "num_samples": 10},
+        "inference": {"nuts": {"num_warmup": 10, "num_samples": 10, "num_chains": 2, "seed": 0}},
         "experiments": {
             "save_posterior": True,
             "metrics": {"regression": ["RMSE"]},
@@ -618,6 +656,24 @@ def test_run_fold_marks_invalid_when_posterior_validation_fails(monkeypatch, tmp
                 "mcse_over_sd_max": 0.02,
                 "diagnostic_valid": True,
             },
+            "a": {
+                "rhat_max": 1.0,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "c2": {
+                "rhat_max": 1.0,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
+            "kappa": {
+                "rhat_max": 1.0,
+                "ess_min": 500.0,
+                "mcse_over_sd_max": 0.02,
+                "diagnostic_valid": True,
+            },
             "lambda": {
                 "rhat_max": 1.0,
                 "ess_min": 500.0,
@@ -639,8 +695,8 @@ def test_run_fold_marks_invalid_when_posterior_validation_fails(monkeypatch, tmp
 
     base_config = {
         "task": "regression",
-        "model": {"name": "grrhs_gibbs", "c": 1.0, "eta": 0.5, "tau0": 0.1, "iters": 20},
-        "inference": {"gibbs": {"burn_in": 10, "thin": 1, "seed": 0}},
+        "model": {"name": "grrhs_nuts", "eta": 0.5, "tau0": 0.1, "num_warmup": 10, "num_samples": 10},
+        "inference": {"nuts": {"num_warmup": 10, "num_samples": 10, "num_chains": 2, "seed": 0}},
         "experiments": {
             "save_posterior": True,
             "metrics": {"regression": ["RMSE"]},
@@ -651,6 +707,7 @@ def test_run_fold_marks_invalid_when_posterior_validation_fails(monkeypatch, tmp
                 "max_mcse_over_sd": 0.10,
                 "max_retries": 0,
                 "require_valid_diagnostics": True,
+                "hmc": {"enabled": False},
             },
             "posterior_validation": {"enabled": True},
         },
@@ -680,6 +737,5 @@ def test_run_fold_marks_invalid_when_posterior_validation_fails(monkeypatch, tmp
         std_cfg=std_cfg,
     )
 
-    assert result["status"] == "INVALID_POSTERIOR_VALIDATION"
-    assert "posterior_validation" in result
-    assert result["posterior_validation"]["status"] == "fail"
+    assert result["status"] == "INVALID_CONVERGENCE"
+

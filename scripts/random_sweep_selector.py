@@ -139,7 +139,7 @@ def main() -> None:
     parser.add_argument("--samples", type=int, default=3, help="Number of random subsets to run.")
     parser.add_argument("--subset-size", type=int, default=4, help="Number of variations per random sweep.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
-    parser.add_argument("--target-model", default="grrhs_gibbs", help="Model name whose RMSE is evaluated.")
+    parser.add_argument("--target-model", default="grrhs_nuts", help="Model name whose RMSE is evaluated.")
     args = parser.parse_args()
 
     results = run_random_samples(
@@ -166,5 +166,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 

@@ -1,4 +1,4 @@
-"""Lambda-layer diagnostics package for Bayesian shrinkage models.
+﻿"""Lambda-layer diagnostics package for Bayesian shrinkage models.
 
 This script focuses on:
 1) kappa-transformed diagnostics (trace + ESS/Rhat)
@@ -110,7 +110,7 @@ def _compute_kappa_draws(
     kappa = np.zeros((C, D, P), dtype=float)
     model_key = str(model_name).lower()
     is_rhs = model_key in {"rhs", "regularized_horseshoe", "regularised_horseshoe", "horseshoe", "hs"}
-    is_grrhs = model_key in {"grrhs_gibbs"}
+    is_grrhs = model_key in {"grrhs_nuts"}
     is_gigg = model_key in {"gigg", "gigg_regression"}
 
     for c in range(C):
@@ -267,4 +267,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -81,7 +81,7 @@ def main() -> None:
     parser.add_argument("runs_root", type=Path, help="Sweep directory containing run subfolders")
     parser.add_argument("--metric", default="RMSE", help="Metric key to score runs by (lower is better by default)")
     parser.add_argument("--top", type=int, default=10, help="Number of top runs to display")
-    parser.add_argument("--model", default=None, help="Filter by model name (e.g., grrhs_gibbs)")
+    parser.add_argument("--model", default=None, help="Filter by model name (e.g., grrhs_nuts)")
     parser.add_argument("--maximize", action="store_true", help="Treat higher metric values as better")
     parser.add_argument("--json", action="store_true", help="Emit results as JSON instead of text")
     args = parser.parse_args()
@@ -133,3 +133,4 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -16,7 +16,7 @@ import yaml
 
 
 MODEL_ALIASES: Dict[str, str] = {
-    "grrhs_gibbs": "GR-RHS",
+    "grrhs_nuts": "GR-RHS",
     "regularized_horseshoe": "RHS",
     "rhs": "RHS",
     "gigg": "GIGG",
@@ -578,3 +578,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

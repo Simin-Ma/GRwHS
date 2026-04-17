@@ -84,7 +84,7 @@ class GRRHS_NUTS:
     thinning: int = 1
     target_accept_prob: float = 0.95
     max_tree_depth: int = 12
-    dense_mass: bool = True
+    dense_mass: bool = False
     chain_method: str = "sequential"
     progress_bar: bool = False
     seed: int = 42

@@ -101,7 +101,6 @@ DEFAULT_CONVERGENCE_CONFIG: Dict[str, Any] = {
     "parameters": ["beta", "tau"],
     "expected_blocks": {
         "default": ["beta", "tau"],
-        "grrhs_gibbs": ["beta", "tau", "a", "c2", "lambda"],
         "grrhs_nuts": ["beta", "tau", "a", "kappa", "c2", "lambda"],
         "grrhs_hmc": ["beta", "tau", "a", "kappa", "c2", "lambda"],
         "gigg": ["beta", "tau", "gamma", "lambda"],
@@ -186,7 +185,6 @@ DEFAULT_POSTERIOR_VALIDATION_CONFIG: Dict[str, Any] = {
 }
 
 _BAYESIAN_MODEL_NAMES = {
-    "grrhs_gibbs",
     "grrhs_nuts",
     "grrhs_hmc",
     "gigg",
@@ -210,10 +208,6 @@ _BAYESIAN_MODEL_NAMES = {
 }
 
 _BAYESIAN_HYPERPRIOR_LABELS: Dict[str, Dict[str, str]] = {
-    "grrhs_gibbs": {
-        "tau": "tau ~ C+(0, 1) via calibrated tau0 heuristic",
-        "group": "a_g ~ HalfNormal(eta/sqrt(p_g)), kappa_g ~ Beta(alpha_kappa, beta_kappa), c_g^2=sigma^2*kappa_g/(1-kappa_g)",
-    },
     "grrhs_nuts": {
         "tau": "tau ~ C+(0, tau0) via sparsity-aware calibration",
         "group": "a_g ~ HalfNormal(eta/sqrt(p_g)), kappa_g ~ Beta(alpha_kappa, beta_kappa), c_g^2=sigma^2*kappa_g/(1-kappa_g)",
@@ -493,7 +487,7 @@ def _apply_bayesian_sampling_budget(config: MutableMapping[str, Any]) -> None:
     inference_cfg = config.setdefault("inference", {})
     model_name = _resolve_model_name(config)
 
-    if model_name in {"grrhs_gibbs", "gigg", "gigg_regression"}:
+    if model_name in {"gigg", "gigg_regression"}:
         gibbs_cfg = inference_cfg.setdefault("gibbs", {})
         gibbs_cfg["burn_in"] = int(budget["burn_in"])
         gibbs_cfg["thin"] = int(budget["thinning"])
@@ -940,16 +934,15 @@ def _scale_bayesian_runtime(
 ) -> None:
     model_name = str(model_config.get("name", "")).lower()
 
-    if model_name in {"grrhs_gibbs", "gigg", "gigg_regression"}:
+    if model_name in {"gigg", "gigg_regression"}:
         if "iters" in model_config:
             model_config["iters"] = max(4, int(math.ceil(float(model_config["iters"]) * scale)))
-        if model_name in {"gigg", "gigg_regression"}:
-            if "n_burn_in" in model_config:
-                model_config["n_burn_in"] = max(2, int(math.ceil(float(model_config["n_burn_in"]) * scale)))
-            if "n_samples" in model_config:
-                model_config["n_samples"] = max(50, int(math.ceil(float(model_config["n_samples"]) * scale)))
-            if "n_thin" in model_config:
-                model_config["n_thin"] = max(1, int(model_config["n_thin"]))
+        if "n_burn_in" in model_config:
+            model_config["n_burn_in"] = max(2, int(math.ceil(float(model_config["n_burn_in"]) * scale)))
+        if "n_samples" in model_config:
+            model_config["n_samples"] = max(50, int(math.ceil(float(model_config["n_samples"]) * scale)))
+        if "n_thin" in model_config:
+            model_config["n_thin"] = max(1, int(model_config["n_thin"]))
         gibbs_cfg = inference_cfg.get("gibbs")
         if isinstance(gibbs_cfg, MutableMapping) and "burn_in" in gibbs_cfg:
             gibbs_cfg["burn_in"] = max(2, int(math.ceil(float(gibbs_cfg["burn_in"]) * scale)))
@@ -1143,29 +1136,12 @@ def _fit_model_with_retry(
         attempt_model_cfg = attempt_config.setdefault("model", {})
         attempt_inference_cfg = attempt_config.setdefault("inference", {})
         model_name = str(attempt_model_cfg.get("name", "")).strip().lower()
-        is_grrhs_gibbs = model_name == "grrhs_gibbs"
         is_bglss_gibbs = model_name in {"bglss", "bglss_python", "bglss_py"}
         _apply_bayesian_sampling_budget(attempt_config)
         if abs(float(attempt_scale) - 1.0) > 1e-9:
             _scale_bayesian_runtime(attempt_model_cfg, attempt_inference_cfg, float(attempt_scale))
         if attempt > 0:
-            if is_grrhs_gibbs and continuation_enabled and previous_chain_states:
-                # Continuation mode: only sample additional iterations and keep warmup minimal.
-                try:
-                    target_total_iters = int(attempt_model_cfg.get("iters", 0))
-                    remaining_iters = target_total_iters - int(max(0, cumulative_effective_iters))
-                    # Keep continuation chunks non-trivial but avoid accidental
-                    # budget inflation caused by subtracting the previous delta.
-                    attempt_model_cfg["iters"] = max(50, remaining_iters)
-                except Exception:
-                    pass
-                gibbs_cfg = attempt_inference_cfg.get("gibbs")
-                if isinstance(gibbs_cfg, Mapping):
-                    gibbs_mut = dict(gibbs_cfg)
-                    cont_iters = int(max(1, attempt_model_cfg.get("iters", 1)))
-                    gibbs_mut["burn_in"] = max(50, int(0.2 * cont_iters))
-                    attempt_inference_cfg["gibbs"] = gibbs_mut
-            elif is_bglss_gibbs and continuation_enabled and previous_chain_states:
+            if is_bglss_gibbs and continuation_enabled and previous_chain_states:
                 # BGLSS continuation: sample only the remaining delta iterations,
                 # and keep continuation burn-in minimal to preserve effective draws.
                 try:
@@ -1207,16 +1183,15 @@ def _fit_model_with_retry(
             p,
             apply_bayesian_budget=False,
         )
-        if attempt > 0 and (is_grrhs_gibbs or is_bglss_gibbs) and continuation_enabled and previous_chain_states:
+        if attempt > 0 and is_bglss_gibbs and continuation_enabled and previous_chain_states:
             setter = getattr(model, "set_chain_initial_states", None)
             if callable(setter):
                 try:
                     states_to_set: Sequence[Mapping[str, Any]] = previous_chain_states
-                    if is_bglss_gibbs:
-                        states_to_set = _prepare_bglss_continuation_states(
-                            previous_chain_states,
-                            attempt=attempt,
-                        )
+                    states_to_set = _prepare_bglss_continuation_states(
+                        previous_chain_states,
+                        attempt=attempt,
+                    )
                     setter(states_to_set)
                 except Exception:
                     pass
@@ -1285,17 +1260,12 @@ def _fit_model_with_retry(
         last_summary = summary
         last_effective_config = attempt_config
         last_sampler_diagnostics = sampler_diagnostics
-        if is_grrhs_gibbs:
-            try:
-                cumulative_effective_iters += max(0, int(attempt_model_cfg.get("iters", 0)))
-            except Exception:
-                pass
-        elif is_bglss_gibbs:
+        if is_bglss_gibbs:
             try:
                 cumulative_effective_iters += max(0, int(attempt_model_cfg.get("niter", 0)))
             except Exception:
                 pass
-        if is_grrhs_gibbs or is_bglss_gibbs:
+        if is_bglss_gibbs:
             states = getattr(model, "chain_final_states_", None)
             if isinstance(states, list) and states:
                 previous_chain_states = states

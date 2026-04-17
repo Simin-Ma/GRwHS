@@ -6,7 +6,7 @@ import numpy as np
 
 from grrhs.models.grrhs_nuts import GRRHS_NUTS
 
-from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, timed_call
+from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
 
 
 def _build_model(
@@ -21,6 +21,7 @@ def _build_model(
     shared_kappa: bool,
     auto_calibrate_tau: bool,
     tau0: float | None,
+    sigma_reference: float,
     sampler: SamplerConfig,
     adapt_delta: float,
     max_treedepth: int,
@@ -33,6 +34,7 @@ def _build_model(
         p0=int(max(p0, 1)),
         tau0=None if tau0 is None else float(tau0),
         auto_calibrate_tau=bool(auto_calibrate_tau),
+        sigma_reference=float(sigma_reference),
         likelihood=likelihood,
         use_group_scale=bool(use_group_scale),
         use_local_scale=bool(use_local_scale),
@@ -66,9 +68,12 @@ def fit_gr_rhs(
     auto_calibrate_tau: bool = True,
     tau0: float | None = None,
 ) -> FitResult:
-    tracked = ["beta", "tau", "kappa"]
+    tracked = ["beta", "tau", "kappa", "a"]
 
     try:
+        pseudo_sigma = 1.0
+        if str(task).lower() == "logistic":
+            pseudo_sigma = logistic_pseudo_sigma(y)
         model = _build_model(
             task=task,
             seed=seed,
@@ -80,6 +85,7 @@ def fit_gr_rhs(
             shared_kappa=shared_kappa,
             auto_calibrate_tau=auto_calibrate_tau,
             tau0=tau0,
+            sigma_reference=pseudo_sigma,
             sampler=sampler,
             adapt_delta=float(sampler.adapt_delta),
             max_treedepth=int(sampler.max_treedepth),
@@ -110,6 +116,7 @@ def fit_gr_rhs(
                 shared_kappa=shared_kappa,
                 auto_calibrate_tau=auto_calibrate_tau,
                 tau0=tau0,
+                sigma_reference=pseudo_sigma,
                 sampler=sampler,
                 adapt_delta=float(sampler.strict_adapt_delta),
                 max_treedepth=int(sampler.strict_max_treedepth),

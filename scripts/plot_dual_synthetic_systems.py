@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -14,7 +14,7 @@ import pandas as pd
 DEFAULT_METRICS = ["RMSE", "BetaRMSE", "AUC-PR", "F1"]
 
 MODEL_LABELS: Dict[str, str] = {
-    "grrhs_gibbs": "GRRHS",
+    "grrhs_nuts": "GRRHS",
     "regularized_horseshoe": "RHS",
     "gigg": "GIGG",
     "sparse_group_lasso": "SGL",
@@ -23,7 +23,7 @@ MODEL_LABELS: Dict[str, str] = {
 }
 
 MODEL_COLORS: Dict[str, str] = {
-    "grrhs_gibbs": "#153B50",
+    "grrhs_nuts": "#153B50",
     "regularized_horseshoe": "#5B4B8A",
     "gigg": "#3A7D44",
     "sparse_group_lasso": "#D17A22",
@@ -144,3 +144,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

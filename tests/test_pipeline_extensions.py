@@ -1,4 +1,4 @@
-
+﻿
 from __future__ import annotations
 
 import json
@@ -289,7 +289,7 @@ def test_make_report_benchmark_safe_uses_common_valid_fold_intersection(tmp_path
     run_dir_a = runs_root / "run_a"
     _write_fake_run_summary(
         run_dir_a,
-        model="grrhs_gibbs",
+        model="grrhs_nuts",
         status="PARTIAL",
         valid_fold_count=1,
         invalid_fold_count=1,
@@ -385,3 +385,4 @@ def test_run_sweep_parallel(tmp_path):
     comparison_payload = json.loads(comparison_json[0].read_text(encoding="utf-8"))
     assert len(comparison_payload.get("rows", [])) >= 2
     assert comparison_payload.get("metric_extrema")
+

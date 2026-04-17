@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -101,7 +101,7 @@ def test_sweep_comparison_prefers_configured_metric_order():
         },
         {
             "name": "var_b",
-            "model": "grrhs_gibbs",
+            "model": "grrhs_nuts",
             "status": "OK",
             "run_dir": "run_b",
             "comparison_metrics": ["RMSE", "BetaRMSE", "AUC-PR"],
@@ -117,7 +117,7 @@ def test_sweep_comparison_uses_common_valid_fold_intersection():
     summary = [
         {
             "name": "var_a",
-            "model": "grrhs_gibbs",
+            "model": "grrhs_nuts",
             "status": "PARTIAL",
             "run_dir": "run_a",
             "comparison_metrics": ["RMSE"],
@@ -351,3 +351,4 @@ def test_gigg_gamma_samples_feed_group_shrinkage_diagnostics():
     assert np.isclose(metrics["MeanKappa"], float(np.mean(diag.per_coeff["kappa"])))
     assert np.isclose(metrics["EffectiveDoF"], float(np.sum(diag.per_group["edf"])))
     assert np.isclose(metrics["MeanEffectiveNonzeros"], float(diag.meta["effective_nonzeros_mean"]))
+

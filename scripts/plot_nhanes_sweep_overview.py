@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -52,7 +52,7 @@ def _resolve_model_label(row: pd.Series) -> str:
     if variation in MODEL_LABELS:
         return MODEL_LABELS[variation]
     fallback = {
-        "grrhs_gibbs": "GR-RHS",
+        "grrhs_nuts": "GR-RHS",
         "gigg": "GIGG",
         "sparse_group_lasso": "SGL",
         "lasso": "Lasso",
@@ -196,3 +196,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

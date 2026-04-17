@@ -70,7 +70,7 @@ experiments:
     parameters: ["beta", "tau"]
     expected_blocks:
       default: ["beta", "tau"]
-      grrhs_gibbs: ["beta", "tau", "a", "c2", "lambda"]
+      grrhs_nuts: ["beta", "tau", "a", "kappa", "c2", "lambda"]
       gigg: ["beta", "tau", "gamma", "lambda"]
       gigg_regression: ["beta", "tau", "gamma", "lambda"]
       regularized_horseshoe: ["beta", "tau", "lambda"]

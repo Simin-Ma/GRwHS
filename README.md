@@ -56,7 +56,7 @@ pip install -e .[dev]
   - `registry.py` exposes the `@register` decorator used by every model/baseline so the runner can request them by name.
   - `sweeps.py` loads sweep templates and materializes per-run configurations; `aggregator.py` consolidates fold-level results.
 - `grrhs/models/`
-  - Contains the Gibbs (`grrhs_gibbs.py`), SVI (`grrhs_svi_numpyro.py`), and convex baselines (ridge/lasso/SGL) implementations.
+  - Contains the GR-RHS NUTS implementation (`grrhs_nuts.py`) and convex baselines (ridge/lasso/SGL).
   - Models rely on inference helpers (sampling routines, Woodbury solvers) and populate posterior buffers used downstream.
 - `grrhs/inference/`
   - Linear algebra kernels, proximal updates, and Generalized Inverse Gaussian samplers shared by multiple models.
@@ -503,7 +503,7 @@ and repeat-level `dataset_meta.json` records:
 ### 6.1 Plot Script
 `scripts/plot_check.py` builds standard and posterior plots for any run:
 ```bash
-python scripts/plot_check.py outputs/runs/grrhs_svi_B-<timestamp>
+python scripts/plot_check.py outputs/runs/grrhs_nuts_B-<timestamp>
 ```
 Outputs include:
 - `scatter_pred_vs_truth.png`
@@ -722,7 +722,7 @@ Outputs:
 
 ### 8.2 Randomized Sweep Selector
 
-Use `scripts/random_sweep_selector.py` to randomly subsample `configs/sweeps/mixed_signal_grid.yaml`, execute the corresponding sweeps, and report the best (lowest) RMSE achieved by `grrhs_gibbs`:
+Use `scripts/random_sweep_selector.py` to randomly subsample `configs/sweeps/mixed_signal_grid.yaml`, execute the corresponding sweeps, and report the best (lowest) RMSE achieved by `grrhs_nuts`:
 
 ```bash
 python scripts/random_sweep_selector.py \
@@ -809,7 +809,7 @@ If you need manual inspection beyond the harness: run `scripts/plot_check.py` on
   - **FailureModes**: always logged at INFO; document known hard regimes (near-equal strong groups, highly correlated features with `p>>n`, etc.).
 
 #### PASS/WARN criteria summary (table)
-The checklist is rule-based: each scenario computes metrics and assigns PASS/WARN using fixed thresholds implemented in `grrhs/diagnostics/validation.py`.
+The historical validation checklist module has been retired as part of consolidating GR-RHS to the NUTS implementation.
 
 | Key | Scenario | PASS means (rules) | WARN triggers |
 |---:|---|---|---|
@@ -853,7 +853,7 @@ The checklist scenarios each generate a small synthetic dataset tailored to the 
 | E-2 | Group ordering stability | 150 (120) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.3`, `strong_frac=0.5`, `beta_scale_strong=1.3`, `beta_scale_weak=0.5` | default noise | re-fits 3 times with different inference seeds (same dataset) |
 | E-3 | Shrinkage factor kappa | 150 (120) | 30 | 5 | equal, contiguous | independent | random sparse beta: `sparsity=0.25`, `strong_frac=0.5`, `beta_scale_strong=1.4`, `beta_scale_weak=0.4` | default noise | checks that kappa separates active vs inactive features |
 | FailureModes | Documented failure regions | 60 (50) | 120 | 8 | equal, contiguous | block: `rho=0.7`, `block_size=10` | random sparse beta: `sparsity=0.2`, `strong_frac=0.5`, `beta_scale_strong=1.0`, `beta_scale_weak=0.3` | fixed `noise_sigma=2.0` | informational only; stresses `p >> n` + strong correlations |
-- Sampler `thin=2`; any unstated parameters inherit the defaults from `grrhs.models.grrhs_gibbs`.
+- Sampler `thin=2`; any unstated parameters inherit the defaults from `grrhs.models.grrhs_nuts`.
 
 ---
 
@@ -1008,6 +1008,7 @@ python scripts/plot_dual_synthetic_systems.py --system-a-csv outputs/sweeps/sim_
 - Use issues/PRs to coordinate new features or bug fixes.
 
 By following the steps above you can benchmark all supported models across the regression suites, targeted ablations, and any real datasets you plug in, inspecting metrics, posterior behavior, and convergence diagnostics end-to-end.
+
 
 
 

@@ -1,27 +1,11 @@
 from __future__ import annotations
-"""Model registry and builders for experiments.
-
-This module exposes a simple registry to construct models from config dicts.
-Optional models (SVI/Gibbs) are imported in try blocks so that baseline-only
-environments can still import this module without errors.
-"""
+"""Model registry and builders for experiments."""
 
 from typing import Callable, Dict, Any, Optional, Sequence, Mapping
 
 import numpy as np
 
 from data.generators import make_groups
-
-# Optional: GRRHS main models (if available)
-try:
-    from grrhs.models.grrhs_svi_numpyro import GRRHS_SVI  # type: ignore
-except Exception:  # pragma: no cover
-    GRRHS_SVI = None  # type: ignore
-
-try:
-    from grrhs.models.grrhs_gibbs import GRRHS_Gibbs  # type: ignore
-except Exception:  # pragma: no cover
-    GRRHS_Gibbs = None  # type: ignore
 
 try:
     from grrhs.models.grrhs_nuts import GRRHS_NUTS  # type: ignore
@@ -704,68 +688,6 @@ def _build_bglss_python(cfg: Dict[str, Any]) -> Any:
 # ------------------------------
 
 
-@register("grrhs_svi")
-def _build_grrhs_svi(cfg: Dict[str, Any]) -> Any:
-    if GRRHS_SVI is None:
-        raise ImportError("GRRHS_SVI is not available. Ensure grrhs.models.grrhs_svi_numpyro exists.")
-    # Key hyperparameters from config with defaults
-    c = float(_get(cfg, "model.c", 1.0))
-    tau0 = float(_get(cfg, "model.tau0", 0.1))
-    eta = float(_get(cfg, "model.eta", 0.5))
-    s0 = float(_get(cfg, "model.s0", 1.0))
-    alpha_kappa = float(_get(cfg, "model.alpha_kappa", _get(cfg, "model.alpha_c", 2.0)))
-    beta_kappa = float(_get(cfg, "model.beta_kappa", _get(cfg, "model.beta_c", 2.0)))
-    svi_kwargs: Dict[str, Any] = {}
-    steps = _get(cfg, "inference.svi.steps", None)
-    if steps is not None:
-        svi_kwargs["num_steps"] = int(steps)
-    lr = _get(cfg, "inference.svi.lr", None)
-    if lr is not None:
-        svi_kwargs["lr"] = float(lr)
-    seed = _get(cfg, "inference.svi.seed", _get(cfg, "seed", None))
-    if seed is not None:
-        svi_kwargs["seed"] = int(seed)
-    batch_size = _get(cfg, "inference.svi.batch_size", None)
-    if batch_size is not None:
-        svi_kwargs["batch_size"] = int(batch_size)
-    natural_grad = bool(_get(cfg, "inference.svi.natural_grad", False))
-    use_hutch = bool(_get(cfg, "inference.svi.use_hutchinson", natural_grad))
-    hutch_samples = int(_get(cfg, "inference.svi.hutchinson_samples", 8))
-    cg_tol = float(_get(cfg, "inference.svi.cg_tol", 1e-5))
-    cg_max_iters = int(_get(cfg, "inference.svi.cg_maxiter", 50))
-    natgrad_damping = float(_get(cfg, "inference.svi.natgrad_damping", 1e-3))
-    coupling_clip_raw = _get(cfg, "inference.svi.coupling_clip", 3.0)
-    if coupling_clip_raw is None:
-        coupling_clip_val = None
-    else:
-        try:
-            coupling_clip_val = float(coupling_clip_raw)
-        except (TypeError, ValueError):
-            coupling_clip_val = None
-    cov_damping = float(_get(cfg, "inference.svi.cov_damping", 0.0))
-
-    svi = GRRHS_SVI(
-        c=c,
-        tau0=tau0,
-        eta=eta,
-        s0=s0,
-        alpha_kappa=alpha_kappa,
-        beta_kappa=beta_kappa,
-        alpha_c=alpha_kappa,
-        beta_c=beta_kappa,
-        natural_gradient=natural_grad,
-        use_hutchinson=use_hutch,
-        hutchinson_samples=hutch_samples,
-        cg_tol=cg_tol,
-        cg_max_iters=cg_max_iters,
-        natgrad_damping=natgrad_damping,
-        coupling_clip=coupling_clip_val,
-        covariance_damping=cov_damping,
-        **svi_kwargs,
-    )  # type: ignore
-    return svi
-
-
 @register("grrhs_nuts")
 @register("grrhs_hmc")
 def _build_grrhs_nuts(cfg: Dict[str, Any]) -> Any:
@@ -790,7 +712,7 @@ def _build_grrhs_nuts(cfg: Dict[str, Any]) -> Any:
         _get(cfg, "inference.nuts.target_accept_prob", _get(cfg, "model.target_accept_prob", 0.95))
     )
     max_tree_depth = int(_get(cfg, "inference.nuts.max_tree_depth", _get(cfg, "model.max_tree_depth", 12)))
-    dense_mass = bool(_get(cfg, "inference.nuts.dense_mass", _get(cfg, "model.dense_mass", True)))
+    dense_mass = bool(_get(cfg, "inference.nuts.dense_mass", _get(cfg, "model.dense_mass", False)))
     chain_method = str(_get(cfg, "inference.nuts.chain_method", _get(cfg, "model.chain_method", "sequential")))
     progress_bar = bool(_get(cfg, "model.progress_bar", _get(cfg, "runtime.progress_bar", False)))
     seed = int(
@@ -931,45 +853,6 @@ def _gibbs_runtime_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return overrides
 
 
-@register("grrhs_gibbs")
-def _build_grrhs_gibbs(cfg: Dict[str, Any]) -> Any:
-    if GRRHS_Gibbs is None:
-        raise ImportError("GRRHS_Gibbs is not available. Ensure grrhs.models.grrhs_gibbs exists.")
-    c = float(_get(cfg, "model.c", 1.0))
-    tau0 = float(_get(cfg, "model.tau0", 0.1))
-    eta = float(_get(cfg, "model.eta", 0.5))
-    use_groups = bool(_get(cfg, "model.use_groups", True))
-    s0 = float(_get(cfg, "model.s0", 1.0))
-    alpha_kappa = float(_get(cfg, "model.alpha_kappa", _get(cfg, "model.alpha_c", 2.0)))
-    beta_kappa = float(_get(cfg, "model.beta_kappa", _get(cfg, "model.beta_c", 2.0)))
-    iters = int(_get(cfg, "model.iters", 2000))
-    use_pcabs_lite = bool(_get(cfg, "model.use_pcabs_lite", True))
-    use_collapsed_scale_updates = bool(_get(cfg, "model.use_collapsed_scale_updates", False))
-    seed = _get(
-        cfg,
-        "inference.gibbs.seed",
-        _get(cfg, "model.seed", _get(cfg, "seed", 42)),
-    )
-    runtime_overrides = _gibbs_runtime_overrides(cfg)
-    sampler = GRRHS_Gibbs(
-        c=c,
-        tau0=tau0,
-        eta=eta,
-        s0=s0,
-        alpha_kappa=alpha_kappa,
-        beta_kappa=beta_kappa,
-        alpha_c=alpha_kappa,
-        beta_c=beta_kappa,
-        iters=iters,
-        seed=int(seed),
-        use_groups=use_groups,
-        use_pcabs_lite=use_pcabs_lite,
-        use_collapsed_scale_updates=use_collapsed_scale_updates,
-        **runtime_overrides,
-    )  # type: ignore
-    return sampler
-
-
 # ------------------------------
 # Public API
 # ------------------------------
@@ -990,7 +873,7 @@ def get_builder(name: str) -> Callable[[Dict[str, Any]], Any]:
 
 def get_model_name_from_config(cfg: Dict[str, Any]) -> str:
     """Support both 'model.name' and 'model.type' keys.
-    Examples: ridge / lasso / elastic_net / sparse_group_lasso / grrhs_svi / grrhs_gibbs
+    Examples: ridge / lasso / elastic_net / sparse_group_lasso / grrhs_nuts
     """
     name = _get(cfg, "model.name", None)
     if name is None:

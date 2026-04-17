@@ -1,16 +1,15 @@
-# Four Bayesian Regression Models: Priors, Posteriors, Sampling, Convergence, and Budgets (Code-Aligned)
+﻿# Four Bayesian Regression Models: Priors, Posteriors, Sampling, Convergence, and Budgets (Code-Aligned)
 
 This document is aligned with the current repository implementation.
 
 ## 0. Scope
 
-- GR-RHS Gibbs: `grrhs/models/grrhs_gibbs.py`
-- GR-RHS SVI: `grrhs/models/grrhs_svi_numpyro.py`
+- GR-RHS (NUTS): `grrhs/models/grrhs_nuts.py`
 - GIGG: `grrhs/models/gigg_regression.py` and `grrhs/models/gigg_cran.py`
 - RHS: `grrhs/models/baselines/stan/rhs_gaussian_regression.stan`
 - Runner + convergence export: `grrhs/experiments/runner.py`
 
-## 1. GR-RHS Gibbs (`grrhs_gibbs`)
+## 1. GR-RHS (`grrhs_nuts`)
 
 ### 1.1 Hierarchy
 
@@ -24,7 +23,7 @@ For `y = X beta + eps, eps ~ N(0, sigma^2 I)`:
 - `tau ~ HalfCauchy(0, tau0)` with auxiliary `nu`:
   - `tau^2 | nu ~ InvGamma(1/2, 1/nu)`
   - `nu | tau^2 ~ InvGamma(1, 1/tau0^2 + 1/tau^2)`
-- `p(sigma^2) ∝ 1/sigma^2`
+- `p(sigma^2) 鈭?1/sigma^2`
 
 Useful precision decomposition used in code:
 
@@ -54,14 +53,9 @@ Metropolis-within-Gibbs:
 - `c2_samples_ -> c2`
 - `phi_samples_ -> phi` (compatibility alias of `a_samples_`)
 
-## 2. GR-RHS SVI (`grrhs_svi`)
+## 2. Legacy Variants
 
-SVI model now matches the same GR-RHS hierarchy (`a_g`, `c_g^2`, regularized variance map).
-
-Guide is mean-field/block variational with log-parameterized positive scales. Exported arrays include:
-
-- `coef_samples_`, `sigma_samples_`, `tau_samples_`, `lambda_samples_`, `a_samples_`, `c2_samples_`
-- compatibility alias: `phi_samples_ = a_samples_`
+Legacy GR-RHS variants have been retired in this repository; GR-RHS is consolidated to the NUTS implementation below.
 
 ## 2.1 GR-RHS NUTS (`grrhs_nuts`)
 
@@ -102,3 +96,4 @@ Compatibility note: `phi` is still accepted as a legacy alias for grouped amplit
 ## 5. Budget policy
 
 Bayesian fairness in `configs/base.yaml` enforces shared posterior budget by default (burn-in, kept draws, thinning, chains), with retry scaling rules handled by `runner.py`.
+

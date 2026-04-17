@@ -2,7 +2,7 @@ name: "grrhs_recommended"
 
 model:
   name: "grrhs_nuts"
-  eta: 0.5
+  eta: 1.0
   alpha_kappa: 0.5
   beta_kappa: 1.0
   s0: 1.0
@@ -21,6 +21,6 @@ inference:
     thinning: 1
     target_accept_prob: 0.95
     max_tree_depth: 12
-    dense_mass: true
+    dense_mass: false
     chain_method: "sequential"
     seed: 321

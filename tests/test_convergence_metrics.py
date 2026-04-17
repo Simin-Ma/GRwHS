@@ -1,4 +1,4 @@
-"""Tests for convergence diagnostics utilities."""
+﻿"""Tests for convergence diagnostics utilities."""
 from __future__ import annotations
 
 import json
@@ -78,7 +78,7 @@ def test_run_experiment_outputs_convergence(tmp_path):
             "outer": {"n_splits": 2, "shuffle": True, "stratify": "auto", "seed": 555},
             "inner": {"n_splits": 2, "shuffle": True, "stratify": "auto", "seed": 666},
         },
-        "model": {"name": "grrhs_gibbs", "c": 1.5, "eta": 0.5, "tau0": 0.1, "iters": 30},
+        "model": {"name": "grrhs_nuts", "c": 1.5, "eta": 0.5, "tau0": 0.1, "iters": 30},
         "inference": {
             "gibbs": {"burn_in": 10, "thin": 1, "seed": 321}
         },
@@ -105,3 +105,4 @@ def test_run_experiment_outputs_convergence(tmp_path):
     assert "beta" in convergence
     assert "rhat_max" in convergence["beta"]
     assert "diagnostic_valid" in convergence["beta"]
+

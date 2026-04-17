@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -19,7 +19,7 @@ DEFAULT_METRICS = [
 ]
 
 MODEL_COLORS: Dict[str, str] = {
-    "grrhs_gibbs": "#153B50",
+    "grrhs_nuts": "#153B50",
     "regularized_horseshoe": "#5B4B8A",
     "gigg": "#3A7D44",
     "ridge": "#7A7A7A",
@@ -110,3 +110,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
