@@ -32,9 +32,7 @@ from grrhs.models.baselines import (
     MBSGSBGLSSRegression,
     BGLSSPythonRegression,
     HorseshoeRegression,
-    GroupedHorseshoeRegression,
-    GroupHorseshoePlusRegression,
-    HierarchicalGroupedHorseshoeRegression,
+    GroupedHorseshoePlus,
     RegularizedHorseshoeRegression,
 )
 
@@ -355,53 +353,23 @@ def _build_regularized_horseshoe(cfg: Dict[str, Any]) -> Any:
     return RegularizedHorseshoeRegression(**kwargs)
 
 
-@register("grouped_horseshoe")
-@register("bghs")
-@register("bayesian_grouped_horseshoe")
-def _build_grouped_horseshoe(cfg: Dict[str, Any]) -> Any:
-    groups = _infer_groups(cfg)
-    if groups is None:
-        raise ValueError("GroupedHorseshoeRegression requires grouped features in config (data.groups or inferable).")
-    iters = int(_get(cfg, "model.iters", _get(cfg, "model.n_samples", 3000)))
-    burnin = int(_get(cfg, "model.burnin", _get(cfg, "inference.gibbs.burn_in", 1500)))
-    thin = max(1, int(_get(cfg, "model.thin", _get(cfg, "inference.gibbs.thin", 1))))
-    num_chains = max(1, int(_get(cfg, "model.num_chains", _get(cfg, "inference.gibbs.num_chains", 1))))
-    seed = int(_get(cfg, "model.seed", _get(cfg, "inference.gibbs.seed", _get(cfg, "seed", 42))))
-    return GroupedHorseshoeRegression(
-        fit_intercept=bool(_get(cfg, "model.fit_intercept", True)),
-        tau0=float(_get(cfg, "model.tau0", 1.0)),
-        group_scale_prior=float(_get(cfg, "model.group_scale_prior", 1.0)),
-        local_scale_prior=float(_get(cfg, "model.local_scale_prior", 1.0)),
-        iters=iters,
-        burnin=burnin,
-        thin=thin,
-        seed=seed,
-        num_chains=num_chains,
-        jitter=float(_get(cfg, "model.jitter", 1e-8)),
-        progress_bar=bool(_get(cfg, "model.progress_bar", _get(cfg, "runtime.progress_bar", False))),
-    )
-
-
-@register("hierarchical_grouped_horseshoe")
+@register("grouped_horseshoe_plus")
 @register("hbghs")
 @register("group_horseshoe_plus")
-@register("grouped_horseshoe_plus")
+@register("hierarchical_grouped_horseshoe")
 @register("ghs_plus")
-def _build_group_horseshoe_plus(cfg: Dict[str, Any]) -> Any:
+def _build_grouped_horseshoe_plus(cfg: Dict[str, Any]) -> Any:
     groups = _infer_groups(cfg)
     if groups is None:
         raise ValueError(
-            "HierarchicalGroupedHorseshoeRegression requires grouped features in config (data.groups or inferable)."
+            "GroupedHorseshoePlus requires grouped features in config (data.groups or inferable)."
         )
     iters = int(_get(cfg, "model.iters", _get(cfg, "model.n_samples", 3000)))
     burnin = int(_get(cfg, "model.burnin", _get(cfg, "inference.gibbs.burn_in", 1500)))
     thin = max(1, int(_get(cfg, "model.thin", _get(cfg, "inference.gibbs.thin", 1))))
     num_chains = max(1, int(_get(cfg, "model.num_chains", _get(cfg, "inference.gibbs.num_chains", 1))))
     seed = int(_get(cfg, "model.seed", _get(cfg, "inference.gibbs.seed", _get(cfg, "seed", 42))))
-    model_cls = HierarchicalGroupedHorseshoeRegression
-    if bool(_get(cfg, "model.use_alias_class", True)):
-        model_cls = GroupHorseshoePlusRegression
-    return model_cls(
+    return GroupedHorseshoePlus(
         fit_intercept=bool(_get(cfg, "model.fit_intercept", True)),
         tau0=float(_get(cfg, "model.tau0", 1.0)),
         group_scale_prior=float(_get(cfg, "model.group_scale_prior", 1.0)),

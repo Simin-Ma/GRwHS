@@ -12,8 +12,7 @@ from sklearn.metrics import roc_auc_score
 
 from grrhs.diagnostics.convergence import summarize_convergence
 from grrhs.models.baselines import (
-    GroupedHorseshoeRegression,
-    GroupHorseshoePlusRegression,
+    GroupedHorseshoePlus,
     HorseshoeRegression,
     RegularizedHorseshoeRegression,
 )
@@ -664,32 +663,8 @@ def _fit_method(
 
     if name in {"group_horseshoe_plus", "grouped_horseshoe_plus", "ghs_plus", "hbghs"}:
         if likelihood != "gaussian":
-            raise NotImplementedError("Group Horseshoe+ baseline is implemented for gaussian outcomes only.")
-        model = GroupHorseshoePlusRegression(
-            fit_intercept=True,
-            tau0=float(
-                GRRHS_NUTS.calibrate_tau0(
-                    p0=max(p0 or 2.0, 1.0),
-                    D=X.shape[1],
-                    n=X.shape[0],
-                    sigma_ref=1.0,
-                )
-            ),
-            group_scale_prior=1.0,
-            local_scale_prior=1.0,
-            iters=profile.rhs_warmup + profile.rhs_samples,
-            burnin=profile.rhs_warmup,
-            thin=1,
-            num_chains=profile.rhs_chains,
-            seed=int(seed),
-            progress_bar=False,
-        )
-        return model.fit(X, y, groups=[list(map(int, g)) for g in groups])
-
-    if name in {"grouped_horseshoe", "bghs", "bayesian_grouped_horseshoe"}:
-        if likelihood != "gaussian":
-            raise NotImplementedError("Grouped Horseshoe baseline is implemented for gaussian outcomes only.")
-        model = GroupedHorseshoeRegression(
+            raise NotImplementedError("Grouped Horseshoe+ is implemented for gaussian outcomes only.")
+        model = GroupedHorseshoePlus(
             fit_intercept=True,
             tau0=float(
                 GRRHS_NUTS.calibrate_tau0(

@@ -1,12 +1,15 @@
 """
-Patch exp4 raw_results.csv: re-run only GIGG_MMLE and GHS_plus (fast Gibbs methods)
-using the same seeds/DGP as the original exp4, then regenerate summary and figures.
+Patch exp4 raw_results.csv: re-run the fast Gibbs-based methods
+(GIGG_MMLE, GIGG_b_small, GIGG_GHS, GIGG_b_large, GHS_plus)
+using the same seeds/DGP as the original exp4, then regenerate
+the summary table and figures.
 
 Run from repo root:
     python simulation_project/patch_exp4_nonmcmc.py
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -16,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from simulation_project.src.dgp_grouped_linear import build_linear_beta, generate_grouped_linear_dataset
-from simulation_project.src.fit_gigg import fit_gigg_mmle
+from simulation_project.src.fit_gigg import fit_gigg_fixed, fit_gigg_mmle
 from simulation_project.src.fit_ghs_plus import fit_ghs_plus
 from simulation_project.src.run_experiment import _evaluate_method_row
 from simulation_project.src.utils import (
@@ -27,7 +30,7 @@ from simulation_project.src.utils import (
 )
 from simulation_project.src.plotting import plot_exp4_mse_partition, plot_exp4_overall_mse
 
-# ── Same settings as run_exp4_benchmark_linear ────────────────────────────────
+# ── Same settings as run_exp4_benchmark_linear ───────────────────────────────
 SETTINGS = {
     "L0": {"group_sizes": [10, 10, 10, 10, 10], "rho_within": 0.0, "rho_between": 0.0,  "design_type": "orthonormal"},
     "L1": {"group_sizes": [10, 10, 10, 10, 10], "rho_within": 0.3, "rho_between": 0.10, "design_type": "correlated"},
@@ -37,7 +40,21 @@ SETTINGS = {
     "L5": {"group_sizes": [30, 10, 5, 3, 2],    "rho_within": 0.3, "rho_between": 0.10, "design_type": "correlated"},
 }
 
-BASE = Path(__file__).parent
+# Methods handled by this patch (all Gibbs-based; GR_RHS and RHS stay from HMC run)
+PATCH_METHODS = ["GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"]
+
+# Canonical ordering for the merged CSV (mirrors METHODS in run_experiment.py)
+METHOD_ORDER = {
+    "GR_RHS": 0,
+    "RHS": 1,
+    "GIGG_MMLE": 2,
+    "GIGG_b_small": 3,
+    "GIGG_GHS": 4,
+    "GIGG_b_large": 5,
+    "GHS_plus": 6,
+}
+
+BASE      = Path(__file__).parent
 RAW_CSV   = BASE / "results" / "exp4_benchmark_linear" / "raw_results.csv"
 FIG_DIR   = BASE / "figures"
 TAB_DIR   = BASE / "tables"
@@ -46,7 +63,6 @@ TAB_DIR   = BASE / "tables"
 def main() -> None:
     raw = pd.read_csv(RAW_CSV)
     design_meta_path = BASE / "results" / "exp4_benchmark_linear" / "exp4_design_meta.json"
-    import json
     repeats = json.loads(design_meta_path.read_text())["repeats"]
 
     sampler = SamplerConfig()
@@ -68,20 +84,22 @@ def main() -> None:
                 target_snr=0.70,
                 design_type=str(spec.get("design_type", "correlated")),
             )
+            p0 = int(np.sum(np.abs(ds["beta0"]) > 0.0))
+            n  = ds["X"].shape[0]
 
-            for method_name, fit_fn, seed_offset in [
-                ("GIGG_MMLE", fit_gigg_mmle, 3),
-                ("GHS_plus",  fit_ghs_plus,  4),
-            ]:
-                result = fit_fn(
-                    ds["X"], ds["y"], groups,
-                    task="gaussian",
-                    seed=s + seed_offset,
-                    sampler=sampler,
-                    **({} if method_name == "GIGG_MMLE" else {
-                        "p0": int(np.sum(np.abs(ds["beta0"]) > 0.0))
-                    }),
-                )
+            # ── seed offsets match _fit_all_methods ──────────────────────────
+            method_calls = [
+                # (method_label,  fit_fn,            seed_offset, extra_kwargs)
+                ("GIGG_MMLE",   fit_gigg_mmle,  3, {}),
+                ("GIGG_b_small", fit_gigg_fixed, 5, {"a_val": 1.0 / n, "b_val": 1.0 / n, "method_label": "GIGG_b_small"}),
+                ("GIGG_GHS",     fit_gigg_fixed, 6, {"a_val": 0.5,     "b_val": 0.5,     "method_label": "GIGG_GHS"}),
+                ("GIGG_b_large", fit_gigg_fixed, 7, {"a_val": 1.0 / n, "b_val": 1.0,     "method_label": "GIGG_b_large"}),
+                ("GHS_plus",     fit_ghs_plus,   4, {}),
+            ]
+
+            for method_name, fit_fn, seed_offset, extra in method_calls:
+                common = dict(task="gaussian", seed=s + seed_offset, sampler=sampler, p0=p0)
+                result = fit_fn(ds["X"], ds["y"], groups, **common, **extra)
                 metrics = _evaluate_method_row(result, ds["beta0"])
                 patch_rows.append({
                     "setting": setting,
@@ -100,17 +118,14 @@ def main() -> None:
 
     patch_df = pd.DataFrame(patch_rows)
     print(f"\nPatch rows: {len(patch_df)}")
-    print("MSE null non-null counts:")
-    print(patch_df.groupby("method")["mse_overall"].count())
 
-    # Replace old GIGG/GHS rows in raw
-    keep = raw[~raw["method"].isin(["GIGG_MMLE", "GHS_plus"])].copy()
+    # Replace all Gibbs method rows in raw, keep GR_RHS / RHS from HMC run
+    keep = raw[~raw["method"].isin(PATCH_METHODS)].copy()
     new_raw = pd.concat([keep, patch_df], ignore_index=True)
-    # Sort to original ordering
-    method_order = {"GR_RHS": 0, "RHS": 1, "GIGG_MMLE": 2, "GHS_plus": 3}
+
     setting_order = {s: i for i, s in enumerate(SETTINGS)}
-    new_raw["_mo"] = new_raw["method"].map(method_order)
-    new_raw["_so"] = new_raw["setting"].map(setting_order)
+    new_raw["_mo"] = new_raw["method"].map(METHOD_ORDER).fillna(99)
+    new_raw["_so"] = new_raw["setting"].map(setting_order).fillna(99)
     new_raw = new_raw.sort_values(["replicate_id", "_so", "_mo"]).drop(columns=["_mo", "_so"])
     new_raw.to_csv(RAW_CSV, index=False)
     print(f"Saved updated raw CSV → {RAW_CSV}")
@@ -134,10 +149,10 @@ def main() -> None:
     TAB_DIR.mkdir(parents=True, exist_ok=True)
     summary.to_csv(TAB_DIR / "table_benchmark_linear.csv", index=False)
 
-    # Regenerate figures
+    # Regenerate figures (both plot functions iterate over methods dynamically)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
-    plot_exp4_overall_mse(summary,    out_path=FIG_DIR / "fig4_benchmark_overall_mse.png")
-    plot_exp4_mse_partition(summary,  out_path=FIG_DIR / "fig4_benchmark_mse_partition.png")
+    plot_exp4_overall_mse(summary,   out_path=FIG_DIR / "fig4_benchmark_overall_mse.png")
+    plot_exp4_mse_partition(summary, out_path=FIG_DIR / "fig4_benchmark_mse_partition.png")
     print("Figures regenerated.")
 
 

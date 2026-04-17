@@ -81,17 +81,18 @@ def _sample_beta_conditional(
 
 
 @dataclass
-class _BaseGroupedHorseshoeRegression:
-    """Xu et al. (2016) grouped horseshoe baselines for Gaussian regression.
+class GroupedHorseshoePlus:
+    """Hierarchical Bayesian Grouped Horseshoe (HBGHS) from Xu et al. (2016).
 
-    When `hierarchical=False`, this is BGHS:
-      beta_j ~ N(0, sigma^2 * tau^2 * lambda_{g(j)}^2)
+    Prior structure:
+        beta_j | sigma^2, tau^2, lambda_g, delta_j
+            ~ N(0, sigma^2 * tau^2 * lambda_{g(j)}^2 * delta_j^2)
+        lambda_g ~ C+(0, group_scale_prior),   g = 1,...,G   [group shrinkage]
+        delta_j  ~ C+(0, local_scale_prior),   j = 1,...,p   [within-group shrinkage]
+        tau      ~ C+(0, tau0)                               [global shrinkage]
+        sigma^2  ~ 1/sigma^2 d sigma^2
 
-    When `hierarchical=True`, this is HBGHS:
-      beta_j ~ N(0, sigma^2 * tau^2 * lambda_{g(j)}^2 * delta_j^2)
-
-    All scale parameters follow half-Cauchy priors using the Makalic-Schmidt
-    inverse-gamma augmentation.
+    Full conditionals follow the Makalic-Schmidt inverse-gamma augmentation.
     """
 
     fit_intercept: bool = True
@@ -105,7 +106,6 @@ class _BaseGroupedHorseshoeRegression:
     num_chains: int = 1
     jitter: float = 1e-8
     progress_bar: bool = False
-    hierarchical: bool = True
 
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -113,17 +113,12 @@ class _BaseGroupedHorseshoeRegression:
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    phi_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    a_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    lambda_group_samples_: Optional[np.ndarray] = field(default=None, init=False)
     group_lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
     coef_: Optional[np.ndarray] = field(default=None, init=False)
     coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
     tau_mean_: Optional[float] = field(default=None, init=False)
     sigma_mean_: Optional[float] = field(default=None, init=False)
     lambda_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    phi_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    a_mean_: Optional[np.ndarray] = field(default=None, init=False)
     group_lambda_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
     groups_: Optional[List[List[int]]] = field(default=None, init=False)
@@ -222,10 +217,10 @@ class _BaseGroupedHorseshoeRegression:
         iterator = range(int(self.iters))
         if bool(self.progress_bar):
             from grrhs.utils.logging_utils import progress
-
-            iterator = progress(iterator, total=int(self.iters), desc="Grouped HS Gibbs")
+            iterator = progress(iterator, total=int(self.iters), desc="Grouped HS+ Gibbs")
 
         for it in iterator:
+            # beta | sigma^2, tau^2, lambda_g, delta_j
             prior_var = tau2 * group_lambda2[group_id] * local_delta2
             beta = _sample_beta_conditional(
                 XtX=XtX,
@@ -236,6 +231,7 @@ class _BaseGroupedHorseshoeRegression:
                 rng=rng,
             )
 
+            # sigma^2 | beta, tau^2, lambda_g, delta_j
             resid = y_ctr - X_std @ beta
             prior_quad = float(np.sum((beta * beta) / np.maximum(prior_var, self.jitter)))
             n_eff = max(n - int(bool(self.fit_intercept)), 1)
@@ -245,16 +241,15 @@ class _BaseGroupedHorseshoeRegression:
                 rng=rng,
             )
 
+            # tau^2 | beta, sigma^2, lambda_g, delta_j  [global shrinkage]
             tau_rate = 0.5 * float(np.sum((beta * beta) / np.maximum(group_lambda2[group_id] * local_delta2, self.jitter))) / max(sigma2, self.jitter)
             tau2 = _sample_invgamma(alpha=0.5 * (p + 1), beta=max(tau_rate + (1.0 / max(tau_aux, self.jitter)), self.jitter), rng=rng)
             tau_aux = _sample_invgamma(alpha=1.0, beta=(1.0 / tau2) + (1.0 / (float(self.tau0) ** 2)), rng=rng)
 
+            # lambda_g^2 | beta, sigma^2, tau^2, delta_j  [group shrinkage]
             for gid, members in enumerate(groups_norm):
                 idx = np.asarray(members, dtype=int)
-                if bool(self.hierarchical):
-                    group_quad = float(np.sum((beta[idx] * beta[idx]) / np.maximum(local_delta2[idx], self.jitter)))
-                else:
-                    group_quad = float(np.sum(beta[idx] * beta[idx]))
+                group_quad = float(np.sum((beta[idx] * beta[idx]) / np.maximum(local_delta2[idx], self.jitter)))
                 rate = 0.5 * group_quad / max(sigma2 * tau2, self.jitter) + (1.0 / max(group_aux[gid], self.jitter))
                 group_lambda2[gid] = _sample_invgamma(alpha=0.5 * (idx.size + 1), beta=max(rate, self.jitter), rng=rng)
                 group_aux[gid] = _sample_invgamma(
@@ -263,18 +258,16 @@ class _BaseGroupedHorseshoeRegression:
                     rng=rng,
                 )
 
-            if bool(self.hierarchical):
-                for j in range(p):
-                    group_scale = group_lambda2[group_id[j]]
-                    rate = 0.5 * float(beta[j] ** 2) / max(sigma2 * tau2 * group_scale, self.jitter) + (1.0 / max(local_aux[j], self.jitter))
-                    local_delta2[j] = _sample_invgamma(alpha=1.0, beta=max(rate, self.jitter), rng=rng)
-                    local_aux[j] = _sample_invgamma(
-                        alpha=1.0,
-                        beta=(1.0 / max(local_delta2[j], self.jitter)) + (1.0 / (float(self.local_scale_prior) ** 2)),
-                        rng=rng,
-                    )
-            else:
-                local_delta2.fill(1.0)
+            # delta_j^2 | beta, sigma^2, tau^2, lambda_g  [within-group shrinkage]
+            for j in range(p):
+                group_scale = group_lambda2[group_id[j]]
+                rate = 0.5 * float(beta[j] ** 2) / max(sigma2 * tau2 * group_scale, self.jitter) + (1.0 / max(local_aux[j], self.jitter))
+                local_delta2[j] = _sample_invgamma(alpha=1.0, beta=max(rate, self.jitter), rng=rng)
+                local_aux[j] = _sample_invgamma(
+                    alpha=1.0,
+                    beta=(1.0 / max(local_delta2[j], self.jitter)) + (1.0 / (float(self.local_scale_prior) ** 2)),
+                    rng=rng,
+                )
 
             if it >= int(self.burnin) and ((it - int(self.burnin)) % int(self.thin) == 0):
                 beta_orig = beta / x_scale
@@ -305,17 +298,14 @@ class _BaseGroupedHorseshoeRegression:
         y: np.ndarray,
         *,
         groups: Optional[Sequence[Sequence[int]]] = None,
-    ) -> "_BaseGroupedHorseshoeRegression":
+    ) -> "GroupedHorseshoePlus":
         X_arr = np.asarray(X, dtype=float)
         y_arr = np.asarray(y, dtype=float).reshape(-1)
         if X_arr.ndim != 2:
             raise ValueError("X must be a 2D array.")
         if y_arr.shape[0] != X_arr.shape[0]:
             raise ValueError("X and y must have compatible first dimensions.")
-        if groups is None:
-            groups_use = [[j] for j in range(X_arr.shape[1])]
-        else:
-            groups_use = [list(map(int, g)) for g in groups]
+        groups_use = [[j] for j in range(X_arr.shape[1])] if groups is None else [list(map(int, g)) for g in groups]
 
         start = time.perf_counter()
         chain_results = [
@@ -330,10 +320,7 @@ class _BaseGroupedHorseshoeRegression:
             self.intercept_samples_ = lead["intercept_samples"]
             self.sigma2_samples_ = lead["sigma2_samples"]
             self.tau_samples_ = lead["tau_samples"]
-            self.lambda_group_samples_ = lead["group_lambda_samples"]
-            self.group_lambda_samples_ = self.lambda_group_samples_
-            self.phi_samples_ = self.lambda_group_samples_
-            self.a_samples_ = self.lambda_group_samples_
+            self.group_lambda_samples_ = lead["group_lambda_samples"]
             self.lambda_samples_ = lead["local_scale_samples"]
             self.groups_ = lead["groups"]
             self.group_id_ = np.asarray(lead["group_id"], dtype=int)
@@ -343,10 +330,7 @@ class _BaseGroupedHorseshoeRegression:
             self.intercept_samples_ = np.stack([item["intercept_samples"] for item in chain_results], axis=0)
             self.sigma2_samples_ = np.stack([item["sigma2_samples"] for item in chain_results], axis=0)
             self.tau_samples_ = np.stack([item["tau_samples"] for item in chain_results], axis=0)
-            self.lambda_group_samples_ = np.stack([item["group_lambda_samples"] for item in chain_results], axis=0)
-            self.group_lambda_samples_ = self.lambda_group_samples_
-            self.phi_samples_ = self.lambda_group_samples_
-            self.a_samples_ = self.lambda_group_samples_
+            self.group_lambda_samples_ = np.stack([item["group_lambda_samples"] for item in chain_results], axis=0)
             self.lambda_samples_ = np.stack([item["local_scale_samples"] for item in chain_results], axis=0)
             self.groups_ = chain_results[0]["groups"]
             self.group_id_ = np.asarray(chain_results[0]["group_id"], dtype=int)
@@ -358,7 +342,7 @@ class _BaseGroupedHorseshoeRegression:
         tau_draws = _flatten_scalar_draws(self.tau_samples_)
         sigma_draws = _flatten_scalar_draws(self.sigma_samples_)
         local_draws = _flatten_param_draws(self.lambda_samples_)
-        group_draws = _flatten_param_draws(self.lambda_group_samples_)
+        group_draws = _flatten_param_draws(self.group_lambda_samples_)
 
         self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
         self.coef_ = None if self.coef_mean_ is None else self.coef_mean_.copy()
@@ -366,18 +350,19 @@ class _BaseGroupedHorseshoeRegression:
         self.tau_mean_ = None if tau_draws is None else float(tau_draws.mean())
         self.sigma_mean_ = None if sigma_draws is None else float(sigma_draws.mean())
         self.lambda_mean_ = None if local_draws is None else local_draws.mean(axis=0)
-        self.lambda_group_mean_ = None if group_draws is None else group_draws.mean(axis=0)
-        self.group_lambda_mean_ = self.lambda_group_mean_
-        self.phi_mean_ = self.lambda_group_mean_
-        self.a_mean_ = self.lambda_group_mean_
+        self.group_lambda_mean_ = None if group_draws is None else group_draws.mean(axis=0)
 
-        kept = 0 if self.coef_samples_ is None else int(np.asarray(self.coef_samples_).shape[-2] if np.asarray(self.coef_samples_).ndim >= 3 else np.asarray(self.coef_samples_).shape[0])
+        kept = 0 if self.coef_samples_ is None else int(
+            np.asarray(self.coef_samples_).shape[-2]
+            if np.asarray(self.coef_samples_).ndim >= 3
+            else np.asarray(self.coef_samples_).shape[0]
+        )
         self.sampler_diagnostics_ = {
-            "backend": "grouped_horseshoe_gibbs",
+            "backend": "grouped_horseshoe_plus_gibbs",
             "runtime_sec": float(runtime_sec),
             "num_chains": int(self.num_chains),
             "kept_draws_per_chain": int(kept),
-            "hierarchical": bool(self.hierarchical),
+            "model": "HBGHS (Xu et al. 2016)",
             "standardization": {
                 "x_center": bool(self.fit_intercept),
                 "x_scale": "column_std",
@@ -398,7 +383,7 @@ class _BaseGroupedHorseshoeRegression:
         coef_draws = _flatten_param_draws(self.coef_samples_)
         if coef_draws is None:
             raise RuntimeError("Posterior coefficient draws are unavailable.")
-        out: Dict[str, Any] = {
+        return {
             "coef_mean": coef_draws.mean(axis=0),
             "coef_median": np.median(coef_draws, axis=0),
             "coef_ci95": np.quantile(coef_draws, [0.025, 0.975], axis=0),
@@ -407,28 +392,6 @@ class _BaseGroupedHorseshoeRegression:
             "group_lambda_mean": self.group_lambda_mean_,
             "local_scale_mean": self.lambda_mean_,
         }
-        return out
 
 
-@dataclass
-class GroupedHorseshoeRegression(_BaseGroupedHorseshoeRegression):
-    """Bayesian Grouped Horseshoe (BGHS) from Xu et al. (2016)."""
-
-    hierarchical: bool = False
-
-
-@dataclass
-class HierarchicalGroupedHorseshoeRegression(_BaseGroupedHorseshoeRegression):
-    """Hierarchical Bayesian Grouped Horseshoe (HBGHS) from Xu et al. (2016)."""
-
-    hierarchical: bool = True
-
-
-GroupHorseshoePlusRegression = HierarchicalGroupedHorseshoeRegression
-
-
-__all__ = [
-    "GroupedHorseshoeRegression",
-    "HierarchicalGroupedHorseshoeRegression",
-    "GroupHorseshoePlusRegression",
-]
+__all__ = ["GroupedHorseshoePlus"]

@@ -4,7 +4,7 @@ from typing import Sequence
 
 import numpy as np
 
-from grrhs.models.baselines import GroupHorseshoePlusRegression
+from grrhs.models.baselines import GroupedHorseshoePlus
 
 from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
 
@@ -39,7 +39,7 @@ def fit_ghs_plus(
     try:
         n, p = int(X.shape[0]), int(X.shape[1])
         tau0 = rhs_style_tau0(n=n, p=p, p0=p0)
-        model = GroupHorseshoePlusRegression(
+        model = GroupedHorseshoePlus(
             fit_intercept=False,
             tau0=float(tau0),
             iters=int(sampler.warmup + sampler.post_warmup_draws),

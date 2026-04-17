@@ -19,7 +19,7 @@ from .dgp_normal_means import (
 from .utils import MASTER_SEED, FitResult, SamplerConfig, ensure_dir, experiment_seed, save_dataframe, save_json, setup_logger
 
 
-METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GHS_plus"]
+METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"]
 
 
 def _save_rows_csv(rows: list[dict[str, Any]], path: Path) -> None:
@@ -596,16 +596,41 @@ def _fit_all_methods(
     sampler: SamplerConfig,
     grrhs_kwargs: dict[str, Any] | None = None,
 ) -> Dict[str, FitResult]:
-    from .fit_gigg import fit_gigg_mmle
+    from .fit_gigg import fit_gigg_fixed, fit_gigg_mmle
     from .fit_ghs_plus import fit_ghs_plus
     from .fit_gr_rhs import fit_gr_rhs
     from .fit_rhs import fit_rhs
 
+    n = X.shape[0]
     grrhs_kwargs = grrhs_kwargs or {}
     out: Dict[str, FitResult] = {}
+
     out["GR_RHS"] = fit_gr_rhs(X, y, groups, task=task, seed=seed + 1, p0=p0, sampler=sampler, **grrhs_kwargs)
     out["RHS"] = fit_rhs(X, y, groups, task=task, seed=seed + 2, p0=p0, sampler=sampler)
-    out["GIGG_MMLE"] = fit_gigg_mmle(X, y, groups, task=task, seed=seed + 3, sampler=sampler)
+
+    # ── GIGG variants (Boss et al. 2024) ─────────────────────────────────────
+    # MMLE: fixes a_g=1/n, estimates b_g adaptively — best overall (Table 2–4)
+    out["GIGG_MMLE"] = fit_gigg_mmle(X, y, groups, task=task, seed=seed + 3, sampler=sampler, p0=p0)
+
+    # Fixed b_g = 1/n  → near-individualistic shrinkage; best for concentrated signals
+    out["GIGG_b_small"] = fit_gigg_fixed(
+        X, y, groups, task=task, seed=seed + 5, sampler=sampler, p0=p0,
+        a_val=1.0 / n, b_val=1.0 / n,
+        method_label="GIGG_b_small",
+    )
+    # Fixed b_g = 1/2  → group horseshoe special case (a_g = b_g = 1/2, Section 2.1)
+    out["GIGG_GHS"] = fit_gigg_fixed(
+        X, y, groups, task=task, seed=seed + 6, sampler=sampler, p0=p0,
+        a_val=0.5, b_val=0.5,
+        method_label="GIGG_GHS",
+    )
+    # Fixed b_g = 1    → group-dependent shrinkage; best for distributed signals
+    out["GIGG_b_large"] = fit_gigg_fixed(
+        X, y, groups, task=task, seed=seed + 7, sampler=sampler, p0=p0,
+        a_val=1.0 / n, b_val=1.0,
+        method_label="GIGG_b_large",
+    )
+
     out["GHS_plus"] = fit_ghs_plus(X, y, groups, task=task, seed=seed + 4, p0=p0, sampler=sampler)
     return out
 

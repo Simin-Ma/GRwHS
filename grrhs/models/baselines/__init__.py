@@ -12,11 +12,7 @@ from .models import (
 )
 from .bglss_mbsgs import MBSGSBGLSSRegression
 from .bglss_python import BGLSSPythonRegression
-from .grouped_horseshoe import (
-    GroupedHorseshoeRegression,
-    GroupHorseshoePlusRegression,
-    HierarchicalGroupedHorseshoeRegression,
-)
+from .grouped_horseshoe import GroupedHorseshoePlus
 
 __all__ = [
     "Ridge",
@@ -28,7 +24,5 @@ __all__ = [
     "BGLSSPythonRegression",
     "HorseshoeRegression",
     "RegularizedHorseshoeRegression",
-    "GroupedHorseshoeRegression",
-    "HierarchicalGroupedHorseshoeRegression",
-    "GroupHorseshoePlusRegression",
+    "GroupedHorseshoePlus",
 ]
