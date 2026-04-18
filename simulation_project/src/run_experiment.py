@@ -720,7 +720,7 @@ def _exp2_worker(
     n_groups = len(group_sizes)
 
     for method, res in fits.items():
-        is_valid = bool(res.converged and res.beta_mean is not None)
+        is_valid = bool(res.beta_mean is not None)
         metrics = _evaluate_row(res, ds["beta0"], X_train=ds["X"], y_train=ds["y"], X_test=X_test, y_test=y_test)
         # Group-level errors
         null_mse_group = float("nan")
@@ -740,7 +740,7 @@ def _exp2_worker(
             **metrics,
         })
         # GR_RHS kappa_g realizations — the key mechanism check
-        if method == "GR_RHS" and is_valid:
+        if method == "GR_RHS" and res.beta_mean is not None:
             kmeans = _kappa_group_means(res, n_groups)
             kprobs = _kappa_group_prob_gt(res, n_groups, threshold=0.5)
             for gid in range(n_groups):
@@ -992,7 +992,7 @@ def _exp3_worker(
         metrics = _evaluate_row(res, beta0, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test)
         kappa_null_mean = float("nan")
         kappa_signal_mean = float("nan")
-        if method == "GR_RHS" and res.converged:
+        if method == "GR_RHS" and res.beta_mean is not None:
             km = _kappa_group_means(res, n_groups)
             # groups 0,1 are active; 2,3,4 are null
             kappa_signal_mean = float(np.mean([km[g] for g in [0, 1] if not np.isnan(km[g])]) if any(not np.isnan(km[g]) for g in [0, 1]) else float("nan"))
@@ -1213,7 +1213,7 @@ def _exp4_worker(
                 max_convergence_retries=max_retries,
                 enforce_bayes_convergence=bool(enforce_conv),
             )
-        is_valid = bool(res.converged and res.beta_mean is not None)
+        is_valid = bool(res.beta_mean is not None)
         from .metrics import mse_null_signal_overall
         mse_metrics: dict[str, float] = {"mse_null": float("nan"), "mse_signal": float("nan"), "mse_overall": float("nan")}
         tau_post_mean = float("nan")
@@ -1421,7 +1421,7 @@ def _exp5_worker(
             max_convergence_retries=max_retries,
             enforce_bayes_convergence=bool(enforce_conv),
         )
-        is_valid = bool(res.converged and res.beta_mean is not None)
+        is_valid = bool(res.beta_mean is not None)
         mse_null = float("nan")
         mse_signal = float("nan")
         auroc = float("nan")

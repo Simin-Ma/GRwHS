@@ -229,9 +229,11 @@ def diagnostics_summary_for_method(
     # Divergence diagnostics are HMC-specific. For samplers without this signal,
     # we gate convergence on R-hat/ESS only.
     div_ok = (not np.isfinite(div_ratio)) or (div_ratio < float(config.max_divergence_ratio))
+    # R-hat requires >=2 chains; when unavailable (NaN from single-chain runs),
+    # skip the R-hat gate and rely on ESS + divergence rate alone.
+    rhat_ok = (not np.isfinite(rhat_max)) or (rhat_max < float(config.rhat_threshold))
     converged = bool(
-        np.isfinite(rhat_max)
-        and (rhat_max < float(config.rhat_threshold))
+        rhat_ok
         and np.isfinite(ess_min)
         and (ess_min > float(config.ess_threshold))
         and div_ok
@@ -244,9 +246,7 @@ def diagnostics_summary_for_method(
     return rhat_max, ess_min, div_ratio, converged, merged
 
 
-def save_dataframe(df: pd.DataFrame, path: Path | str) -> None:
-    import pandas as pd
-
+def save_dataframe(df: Any, path: Path | str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(p, index=False)
