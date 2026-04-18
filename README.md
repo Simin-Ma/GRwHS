@@ -13,6 +13,10 @@ python -m simulation_project.src.run_experiment --help
 python scripts/run_simulation.py --help
 ```
 
+Detailed command guide:
+
+- `docs/simulation_cli_guide.md`
+
 Run all experiments:
 
 ```bash

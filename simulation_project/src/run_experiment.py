@@ -604,12 +604,15 @@ def run_exp1_kappa_profile_regimes(
     for pg in pg_vals_seen:
         sub = [r for r in null_rows if int(r["p_g"]) == pg]
         means = np.array([float(r["post_mean_kappa"]) for r in sub])
+        tails = np.array([float(r.get("tail_prob_kappa_gt_eps", float("nan"))) for r in sub])
         null_agg.append({
             "p_g": pg,
             "median_post_mean_kappa": float(np.median(means)),
             "mean_post_mean_kappa": float(np.mean(means)),
             "q25_post_mean_kappa": float(np.quantile(means, 0.25)),
             "q75_post_mean_kappa": float(np.quantile(means, 0.75)),
+            "std_post_mean_kappa": float(np.std(means, ddof=1)) if len(means) > 1 else float("nan"),
+            "mean_tail_prob_kappa_gt_eps": float(np.nanmean(tails)),
             "n_replicates": len(means),
         })
     log_pg = np.log(np.array([r["p_g"] for r in null_agg], dtype=float))
@@ -687,13 +690,13 @@ def run_exp1_kappa_profile_regimes(
 # ---------------------------------------------------------------------------
 
 def _exp2_worker(
-    task: tuple[int, int, list[int], list[float], SamplerConfig, list[str], dict[str, Any], bool, int, int]
+    task: tuple[int, int, list[int], list[float], SamplerConfig, list[str], dict[str, Any], bool, int, int, dict]
 ) -> tuple[list[dict], list[dict]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .metrics import group_auroc, group_l2_error, group_l2_score
     from .utils import canonical_groups, sample_correlated_design
 
-    r, seed, group_sizes, mu, sampler, methods, gigg_config, enforce_convergence, max_retries, n_test = task
+    r, seed, group_sizes, mu, sampler, methods, gigg_config, enforce_convergence, max_retries, n_test, grrhs_kwargs = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     n_train = 300
     s = experiment_seed(2, 1, r, master_seed=seed)
@@ -711,6 +714,7 @@ def _exp2_worker(
         ds["X"], ds["y"], ds["groups"],
         task="gaussian", seed=s, p0=int(np.sum(labels)),
         sampler=sampler, methods=methods, gigg_config=gigg_config,
+        grrhs_kwargs=grrhs_kwargs or {},
         enforce_bayes_convergence=bool(enforce_convergence),
         max_convergence_retries=int(max_retries),
     )
@@ -767,6 +771,7 @@ def run_exp2_group_separation(
     until_bayes_converged: bool = True,
     rho_ref: float = 0.1,
     n_test: int = 100,
+    sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
     Exp2: Full-model group separation (Theorem 3.34).
@@ -806,8 +811,9 @@ def run_exp2_group_separation(
     mu = [0.0, 0.0, float(mu_boundary), 2.0, 8.0, 25.0]
     log.info("Exp2: rho_ref=%.2f, xi_crit=%.6f, mu_boundary=%.4f, mu=%s", rho_ref, xi_c, mu_boundary, mu)
 
+    grrhs_kw = {"backend": str(sampler_backend)}
     tasks = [
-        (r, seed, group_sizes, mu, sampler, methods_use, gigg_cfg, bool(enforce_bayes_convergence), int(retry_limit), int(n_test))
+        (r, seed, group_sizes, mu, sampler, methods_use, gigg_cfg, bool(enforce_bayes_convergence), int(retry_limit), int(n_test), grrhs_kw)
         for r in range(1, int(repeats) + 1)
     ]
     results = _parallel_rows(tasks, _exp2_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp2 Group Separation")
@@ -833,10 +839,14 @@ def run_exp2_group_separation(
     )
     summary_df = raw.loc[raw["converged"]].groupby("method", as_index=False).agg(
         null_group_mse=("null_group_mse", "mean"),
+        null_group_mse_std=("null_group_mse", "std"),
         signal_group_mse=("signal_group_mse", "mean"),
+        signal_group_mse_std=("signal_group_mse", "std"),
         mse_overall=("mse_overall", "mean"),
         group_auroc=("group_auroc", "mean"),
+        group_auroc_std=("group_auroc", "std"),
         lpd_test=("lpd_test", "mean"),
+        lpd_test_std=("lpd_test", "std"),
         n_effective=("converged", "sum"),
     )
     # kappa summary by group (GR_RHS)
@@ -861,7 +871,7 @@ def run_exp2_group_separation(
 
     try:
         from .plotting import plot_exp2_separation
-        plot_exp2_separation(summary_df, kappa_summary, out_dir=fig_dir)
+        plot_exp2_separation(summary_df, kappa_df, out_dir=fig_dir)
     except Exception as exc:
         log.warning("Plot exp2 failed: %s", exc)
 
@@ -935,12 +945,12 @@ def _build_benchmark_beta(
 
 
 def _exp3_worker(
-    task: tuple[int, str, str, float, float, float, int, float, int, SamplerConfig, list[str], dict[str, Any], bool, int]
+    task: tuple[int, str, str, float, float, float, int, float, int, SamplerConfig, list[str], dict[str, Any], bool, int, dict]
 ) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import generate_grouped_linear_dataset, generate_orthonormal_block_design, sigma2_for_target_snr
     from .utils import canonical_groups, sample_correlated_design
 
-    sid, signal, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, enforce_conv, max_retries = task
+    sid, signal, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, enforce_conv, max_retries, grrhs_kwargs = task
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
     group_sizes = [10, 10, 10, 10, 10]
@@ -983,6 +993,7 @@ def _exp3_worker(
         X_train, y_train, groups,
         task="gaussian", seed=s, p0=p0,
         sampler=sampler, methods=methods, gigg_config=gigg_config,
+        grrhs_kwargs=grrhs_kwargs or {},
         enforce_bayes_convergence=bool(enforce_conv),
         max_convergence_retries=int(max_retries),
     )
@@ -1031,6 +1042,7 @@ def run_exp3_linear_benchmark(
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
     n_test: int = 100,
+    sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
     Exp3: Linear benchmark — concentrated vs. distributed vs. boundary.
@@ -1083,10 +1095,11 @@ def run_exp3_linear_benchmark(
                     sid += 1
                     settings.append((sid, signal, design_type, float(rho), float(rho_between), float(snr)))
 
+    grrhs_kw = {"backend": str(sampler_backend)}
     tasks: list[tuple] = []
     for (sid_v, signal_v, dt_v, rho_v, rhob_v, snr_v) in settings:
         for r in range(1, int(repeats) + 1):
-            tasks.append((sid_v, signal_v, dt_v, rho_v, rhob_v, snr_v, r, seed, n_test, sampler, methods_use, gigg_cfg, bool(enforce_bayes_convergence), int(retry_limit)))
+            tasks.append((sid_v, signal_v, dt_v, rho_v, rhob_v, snr_v, r, seed, n_test, sampler, methods_use, gigg_cfg, bool(enforce_bayes_convergence), int(retry_limit), grrhs_kw))
 
     log.info("Exp3: %d settings × %d repeats = %d tasks", len(settings), repeats, len(tasks))
     all_chunks = _parallel_rows(tasks, _exp3_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp3 Linear Benchmark")
@@ -1152,13 +1165,13 @@ def run_exp3_linear_benchmark(
 # ---------------------------------------------------------------------------
 
 def _exp4_worker(
-    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], bool, int, int]
+    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], bool, int, int, str]
 ) -> list[dict[str, Any]]:
     from .fit_gr_rhs import fit_gr_rhs
     from .fit_rhs import fit_rhs
     from .utils import canonical_groups, sample_correlated_design
 
-    p0_true, r, seed, group_sizes, sampler, variants, enforce_conv, max_retries, n = task
+    p0_true, r, seed, group_sizes, sampler, variants, enforce_conv, max_retries, n, backend = task
     p = int(sum(group_sizes))
     s = experiment_seed(4, int(p0_true), r, master_seed=seed)
 
@@ -1183,7 +1196,7 @@ def _exp4_worker(
         method = str(spec["method"])
         if method == "GR_RHS":
             res = _fit_with_convergence_retry(
-                lambda st, att, _s=spec, _s_val=s, _vn=vname: fit_gr_rhs(
+                lambda st, att, _s=spec, _s_val=s, _vn=vname, _be=backend: fit_gr_rhs(
                     X, y, groups, task="gaussian",
                     seed=_s_val + 31 + hash(_vn) % 1000 + 100 * att,
                     p0=int(_s.get("p0_for_fit", p0_true)),
@@ -1195,6 +1208,7 @@ def _exp4_worker(
                     use_group_scale=bool(_s.get("use_group_scale", True)),
                     use_local_scale=bool(_s.get("use_local_scale", True)),
                     shared_kappa=bool(_s.get("shared_kappa", False)),
+                    backend=_be,
                 ),
                 method="GR_RHS",
                 sampler=sampler,
@@ -1282,6 +1296,7 @@ def run_exp4_variant_ablation(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
+    sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
     Exp4: GR-RHS variant ablation — tau calibration strategies.
@@ -1330,7 +1345,7 @@ def run_exp4_variant_ablation(
     for p0_v in p0_vals:
         variants = _variants_for_p0(int(p0_v))
         for r in range(1, int(repeats) + 1):
-            tasks.append((int(p0_v), r, seed, group_sizes, sampler, variants, bool(enforce_bayes_convergence), int(retry_limit), n))
+            tasks.append((int(p0_v), r, seed, group_sizes, sampler, variants, bool(enforce_bayes_convergence), int(retry_limit), n, str(sampler_backend)))
 
     log.info("Exp4: %d p0 levels × %d repeats = %d tasks", len(p0_vals), repeats, len(tasks))
     all_chunks = _parallel_rows(tasks, _exp4_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp4 Variant Ablation")
@@ -1343,6 +1358,7 @@ def run_exp4_variant_ablation(
         mse_null=("mse_null", "mean"),
         mse_signal=("mse_signal", "mean"),
         mse_overall=("mse_overall", "mean"),
+        tau0_oracle=("tau0_oracle", "first"),
         tau_post_mean=("tau_post_mean", "mean"),
         tau_ratio_to_oracle=("tau_ratio_to_oracle", "mean"),
         kappa_null_mean=("kappa_null_mean", "mean"),
@@ -1391,13 +1407,13 @@ _DEFAULT_PRIOR_GRID: list[tuple[float, float]] = [
 
 
 def _exp5_worker(
-    task: tuple[int, int, list[int], list[float], int, SamplerConfig, list[tuple[float, float]], bool, int]
+    task: tuple[int, int, list[int], list[float], int, SamplerConfig, list[tuple[float, float]], bool, int, str]
 ) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .fit_gr_rhs import fit_gr_rhs
     from .metrics import group_auroc, group_l2_error, group_l2_score
 
-    sid, r, group_sizes, mu, seed, sampler, prior_grid, enforce_conv, max_retries = task
+    sid, r, group_sizes, mu, seed, sampler, prior_grid, enforce_conv, max_retries, backend = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     s = experiment_seed(5, int(sid), r, master_seed=seed)
     # All priors evaluated on THE SAME dataset (paired comparison)
@@ -1409,12 +1425,13 @@ def _exp5_worker(
     rows: list[dict[str, Any]] = []
     for pid, (alpha_k, beta_k) in enumerate(prior_grid, start=1):
         res = _fit_with_convergence_retry(
-            lambda st, att, _a=alpha_k, _b=beta_k, _s=s, _pid=pid: fit_gr_rhs(
+            lambda st, att, _a=alpha_k, _b=beta_k, _s=s, _pid=pid, _be=backend: fit_gr_rhs(
                 ds["X"], ds["y"], ds["groups"],
                 task="gaussian", seed=_s + 100 + _pid + 100 * att,
                 p0=int(np.sum(labels)), sampler=st,
                 alpha_kappa=float(_a), beta_kappa=float(_b),
                 use_group_scale=True, use_local_scale=True, shared_kappa=False,
+                backend=_be,
             ),
             method="GR_RHS",
             sampler=sampler,
@@ -1468,6 +1485,7 @@ def run_exp5_prior_sensitivity(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
+    sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
     Exp5: Prior sensitivity — (alpha_kappa, beta_kappa) grid.
@@ -1506,7 +1524,7 @@ def run_exp5_prior_sensitivity(
     tasks: list[tuple] = []
     for scen_id, grp_sizes, mu in scenarios:
         for r in range(1, int(repeats) + 1):
-            tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, priors, bool(enforce_bayes_convergence), int(retry_limit)))
+            tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, priors, bool(enforce_bayes_convergence), int(retry_limit), str(sampler_backend)))
 
     log.info("Exp5: %d scenarios × %d repeats × %d priors = %d task-rows", len(scenarios), repeats, len(priors), len(tasks) * len(priors))
     all_chunks = _parallel_rows(tasks, _exp5_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp5 Prior Sensitivity")
@@ -1552,6 +1570,7 @@ def run_all_experiments(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
+    sampler_backend: str = "nuts",
 ) -> Dict[str, Any]:
     profile_name = _normalize_compute_profile(profile)
     retry_limit = max_convergence_retries
@@ -1560,6 +1579,7 @@ def run_all_experiments(
         enforce_bayes_convergence=bool(enforce_bayes_convergence),
         max_convergence_retries=retry_limit,
         until_bayes_converged=bool(until_bayes_converged),
+        sampler_backend=str(sampler_backend),
     )
     out: Dict[str, Any] = {}
     jobs: list[tuple[str, Any]] = [
@@ -1592,6 +1612,8 @@ def _cli() -> None:
     parser.add_argument("--no-enforce-bayes-convergence", action="store_true")
     parser.add_argument("--max-convergence-retries", type=int, default=None)
     parser.add_argument("--until-bayes-converged", action="store_true")
+    parser.add_argument("--sampler", type=str, default="nuts", choices=["nuts", "collapsed", "gibbs"],
+                        help="GR-RHS posterior sampler: nuts (default), collapsed (beta marginalized, Gaussian only), gibbs (Gibbs+slice, Gaussian only)")
     args = parser.parse_args()
     profile_name = _normalize_compute_profile(args.profile)
     enforce_conv = not bool(args.no_enforce_bayes_convergence)
@@ -1602,6 +1624,7 @@ def _cli() -> None:
         enforce_bayes_convergence=enforce_conv,
         max_convergence_retries=args.max_convergence_retries,
         until_bayes_converged=until_conv,
+        sampler_backend=args.sampler,
     )
     reps = args.repeats
 

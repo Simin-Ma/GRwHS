@@ -14,6 +14,10 @@ Or:
 python scripts/run_simulation.py --help
 ```
 
+Detailed CLI playbook:
+
+- `docs/simulation_cli_guide.md`
+
 ## Experiment IDs
 
 1. `run_exp1_kappa_profile_regimes`
