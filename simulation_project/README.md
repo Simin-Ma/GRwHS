@@ -18,6 +18,17 @@ Detailed CLI playbook:
 
 - `docs/simulation_cli_guide.md`
 
+Sweep entrypoint:
+
+```bash
+python -m simulation_project.src.run_sweep --list
+python scripts/run_sweep.py --list
+```
+
+Default sweep config:
+
+- `simulation_project/config/sweeps.yaml`
+
 ## Experiment IDs
 
 1. `run_exp1_kappa_profile_regimes`
