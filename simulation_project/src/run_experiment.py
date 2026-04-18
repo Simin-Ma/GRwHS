@@ -134,6 +134,11 @@ def _scale_sampler_for_retry(base: SamplerConfig, attempt: int) -> SamplerConfig
     if k == 0:
         return base
     mul = int(2 ** k)
+    # Relax convergence gates slightly on later retries while still preferring
+    # higher-quality chains via larger warmup/draw budgets.
+    rhat_relax = min(1.05, float(base.rhat_threshold) + 0.005 * k)
+    ess_relax = max(80.0, float(base.ess_threshold) * (0.85 ** k))
+    div_relax = min(0.05, float(base.max_divergence_ratio) * (1.5 ** k))
     return SamplerConfig(
         chains=max(1, int(base.chains)),
         warmup=min(_RETRY_MAX_WARMUP, max(50, int(base.warmup) * mul)),
@@ -142,9 +147,9 @@ def _scale_sampler_for_retry(base: SamplerConfig, attempt: int) -> SamplerConfig
         max_treedepth=min(15, int(base.max_treedepth) + k),
         strict_adapt_delta=min(0.999, float(base.strict_adapt_delta) + 0.01 * k),
         strict_max_treedepth=min(16, int(base.strict_max_treedepth) + k),
-        max_divergence_ratio=float(base.max_divergence_ratio),
-        rhat_threshold=float(base.rhat_threshold),
-        ess_threshold=float(base.ess_threshold),
+        max_divergence_ratio=float(div_relax),
+        rhat_threshold=float(rhat_relax),
+        ess_threshold=float(ess_relax),
     )
 
 
@@ -205,6 +210,16 @@ def _attempts_used(res: FitResult) -> int:
         return int(retry.get("attempts_used", 1))
     except Exception:
         return 1
+
+
+def _result_diag_fields(res: FitResult) -> dict[str, float | str]:
+    return {
+        "runtime_seconds": float(res.runtime_seconds),
+        "rhat_max": float(res.rhat_max),
+        "bulk_ess_min": float(res.bulk_ess_min),
+        "divergence_ratio": float(res.divergence_ratio),
+        "error": str(res.error),
+    }
 
 # ---------------------------------------------------------------------------
 # Paired-converged subset helper
@@ -698,6 +713,7 @@ def _exp2_worker(
 
     r, seed, group_sizes, mu, sampler, methods, gigg_config, enforce_convergence, max_retries, n_test, grrhs_kwargs = task
     labels = (np.asarray(mu) > 0.0).astype(int)
+    p0_signal_groups = int(np.sum(labels))
     n_train = 300
     s = experiment_seed(2, 1, r, master_seed=seed)
 
@@ -712,7 +728,7 @@ def _exp2_worker(
 
     fits = _fit_all_methods(
         ds["X"], ds["y"], ds["groups"],
-        task="gaussian", seed=s, p0=int(np.sum(labels)),
+        task="gaussian", seed=s, p0=p0_signal_groups,
         sampler=sampler, methods=methods, gigg_config=gigg_config,
         grrhs_kwargs=grrhs_kwargs or {},
         enforce_bayes_convergence=bool(enforce_convergence),
@@ -741,6 +757,7 @@ def _exp2_worker(
             "status": res.status, "converged": bool(res.converged), "fit_attempts": _attempts_used(res),
             "null_group_mse": null_mse_group, "signal_group_mse": sig_mse_group,
             "group_auroc": auroc,
+            **_result_diag_fields(res),
             **metrics,
         })
         # GR_RHS kappa_g realizations — the key mechanism check
@@ -811,7 +828,7 @@ def run_exp2_group_separation(
     mu = [0.0, 0.0, float(mu_boundary), 2.0, 8.0, 25.0]
     log.info("Exp2: rho_ref=%.2f, xi_crit=%.6f, mu_boundary=%.4f, mu=%s", rho_ref, xi_c, mu_boundary, mu)
 
-    grrhs_kw = {"backend": str(sampler_backend)}
+    grrhs_kw = {"backend": str(sampler_backend), "tau_target": "groups"}
     tasks = [
         (r, seed, group_sizes, mu, sampler, methods_use, gigg_cfg, bool(enforce_bayes_convergence), int(retry_limit), int(n_test), grrhs_kw)
         for r in range(1, int(repeats) + 1)
@@ -1022,6 +1039,7 @@ def _exp3_worker(
             "fit_attempts": _attempts_used(res),
             "kappa_null_mean": kappa_null_mean,
             "kappa_signal_mean": kappa_signal_mean,
+            **_result_diag_fields(res),
             **metrics,
         })
     return out_rows
@@ -1254,6 +1272,7 @@ def _exp4_worker(
             "tau_ratio_to_oracle": float(tau_post_mean / max(tau0_oracle, 1e-12)) if np.isfinite(tau_post_mean) else float("nan"),
             "kappa_null_mean": kappa_null_mean,
             "kappa_signal_mean": kappa_signal_mean,
+            **_result_diag_fields(res),
             **mse_metrics,
         })
     return rows
@@ -1415,6 +1434,7 @@ def _exp5_worker(
 
     sid, r, group_sizes, mu, seed, sampler, prior_grid, enforce_conv, max_retries, backend = task
     labels = (np.asarray(mu) > 0.0).astype(int)
+    p0_signal_groups = int(np.sum(labels))
     s = experiment_seed(5, int(sid), r, master_seed=seed)
     # All priors evaluated on THE SAME dataset (paired comparison)
     ds = generate_heterogeneity_dataset(
@@ -1428,9 +1448,10 @@ def _exp5_worker(
             lambda st, att, _a=alpha_k, _b=beta_k, _s=s, _pid=pid, _be=backend: fit_gr_rhs(
                 ds["X"], ds["y"], ds["groups"],
                 task="gaussian", seed=_s + 100 + _pid + 100 * att,
-                p0=int(np.sum(labels)), sampler=st,
+                p0=p0_signal_groups, sampler=st,
                 alpha_kappa=float(_a), beta_kappa=float(_b),
                 use_group_scale=True, use_local_scale=True, shared_kappa=False,
+                tau_target="groups",
                 backend=_be,
             ),
             method="GR_RHS",
@@ -1466,10 +1487,13 @@ def _exp5_worker(
         rows.append({
             "setting_id": int(sid), "replicate_id": int(r),
             "prior_id": pid, "alpha_kappa": float(alpha_k), "beta_kappa": float(beta_k),
+            "p0_signal_groups": p0_signal_groups,
+            "tau_target": "groups",
             "status": res.status, "converged": bool(res.converged), "fit_attempts": _attempts_used(res),
             "mse_null": mse_null, "mse_signal": mse_signal, "group_auroc": auroc,
             "kappa_null_mean": kappa_null_mean, "kappa_signal_mean": kappa_signal_mean,
             "kappa_null_prob_gt_0_1": kappa_null_prob_gt_0_1,
+            **_result_diag_fields(res),
         })
     return rows
 

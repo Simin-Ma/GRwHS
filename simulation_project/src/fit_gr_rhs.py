@@ -23,6 +23,7 @@ def _build_nuts(
     shared_kappa: bool,
     auto_calibrate_tau: bool,
     tau0: float | None,
+    tau_target: str,
     sigma_reference: float,
     sampler: SamplerConfig,
     adapt_delta: float,
@@ -36,6 +37,7 @@ def _build_nuts(
         p0=int(max(p0, 1)),
         tau0=None if tau0 is None else float(tau0),
         auto_calibrate_tau=bool(auto_calibrate_tau),
+        tau_target=str(tau_target),
         sigma_reference=float(sigma_reference),
         likelihood=likelihood,
         use_group_scale=bool(use_group_scale),
@@ -65,6 +67,7 @@ def _build_collapsed(
     shared_kappa: bool,
     auto_calibrate_tau: bool,
     tau0: float | None,
+    tau_target: str,
     sigma_reference: float,
     sampler: SamplerConfig,
     adapt_delta: float,
@@ -79,6 +82,7 @@ def _build_collapsed(
         p0=int(max(p0, 1)),
         tau0=None if tau0 is None else float(tau0),
         auto_calibrate_tau=bool(auto_calibrate_tau),
+        tau_target=str(tau_target),
         sigma_reference=float(sigma_reference),
         use_group_scale=bool(use_group_scale),
         use_local_scale=bool(use_local_scale),
@@ -109,6 +113,7 @@ def _build_gibbs(
     shared_kappa: bool,
     auto_calibrate_tau: bool,
     tau0: float | None,
+    tau_target: str,
     sigma_reference: float,
     sampler: SamplerConfig,
 ) -> GRRHS_Gibbs:
@@ -123,6 +128,7 @@ def _build_gibbs(
         p0=int(max(p0, 1)),
         tau0=None if tau0 is None else float(tau0),
         auto_calibrate_tau=bool(auto_calibrate_tau),
+        tau_target=str(tau_target),
         sigma_reference=float(sigma_reference),
         use_group_scale=bool(use_group_scale),
         use_local_scale=bool(use_local_scale),
@@ -165,6 +171,7 @@ def fit_gr_rhs(
     shared_kappa: bool = False,
     auto_calibrate_tau: bool = True,
     tau0: float | None = None,
+    tau_target: str = "coefficients",
     backend: str = "nuts",
 ) -> FitResult:
     tracked = ["beta", "tau", "kappa", "a"]
@@ -181,6 +188,7 @@ def fit_gr_rhs(
         shared_kappa=shared_kappa,
         auto_calibrate_tau=auto_calibrate_tau,
         tau0=tau0,
+        tau_target=tau_target,
         sampler=sampler,
     )
 
@@ -190,7 +198,9 @@ def fit_gr_rhs(
             pseudo_sigma = logistic_pseudo_sigma(y)
 
         def _make(seed_: int, adapt_delta: float, max_treedepth: int):
-            kw = dict(**common_kwargs, sigma_reference=pseudo_sigma, seed=seed_)
+            kw = dict(common_kwargs)
+            kw["sigma_reference"] = pseudo_sigma
+            kw["seed"] = seed_
             if b in ("nuts", "collapsed"):
                 kw["adapt_delta"] = adapt_delta
                 kw["max_treedepth"] = max_treedepth

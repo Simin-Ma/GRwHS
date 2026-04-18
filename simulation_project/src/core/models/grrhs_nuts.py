@@ -182,41 +182,21 @@ class GRRHS_NUTS:
         G = int(group_sizes.shape[0])
 
         if self.likelihood == "gaussian":
-            log_sigma = numpyro.sample("log_sigma_raw", dist.Normal(0.0, 1.0))
-            sigma = numpyro.deterministic("sigma", jnp.exp(log_sigma))
-            numpyro.factor(
-                "prior_log_sigma",
-                self._log_half_cauchy_on_log(log_sigma, self.s0) - dist.Normal(0.0, 1.0).log_prob(log_sigma),
-            )
+            sigma = numpyro.sample("sigma", dist.HalfCauchy(jnp.asarray(self.s0, dtype=X.dtype)))
         else:
             sigma = numpyro.deterministic("sigma", jnp.asarray(1.0, dtype=X.dtype))
 
-        log_tau = numpyro.sample("log_tau_raw", dist.Normal(0.0, 1.0))
-        tau = numpyro.deterministic("tau", jnp.exp(log_tau))
         tau_scale = jnp.maximum(jnp.asarray(tau0_eff, dtype=X.dtype) * sigma, _EPS)
-        numpyro.factor(
-            "prior_log_tau",
-            self._log_half_cauchy_on_log(log_tau, tau_scale) - dist.Normal(0.0, 1.0).log_prob(log_tau),
-        )
+        tau = numpyro.sample("tau", dist.HalfCauchy(tau_scale))
 
         if self.use_local_scale:
-            log_lambda = numpyro.sample("log_lambda_raw", dist.Normal(jnp.zeros((p,)), jnp.ones((p,))).to_event(1))
-            lam = numpyro.deterministic("lambda", jnp.exp(log_lambda))
-            numpyro.factor(
-                "prior_log_lambda",
-                jnp.sum(self._log_half_cauchy_on_log(log_lambda, 1.0) - dist.Normal(0.0, 1.0).log_prob(log_lambda)),
-            )
+            lam = numpyro.sample("lambda", dist.HalfCauchy(jnp.ones((p,), dtype=X.dtype)).to_event(1))
         else:
             lam = numpyro.deterministic("lambda", jnp.ones((p,), dtype=X.dtype))
 
         s_a = self.eta / jnp.sqrt(jnp.maximum(group_sizes.astype(X.dtype), 1.0))
         if self.use_group_scale:
-            log_a = numpyro.sample("log_a_raw", dist.Normal(jnp.zeros((G,)), jnp.ones((G,))).to_event(1))
-            a = numpyro.deterministic("a", jnp.exp(log_a))
-            numpyro.factor(
-                "prior_log_a",
-                jnp.sum(self._log_half_normal_on_log(log_a, s_a) - dist.Normal(0.0, 1.0).log_prob(log_a)),
-            )
+            a = numpyro.sample("a", dist.HalfNormal(s_a).to_event(1))
         else:
             a = numpyro.deterministic("a", jnp.ones((G,), dtype=X.dtype))
 
@@ -341,9 +321,7 @@ class GRRHS_NUTS:
         samples = mcmc.get_samples(group_by_chain=True)
         self._store_samples(samples)
         self.sampler_diagnostics_ = self._extract_diagnostics(mcmc, runtime_sec=runtime_sec)
-        transformed = ["log_tau", "log_sigma", "log_a", "logit_kappa"]
-        if self.use_local_scale:
-            transformed.insert(2, "log_lambda")
+        transformed = ["logit_kappa"]
         self.sampler_diagnostics_["parameterization"] = {
             "primitive_hierarchy": True,
             "transformed_variables": transformed,
@@ -1046,49 +1024,27 @@ class GRRHS_CollapsedNUTS:
         use_group = bool(self.use_group_scale)
         shared_kappa = bool(self.shared_kappa)
         sig_jit = float(self.sigma_jitter)
-        # capture static helpers as local references (avoids self-capture inside JAX trace)
-        _lhc = GRRHS_NUTS._log_half_cauchy_on_log
-        _lhn = GRRHS_NUTS._log_half_normal_on_log
+        # capture static helper as local reference (avoids self-capture inside JAX trace)
         _lbeta = GRRHS_NUTS._log_beta_on_logit
 
         def model(X, y, group_id, group_sizes, tau0_eff):
             n, p = X.shape
             G = int(group_sizes.shape[0])
 
-            log_sigma = numpyro.sample("log_sigma_raw", dist.Normal(0.0, 1.0))
-            sigma = numpyro.deterministic("sigma", jnp.exp(log_sigma))
-            numpyro.factor(
-                "prior_log_sigma",
-                _lhc(log_sigma, s0) - dist.Normal(0.0, 1.0).log_prob(log_sigma),
-            )
+            sigma = numpyro.sample("sigma", dist.HalfCauchy(jnp.asarray(s0, dtype=X.dtype)))
             sigma2 = sigma * sigma
 
-            log_tau = numpyro.sample("log_tau_raw", dist.Normal(0.0, 1.0))
-            tau = numpyro.deterministic("tau", jnp.exp(log_tau))
             tau_scale = jnp.maximum(jnp.asarray(tau0_eff, dtype=X.dtype) * sigma, _EPS)
-            numpyro.factor(
-                "prior_log_tau",
-                _lhc(log_tau, tau_scale) - dist.Normal(0.0, 1.0).log_prob(log_tau),
-            )
+            tau = numpyro.sample("tau", dist.HalfCauchy(tau_scale))
 
             if use_local:
-                log_lambda = numpyro.sample("log_lambda_raw", dist.Normal(jnp.zeros(p), jnp.ones(p)).to_event(1))
-                lam = numpyro.deterministic("lambda", jnp.exp(log_lambda))
-                numpyro.factor(
-                    "prior_log_lambda",
-                    jnp.sum(_lhc(log_lambda, 1.0) - dist.Normal(0.0, 1.0).log_prob(log_lambda)),
-                )
+                lam = numpyro.sample("lambda", dist.HalfCauchy(jnp.ones(p, dtype=X.dtype)).to_event(1))
             else:
                 lam = numpyro.deterministic("lambda", jnp.ones(p, dtype=X.dtype))
 
             s_a = eta / jnp.sqrt(jnp.maximum(group_sizes.astype(X.dtype), 1.0))
             if use_group:
-                log_a = numpyro.sample("log_a_raw", dist.Normal(jnp.zeros(G), jnp.ones(G)).to_event(1))
-                a = numpyro.deterministic("a", jnp.exp(log_a))
-                numpyro.factor(
-                    "prior_log_a",
-                    jnp.sum(_lhn(log_a, s_a) - dist.Normal(0.0, 1.0).log_prob(log_a)),
-                )
+                a = numpyro.sample("a", dist.HalfNormal(s_a).to_event(1))
             else:
                 a = numpyro.deterministic("a", jnp.ones(G, dtype=X.dtype))
 
