@@ -88,6 +88,35 @@ def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
     return {"iter_mult": 2, "iter_floor": 500, "iter_cap": 1500, "btrick": True, "mmle_burnin_only": True}
 
 
+def _sampler_for_exp5(base: SamplerConfig, *, profile: str) -> SamplerConfig:
+    p = _normalize_compute_profile(profile)
+    if p == "full":
+        return SamplerConfig(
+            chains=max(4, int(base.chains)),
+            warmup=max(1500, int(base.warmup)),
+            post_warmup_draws=max(1500, int(base.post_warmup_draws)),
+            adapt_delta=max(0.97, float(base.adapt_delta)),
+            max_treedepth=max(13, int(base.max_treedepth)),
+            strict_adapt_delta=max(0.995, float(base.strict_adapt_delta)),
+            strict_max_treedepth=max(15, int(base.strict_max_treedepth)),
+            max_divergence_ratio=min(0.01, float(base.max_divergence_ratio)),
+            rhat_threshold=min(1.02, float(base.rhat_threshold)),
+            ess_threshold=max(400.0, float(base.ess_threshold)),
+        )
+    return SamplerConfig(
+        chains=max(2, int(base.chains)),
+        warmup=max(800, int(base.warmup)),
+        post_warmup_draws=max(800, int(base.post_warmup_draws)),
+        adapt_delta=max(0.95, float(base.adapt_delta)),
+        max_treedepth=max(12, int(base.max_treedepth)),
+        strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
+        strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
+        max_divergence_ratio=min(0.015, float(base.max_divergence_ratio)),
+        rhat_threshold=min(1.03, float(base.rhat_threshold)),
+        ess_threshold=max(200.0, float(base.ess_threshold)),
+    )
+
+
 def _default_repeats(exp: str, profile: str) -> int:
     p = _normalize_compute_profile(profile)
     full = {"exp1": 500, "exp2": 100, "exp3": 100, "exp4": 50, "exp5": 30}
@@ -137,7 +166,8 @@ def _scale_sampler_for_retry(base: SamplerConfig, attempt: int) -> SamplerConfig
     # Relax convergence gates slightly on later retries while still preferring
     # higher-quality chains via larger warmup/draw budgets.
     rhat_relax = min(1.05, float(base.rhat_threshold) + 0.005 * k)
-    ess_relax = max(80.0, float(base.ess_threshold) * (0.85 ** k))
+    ess_floor = max(40.0, 0.6 * float(base.ess_threshold))
+    ess_relax = max(ess_floor, float(base.ess_threshold) * (0.85 ** k))
     div_relax = min(0.05, float(base.max_divergence_ratio) * (1.5 ** k))
     return SamplerConfig(
         chains=max(1, int(base.chains)),
@@ -1536,8 +1566,11 @@ def run_exp5_prior_sensitivity(
     log = setup_logger("exp5", base / "logs" / "exp5_prior_sensitivity.log")
 
     profile_name = _normalize_compute_profile(profile)
-    sampler = _sampler_for_profile(profile_name)
+    sampler = _sampler_for_exp5(_sampler_for_profile(profile_name), profile=profile_name)
     retry_limit = _resolve_convergence_retry_limit(profile_name, max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
+    if max_convergence_retries is None and retry_limit < 0:
+        # Exp5 is intentionally heavy; cap unlimited mode to a practical retry budget.
+        retry_limit = 3
     priors = list(prior_grid or _DEFAULT_PRIOR_GRID)
 
     scenarios: list[tuple[int, list[int], list[float]]] = [

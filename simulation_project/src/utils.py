@@ -226,6 +226,11 @@ def diagnostics_summary_for_method(
     if np.isfinite(hmc_ess):
         ess_min = float(hmc_ess)
 
+    # Single-chain runs do not have meaningful R-hat; treat it as unavailable
+    # so convergence relies on ESS + divergence diagnostics.
+    if int(getattr(config, "chains", 0)) < 2:
+        rhat_max = float("nan")
+
     # Divergence diagnostics are HMC-specific. For samplers without this signal,
     # we gate convergence on R-hat/ESS only.
     div_ok = (not np.isfinite(div_ratio)) or (div_ratio < float(config.max_divergence_ratio))
