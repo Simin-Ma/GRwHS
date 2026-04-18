@@ -25,6 +25,12 @@ python -m simulation_project.src.run_sweep --list
 python scripts/run_sweep.py --list
 ```
 
+Unified Exp1-Exp5 sweep:
+
+```bash
+python -m simulation_project.src.run_sweep --sweep exp1_to_exp5
+```
+
 Default sweep config:
 
 - `simulation_project/config/sweeps.yaml`

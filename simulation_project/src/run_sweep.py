@@ -19,11 +19,13 @@ from .run_experiment import (
     run_exp3_linear_benchmark,
     run_exp4_variant_ablation,
     run_exp5_prior_sensitivity,
+    run_all_experiments,
 )
 from .utils import ensure_dir, save_json
 
 
 _RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {
+    "all": run_all_experiments,
     "exp1": run_exp1_kappa_profile_regimes,
     "exp2": run_exp2_group_separation,
     "exp3": run_exp3_linear_benchmark,
@@ -32,6 +34,10 @@ _RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {
 }
 
 _EXP_ALIASES: dict[str, str] = {
+    "all": "all",
+    "exp1-5": "all",
+    "exp1_to_exp5": "all",
+    "pipeline": "all",
     "1": "exp1",
     "exp1": "exp1",
     "exp1_kappa_profile_regimes": "exp1",

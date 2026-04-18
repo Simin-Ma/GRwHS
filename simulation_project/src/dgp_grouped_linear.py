@@ -59,11 +59,11 @@ def generate_orthonormal_block_design(n: int, group_sizes: Sequence[int], seed: 
 
 
 def sigma2_for_target_snr(beta: np.ndarray, cov_x: np.ndarray, target_snr: float) -> float:
+    """Return sigma2 such that SNR = beta'Cov_X beta / sigma2 = target_snr."""
     signal_var = float(np.asarray(beta, dtype=float).T @ np.asarray(cov_x, dtype=float) @ np.asarray(beta, dtype=float))
-    snr = float(target_snr)
     if signal_var <= 1e-12:
         return 1.0
-    return float(signal_var * (1.0 - snr) / max(snr, 1e-8))
+    return float(signal_var / max(float(target_snr), 1e-8))
 
 
 def generate_grouped_linear_dataset(

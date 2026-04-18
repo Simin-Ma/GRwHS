@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -94,11 +95,16 @@ def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Pa
     ax = axes[0]
     lx = np.log(p_g)
     ly = np.log(np.maximum(med, 1e-12))
-    ax.plot(lx, ly, "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3)
+    # Distinguish fit range (p_g 20-500) from out-of-range points visually
+    fit_mask = (p_g >= 20) & (p_g <= 500)
+    ax.plot(lx[fit_mask], ly[fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, label="fit range (p_g 20–500)")
+    ax.plot(lx[~fit_mask], ly[~fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, alpha=0.35, markerfacecolor="none")
     ax.plot(lx, ly, "-", color=_METHOD_COLORS["GR_RHS"], alpha=0.4)
-    coef = np.polyfit(lx, ly, deg=1)
+    # Draw fitted line through full x-range but anchored to fit-range regression
+    fit_lx = lx[fit_mask]
+    coef = np.polyfit(fit_lx, ly[fit_mask], deg=1)
     ax.plot(lx, coef[0] * lx + coef[1], "--", color="black", lw=1.5, label=f"fitted slope={slope:.3f}")
-    ref = np.log(med[0]) - (-0.5) * lx[0]
+    ref = np.log(med[fit_mask][0]) - (-0.5) * fit_lx[0]
     ax.plot(lx, -0.5 * lx + ref, ":", color="gray", lw=1.2, label="theory slope=−0.5")
     ax.set_xlabel("log p_g", fontsize=10)
     ax.set_ylabel("log E[κ_g | Y_null]  (median)", fontsize=10)
@@ -285,9 +291,13 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
                 colors_g.append("#cccccc")
                 continue
             sig = int(sub["signal_label"].iloc[0]) if "signal_label" in sub.columns else 0
-            mu = float(sub["mu_g"].iloc[0]) if "mu_g" in sub.columns else 0.0
-            mu_str = f"μ={mu:.2g}" if mu > 0 else "null"
-            labels_g.append(f"g{int(g)+1}\n{mu_str}")
+            mu_val = float(sub["mu_g"].iloc[0]) if "mu_g" in sub.columns else 0.0
+            xi_r = float(sub["xi_ratio"].iloc[0]) if "xi_ratio" in sub.columns else float("nan")
+            if not math.isnan(xi_r):
+                regime = "null" if xi_r == 0 else f"xi/xi_c={xi_r:.1f}"
+                labels_g.append(f"G{int(g)}\n{regime}")
+            else:
+                labels_g.append(f"G{int(g)}\n{'null' if mu_val == 0 else f'mu={mu_val:.2g}'}")
             colors_g.append("#ff7f7f" if sig else "#7fb3d3")
 
         fig, ax = plt.subplots(figsize=(8, 4.5))

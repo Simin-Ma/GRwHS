@@ -145,7 +145,7 @@ for e in exps:
 '@ | python -
 ```
 
-## 6. Sweep 架构（Exp1-Exp5）
+## 6. Sweep 架构（统一跑 Exp1-Exp5）
 
 现在支持统一 sweep 调度器：
 
@@ -157,20 +157,20 @@ python scripts/run_sweep.py --list
 默认配置文件：
 - `simulation_project/config/sweeps.yaml`
 
-常用命令：
+常用命令（现在只需要一个 sweep 名）：
 
 ```bash
 # 查看可用 sweep 名称
 python -m simulation_project.src.run_sweep --list
 
 # 先做 dry-run（只展开参数并校验，不执行）
-python -m simulation_project.src.run_sweep --sweep exp5_prior_quality --dry-run --max-runs 2
+python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --dry-run
 
-# 真正执行一个 sweep（可限制前 N 组）
-python -m simulation_project.src.run_sweep --sweep exp4_tau_ablation --max-runs 3
+# 真正执行一个 sweep（一次跑完整 Exp1-Exp5）
+python -m simulation_project.src.run_sweep --sweep exp1_to_exp5
 
 # 覆盖 sweep 参数（不改 yaml）
-python -m simulation_project.src.run_sweep --sweep exp2_backend_profile --set repeats=10 --set n_jobs=2
+python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --set profile=full --set n_jobs=2 --set max_convergence_retries=2
 ```
 
 输出结构：
