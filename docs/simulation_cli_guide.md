@@ -20,6 +20,7 @@ python scripts/run_simulation.py --help
 - `--max-convergence-retries <int>`
 - `--until-bayes-converged`
 - `--sampler {nuts,collapsed,gibbs}`
+- Default note: Bayesian methods use at least `4` chains by default (method-level floor).
 
 说明：
 - `scripts/run_simulation.py` 是统一封装，行为与 `python -m ...run_experiment` 一致。

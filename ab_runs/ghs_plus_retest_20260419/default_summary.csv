@@ -1,0 +1,3 @@
+signal,method,n,ok_rate,conv_rate,attempts_mean,ess_median,ess_p10,runtime_median
+concentrated,GHS_plus,10,1.0,1.0,1.0,283.0338120195074,226.61529216879026,1.262574449996464
+distributed,GHS_plus,10,1.0,1.0,1.0,184.69417697742105,145.04551704826153,0.9232409000032931

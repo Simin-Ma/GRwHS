@@ -63,6 +63,10 @@ Laptop profile:
 python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --profile laptop --n-jobs 2
 ```
 
+Default sampler rule:
+
+- All Bayesian methods now run with at least `4` chains by default.
+
 ## Internal Runtime
 
 Simulation methods now use in-tree runtime modules under:

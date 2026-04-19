@@ -36,10 +36,16 @@ LAPTOP_METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GHS_plus", "OLS", "LASSO_CV"]
 COMPUTE_PROFILES = ("full", "laptop")
 
 _BAYESIAN_METHODS = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
+_BAYESIAN_DEFAULT_CHAINS = 4
 _UNTIL_CONVERGED_RETRY_HARD_CAP = 12
 _RETRY_MAX_WARMUP = 8000
 _RETRY_MAX_POST_DRAWS = 8000
 _RETRY_MAX_GIGG_ITER = 50000
+_GHS_PLUS_DEFAULT_CHAINS = 4
+_GHS_PLUS_DEFAULT_WARMUP = 2500
+_GHS_PLUS_DEFAULT_POST_DRAWS = 2500
+_GHS_PLUS_DEFAULT_RHAT_THRESHOLD = 1.01
+_GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
 
 # ---------------------------------------------------------------------------
 # Compute-profile helpers
@@ -114,6 +120,38 @@ def _sampler_for_exp5(base: SamplerConfig, *, profile: str) -> SamplerConfig:
         max_divergence_ratio=min(0.015, float(base.max_divergence_ratio)),
         rhat_threshold=min(1.03, float(base.rhat_threshold)),
         ess_threshold=max(200.0, float(base.ess_threshold)),
+    )
+
+
+def _sampler_for_ghs_plus_default(base: SamplerConfig) -> SamplerConfig:
+    """Method-specific default budget for Grouped Horseshoe+."""
+    return SamplerConfig(
+        chains=max(_GHS_PLUS_DEFAULT_CHAINS, int(base.chains)),
+        warmup=max(_GHS_PLUS_DEFAULT_WARMUP, int(base.warmup)),
+        post_warmup_draws=max(_GHS_PLUS_DEFAULT_POST_DRAWS, int(base.post_warmup_draws)),
+        adapt_delta=max(0.95, float(base.adapt_delta)),
+        max_treedepth=max(12, int(base.max_treedepth)),
+        strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
+        strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
+        max_divergence_ratio=min(0.005, float(base.max_divergence_ratio)),
+        rhat_threshold=min(_GHS_PLUS_DEFAULT_RHAT_THRESHOLD, float(base.rhat_threshold)),
+        ess_threshold=max(_GHS_PLUS_DEFAULT_ESS_THRESHOLD, float(base.ess_threshold)),
+    )
+
+
+def _sampler_for_bayesian_default(base: SamplerConfig) -> SamplerConfig:
+    """Unified Bayesian default: all Bayesian methods use at least 4 chains."""
+    return SamplerConfig(
+        chains=max(_BAYESIAN_DEFAULT_CHAINS, int(base.chains)),
+        warmup=int(base.warmup),
+        post_warmup_draws=int(base.post_warmup_draws),
+        adapt_delta=float(base.adapt_delta),
+        max_treedepth=int(base.max_treedepth),
+        strict_adapt_delta=float(base.strict_adapt_delta),
+        strict_max_treedepth=int(base.strict_max_treedepth),
+        max_divergence_ratio=float(base.max_divergence_ratio),
+        rhat_threshold=float(base.rhat_threshold),
+        ess_threshold=float(base.ess_threshold),
     )
 
 
@@ -403,7 +441,12 @@ def _fit_all_methods(
     gigg_fixed_cfg = {k: v for k, v in gigg_cfg.items() if k != "mmle_burnin_only"}
 
     def _fit_once(method: str, attempt: int) -> FitResult:
-        sampler_try = _scale_sampler_for_retry(sampler, attempt)
+        sampler_base = sampler
+        if _is_bayesian_method(method):
+            sampler_base = _sampler_for_bayesian_default(sampler_base)
+        if method == "GHS_plus":
+            sampler_base = _sampler_for_ghs_plus_default(sampler_base)
+        sampler_try = _scale_sampler_for_retry(sampler_base, attempt)
         gigg_try = _scale_gigg_config_for_retry(gigg_cfg, attempt)
         gigg_mmle_try = dict(gigg_try)
         gigg_fixed_try = {k: v for k, v in gigg_try.items() if k != "mmle_burnin_only"}
@@ -1094,6 +1137,7 @@ def _exp3_worker(
             "signal": signal,
             "design_type": str(design_type),
             "rho_within": float(rho_within),
+            "rho_between": float(rho_between),
             "target_snr": float(target_snr),
             "sigma2": float(sigma2),
             "replicate_id": int(r),
@@ -1116,6 +1160,9 @@ def run_exp3_linear_benchmark(
     save_dir: str = "simulation_project",
     *,
     signal_types: Sequence[str] | None = None,
+    rho_within_values: Sequence[float] | None = None,
+    snr_values: Sequence[float] | None = None,
+    rho_between: float = 0.0,
     profile: str = "full",
     methods: Sequence[str] | None = None,
     enforce_bayes_convergence: bool = True,
@@ -1123,33 +1170,45 @@ def run_exp3_linear_benchmark(
     until_bayes_converged: bool = True,
     n_test: int = 30,
     sampler_backend: str = "nuts",
+    grrhs_extra_kwargs: dict | None = None,
 ) -> Dict[str, str]:
     """
-    Exp3: Toy linear benchmark — concentrated vs. distributed signal structure.
-
-    2-setting design (orthonormal only, rho=0), fixed SNR=2.0.
+    Exp3: Full factor benchmark — signal_structure × rho_within × SNR × rho_between.
     group_sizes=[5]*5 (p=25), n_train=100, n_test=30.
-    Prop 3.35 (blockwise orthonormal lift) applies exactly.
 
-    Signal types:
-      concentrated  — all nonzero beta in G0, G1 only; G2/G3/G4 are pure null.
-                      GR-RHS kappa_g gate fires on G0/G1, contracts G2-G4.
-      distributed   — nonzero beta spread uniformly across ALL groups.
-                      No group is entirely null => kappa_g gate confers no advantage.
-                      Expected: GR-RHS ~= RHS.
+    Signal types (default ["concentrated", "distributed"]):
+      concentrated — all nonzero beta in G0, G1; G2/G3/G4 are pure null.
+                     GR-RHS kappa_g gate fires on G0/G1, contracts G2-G4.
+      distributed  — one nonzero beta each in G0, G1; within-group sparse.
+      boundary     — signal at 1.2×xi_crit(u0=0.5, rho_ref=0.1); near detection threshold.
+
+    rho_within values (default [0.0]):
+      0.0 — orthonormal blocks; GIGG has exact null contraction (special case)
+      0.3 — moderate within-group correlation; GR-RHS kappa_g advantage emerges
+      0.8 — high within-group correlation; GR-RHS vs competitors gap is largest
+
+    snr_values (default [2.0]):
+      2.0 — moderate SNR; all methods competitive
+      1.0 — lower SNR; group-level regularization more valuable
+      0.5 — weak SNR; individual-level methods lose to group-structured priors
+
+    rho_between (default 0.0):
+      0.0 — groups are independent; all group methods on equal footing
+      0.1 — mild cross-group correlation; breaks GIGG/GHS+ group-independence assumption
+      0.3 — strong cross-group correlation; GR-RHS's flexible kappa_g clearly dominates
 
     Methods (fixed, 6 total):
-      GR_RHS    — paper method (canonical: tau_target=groups, default Beta prior)
-      GHS_plus  — Group Horseshoe+ (Xu et al.), direct group-level competitor
-      GIGG_MMLE — GIGG with MMLE hyperparameter selection, another group-level method
-      RHS       — Regularized Horseshoe, no group structure (Bayes baseline)
-      LASSO_CV  — LASSO with CV, classical baseline
-      OLS       — unregularized, lower-bound reference
+      GR_RHS    — paper method (canonical: tau_target=groups)
+      GHS_plus  — Group Horseshoe+ (Xu et al.)
+      GIGG_MMLE — GIGG with MMLE hyperparameter selection
+      RHS       — Regularized Horseshoe (no group structure)
+      LASSO_CV  — LASSO with CV
+      OLS       — unregularized reference
 
-    Key expected pattern:
-      concentrated: GR_RHS null_mse << RHS null_mse; kappa_null~0, kappa_signal large
-      distributed:  GR_RHS null_mse ~= RHS null_mse; kappa separation absent
-    laptop: 2 settings x 5 reps = 10 tasks, ~10 min
+    Key expected patterns:
+      rho_within>0, low SNR, concentrated: GR_RHS null_mse << all competitors
+      rho_between>0, any: GIGG/GHS+ group-independence violated; GR_RHS robust
+      boundary signal: GR_RHS separates null/signal groups; individual methods fail
     """
     import pandas as pd
 
@@ -1161,7 +1220,6 @@ def run_exp3_linear_benchmark(
 
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_profile(profile_name)
-    # Fixed 6-method comparison; ignore profile method resolver
     _exp3_methods = ["GR_RHS", "GHS_plus", "GIGG_MMLE", "RHS", "LASSO_CV", "OLS"]
     methods_use = [m for m in (methods or _exp3_methods) if m in set(_exp3_methods)]
     if not methods_use:
@@ -1174,14 +1232,24 @@ def run_exp3_linear_benchmark(
     )
 
     signals = list(signal_types or ["concentrated", "distributed"])
-    fixed_snr = 2.0
+    rho_values = list(rho_within_values if rho_within_values is not None else [0.0])
+    snr_list = list(snr_values if snr_values is not None else [2.0])
+    rhob = float(rho_between)
 
-    # 2 settings: concentrated vs distributed, both orthonormal (rho=0)
+    # settings: signal × rho_within × target_snr
+    # rho=0 → orthonormal design; rho>0 → correlated design (rho_between applied to both)
     settings: list[tuple[int, str, str, float, float, float]] = []
-    for sid, signal in enumerate(signals, start=1):
-        settings.append((sid, signal, "orthonormal", 0.0, 0.0, fixed_snr))
+    sid = 0
+    for signal in signals:
+        for rho in rho_values:
+            for snr in snr_list:
+                sid += 1
+                design = "orthonormal" if float(rho) == 0.0 and rhob == 0.0 else "correlated"
+                settings.append((sid, signal, design, float(rho), rhob, float(snr)))
 
-    grrhs_kw = {"backend": str(sampler_backend), "tau_target": "groups"}
+    grrhs_kw: dict = {"backend": str(sampler_backend), "tau_target": "groups"}
+    if grrhs_extra_kwargs:
+        grrhs_kw.update(grrhs_extra_kwargs)
     tasks: list[tuple] = []
     for (sid_v, signal_v, dt_v, rho_v, rhob_v, snr_v) in settings:
         for r in range(1, int(repeats) + 1):
@@ -1204,13 +1272,11 @@ def run_exp3_linear_benchmark(
             ))
 
     log.info(
-        "Exp3: %d settings x %d repeats = %d tasks, methods=%s, enforce=%s, retry_limit=%d",
-        len(settings),
-        repeats,
-        len(tasks),
-        methods_use,
-        bool(enforce_bayes_convergence),
-        int(retry_limit),
+        "Exp3: %d settings x %d repeats = %d tasks "
+        "(signals=%s, rho_within=%s, snr=%s, rho_between=%.2f), methods=%s, enforce=%s, retry_limit=%d",
+        len(settings), repeats, len(tasks),
+        signals, rho_values, snr_list, rhob,
+        methods_use, bool(enforce_bayes_convergence), int(retry_limit),
     )
     all_chunks = _parallel_rows(tasks, _exp3_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp3 Linear Benchmark")
     rows: list[dict] = []
@@ -1221,7 +1287,7 @@ def run_exp3_linear_benchmark(
 
     ok_raw = raw.loc[raw["status"] == "ok"].copy()
     conv_raw = ok_raw.loc[ok_raw["converged"].fillna(False).astype(bool)].copy()
-    group_keys = ["signal", "design_type", "rho_within", "method"]
+    group_keys = ["signal", "design_type", "rho_within", "rho_between", "target_snr", "method"]
 
     counts_df = raw.groupby(group_keys, as_index=False).agg(
         n_reps_total=("replicate_id", "count"),
@@ -1251,8 +1317,9 @@ def run_exp3_linear_benchmark(
     save_json({
         "profile": profile_name,
         "signals": signals,
-        "rho": 0.0,
-        "fixed_snr": fixed_snr,
+        "rho_within_values": rho_values,
+        "rho_between": rhob,
+        "snr_values": snr_list,
         "group_sizes": [5, 5, 5, 5, 5],
         "n_train": 100,
         "n_test": int(n_test),
@@ -1403,11 +1470,14 @@ def _fit_with_convergence_retry(
     enforce_bayes_convergence: bool,
 ) -> FitResult:
     retry_max, until_mode = _retry_budget_from_limit(int(max_convergence_retries))
+    sampler_base = sampler
+    if _is_bayesian_method(method):
+        sampler_base = _sampler_for_bayesian_default(sampler_base)
     res: FitResult | None = None
     attempts = 1
     for attempt in range(retry_max + 1):
         attempts = attempt + 1
-        sampler_try = _scale_sampler_for_retry(sampler, attempt)
+        sampler_try = _scale_sampler_for_retry(sampler_base, attempt)
         res = fit_fn(sampler_try, attempt)
         if not bool(enforce_bayes_convergence):
             break
