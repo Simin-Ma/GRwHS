@@ -23,29 +23,31 @@ def beta_sample_woodbury(
     *,
     jitter: float = 1e-10,
 ) -> np.ndarray:
-    """Sample 尾 ~ N(渭_尾, 危_尾) via Bhattacharya (2016) fast algorithm.
+    """Sample beta from its Gaussian posterior using the Woodbury sampler.
 
-    Complexity O(n虏p + n鲁) versus O(p鲁) for the direct Cholesky approach.
-    Efficient when n << p.
+    Complexity is O(n^2 p + n^3), versus O(p^3) for direct Cholesky on the
+    p-by-p precision matrix. This path is efficient when n << p.
 
-    Posterior: 危_尾 = D - D X岬€ M鈦宦?X D,  渭_尾 = D X岬€ M鈦宦?y
-    where D = diag(prior_var), M = X D X岬€ + 蟽虏I.
+    Posterior:
+      Cov(beta | y) = D - D X^T M^{-1} X D
+      Mean(beta | y) = D X^T M^{-1} y
+      with D = diag(prior_var), M = X D X^T + sigma2 * I_n.
 
-    Algorithm (Bhattacharya et al., 2016, Biometrika):
-        u  ~ N(0, D)
-        未  ~ N(0, 蟽虏I_n)
-        w   = M鈦宦?(y 鈭?Xu 鈭?未)
-        尾   = u + D X岬€ w
+    Algorithm (Bhattacharya et al., 2016):
+      u ~ N(0, D)
+      delta ~ N(0, sigma2 * I_n)
+      w = M^{-1}(y - X u - delta)
+      beta = u + D X^T w
     """
     n, p = X.shape
     D = np.maximum(prior_var, jitter)
 
-    XD = X * D                                          # n脳p  (broadcast D as row)
-    M = XD @ X.T                                        # n脳n
-    np.fill_diagonal(M, M.diagonal() + sigma2)          # M += 蟽虏I
+    XD = X * D                                          # n x p (broadcast D by row)
+    M = XD @ X.T                                        # n x n
+    np.fill_diagonal(M, M.diagonal() + sigma2)          # M += sigma2 * I
 
     u = rng.standard_normal(p) * np.sqrt(D)             # u ~ N(0, D)
-    delta = rng.standard_normal(n) * math.sqrt(max(sigma2, jitter))  # 未 ~ N(0, 蟽虏I)
+    delta = rng.standard_normal(n) * math.sqrt(max(sigma2, jitter))  # delta ~ N(0, sigma2 * I)
     w = np.linalg.solve(M, y - X @ u - delta)           # n
     return u + D * (X.T @ w)                            # p
 
@@ -59,10 +61,10 @@ def beta_sample_cholesky(
     *,
     jitter: float = 1e-10,
 ) -> np.ndarray:
-    """Sample 尾 from its Gaussian posterior via Cholesky on the p脳p precision.
+    """Sample beta via Cholesky on the p-by-p posterior precision.
 
-    Posterior precision: X岬€ X / 蟽虏 + diag(1/prior_var).
-    Complexity O(p鲁); use beta_sample_woodbury for n << p.
+    Posterior precision: X^T X / sigma2 + diag(1 / prior_var).
+    Complexity O(p^3). Prefer beta_sample_woodbury when n << p.
     """
     from scipy.linalg import cho_factor, cho_solve, solve_triangular
 

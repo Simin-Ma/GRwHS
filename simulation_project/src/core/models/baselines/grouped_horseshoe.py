@@ -73,13 +73,14 @@ def _sample_beta_conditional(
     jitter: float,
     rng: Generator,
 ) -> np.ndarray:
-    """Sample 尾 from its Gaussian full conditional.
+    """Sample beta from its Gaussian full conditional.
 
-    Uses Bhattacharya (2016) Woodbury path (O(n虏p)) when X and y are supplied
-    and n < p; falls back to Cholesky on the p脳p precision otherwise.
+    Uses the Bhattacharya (2016) Woodbury path when X and y are supplied and
+    n < p; otherwise falls back to Cholesky on the p-by-p precision matrix.
 
-    The HBGHS prior is 尾_j ~ N(0, 蟽虏路prior_var_j), so the posterior is
-    N((X岬€X + diag(prior_prec))鈦宦?X岬€y, 蟽虏路(X岬€X + diag(prior_prec))鈦宦?.
+    The HBGHS prior is beta_j ~ N(0, sigma2 * prior_var_j), so the posterior is
+    N((X^T X + diag(prior_prec))^{-1} X^T y,
+      sigma2 * (X^T X + diag(prior_prec))^{-1}).
     The Woodbury path works in the equivalent scaled space (X' = X, y' = y,
     prior D = prior_var), recovering the same distribution.
     """
@@ -94,8 +95,8 @@ def _sample_beta_conditional(
             rng,
             jitter=float(jitter),
         )
-    # Cholesky on p脳p precision: precision = X岬€X + diag(1/prior_var)
-    # (蟽虏 factored out; noise scaled by 鈭毾兟?to match N(渭, 蟽虏路precision鈦宦?)
+    # Cholesky on p-by-p precision: precision = X^T X + diag(1/prior_var)
+    # sigma2 is factored out; noise is scaled by sqrt(sigma2).
     prior_prec = 1.0 / np.maximum(pv, jitter)
     precision = np.asarray(XtX, dtype=float) + np.diag(prior_prec)
     if jitter > 0.0:
@@ -275,7 +276,7 @@ class GroupedHorseshoePlus:
             tau2 = _sample_invgamma(alpha=0.5 * (p + 1), beta=max(tau_rate + (1.0 / max(tau_aux, self.jitter)), self.jitter), rng=rng)
             tau_aux = _sample_invgamma(alpha=1.0, beta=(1.0 / tau2) + (1.0 / (float(self.tau0) ** 2)), rng=rng)
 
-            # lambda_g^2 | beta, sigma^2, tau^2, delta_j  [group shrinkage 鈥?vectorized]
+            # lambda_g^2 | beta, sigma^2, tau^2, delta_j  [group shrinkage, vectorized]
             weighted_b2 = beta ** 2 / np.maximum(local_delta2, self.jitter)
             group_beta_sq = np.bincount(group_id, weights=weighted_b2, minlength=G)
             rates_g = (0.5 * group_beta_sq / max(sigma2 * tau2, self.jitter)
@@ -294,7 +295,7 @@ class GroupedHorseshoePlus:
                 ),
             )
 
-            # delta_j^2 | beta, sigma^2, tau^2, lambda_g  [within-group 鈥?vectorized]
+            # delta_j^2 | beta, sigma^2, tau^2, lambda_g  [within-group, vectorized]
             group_scales_j = group_lambda2[group_id]
             rates_j = (0.5 * beta ** 2 / np.maximum(sigma2 * tau2 * group_scales_j, self.jitter)
                        + 1.0 / np.maximum(local_aux, self.jitter))

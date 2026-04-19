@@ -231,9 +231,9 @@ class GRRHS_NUTS:
         tau2 = tau * tau
         lam2 = lam * lam
         a2_j = a_j * a_j
-        # Dimensionless ratio r_j = (蟿路位_j路a_{g(j)})虏/蟽虏 keeps each factor O(1)
-        # and avoids overflow from the four-way product 蟿虏路位虏路a虏路蟽虏.
-        # v_j = 蟽虏路魏_{g(j)}路r_j / (魏_{g(j)} + (1-魏_{g(j)})路r_j)
+        # Dimensionless ratio r_j = tau^2 * lambda_j^2 * a_g(j)^2 / sigma^2
+        # keeps each factor O(1) and avoids overflow in products of scales.
+        # v_j = sigma^2 * kappa_g(j) * r_j / (kappa_g(j) + (1-kappa_g(j)) * r_j)
         r = tau2 * lam2 * a2_j / (sigma2 + _EPS)
         beta_var = sigma2 * kappa_j * r / (kappa_j + (1.0 - kappa_j) * r + _EPS)
         beta_scale = jnp.sqrt(jnp.maximum(beta_var, _EPS))
@@ -504,20 +504,20 @@ class GRRHS_Gibbs:
 
     Per-iteration complexity
     ------------------------
-    尾 update     : O(n虏p + n鲁)  when n < p  (Bhattacharya fast sampler)
-                   O(p鲁)         when n 鈮?p  (Cholesky)
-    蟽虏 update    : O(p)  (1-D slice on log 蟽)
-    蟿  update    : O(p)  (1-D slice on log 蟿)
-    位_j updates  : O(1) 脳 p  (1-D slice per coefficient, if use_local_scale)
-    a_g updates  : O(p_g) 脳 G  (1-D slice per group, if use_group_scale)
-    魏_g updates  : O(p_g) 脳 G  (1-D slice per group)
+    beta update    : O(n^2 p + n^3) when n < p (Bhattacharya fast sampler),
+                     O(p^3) otherwise (Cholesky)
+    sigma^2 update : O(p) (1-D slice on log sigma)
+    tau update     : O(p) (1-D slice on log tau)
+    lambda_j update: O(1) x p (1-D slice per coefficient, if use_local_scale)
+    a_g update     : O(p_g) x G (1-D slice per group, if use_group_scale)
+    kappa_g update : O(p_g) x G (1-D slice per group)
 
     Profile specialisation (O5)
     ---------------------------
     When use_local_scale=False and use_group_scale=False the posterior
     factorises across groups (Prop. 3.16).  The algorithm exploits this
-    automatically because every 魏_g slice step is already conditionally
-    independent of every other 魏_{g'} given 尾, 蟿, 蟽虏.
+    automatically because every kappa_g slice step is conditionally
+    independent of every other kappa_{g'} given beta, tau, and sigma^2.
     """
 
     # prior hyper-parameters
@@ -577,13 +577,16 @@ class GRRHS_Gibbs:
         kappa_j: np.ndarray,
         jitter: float,
     ) -> np.ndarray:
-        """Per-coefficient prior variance v_{j,g} = 蟽虏魏r/(魏+(1-魏)r), r=蟿虏位虏a虏/蟽虏."""
+        """Per-coefficient prior variance:
+        v_{j,g} = sigma^2 * kappa * r / (kappa + (1-kappa) * r),
+        where r = tau^2 * lambda^2 * a^2 / sigma^2.
+        """
         r = tau2 * lam2 * a2_j / (sigma2 + jitter)
         return np.maximum(sigma2 * kappa_j * r / (kappa_j + (1.0 - kappa_j) * r + jitter), jitter)
 
     @staticmethod
     def _ll_beta(beta: np.ndarray, v: np.ndarray) -> float:
-        """Log N(0, diag(v)) density for 尾 (proportional)."""
+        """Log N(0, diag(v)) density for beta (up to constants)."""
         return -0.5 * float(np.sum(np.log(v) + beta ** 2 / v))
 
     # ------------------------------------------------------------------ log conditionals
@@ -599,12 +602,12 @@ class GRRHS_Gibbs:
         a2_j: np.ndarray,
         kappa_j: np.ndarray,
     ) -> float:
-        """Log-conditional for r = log 蟽 (Jacobian included)."""
+        """Log-conditional for r = log(sigma), including Jacobian."""
         sigma2 = math.exp(2.0 * r)
         resid = y - Xbeta
         v = self._v_arr(sigma2, tau2, lam2, a2_j, kappa_j, self.jitter)
         n = float(len(y))
-        # Gaussian likelihood + 尾 prior + half-Cauchy(s0) prior + Jacobian (+r)
+        # Gaussian likelihood + beta prior + half-Cauchy(s0) prior + Jacobian (+r)
         return (
             -n * r
             - 0.5 * float(np.dot(resid, resid)) / sigma2
@@ -623,7 +626,7 @@ class GRRHS_Gibbs:
         kappa_j: np.ndarray,
         tau_scale: float,
     ) -> float:
-        """Log-conditional for u = log 蟿."""
+        """Log-conditional for u = log(tau)."""
         tau2 = math.exp(2.0 * u)
         v = self._v_arr(sigma2, tau2, lam2, a2_j, kappa_j, self.jitter)
         return (
@@ -641,11 +644,11 @@ class GRRHS_Gibbs:
         a2_j: float,
         kappa_j: float,
     ) -> float:
-        """Log-conditional for s = log 位_j (affects only coefficient j)."""
+        """Log-conditional for s = log(lambda_j); affects coefficient j only."""
         lam2_j = math.exp(2.0 * s)
         r = tau2 * lam2_j * a2_j / (sigma2 + self.jitter)
         v_j = max(sigma2 * kappa_j * r / (kappa_j + (1.0 - kappa_j) * r + self.jitter), self.jitter)
-        # half-Cauchy(1) prior on 位_j + Jacobian
+        # half-Cauchy(1) prior on lambda_j + Jacobian
         return -0.5 * (math.log(v_j) + beta_j ** 2 / v_j) + s - math.log(max(1.0 + math.exp(2.0 * s), self.jitter))
 
     def _lc_log_a_g(
@@ -679,12 +682,12 @@ class GRRHS_Gibbs:
         lam2_g: np.ndarray,
         a2_g: float,
     ) -> float:
-        """Log-conditional for w = logit 魏_g (Jacobian included in Beta prior term)."""
+        """Log-conditional for w = logit(kappa_g). Jacobian is included in the Beta prior term."""
         kappa_g = 1.0 / (1.0 + math.exp(-w))
         kg = np.full(len(beta_g), kappa_g)
         r = tau2 * lam2_g * a2_g / (sigma2 + self.jitter)
         v_g = np.maximum(sigma2 * kg * r / (kg + (1.0 - kg) * r + self.jitter), self.jitter)
-        # Beta(伪_魏, 尾_魏) prior; log|d魏/dw| = log 魏 + log(1-魏) absorbed into (伪+1, 尾+1) shift
+        # Beta(alpha_kappa, beta_kappa) prior with logit Jacobian absorbed.
         return (
             self._ll_beta(beta_g, v_g)
             + self.alpha_kappa * math.log(max(kappa_g, self.jitter))
@@ -752,7 +755,7 @@ class GRRHS_Gibbs:
             a2_j = a[group_id] ** 2
             kappa_j = kappa[group_id]
 
-            # ---- 尾 | rest  (Woodbury when n < p, else Cholesky) ----
+            # ---- beta | rest  (Woodbury when n < p, else Cholesky) ----
             v = self._v_arr(sigma2, tau2, lam2, a2_j, kappa_j, self.jitter)
             if n < p:
                 beta = beta_sample_woodbury(X, y, sigma2, v, rng, jitter=self.jitter)
@@ -760,13 +763,13 @@ class GRRHS_Gibbs:
                 beta = beta_sample_cholesky(XtX, Xty, sigma2, v, rng, jitter=self.jitter)
             Xbeta = X @ beta
 
-            # ---- log 蟽 | rest  (1-D slice) ----
+            # ---- log sigma | rest  (1-D slice) ----
             def _lc_s(r: float) -> float:
                 return self._lc_log_sigma(r, beta, y, X @ beta, tau2, lam2, a2_j, kappa_j)
             log_sigma = slice_sample_1d(_lc_s, log_sigma, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
             sigma2 = math.exp(2.0 * log_sigma)
 
-            # ---- log 蟿 | rest  (1-D slice) ----
+            # ---- log tau | rest  (1-D slice) ----
             tau_scale = float(tau0_eff) * math.sqrt(max(sigma2, self.jitter))
             def _lc_t(u: float) -> float:
                 return self._lc_log_tau(u, beta, sigma2, lam2, a2_j, kappa_j, tau_scale)
@@ -774,7 +777,7 @@ class GRRHS_Gibbs:
             tau = math.exp(log_tau)
             tau2 = tau ** 2
 
-            # ---- log 位_j | rest  (1-D slice per coefficient) ----
+            # ---- log lambda_j | rest  (1-D slice per coefficient) ----
             if self.use_local_scale:
                 for j in range(p):
                     def _lc_lj(s: float, _j: int = j) -> float:
@@ -794,7 +797,7 @@ class GRRHS_Gibbs:
 
             a2_j = a[group_id] ** 2
 
-            # ---- logit 魏_g | rest  (1-D slice per group; factorises in profile mode) ----
+            # ---- logit kappa_g | rest  (1-D slice per group; factorizes in profile mode) ----
             if self.shared_kappa:
                 g0_members = np.arange(p)
                 def _lc_ksh(w: float) -> float:
@@ -1074,7 +1077,8 @@ class GRRHS_CollapsedNUTS:
 
             # Marginal likelihood: y ~ N(0, X V X^T + sigma^2 I_n)
             if profile_mode and group_XXT is not None:
-                # lam=1, a=1 鈫?v only depends on group: v_g = sigma2*kappa_g*tau2/(sigma2*kappa_g+(1-kappa_g)*tau2)
+                # lam=1 and a=1 => v depends only on group:
+                # v_g = sigma2*kappa_g*tau2 / (sigma2*kappa_g + (1-kappa_g)*tau2)
                 r_g = tau2 / (sigma2 + _EPS)
                 v_g = sigma2 * kappa * r_g / (kappa + (1.0 - kappa) * r_g + _EPS)  # (G,)
                 # Sigma_y = sum_g v_g * M_g + sigma2 * I  [M_g = X_g X_g^T precomputed]
@@ -1086,7 +1090,7 @@ class GRRHS_CollapsedNUTS:
                 a2_j = a_j * a_j
                 r = tau2 * lam2 * a2_j / (sigma2 + _EPS)
                 v = sigma2 * kappa_j * r / (kappa_j + (1.0 - kappa_j) * r + _EPS)  # (p,)
-                XD = X * v        # n脳p
+                XD = X * v        # n x p
                 Sigma_y = XD @ X.T + sigma2 * jnp.eye(n, dtype=X.dtype)
 
             Sigma_y = Sigma_y + sig_jit * jnp.eye(n, dtype=X.dtype)
@@ -1130,8 +1134,8 @@ class GRRHS_CollapsedNUTS:
             M_list = []
             for g_idx, members in enumerate(groups_use):
                 Xg = X_arr[:, np.asarray(members, dtype=int)]
-                M_list.append(Xg @ Xg.T)  # n脳n
-            group_XXT_jnp = jnp.asarray(np.stack(M_list, axis=0))  # G脳n脳n
+                M_list.append(Xg @ Xg.T)  # n x n
+            group_XXT_jnp = jnp.asarray(np.stack(M_list, axis=0))  # G x n x n
 
         model_fn = self._build_model(profile_mode=profile_mode, group_XXT=group_XXT_jnp)
 
