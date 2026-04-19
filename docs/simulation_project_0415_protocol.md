@@ -24,6 +24,7 @@ The active code path includes 5 experiments (`exp1`-`exp5`).
 - `--no-enforce-bayes-convergence`
 - `--max-convergence-retries <k>`
 - `--until-bayes-converged`
+- default retry budget by profile when not specified: `full=2`, `laptop=1`
 
 ## Commands
 

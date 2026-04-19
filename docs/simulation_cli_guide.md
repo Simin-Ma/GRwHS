@@ -84,7 +84,8 @@ python -m simulation_project.src.run_experiment --experiment 4 --save-dir simula
 - `laptop`: `chains=2, warmup=800, draws=800, ess_threshold=200`
 - `full`: `chains=4, warmup=1500, draws=1500, ess_threshold=400`
 - 单链时 R-hat 自动跳过，避免伪失败。
-- 若使用 `--until-bayes-converged` 且未显式设置 `--max-convergence-retries`，Exp5 内部会将重试上限限制为 `3`（避免无限耗时）。
+- 未显式设置 `--max-convergence-retries` 时，默认按 profile 取值：`full=2`，`laptop=1`。
+- 若需要“直到收敛”为止的模式，请显式设置：`--max-convergence-retries -1`。
 
 命令建议：
 

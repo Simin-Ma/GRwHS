@@ -146,8 +146,11 @@ def _resolve_convergence_retry_limit(
 ) -> int:
     if max_convergence_retries is not None:
         return int(max_convergence_retries)
+    # Default retries are profile-bounded to avoid runaway wall-time.
+    # If truly unbounded-until-converged behavior is desired, pass
+    # max_convergence_retries=-1 explicitly.
     if bool(until_bayes_converged):
-        return -1
+        return _default_convergence_retries(profile)
     return _default_convergence_retries(profile)
 
 
