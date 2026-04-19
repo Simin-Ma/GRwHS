@@ -90,7 +90,12 @@ def _sampler_for_profile(profile: str, *, experiment: str = "") -> SamplerConfig
 def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
     p = _normalize_compute_profile(profile)
     if p == "full":
-        return {"iter_mult": 4, "iter_floor": 2000, "iter_cap": 5000, "btrick": False, "mmle_burnin_only": True}
+        # Boss et al. (2024) Section 5.2: 10 000 burn-in + 10 000 posterior draws.
+        # floor=cap=10000 pins both burnin and draws to exactly 10k regardless of
+        # the HMC sampler budget, matching the published computational baseline.
+        # no_retry=True: if 10k+10k is not enough, report non-convergence rather
+        # than inflating the budget beyond what the paper used.
+        return {"iter_mult": 4, "iter_floor": 10000, "iter_cap": 10000, "btrick": False, "mmle_burnin_only": True, "no_retry": True}
     return {"iter_mult": 2, "iter_floor": 500, "iter_cap": 1500, "btrick": False, "mmle_burnin_only": True}
 
 
@@ -471,12 +476,17 @@ def _fit_all_methods(
         raise ValueError(f"Unsupported method: {method}")
 
     retry_max, until_mode = _retry_budget_from_limit(int(max_convergence_retries))
+    _gigg_methods = {"GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large"}
+    _gigg_no_retry = bool(gigg_cfg.get("no_retry", False))
     out: Dict[str, FitResult] = {}
     for method in methods_use:
         res: FitResult | None = None
         attempts = 1
+        # GIGG methods with no_retry=True run exactly once (paper budget = 10k+10k);
+        # non-convergence is reported as-is rather than retried with a larger budget.
+        method_retry_max = 0 if (_gigg_no_retry and method in _gigg_methods) else retry_max
         if bool(enforce_bayes_convergence) and _is_bayesian_method(method):
-            for attempt in range(retry_max + 1):
+            for attempt in range(method_retry_max + 1):
                 attempts = attempt + 1
                 res = _fit_once(method, attempt)
                 if bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):

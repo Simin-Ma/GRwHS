@@ -9,12 +9,14 @@ from simulation_project.src.core.models.gigg_regression import GIGGRegression
 from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
 
 # ── iteration counts ────────────────────────────────────────────────────────
-# Boss et al. (2024) use 10 000 burn-in + 10 000 draws in all simulations.
-# We use 4× the HMC warmup (floor 2 000, cap 5 000) so MMLE has enough
-# steps to converge b_g from b_init = 0.5, keeping wall-time manageable.
+# Boss et al. (2024) use 10 000 burn-in + 10 000 draws in all simulations
+# (Section 5.2). Defaults here match that budget exactly so direct calls to
+# fit_gigg_mmle / fit_gigg_fixed reproduce the paper's computational setting.
+# floor=cap=10000 means the sampler always runs exactly 10k+10k regardless
+# of the HMC warmup/draw budget passed via SamplerConfig.
 _DEFAULT_GIGG_ITER_MULT = 4
-_DEFAULT_GIGG_ITER_FLOOR = 2000
-_DEFAULT_GIGG_ITER_CAP = 5000
+_DEFAULT_GIGG_ITER_FLOOR = 10000
+_DEFAULT_GIGG_ITER_CAP = 10000
 
 
 def _gigg_iters(
