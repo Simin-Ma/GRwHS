@@ -25,12 +25,12 @@ exp3_linear_benchmark:
     Metrics: mse_null, mse_signal, mse_overall, lpd_test (MLPD), coverage_95.
 
 exp4_variant_ablation:
-  repeats_full: 50
-  repeats_laptop: 20
+  repeats_full: 30
+  repeats_laptop: 15
   description: >
     Exp4 — GR-RHS variant ablation: tau calibration study.
-    Variants: oracle tau0, auto-calibrated, under-shrinkage (0.1x), over-shrinkage (10x), RHS baseline.
-    DGP: 4-group, 20 vars/group, p0 in {2, 8, 20}.
+    Variants: oracle tau0, auto-calibrated, over-permissive (10x), RHS baseline.
+    DGP matches Exp3 scale: 5 groups x 10 vars (p=50), n=100, p0 in {5, 15, 30}.
     Validates that the 0415 tau0 calibration formula recovers oracle-level MSE.
 
 exp5_prior_sensitivity:

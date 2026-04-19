@@ -1568,16 +1568,16 @@ def run_exp4_variant_ablation(
 
     Tests the 0415 tau calibration formula:  tau0 = p0/(p-p0)/sqrt(n).
     The central prediction: calibrated-tau should match oracle-tau and dominate
-    the misspecified variants (x0.1, x10).
+    the misspecified variant (x10) and RHS baseline.
 
     Variants:
-      oracle:       auto_calibrate=False, tau0 from true p0 (best case)
-      calibrated:   auto_calibrate=True  (0415 formula with estimated p0)
-      fixed_0_1x:   tau0 * 0.1 (too small, insufficient global shrinkage)
-      fixed_10x:    tau0 * 10  (too large, over-shrinks all signals)
-      RHS:          standard RHS with oracle p0 (baseline without kappa_g layer)
+      oracle:     auto_calibrate=False, tau0 from true p0 (best case)
+      calibrated: auto_calibrate=True  (0415 formula with estimated p0)
+      fixed_10x:  tau0 * 10  (over-permissive, nulls not shrunk enough)
+      RHS_oracle: standard RHS with oracle p0 (baseline without kappa_g layer)
 
-    Sparsity levels: p0 in {5, 15, 40} (p=100, 5 groups of 20, n=500)
+    DGP matches Exp3 scale: p=50 (5 groups of 10), n=100.
+    Sparsity levels: p0 in {5, 15, 30}.
     """
     import pandas as pd
 
@@ -1590,20 +1590,19 @@ def run_exp4_variant_ablation(
     sampler = _sampler_for_profile(profile_name)
     retry_limit = _resolve_convergence_retry_limit(profile_name, max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
 
-    group_sizes = [20, 20, 20, 20, 20]
+    group_sizes = [10, 10, 10, 10, 10]
     p = int(sum(group_sizes))
-    n = 500
-    p0_vals = list(p0_list or [5, 15, 40])
+    n = 100
+    p0_vals = list(p0_list or [5, 15, 30])
 
     # Variants: method + grrhs kwargs
     def _variants_for_p0(p0_true: int) -> dict[str, dict]:
         tau0_oracle = rhs_style_tau0(n=n, p=p, p0=p0_true)
         return {
-            "oracle":       {"method": "GR_RHS", "auto_calibrate_tau": False, "tau0": tau0_oracle, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
-            "calibrated":   {"method": "GR_RHS", "auto_calibrate_tau": True, "tau0": None, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
-            "fixed_0_1x":   {"method": "GR_RHS", "auto_calibrate_tau": False, "tau0": tau0_oracle * 0.1, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
-            "fixed_10x":    {"method": "GR_RHS", "auto_calibrate_tau": False, "tau0": tau0_oracle * 10.0, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
-            "RHS_oracle":   {"method": "RHS"},
+            "oracle":     {"method": "GR_RHS", "auto_calibrate_tau": False, "tau0": tau0_oracle, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
+            "calibrated": {"method": "GR_RHS", "auto_calibrate_tau": True, "tau0": None, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
+            "fixed_10x":  {"method": "GR_RHS", "auto_calibrate_tau": False, "tau0": tau0_oracle * 10.0, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
+            "RHS_oracle": {"method": "RHS"},
         }
 
     tasks: list[tuple] = []
