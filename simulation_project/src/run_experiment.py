@@ -1017,38 +1017,60 @@ def run_exp2_group_separation(
 _RHO_REF_BOUNDARY = 0.1   # reference rho for xi_crit calibration in boundary setting
 _SIGMA2_BOUNDARY = 1.0
 
+# ---------------------------------------------------------------------------
+# Default group configurations for Exp3 — mirrors GIGG paper Table 1 coverage
+# plus GR-RHS-favorable scenarios (large null blocks, rho_between > 0).
+#
+# Each entry:
+#   name          — short label used in output CSV / meta JSON
+#   group_sizes   — list of per-group sizes (sum = p)
+#   active_groups — which group indices contain the signal (rest are null)
+#
+# G5x5  : 5 equal groups of size 5  (p=25)  — GR-RHS home turf
+# G10x5 : 5 equal groups of size 10 (p=50)  — GIGG paper C10H/D10H baseline
+# CL    : [30,10,5,3,2], signal in large groups — GIGG Table 3 CL/DL
+# CS    : [30,10,5,3,2], signal in small groups — GR-RHS κ_g advantage
+#         (large null blocks → κ_g→0 contracts 30+10+5 features collectively)
+# ---------------------------------------------------------------------------
+_DEFAULT_EXP3_GROUP_CONFIGS: list[dict[str, Any]] = [
+    {"name": "G5x5",  "group_sizes": [5, 5, 5, 5, 5],      "active_groups": [0, 1]},
+    {"name": "G10x5", "group_sizes": [10, 10, 10, 10, 10],  "active_groups": [0, 1]},
+    {"name": "CL",    "group_sizes": [30, 10, 5, 3, 2],     "active_groups": [0, 1]},
+    {"name": "CS",    "group_sizes": [30, 10, 5, 3, 2],     "active_groups": [3, 4]},
+]
+
 
 def _build_benchmark_beta(
     signal: str,
     group_sizes: Sequence[int],
     *,
+    active_groups: Sequence[int] | None = None,
     sigma2: float = 1.0,
     p: int | None = None,
 ) -> np.ndarray:
     """Construct beta for each benchmark signal structure.
 
-    concentrated: all variables in groups 0,1 active with equal weight (||beta_g||=1)
-    distributed:  first variable only in groups 0,1 active (||beta_g||=1)
-    boundary:     all vars in groups 0,1 active, calibrated at 1.2*xi_crit
+    concentrated: all variables in active groups with equal weight (||beta_g||=1 per group)
+    distributed:  first variable only in each active group (beta_j=1)
+    boundary:     all vars in active groups, calibrated at 1.2*xi_crit
     """
     from .utils import canonical_groups
     groups = canonical_groups(group_sizes)
     total_p = int(p or sum(group_sizes))
     beta = np.zeros(total_p, dtype=float)
-    n_active = 2
-    active_groups = list(range(n_active))
+    _active = list(active_groups) if active_groups is not None else [0, 1]
 
     if signal == "concentrated":
-        for gid in active_groups:
+        for gid in _active:
             idx = np.asarray(groups[gid], dtype=int)
             beta[idx] = 1.0 / math.sqrt(len(idx))
     elif signal == "distributed":
-        for gid in active_groups:
+        for gid in _active:
             beta[groups[gid][0]] = 1.0
     elif signal == "boundary":
         # sigma2=1.0, rho_ref=0.1 fixed for xi_crit calibration
         xi_c = xi_crit_u0_rho(u0=0.5, rho=_RHO_REF_BOUNDARY / math.sqrt(_SIGMA2_BOUNDARY))
-        for gid in active_groups:
+        for gid in _active:
             idx = np.asarray(groups[gid], dtype=int)
             pg = len(idx)
             mu_g = 1.2 * xi_c * pg
@@ -1060,18 +1082,20 @@ def _build_benchmark_beta(
 
 
 def _exp3_worker(
-    task: tuple[int, str, str, float, float, float, int, float, int, SamplerConfig, list[str], dict[str, Any], bool, int, dict]
+    task: tuple,
 ) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import generate_grouped_linear_dataset, generate_orthonormal_block_design, sigma2_for_target_snr
     from .utils import canonical_groups, sample_correlated_design
 
-    sid, signal, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, enforce_conv, max_retries, grrhs_kwargs = task
+    sid, signal, group_cfg, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, enforce_conv, max_retries, grrhs_kwargs = task
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
-    group_sizes = [5, 5, 5, 5, 5]
+    group_sizes: list[int] = list(group_cfg["group_sizes"])
+    active_groups: list[int] = list(group_cfg["active_groups"])
+    group_cfg_name: str = str(group_cfg["name"])
     n_train = 100
 
-    beta0 = _build_benchmark_beta(signal, group_sizes)
+    beta0 = _build_benchmark_beta(signal, group_sizes, active_groups=active_groups)
     p = int(sum(group_sizes))
 
     # Construct training dataset
@@ -1129,11 +1153,14 @@ def _exp3_worker(
         kappa_signal_mean = float("nan")
         if method == "GR_RHS" and res.beta_mean is not None:
             km = _kappa_group_means(res, n_groups)
-            # groups 0,1 are active; 2,3,4 are null
-            kappa_signal_mean = float(np.mean([km[g] for g in [0, 1] if not np.isnan(km[g])]) if any(not np.isnan(km[g]) for g in [0, 1]) else float("nan"))
-            kappa_null_mean = float(np.mean([km[g] for g in [2, 3, 4] if not np.isnan(km[g])]) if any(not np.isnan(km[g]) for g in [2, 3, 4]) else float("nan"))
+            null_groups = [g for g in range(n_groups) if g not in set(active_groups)]
+            _sig_vals = [km[g] for g in active_groups if not np.isnan(km[g])]
+            _null_vals = [km[g] for g in null_groups if not np.isnan(km[g])]
+            kappa_signal_mean = float(np.mean(_sig_vals)) if _sig_vals else float("nan")
+            kappa_null_mean = float(np.mean(_null_vals)) if _null_vals else float("nan")
         out_rows.append({
             "setting_id": int(sid),
+            "group_config": group_cfg_name,
             "signal": signal,
             "design_type": str(design_type),
             "rho_within": float(rho_within),
@@ -1162,7 +1189,8 @@ def run_exp3_linear_benchmark(
     signal_types: Sequence[str] | None = None,
     rho_within_values: Sequence[float] | None = None,
     snr_values: Sequence[float] | None = None,
-    rho_between: float = 0.0,
+    rho_between: float = 0.1,
+    group_configs: list[dict[str, Any]] | None = None,
     profile: str = "full",
     methods: Sequence[str] | None = None,
     enforce_bayes_convergence: bool = True,
@@ -1173,27 +1201,25 @@ def run_exp3_linear_benchmark(
     grrhs_extra_kwargs: dict | None = None,
 ) -> Dict[str, str]:
     """
-    Exp3: Full factor benchmark — signal_structure × rho_within × SNR × rho_between.
-    group_sizes=[5]*5 (p=25), n_train=100, n_test=30.
+    Exp3: Full factor benchmark — signal_structure × group_config × rho_within × SNR × rho_between.
+    n_train=100, n_test=30.
 
-    Signal types (default ["concentrated", "distributed"]):
+    Signal types (default ["concentrated", "distributed", "boundary"]):
       concentrated — all nonzero beta in G0, G1; G2/G3/G4 are pure null.
                      GR-RHS kappa_g gate fires on G0/G1, contracts G2-G4.
       distributed  — one nonzero beta each in G0, G1; within-group sparse.
       boundary     — signal at 1.2×xi_crit(u0=0.5, rho_ref=0.1); near detection threshold.
 
-    rho_within values (default [0.0]):
-      0.0 — orthonormal blocks; GIGG has exact null contraction (special case)
+    rho_within values (default [0.3, 0.8]):
       0.3 — moderate within-group correlation; GR-RHS kappa_g advantage emerges
       0.8 — high within-group correlation; GR-RHS vs competitors gap is largest
 
-    snr_values (default [2.0]):
+    snr_values (default [0.5, 2.0]):
       2.0 — moderate SNR; all methods competitive
       1.0 — lower SNR; group-level regularization more valuable
       0.5 — weak SNR; individual-level methods lose to group-structured priors
 
-    rho_between (default 0.0):
-      0.0 — groups are independent; all group methods on equal footing
+    rho_between (default 0.1):
       0.1 — mild cross-group correlation; breaks GIGG/GHS+ group-independence assumption
       0.3 — strong cross-group correlation; GR-RHS's flexible kappa_g clearly dominates
 
@@ -1231,31 +1257,34 @@ def run_exp3_linear_benchmark(
         until_bayes_converged=bool(until_bayes_converged),
     )
 
-    signals = list(signal_types or ["concentrated", "distributed"])
-    rho_values = list(rho_within_values if rho_within_values is not None else [0.0])
-    snr_list = list(snr_values if snr_values is not None else [2.0])
+    signals = list(signal_types or ["concentrated", "distributed", "boundary"])
+    rho_values = list(rho_within_values if rho_within_values is not None else [0.3, 0.8])
+    snr_list = list(snr_values if snr_values is not None else [0.5, 2.0])
     rhob = float(rho_between)
+    gc_list: list[dict[str, Any]] = list(group_configs) if group_configs is not None else list(_DEFAULT_EXP3_GROUP_CONFIGS)
 
-    # settings: signal × rho_within × target_snr
-    # rho=0 → orthonormal design; rho>0 → correlated design (rho_between applied to both)
-    settings: list[tuple[int, str, str, float, float, float]] = []
+    # settings: group_config × signal × rho_within × target_snr
+    # rho=0 and rhob=0 → orthonormal design; otherwise correlated
+    settings: list[tuple[int, str, dict, str, float, float, float]] = []
     sid = 0
-    for signal in signals:
-        for rho in rho_values:
-            for snr in snr_list:
-                sid += 1
-                design = "orthonormal" if float(rho) == 0.0 and rhob == 0.0 else "correlated"
-                settings.append((sid, signal, design, float(rho), rhob, float(snr)))
+    for gc in gc_list:
+        for signal in signals:
+            for rho in rho_values:
+                for snr in snr_list:
+                    sid += 1
+                    design = "orthonormal" if float(rho) == 0.0 and rhob == 0.0 else "correlated"
+                    settings.append((sid, signal, gc, design, float(rho), rhob, float(snr)))
 
     grrhs_kw: dict = {"backend": str(sampler_backend), "tau_target": "groups"}
     if grrhs_extra_kwargs:
         grrhs_kw.update(grrhs_extra_kwargs)
     tasks: list[tuple] = []
-    for (sid_v, signal_v, dt_v, rho_v, rhob_v, snr_v) in settings:
+    for (sid_v, signal_v, gc_v, dt_v, rho_v, rhob_v, snr_v) in settings:
         for r in range(1, int(repeats) + 1):
             tasks.append((
                 sid_v,
                 signal_v,
+                gc_v,
                 dt_v,
                 rho_v,
                 rhob_v,
@@ -1273,9 +1302,10 @@ def run_exp3_linear_benchmark(
 
     log.info(
         "Exp3: %d settings x %d repeats = %d tasks "
-        "(signals=%s, rho_within=%s, snr=%s, rho_between=%.2f), methods=%s, enforce=%s, retry_limit=%d",
+        "(group_configs=%s, signals=%s, rho_within=%s, snr=%s, rho_between=%.2f), methods=%s, enforce=%s, retry_limit=%d",
         len(settings), repeats, len(tasks),
         signals, rho_values, snr_list, rhob,
+        [gc["name"] for gc in gc_list], signals, rho_values, snr_list, rhob,
         methods_use, bool(enforce_bayes_convergence), int(retry_limit),
     )
     all_chunks = _parallel_rows(tasks, _exp3_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp3 Linear Benchmark")
@@ -1287,7 +1317,7 @@ def run_exp3_linear_benchmark(
 
     ok_raw = raw.loc[raw["status"] == "ok"].copy()
     conv_raw = ok_raw.loc[ok_raw["converged"].fillna(False).astype(bool)].copy()
-    group_keys = ["signal", "design_type", "rho_within", "rho_between", "target_snr", "method"]
+    group_keys = ["group_config", "signal", "design_type", "rho_within", "rho_between", "target_snr", "method"]
 
     counts_df = raw.groupby(group_keys, as_index=False).agg(
         n_reps_total=("replicate_id", "count"),
@@ -1316,11 +1346,11 @@ def run_exp3_linear_benchmark(
     save_dataframe(table_df, tab_dir / "table_linear_benchmark.csv")
     save_json({
         "profile": profile_name,
+        "group_configs": [{"name": gc["name"], "group_sizes": gc["group_sizes"], "active_groups": gc["active_groups"]} for gc in gc_list],
         "signals": signals,
         "rho_within_values": rho_values,
         "rho_between": rhob,
         "snr_values": snr_list,
-        "group_sizes": [5, 5, 5, 5, 5],
         "n_train": 100,
         "n_test": int(n_test),
         "methods": methods_use,
