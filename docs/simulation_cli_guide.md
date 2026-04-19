@@ -86,6 +86,7 @@ python -m simulation_project.src.run_experiment --experiment 4 --save-dir simula
 - 单链时 R-hat 自动跳过，避免伪失败。
 - 未显式设置 `--max-convergence-retries` 时，默认按 profile 取值：`full=2`，`laptop=1`。
 - 若需要“直到收敛”为止的模式，请显式设置：`--max-convergence-retries -1`。
+- 重试不会放宽 `R-hat/ESS/divergence` 阈值，只会增加 warmup/draw 与迭代预算。
 
 命令建议：
 

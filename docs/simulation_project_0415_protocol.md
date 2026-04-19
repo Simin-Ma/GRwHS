@@ -25,6 +25,7 @@ The active code path includes 5 experiments (`exp1`-`exp5`).
 - `--max-convergence-retries <k>`
 - `--until-bayes-converged`
 - default retry budget by profile when not specified: `full=2`, `laptop=1`
+- convergence thresholds are fixed across retries (`R-hat` / `ESS` / divergence); retries only increase sampling budget
 
 ## Commands
 

@@ -166,12 +166,8 @@ def _scale_sampler_for_retry(base: SamplerConfig, attempt: int) -> SamplerConfig
     if k == 0:
         return base
     mul = int(2 ** k)
-    # Relax convergence gates slightly on later retries while still preferring
-    # higher-quality chains via larger warmup/draw budgets.
-    rhat_relax = min(1.05, float(base.rhat_threshold) + 0.005 * k)
-    ess_floor = max(40.0, 0.6 * float(base.ess_threshold))
-    ess_relax = max(ess_floor, float(base.ess_threshold) * (0.85 ** k))
-    div_relax = min(0.05, float(base.max_divergence_ratio) * (1.5 ** k))
+    # Keep convergence criteria fixed across retries to enforce a uniform
+    # Bayesian quality standard. Retries only increase sampling budget.
     return SamplerConfig(
         chains=max(1, int(base.chains)),
         warmup=min(_RETRY_MAX_WARMUP, max(50, int(base.warmup) * mul)),
@@ -180,9 +176,9 @@ def _scale_sampler_for_retry(base: SamplerConfig, attempt: int) -> SamplerConfig
         max_treedepth=min(15, int(base.max_treedepth) + k),
         strict_adapt_delta=min(0.999, float(base.strict_adapt_delta) + 0.01 * k),
         strict_max_treedepth=min(16, int(base.strict_max_treedepth) + k),
-        max_divergence_ratio=float(div_relax),
-        rhat_threshold=float(rhat_relax),
-        ess_threshold=float(ess_relax),
+        max_divergence_ratio=float(base.max_divergence_ratio),
+        rhat_threshold=float(base.rhat_threshold),
+        ess_threshold=float(base.ess_threshold),
     )
 
 
