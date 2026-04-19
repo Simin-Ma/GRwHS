@@ -99,6 +99,12 @@ def fit_gigg_mmle(
     iter_cap: int = _DEFAULT_GIGG_ITER_CAP,
     btrick: bool = True,
     mmle_burnin_only: bool = True,
+    init_strategy: str = "ridge",
+    init_ridge: float = 1.0,
+    init_scale_blend: float = 0.5,
+    randomize_group_order: bool = False,
+    lambda_vectorized_update: bool = False,
+    extra_beta_refresh_prob: float = 0.0,
 ) -> FitResult:
     """GIGG with MMLE hyperparameter estimation (Boss et al. 2024, Section 4.2).
 
@@ -139,6 +145,12 @@ def fit_gigg_mmle(
             btrick=bool(btrick),
             stable_solve=True,
             mmle_burnin_only=bool(mmle_burnin_only),
+            init_strategy=str(init_strategy),
+            init_ridge=float(init_ridge),
+            init_scale_blend=float(init_scale_blend),
+            randomize_group_order=bool(randomize_group_order),
+            lambda_vectorized_update=bool(lambda_vectorized_update),
+            extra_beta_refresh_prob=float(extra_beta_refresh_prob),
         )
         model, runtime = timed_call(model.fit, X, y, groups=[list(map(int, g)) for g in groups])
         return _extract_and_diagnose(model, "GIGG_MMLE", sampler, runtime)
@@ -164,6 +176,12 @@ def fit_gigg_fixed(
     iter_floor: int = _DEFAULT_GIGG_ITER_FLOOR,
     iter_cap: int = _DEFAULT_GIGG_ITER_CAP,
     btrick: bool = True,
+    init_strategy: str = "ridge",
+    init_ridge: float = 1.0,
+    init_scale_blend: float = 0.5,
+    randomize_group_order: bool = False,
+    lambda_vectorized_update: bool = False,
+    extra_beta_refresh_prob: float = 0.0,
 ) -> FitResult:
     """GIGG with fixed hyperparameters (Boss et al. 2024, Table 2 ablation variants).
 
@@ -208,6 +226,12 @@ def fit_gigg_fixed(
             tau_sq_init=float(tau0 ** 2),
             btrick=bool(btrick),
             stable_solve=True,
+            init_strategy=str(init_strategy),
+            init_ridge=float(init_ridge),
+            init_scale_blend=float(init_scale_blend),
+            randomize_group_order=bool(randomize_group_order),
+            lambda_vectorized_update=bool(lambda_vectorized_update),
+            extra_beta_refresh_prob=float(extra_beta_refresh_prob),
         )
         a_arr = [a_fixed] * G
         b_arr = [float(b_val)] * G

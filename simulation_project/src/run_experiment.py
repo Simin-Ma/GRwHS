@@ -119,8 +119,8 @@ def _sampler_for_exp5(base: SamplerConfig, *, profile: str) -> SamplerConfig:
 
 def _default_repeats(exp: str, profile: str) -> int:
     p = _normalize_compute_profile(profile)
-    full = {"exp1": 500, "exp2": 30, "exp3": 50, "exp4": 50, "exp5": 30}
-    laptop = {"exp1": 200, "exp2": 10, "exp3": 10, "exp4": 20, "exp5": 15}
+    full = {"exp1": 500, "exp2": 30, "exp3": 20, "exp4": 50, "exp5": 30}
+    laptop = {"exp1": 200, "exp2": 10, "exp3": 5, "exp4": 20, "exp5": 15}
     table = full if p == "full" else laptop
     if str(exp).lower() not in table:
         raise ValueError(f"unknown experiment: {exp!r}")
@@ -378,6 +378,7 @@ def _fit_all_methods(
     task: str,
     seed: int,
     p0: int,
+    p0_groups: int | None = None,
     sampler: SamplerConfig,
     grrhs_kwargs: dict[str, Any] | None = None,
     methods: Sequence[str] | None = None,
@@ -393,6 +394,10 @@ def _fit_all_methods(
 
     n = X.shape[0]
     grrhs_kwargs = grrhs_kwargs or {}
+    tau_target_use = str(grrhs_kwargs.get("tau_target", "coefficients")).strip().lower()
+    grrhs_p0 = int(p0)
+    if tau_target_use == "groups" and (p0_groups is not None):
+        grrhs_p0 = int(p0_groups)
     methods_use = _resolve_method_list(methods, profile="full") if methods is not None else list(METHODS)
     gigg_cfg = dict(gigg_config or {})
     gigg_mmle_cfg = dict(gigg_cfg)
@@ -404,7 +409,7 @@ def _fit_all_methods(
         gigg_mmle_try = dict(gigg_try)
         gigg_fixed_try = {k: v for k, v in gigg_try.items() if k != "mmle_burnin_only"}
         if method == "GR_RHS":
-            return fit_gr_rhs(X, y, groups, task=task, seed=seed + 1 + 100 * attempt, p0=p0, sampler=sampler_try, **grrhs_kwargs)
+            return fit_gr_rhs(X, y, groups, task=task, seed=seed + 1 + 100 * attempt, p0=grrhs_p0, sampler=sampler_try, **grrhs_kwargs)
         if method == "RHS":
             return fit_rhs(X, y, groups, task=task, seed=seed + 2 + 100 * attempt, p0=p0, sampler=sampler_try)
         if method == "GIGG_MMLE":
@@ -1021,8 +1026,8 @@ def _exp3_worker(
     sid, signal, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, enforce_conv, max_retries, grrhs_kwargs = task
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
-    group_sizes = [10, 10, 10, 10, 10]
-    n_train = 200
+    group_sizes = [5, 5, 5, 5, 5]
+    n_train = 100
 
     beta0 = _build_benchmark_beta(signal, group_sizes)
     p = int(sum(group_sizes))
@@ -1055,11 +1060,20 @@ def _exp3_worker(
 
     groups = canonical_groups(group_sizes)
     p0 = int(np.sum(np.abs(beta0) > 1e-12))
+    p0_signal_groups = int(
+        np.sum(
+            [
+                int(np.any(np.abs(beta0[np.asarray(g, dtype=int)]) > 1e-12))
+                for g in groups
+            ]
+        )
+    )
     n_groups = len(group_sizes)
 
     fits = _fit_all_methods(
         X_train, y_train, groups,
         task="gaussian", seed=s, p0=p0,
+        p0_groups=p0_signal_groups,
         sampler=sampler, methods=methods, gigg_config=gigg_config,
         grrhs_kwargs=grrhs_kwargs or {},
         enforce_bayes_convergence=bool(enforce_conv),
@@ -1099,35 +1113,31 @@ def _exp3_worker(
 def run_exp3_linear_benchmark(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
-    repeats: int = 50,
+    repeats: int = 20,
     save_dir: str = "simulation_project",
     *,
     signal_types: Sequence[str] | None = None,
-    rho_list: Sequence[float] | None = None,
     profile: str = "full",
     methods: Sequence[str] | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    n_test: int = 50,
+    n_test: int = 30,
     sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
     Exp3: Toy linear benchmark — concentrated vs. distributed signal structure.
 
-    4-setting design (2 signal types x 2 design types), fixed SNR=1.0, n_train=200.
+    2-setting design (orthonormal only, rho=0), fixed SNR=2.0.
+    group_sizes=[5]*5 (p=25), n_train=100, n_test=30.
+    Prop 3.35 (blockwise orthonormal lift) applies exactly.
 
     Signal types:
       concentrated  — all nonzero beta in G0, G1 only; G2/G3/G4 are pure null.
                       GR-RHS kappa_g gate fires on G0/G1, contracts G2-G4.
-                      Prop 3.35 (blockwise orthonormal lift) applies at rho=0.
       distributed   — nonzero beta spread uniformly across ALL groups.
                       No group is entirely null => kappa_g gate confers no advantage.
                       Expected: GR-RHS ~= RHS.
-
-    Design types:
-      orthonormal (rho=0.0) — Prop 3.35 applies exactly; cleanest theoretical setting.
-      correlated  (rho=0.5) — practical correlated-predictor setting.
 
     Methods (fixed, 6 total):
       GR_RHS    — paper method (canonical: tau_target=groups, default Beta prior)
@@ -1138,8 +1148,9 @@ def run_exp3_linear_benchmark(
       OLS       — unregularized, lower-bound reference
 
     Key expected pattern:
-      concentrated: GR_RHS null_mse << RHS null_mse; kappa_null~0, kappa_signal>>0
+      concentrated: GR_RHS null_mse << RHS null_mse; kappa_null~0, kappa_signal large
       distributed:  GR_RHS null_mse ~= RHS null_mse; kappa separation absent
+    laptop: 2 settings x 5 reps = 10 tasks, ~10 min
     """
     import pandas as pd
 
@@ -1157,30 +1168,51 @@ def run_exp3_linear_benchmark(
     if not methods_use:
         methods_use = list(_exp3_methods)
     gigg_cfg = _gigg_config_for_profile(profile_name)
-    retry_limit = _resolve_convergence_retry_limit(profile_name, max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
+    retry_limit = _resolve_convergence_retry_limit(
+        profile_name,
+        max_convergence_retries,
+        until_bayes_converged=bool(until_bayes_converged),
+    )
 
     signals = list(signal_types or ["concentrated", "distributed"])
-    rhos = list(rho_list or [0.0, 0.5])
-    fixed_snr = 1.0
+    fixed_snr = 2.0
 
-    # 4 settings: 2 signals x 2 rho values
+    # 2 settings: concentrated vs distributed, both orthonormal (rho=0)
     settings: list[tuple[int, str, str, float, float, float]] = []
-    sid = 0
-    for signal in signals:
-        for rho in rhos:
-            sid += 1
-            design_type = "orthonormal" if abs(float(rho)) < 1e-9 else "correlated"
-            rho_between = 0.05 if design_type == "correlated" else 0.0
-            settings.append((sid, signal, design_type, float(rho), float(rho_between), fixed_snr))
+    for sid, signal in enumerate(signals, start=1):
+        settings.append((sid, signal, "orthonormal", 0.0, 0.0, fixed_snr))
 
     grrhs_kw = {"backend": str(sampler_backend), "tau_target": "groups"}
     tasks: list[tuple] = []
     for (sid_v, signal_v, dt_v, rho_v, rhob_v, snr_v) in settings:
         for r in range(1, int(repeats) + 1):
-            tasks.append((sid_v, signal_v, dt_v, rho_v, rhob_v, snr_v, r, seed, n_test, sampler, methods_use, gigg_cfg, bool(enforce_bayes_convergence), int(retry_limit), grrhs_kw))
+            tasks.append((
+                sid_v,
+                signal_v,
+                dt_v,
+                rho_v,
+                rhob_v,
+                snr_v,
+                r,
+                seed,
+                n_test,
+                sampler,
+                methods_use,
+                gigg_cfg,
+                bool(enforce_bayes_convergence),
+                int(retry_limit),
+                grrhs_kw,
+            ))
 
-    log.info("Exp3 toy: %d settings x %d repeats = %d tasks, methods=%s",
-             len(settings), repeats, len(tasks), methods_use)
+    log.info(
+        "Exp3: %d settings x %d repeats = %d tasks, methods=%s, enforce=%s, retry_limit=%d",
+        len(settings),
+        repeats,
+        len(tasks),
+        methods_use,
+        bool(enforce_bayes_convergence),
+        int(retry_limit),
+    )
     all_chunks = _parallel_rows(tasks, _exp3_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp3 Linear Benchmark")
     rows: list[dict] = []
     for chunk in all_chunks:
@@ -1188,19 +1220,17 @@ def run_exp3_linear_benchmark(
 
     raw = pd.DataFrame(rows)
 
-    # Paired-converged summary by (signal, design_type, rho_within, method)
-    paired_raw, _ = _paired_converged_subset(
-        raw,
-        group_cols=["signal", "rho_within"],
-        method_col="method",
-        replicate_col="replicate_id",
-        converged_col="converged",
-        required_cols=["mse_null", "mse_signal", "mse_overall", "lpd_test"],
-        method_levels=methods_use,
+    ok_raw = raw.loc[raw["status"] == "ok"].copy()
+    conv_raw = ok_raw.loc[ok_raw["converged"].fillna(False).astype(bool)].copy()
+    group_keys = ["signal", "design_type", "rho_within", "method"]
+
+    counts_df = raw.groupby(group_keys, as_index=False).agg(
+        n_reps_total=("replicate_id", "count"),
+        n_reps_ok=("status", lambda s: int((s == "ok").sum())),
+        n_reps_converged=("converged", lambda s: int(s.fillna(False).astype(bool).sum())),
     )
-    agg_df = (paired_raw if not paired_raw.empty else raw.loc[raw["converged"]]).groupby(
-        ["signal", "design_type", "rho_within", "method"], as_index=False
-    ).agg(
+
+    metric_df = conv_raw.groupby(group_keys, as_index=False).agg(
         mse_null=("mse_null", "mean"),
         mse_signal=("mse_signal", "mean"),
         mse_overall=("mse_overall", "mean"),
@@ -1209,31 +1239,47 @@ def run_exp3_linear_benchmark(
         avg_ci_length=("avg_ci_length", "mean"),
         kappa_null_mean=("kappa_null_mean", "mean"),
         kappa_signal_mean=("kappa_signal_mean", "mean"),
-        n_effective=("converged", "sum"),
     )
+
+    agg_df = counts_df.merge(metric_df, on=group_keys, how="left")
+    agg_df["n_reps"] = agg_df["n_reps_converged"]
 
     save_dataframe(raw, out_dir / "raw_results.csv")
     save_dataframe(agg_df, out_dir / "summary.csv")
-    save_dataframe(agg_df, tab_dir / "table_linear_benchmark.csv")
+    table_df = metric_df.merge(counts_df[group_keys + ["n_reps_converged"]], on=group_keys, how="left")
+    table_df = table_df.rename(columns={"n_reps_converged": "n_reps"})
+    save_dataframe(table_df, tab_dir / "table_linear_benchmark.csv")
     save_json({
         "profile": profile_name,
         "signals": signals,
-        "rhos": rhos,
+        "rho": 0.0,
         "fixed_snr": fixed_snr,
-        "n_train": 200,
+        "group_sizes": [5, 5, 5, 5, 5],
+        "n_train": 100,
         "n_test": int(n_test),
         "methods": methods_use,
         "n_settings": len(settings),
         "repeats": int(repeats),
+        "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+        "max_convergence_retries": int(retry_limit),
+        "until_bayes_converged": bool(until_bayes_converged),
     }, out_dir / "exp3_meta.json")
 
     try:
         from .plotting import plot_exp3_benchmark
-        plot_exp3_benchmark(agg_df, out_dir=fig_dir)
+        if not table_df.empty:
+            plot_exp3_benchmark(table_df, out_dir=fig_dir)
+        else:
+            log.warning("Plot exp3 skipped: no converged rows available.")
     except Exception as exc:
         log.warning("Plot exp3 failed: %s", exc)
 
-    log.info("Exp3 done: %d rows, %d settings", len(rows), len(settings))
+    log.info(
+        "Exp3 done: %d rows, %d settings, %d converged rows used for metrics",
+        len(rows),
+        len(settings),
+        int(conv_raw.shape[0]),
+    )
     return {"raw": str(out_dir / "raw_results.csv"), "summary": str(out_dir / "summary.csv"), "table": str(tab_dir / "table_linear_benchmark.csv")}
 
 # ---------------------------------------------------------------------------
