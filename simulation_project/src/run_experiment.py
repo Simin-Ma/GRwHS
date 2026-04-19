@@ -84,8 +84,8 @@ def _sampler_for_profile(profile: str, *, experiment: str = "") -> SamplerConfig
 def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
     p = _normalize_compute_profile(profile)
     if p == "full":
-        return {"iter_mult": 4, "iter_floor": 2000, "iter_cap": 5000, "btrick": True, "mmle_burnin_only": True}
-    return {"iter_mult": 2, "iter_floor": 500, "iter_cap": 1500, "btrick": True, "mmle_burnin_only": True}
+        return {"iter_mult": 4, "iter_floor": 2000, "iter_cap": 5000, "btrick": False, "mmle_burnin_only": True}
+    return {"iter_mult": 2, "iter_floor": 500, "iter_cap": 1500, "btrick": False, "mmle_burnin_only": True}
 
 
 def _sampler_for_exp5(base: SamplerConfig, *, profile: str) -> SamplerConfig:

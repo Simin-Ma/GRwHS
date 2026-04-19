@@ -1,0 +1,110 @@
+[
+  {
+    "case": "laptop_retry0_r20",
+    "profile": "laptop",
+    "repeats": 20,
+    "max_retries": 0,
+    "n_tasks": 40,
+    "wall_seconds": 45.01127886772156,
+    "ok_rate": 0.525,
+    "conv_rate": 0.525,
+    "runtime_median": 1.0744090000007418,
+    "runtime_p90": 1.1336134600031074,
+    "ess_median": 122.14211989838871,
+    "ess_p10": 61.69291702256057,
+    "rhat_median": NaN,
+    "by_signal": {
+      "concentrated": {
+        "n": 20,
+        "ok_rate": 0.65,
+        "conv_rate": 0.65,
+        "runtime_median": 1.083737850000034,
+        "runtime_p90": 1.1416665900003864,
+        "ess_median": 131.57295774724247,
+        "ess_p10": 94.68330554839321
+      },
+      "distributed": {
+        "n": 20,
+        "ok_rate": 0.4,
+        "conv_rate": 0.4,
+        "runtime_median": 1.069657100000768,
+        "runtime_p90": 1.0877067300039927,
+        "ess_median": 90.11557496882861,
+        "ess_p10": 51.46654954732906
+      }
+    },
+    "raw_path": "D:\\FilesP\\GR-RHS\\ab_runs\\exp3_gigg_forecast\\laptop_retry0_r20\\results\\exp3_linear_benchmark\\raw_results.csv"
+  },
+  {
+    "case": "laptop_retry1_r20",
+    "profile": "laptop",
+    "repeats": 20,
+    "max_retries": 1,
+    "n_tasks": 40,
+    "wall_seconds": 125.31095433235168,
+    "ok_rate": 1.0,
+    "conv_rate": 1.0,
+    "runtime_median": 1.1062359499992453,
+    "runtime_p90": 4.316383650005447,
+    "ess_median": 221.93728891556822,
+    "ess_p10": 133.9717566853809,
+    "rhat_median": NaN,
+    "by_signal": {
+      "concentrated": {
+        "n": 20,
+        "ok_rate": 1.0,
+        "conv_rate": 1.0,
+        "runtime_median": 1.0870532000044475,
+        "runtime_p90": 4.231265909993089,
+        "ess_median": 166.66294424272428,
+        "ess_p10": 128.07204538306914
+      },
+      "distributed": {
+        "n": 20,
+        "ok_rate": 1.0,
+        "conv_rate": 1.0,
+        "runtime_median": 4.2111592999935965,
+        "runtime_p90": 4.3212500799971165,
+        "ess_median": 247.63623988254216,
+        "ess_p10": 185.57717733057896
+      }
+    },
+    "raw_path": "D:\\FilesP\\GR-RHS\\ab_runs\\exp3_gigg_forecast\\laptop_retry1_r20\\results\\exp3_linear_benchmark\\raw_results.csv"
+  },
+  {
+    "case": "full_retry1_r5",
+    "profile": "full",
+    "repeats": 5,
+    "max_retries": 1,
+    "n_tasks": 10,
+    "wall_seconds": 89.21427035331726,
+    "ok_rate": 0.9,
+    "conv_rate": 0.9,
+    "runtime_median": 6.41489305000141,
+    "runtime_p90": 8.919968939994572,
+    "ess_median": 1188.8868902710105,
+    "ess_p10": 876.0836856269256,
+    "rhat_median": 1.0057794178183452,
+    "by_signal": {
+      "concentrated": {
+        "n": 5,
+        "ok_rate": 1.0,
+        "conv_rate": 1.0,
+        "runtime_median": 6.449712000001455,
+        "runtime_p90": 7.110779579996597,
+        "ess_median": 1005.3627374798324,
+        "ess_p10": 776.4298380548603
+      },
+      "distributed": {
+        "n": 5,
+        "ok_rate": 0.8,
+        "conv_rate": 0.8,
+        "runtime_median": 6.412566999992123,
+        "runtime_p90": 16.326927340007387,
+        "ess_median": 1726.8054585781103,
+        "ess_p10": 1219.031547628705
+      }
+    },
+    "raw_path": "D:\\FilesP\\GR-RHS\\ab_runs\\exp3_gigg_forecast\\full_retry1_r5\\results\\exp3_linear_benchmark\\raw_results.csv"
+  }
+]

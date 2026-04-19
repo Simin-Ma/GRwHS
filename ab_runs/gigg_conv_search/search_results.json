@@ -1,0 +1,1071 @@
+{
+  "elapsed_seconds": 5139.143260478973,
+  "stage1_repeats": 2,
+  "stage2_repeats": 5,
+  "stage1": [
+    {
+      "name": "S9_no_btrick",
+      "n_tasks": 4,
+      "conv_rate": 1.0,
+      "runtime_median": 1.1848116000037408,
+      "runtime_p90": 1.2018285499929333,
+      "ess_median": 188.20573584812206,
+      "ess_p90": 247.8048323742709,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 1.0,
+          "runtime_median": 1.1985560499961139,
+          "ess_median": 126.59620283628888
+        },
+        "distributed": {
+          "conv_rate": 1.0,
+          "runtime_median": 1.1730224499988253,
+          "ess_median": 246.99877071305116
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.2067372999881627,
+          "ess_last": 131.42785513624233,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.190374800004065,
+          "ess_last": 121.76455053633542,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1792484000034165,
+          "ess_last": 249.0139248661005,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1667964999942342,
+          "ess_last": 244.98361656000182,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S6_retry2",
+      "n_tasks": 4,
+      "conv_rate": 1.0,
+      "runtime_median": 69.92630844999076,
+      "runtime_p90": 187.39697476998992,
+      "ess_median": 171.50238992792816,
+      "ess_p90": 382.28933376256157,
+      "attempts_mean": 2.25,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 1.0,
+          "runtime_median": 69.87539610000385,
+          "ess_median": 139.98518890984835
+        },
+        "distributed": {
+          "conv_rate": 1.0,
+          "runtime_median": 153.8313239999843,
+          "ess_median": 327.2328785325841
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 69.82083920000878,
+          "ess_last": 126.55733842148086,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 69.92995299999893,
+          "ess_last": 153.41303939821583,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 69.92266389998258,
+          "ess_last": 189.5917404576405,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 3,
+          "runtime_seconds": 237.73998409998603,
+          "ess_last": 464.87401660752766,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S2_more_draws_1chain_more_iter",
+      "n_tasks": 4,
+      "conv_rate": 0.75,
+      "runtime_median": 39.51947704999475,
+      "runtime_p90": 39.558472169998275,
+      "ess_median": 136.18942365149832,
+      "ess_p90": 149.43596445526015,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 1.0,
+          "runtime_median": 39.52258759999677,
+          "ess_median": 147.8252901156382
+        },
+        "distributed": {
+          "conv_rate": 0.5,
+          "runtime_median": 39.48533259999385,
+          "ess_median": 109.22440672161582
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 39.48483669999405,
+          "ess_last": 143.7986042665834,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 39.56033849999949,
+          "ess_last": 151.85197596469303,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 39.55411739999545,
+          "ess_last": 89.86857040681839,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 39.41654779999226,
+          "ess_last": 128.58024303641324,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S5_retry1",
+      "n_tasks": 4,
+      "conv_rate": 0.75,
+      "runtime_median": 70.53484965000098,
+      "runtime_p90": 71.39867235999554,
+      "ess_median": 139.98518890984835,
+      "ess_p90": 178.7381301398131,
+      "attempts_mean": 2.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 1.0,
+          "runtime_median": 71.16789539999445,
+          "ess_median": 139.98518890984835
+        },
+        "distributed": {
+          "conv_rate": 0.5,
+          "runtime_median": 69.70822985000996,
+          "ess_median": 134.5988679547533
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 71.74483779999719,
+          "ess_last": 126.55733842148086,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 70.59095299999171,
+          "ess_last": 153.41303939821583,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 70.47874630001024,
+          "ess_last": 189.5917404576405,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 2,
+          "runtime_seconds": 68.93771340000967,
+          "ess_last": 79.60599545186612,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S4_two_chains_more_draws",
+      "n_tasks": 4,
+      "conv_rate": 0.75,
+      "runtime_median": 124.19998350000242,
+      "runtime_p90": 130.4479711699925,
+      "ess_median": 189.28477389703335,
+      "ess_p90": 218.7084792268728,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 0.5,
+          "runtime_median": 128.22796055000072,
+          "ess_median": 189.28477389703335
+        },
+        "distributed": {
+          "conv_rate": 1.0,
+          "runtime_median": 121.11149954999564,
+          "ess_median": 186.9587789203564
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 132.8647573999915,
+          "ess_last": 181.14916067325885,
+          "rhat_last": 1.1111195489661603
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 123.59116370000993,
+          "ess_last": 197.42038712080785,
+          "rhat_last": 1.0215589120417228
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 117.41419579999638,
+          "ess_last": 146.08561056838357,
+          "rhat_last": 1.015878660616846
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 124.8088032999949,
+          "ess_last": 227.83194727232922,
+          "rhat_last": 1.0077274969938412
+        }
+      ]
+    },
+    {
+      "name": "S1_more_draws_1chain",
+      "n_tasks": 4,
+      "conv_rate": 0.25,
+      "runtime_median": 26.557609150004282,
+      "runtime_p90": 27.511805580001965,
+      "ess_median": 94.12971251753487,
+      "ess_p90": 116.19452602498433,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 0.5,
+          "runtime_median": 27.28111550000176,
+          "ess_median": 103.05387035843376
+        },
+        "distributed": {
+          "conv_rate": 0.0,
+          "runtime_median": 26.39875475000008,
+          "ess_median": 89.92393984394116
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 27.85784070000227,
+          "ess_last": 84.55871998734385,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 26.70439030000125,
+          "ess_last": 121.54902072952366,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 26.410828000007314,
+          "ess_last": 76.14717464015644,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 26.386681499992847,
+          "ess_last": 103.70070504772588,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S3_two_chains",
+      "n_tasks": 4,
+      "conv_rate": 0.25,
+      "runtime_median": 68.73632575000374,
+      "runtime_p90": 71.27297390999884,
+      "ess_median": 99.4465640578879,
+      "ess_p90": 117.07285534322801,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 0.0,
+          "runtime_median": 71.14841565000097,
+          "ess_median": 92.83699634209776
+        },
+        "distributed": {
+          "conv_rate": 0.5,
+          "runtime_median": 64.99069210000016,
+          "ess_median": 108.14250724922698
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 70.8370200000063,
+          "ess_last": 80.77545780884223,
+          "rhat_last": 1.0449155644341512
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 71.45981129999564,
+          "ess_last": 104.89853487535328,
+          "rhat_last": 1.0512426285397047
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 63.34575269999914,
+          "ess_last": 93.99459324042252,
+          "rhat_last": 1.0503213114123773
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 66.63563150000118,
+          "ess_last": 122.29042125803146,
+          "rhat_last": 1.0225352227990712
+        }
+      ]
+    },
+    {
+      "name": "S0_baseline",
+      "n_tasks": 4,
+      "conv_rate": 0.0,
+      "runtime_median": 13.489410849993874,
+      "runtime_p90": 13.805719940003474,
+      "ess_median": 43.52513699979435,
+      "ess_p90": 46.02337055040659,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 0.0,
+          "runtime_median": 13.405191199999535,
+          "ess_median": 37.347662398573604
+        },
+        "distributed": {
+          "conv_rate": 0.0,
+          "runtime_median": 13.724552100000437,
+          "ess_median": 45.663279129988936
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 13.35319320000417,
+          "ess_last": 32.40810137650332,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 13.4571891999949,
+          "ess_last": 42.2872234206439,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 13.521632499992847,
+          "ess_last": 44.7630505789448,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 13.927471700008027,
+          "ess_last": 46.56350768103307,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S8_block_mix",
+      "n_tasks": 4,
+      "conv_rate": 0.0,
+      "runtime_median": 17.741202249999333,
+      "runtime_p90": 17.907135560001187,
+      "ess_median": 44.439254202741544,
+      "ess_p90": 71.7288758594552,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 0.0,
+          "runtime_median": 17.86343360000319,
+          "ess_median": 44.439254202741544
+        },
+        "distributed": {
+          "conv_rate": 0.0,
+          "runtime_median": 17.64333239998814,
+          "ess_median": 54.15736756296731
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 17.972688499998185,
+          "ess_last": 53.422973827867985,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 17.754178700008197,
+          "ess_last": 35.455534577615104,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 17.55843899998581,
+          "ess_last": 28.740472681513477,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 17.72822579999047,
+          "ess_last": 79.57426244442114,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S7_mmle_full",
+      "n_tasks": 4,
+      "conv_rate": 0.0,
+      "runtime_median": 167.69152714999655,
+      "runtime_p90": 561.621247090008,
+      "ess_median": 50.52953273424198,
+      "ess_p90": 66.7625588103435,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 0.0,
+          "runtime_median": 167.69152714999655,
+          "ess_median": 45.95163839996527
+        },
+        "distributed": {
+          "conv_rate": 0.0,
+          "runtime_median": 415.5840914500077,
+          "ess_median": 55.70903217697193
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 138.511087699997,
+          "ess_last": 59.511259590521576,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 196.87196659999609,
+          "ess_last": 32.39201720940896,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 113.22581560000253,
+          "ess_last": 41.54780587796239,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 717.9423673000128,
+          "ess_last": 69.87025847598147,
+          "rhat_last": NaN
+        }
+      ]
+    }
+  ],
+  "stage2": [
+    {
+      "name": "S6_retry2",
+      "n_tasks": 10,
+      "conv_rate": 1.0,
+      "runtime_median": 69.45687874998839,
+      "runtime_p90": 230.05972812000692,
+      "ess_median": 177.81082860771664,
+      "ess_p90": 298.3411122684295,
+      "attempts_mean": 2.2,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 1.0,
+          "runtime_median": 69.78983470000094,
+          "ess_median": 193.35842065410503
+        },
+        "distributed": {
+          "conv_rate": 1.0,
+          "runtime_median": 67.58890879999672,
+          "ess_median": 166.02991675779276
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 71.34125529999437,
+          "ess_last": 126.55733842148086,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 66.968672899995,
+          "ess_last": 153.41303939821583,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 3,
+          "converged": true,
+          "attempts": 3,
+          "runtime_seconds": 229.93647270000656,
+          "ess_last": 279.837456230752,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 4,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 69.78983470000094,
+          "ess_last": 193.35842065410503,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 5,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 69.4109216999932,
+          "ess_last": 234.34031838049393,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 69.50283579998359,
+          "ess_last": 189.5917404576405,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 3,
+          "runtime_seconds": 231.16902690001007,
+          "ess_last": 464.87401660752766,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 3,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 65.88947049998387,
+          "ess_last": 152.75224431589092,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 4,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 65.85119440000562,
+          "ess_last": 166.02991675779276,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 5,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 67.58890879999672,
+          "ess_last": 132.6925842360612,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S9_no_btrick",
+      "n_tasks": 10,
+      "conv_rate": 0.8,
+      "runtime_median": 1.159055600001011,
+      "runtime_p90": 1.1686561500056996,
+      "ess_median": 147.62955848770852,
+      "ess_p90": 245.3866473906117,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 0.8,
+          "runtime_median": 1.1545263000007253,
+          "ess_median": 126.68163949787272
+        },
+        "distributed": {
+          "conv_rate": 0.8,
+          "runtime_median": 1.1599515999987489,
+          "ess_median": 210.1549666077548
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1672759000066435,
+          "ess_last": 131.42785513624233,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1593324999994365,
+          "ess_last": 121.76455053633542,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 3,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1531407000002218,
+          "ess_last": 126.68163949787272,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 4,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1545263000007253,
+          "ess_last": 163.83126183917472,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 5,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 1.1475197999970987,
+          "ess_last": 118.53837827255037,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1670192000019597,
+          "ess_last": 249.0139248661005,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1599515999987489,
+          "ess_last": 244.98361656000182,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 3,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 1.1810783999972045,
+          "ess_last": 52.8243149211179,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 4,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1587787000025855,
+          "ess_last": 210.1549666077548,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 5,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 1.1345870000077412,
+          "ess_last": 191.43959782696007,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S5_retry1",
+      "n_tasks": 10,
+      "conv_rate": 0.8,
+      "runtime_median": 66.47289739999542,
+      "runtime_p90": 66.75603015999368,
+      "ess_median": 153.08264185705337,
+      "ess_p90": 197.4566104267439,
+      "attempts_mean": 2.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 0.8,
+          "runtime_median": 66.49784599999839,
+          "ess_median": 153.41303939821583
+        },
+        "distributed": {
+          "conv_rate": 0.8,
+          "runtime_median": 62.717608299994026,
+          "ess_median": 152.75224431589092
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 66.75601509999251,
+          "ess_last": 126.55733842148086,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 66.7561657000042,
+          "ess_last": 153.41303939821583,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 3,
+          "converged": false,
+          "attempts": 2,
+          "runtime_seconds": 66.46894759999122,
+          "ess_last": 86.90260209532897,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 4,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 66.49784599999839,
+          "ess_last": 193.35842065410503,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 5,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 66.47684719999961,
+          "ess_last": 234.34031838049393,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 66.51880700000038,
+          "ess_last": 189.5917404576405,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": false,
+          "attempts": 2,
+          "runtime_seconds": 66.42014450000715,
+          "ess_last": 79.60599545186612,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 3,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 62.717608299994026,
+          "ess_last": 152.75224431589092,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 4,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 61.87196030000632,
+          "ess_last": 166.02991675779276,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 5,
+          "converged": true,
+          "attempts": 2,
+          "runtime_seconds": 61.38180520001333,
+          "ess_last": 132.6925842360612,
+          "rhat_last": NaN
+        }
+      ]
+    },
+    {
+      "name": "S2_more_draws_1chain_more_iter",
+      "n_tasks": 10,
+      "conv_rate": 0.6,
+      "runtime_median": 40.1748260999957,
+      "runtime_p90": 41.38530352000962,
+      "ess_median": 125.28883511848318,
+      "ess_p90": 148.36081857373657,
+      "attempts_mean": 1.0,
+      "by_signal": {
+        "concentrated": {
+          "conv_rate": 0.6,
+          "runtime_median": 39.4206625999941,
+          "ess_median": 125.6907915137249
+        },
+        "distributed": {
+          "conv_rate": 0.6,
+          "runtime_median": 40.910531699992134,
+          "ess_median": 124.88687872324147
+        }
+      },
+      "rows": [
+        {
+          "signal": "concentrated",
+          "replicate": 1,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 39.4206625999941,
+          "ess_last": 143.7986042665834,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 39.306263799997396,
+          "ess_last": 151.85197596469303,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 3,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 39.28227800001332,
+          "ess_last": 87.32097111871842,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 4,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 39.437901299999794,
+          "ess_last": 125.6907915137249,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "concentrated",
+          "replicate": 5,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 40.04571700000088,
+          "ess_last": 112.2239787254516,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 1,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 40.74595120000595,
+          "ess_last": 89.86857040681839,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 2,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 41.315517100010766,
+          "ess_last": 128.58024303641324,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 3,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 42.01338129999931,
+          "ess_last": 124.88687872324147,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 4,
+          "converged": false,
+          "attempts": 1,
+          "runtime_seconds": 40.910531699992134,
+          "ess_last": 117.96495226820751,
+          "rhat_last": NaN
+        },
+        {
+          "signal": "distributed",
+          "replicate": 5,
+          "converged": true,
+          "attempts": 1,
+          "runtime_seconds": 40.30393519999052,
+          "ess_last": 147.97291219696362,
+          "rhat_last": NaN
+        }
+      ]
+    }
+  ],
+  "top_names": [
+    "S9_no_btrick",
+    "S6_retry2",
+    "S2_more_draws_1chain_more_iter",
+    "S5_retry1"
+  ]
+}

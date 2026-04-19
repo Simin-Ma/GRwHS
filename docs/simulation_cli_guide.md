@@ -62,10 +62,11 @@ python -m simulation_project.src.run_experiment --experiment 2 --save-dir simula
 ### Exp3 (`linear_benchmark`)
 
 维度和组合都多，推荐有限重试。
+当前代码默认 GIGG 使用 `btrick=False`，Exp3 建议 `--max-convergence-retries 1`。
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
 ```
 
 ### Exp4 (`variant_ablation`)
@@ -107,7 +108,7 @@ python -m simulation_project.src.run_experiment --experiment 5 --save-dir simula
 ```bash
 python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --repeats 400 --n-jobs 8 --no-enforce-bayes-convergence
 python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 100 --n-jobs 6 --until-bayes-converged --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
 python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 50 --n-jobs 6 --until-bayes-converged --sampler collapsed
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile full --repeats 30 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
 ```

@@ -1,0 +1,65 @@
+[
+  {
+    "name": "NB0_no_btrick_no_retry",
+    "n": 20,
+    "conv_rate": 0.55,
+    "runtime_median": 0.9750215500025661,
+    "runtime_p90": 0.9934523899923079,
+    "ess_median": 128.41947883404882,
+    "attempts_mean": 1.0,
+    "by_signal": {
+      "concentrated": {
+        "conv_rate": 0.8,
+        "runtime_median": 0.9792374500029837,
+        "ess_median": 132.56891511508053
+      },
+      "distributed": {
+        "conv_rate": 0.3,
+        "runtime_median": 0.9499110000033397,
+        "ess_median": 93.10930646465704
+      }
+    }
+  },
+  {
+    "name": "NB1_no_btrick_retry1",
+    "n": 20,
+    "conv_rate": 1.0,
+    "runtime_median": 0.9495116999969468,
+    "runtime_p90": 4.842169349998585,
+    "ess_median": 225.78709005321838,
+    "attempts_mean": 1.45,
+    "by_signal": {
+      "concentrated": {
+        "conv_rate": 1.0,
+        "runtime_median": 0.9475493500067387,
+        "ess_median": 140.88213197479064
+      },
+      "distributed": {
+        "conv_rate": 1.0,
+        "runtime_median": 4.8015178499990725,
+        "ess_median": 271.9491296800776
+      }
+    }
+  },
+  {
+    "name": "NB2_no_btrick_retry2",
+    "n": 20,
+    "conv_rate": 1.0,
+    "runtime_median": 0.9921423999985564,
+    "runtime_p90": 4.980663260002621,
+    "ess_median": 225.78709005321838,
+    "attempts_mean": 1.45,
+    "by_signal": {
+      "concentrated": {
+        "conv_rate": 1.0,
+        "runtime_median": 0.9795644999903743,
+        "ess_median": 140.88213197479064
+      },
+      "distributed": {
+        "conv_rate": 1.0,
+        "runtime_median": 4.743136399993091,
+        "ess_median": 271.9491296800776
+      }
+    }
+  }
+]

@@ -54,7 +54,7 @@ python -m simulation_project.src.run_experiment --experiment all --save-dir simu
 Run one experiment:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --repeats 20 --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 ```
 
 Laptop profile:
