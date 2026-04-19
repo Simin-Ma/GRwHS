@@ -810,11 +810,12 @@ def run_exp1_kappa_profile_regimes(
 # Tests Theorem 3.34: simultaneous null contraction + signal retention in the
 # full grouped horseshoe model.
 #
-# DGP (xi_crit-calibrated, same as best-designed exp5):
-#   6 groups: [50, 50, 20, 10, 10, 10]
-#   mu = [0, 0, 1.2*xi_crit*p_g[2], 2.0, 8.0, 25.0]   (null / near-boundary / strong)
-#   rho_ref = 0.1 for xi_crit calibration (sigma2 = 1.0)
-#   n_train = 300, n_test = 100
+# DGP (xi_crit-calibrated):
+#   4 groups: [30, 20, 15, 10]
+#   xi_ratios = [0.0, 1.0, 4.0, 8.0]
+#   mu_g = xi_ratio * xi_crit * p_g
+#   rho_ref controls xi_crit calibration (sigma2 = 1.0)
+#   n_train = 200, n_test default = 50
 #
 # Key outputs:
 #   - group-level null/signal MSE for all methods
@@ -958,11 +959,27 @@ def run_exp2_group_separation(
              rho_ref, xi_c, xi_ratios, [round(v, 3) for v in mu])
 
     grrhs_kw = {"backend": str(sampler_backend), "tau_target": "groups"}
-    tasks = [
-        (r, seed, group_sizes, mu, xi_ratios, sampler, methods_use, gigg_cfg,
-         bool(enforce_bayes_convergence), int(retry_limit), int(n_test), grrhs_kw)
-        for r in range(1, int(repeats) + 1)
-    ]
+    # Method-level task granularity gives smoother progress updates and better
+    # load balancing when one method is much slower than others.
+    tasks: list[tuple] = []
+    for r in range(1, int(repeats) + 1):
+        for method in methods_use:
+            tasks.append(
+                (
+                    r,
+                    seed,
+                    group_sizes,
+                    mu,
+                    xi_ratios,
+                    sampler,
+                    [method],
+                    gigg_cfg,
+                    bool(enforce_bayes_convergence),
+                    int(retry_limit),
+                    int(n_test),
+                    grrhs_kw,
+                )
+            )
     results = _parallel_rows(tasks, _exp2_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp2 Group Separation")
 
     rep_rows: list[dict] = []
@@ -1037,8 +1054,8 @@ def run_exp2_group_separation(
 #     distributed:  2/5 groups each with 1 active variable, beta_j=1  (sparse within group)
 #     boundary:     2/5 groups active, beta calibrated at 1.2*xi_crit (near threshold)
 #   rho_within:     0.0 (orthonormal), 0.3 (moderate), 0.8 (high)
-#   snr:            0.3 / 0.7 / 2.0  (concentrated and distributed only;
-#                   boundary uses its own signal level)
+#   snr:            defaults 0.5 / 2.0 (concentrated and distributed only;
+#                   boundary uses its own calibrated signal level)
 #
 # Prediction:
 #   concentrated + moderate/high rho: GR-RHS wins on null_group_mse
@@ -1313,29 +1330,30 @@ def run_exp3_linear_benchmark(
     tasks: list[tuple] = []
     for (sid_v, signal_v, gc_v, dt_v, rho_v, rhob_v, snr_v) in settings:
         for r in range(1, int(repeats) + 1):
-            tasks.append((
-                sid_v,
-                signal_v,
-                gc_v,
-                dt_v,
-                rho_v,
-                rhob_v,
-                snr_v,
-                r,
-                seed,
-                n_test,
-                sampler,
-                methods_use,
-                gigg_cfg,
-                bool(enforce_bayes_convergence),
-                int(retry_limit),
-                grrhs_kw,
-            ))
+            for method in methods_use:
+                tasks.append((
+                    sid_v,
+                    signal_v,
+                    gc_v,
+                    dt_v,
+                    rho_v,
+                    rhob_v,
+                    snr_v,
+                    r,
+                    seed,
+                    n_test,
+                    sampler,
+                    [method],
+                    gigg_cfg,
+                    bool(enforce_bayes_convergence),
+                    int(retry_limit),
+                    grrhs_kw,
+                ))
 
     log.info(
-        "Exp3: %d settings x %d repeats = %d tasks "
+        "Exp3: %d settings x %d repeats x %d methods = %d tasks "
         "(group_configs=%s, signals=%s, rho_within=%s, snr=%s, rho_between=%.2f), methods=%s, enforce=%s, retry_limit=%d",
-        len(settings), repeats, len(tasks),
+        len(settings), repeats, len(methods_use), len(tasks),
         [gc["name"] for gc in gc_list], signals, rho_values, snr_list, rhob,
         methods_use, bool(enforce_bayes_convergence), int(retry_limit),
     )

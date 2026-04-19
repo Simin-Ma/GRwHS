@@ -72,14 +72,23 @@ python -m simulation_project.src.run_experiment --experiment 3 --save-dir simula
 
 ### Exp4 (`variant_ablation`)
 
-Exp4 对 GR_RHS 变体敏感，推荐 `collapsed`。
+Exp4 current design is a compact mechanism ablation aligned with Exp3 scale:
+- DGP scale: `n=100`, `p=50`, `group_sizes=[10]*5`
+- `p0 in {5, 15, 30}`
+- variants: `oracle`, `calibrated`, `fixed_10x`, `RHS_oracle`
+
+Exp4 is sensitive to GR_RHS variants; `collapsed` remains the recommended sampler. To avoid ambiguity around `--until-bayes-converged`, use explicit retry budget in commands.
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 6 --max-convergence-retries 2 --sampler collapsed
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 50 --n-jobs 6 --until-bayes-converged --sampler collapsed
+python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 50 --n-jobs 6 --max-convergence-retries 2 --sampler collapsed
 ```
 
 ### Exp5 (`prior_sensitivity`) - 当前高质量推荐
+
+Exp5 current design is also aligned with Exp3 scale:
+- `n=100`, `rho_within=0.3`
+- scenarios: `G10x5` and `CL` (both `p=50`)
 
 当前代码已为 Exp5 加入“质量优先”采样配置（不需要手动改代码）：
 - `laptop`: `chains=2, warmup=800, draws=800, ess_threshold=200`
@@ -112,7 +121,7 @@ python -m simulation_project.src.run_experiment --experiment 5 --save-dir simula
 python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --repeats 400 --n-jobs 8 --no-enforce-bayes-convergence
 python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 100 --n-jobs 6 --until-bayes-converged --sampler nuts
 python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 50 --n-jobs 6 --until-bayes-converged --sampler collapsed
+python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 50 --n-jobs 6 --max-convergence-retries 2 --sampler collapsed
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile full --repeats 30 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
 ```
 

@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
@@ -884,17 +884,25 @@ class GIGGRegression:
 
         if int(self.num_chains) <= 1:
             chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
-        elif bool(self.progress_bar):
-            from simulation_project.src.core.utils.logging_utils import progress as _progress
-            chain_results = []
-            for i in _progress(range(len(payloads)), total=len(payloads), desc="GIGG chains"):
-                chain_results.append(_fit_gigg_chain_task(payloads[int(i)]))
         else:
             try:
                 with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
-                    chain_results = list(executor.map(_fit_gigg_chain_task, payloads))
+                    fut_map = {executor.submit(_fit_gigg_chain_task, payloads[i]): i for i in range(len(payloads))}
+                    chain_results = [None] * len(payloads)
+                    fut_iter = as_completed(fut_map)
+                    if bool(self.progress_bar):
+                        from simulation_project.src.core.utils.logging_utils import progress as _progress
+                        fut_iter = _progress(fut_iter, total=len(payloads), desc="GIGG chains")
+                    for fut in fut_iter:
+                        chain_results[fut_map[fut]] = fut.result()
             except Exception:
-                chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
+                if bool(self.progress_bar):
+                    from simulation_project.src.core.utils.logging_utils import progress as _progress
+                    chain_results = []
+                    for i in _progress(range(len(payloads)), total=len(payloads), desc="GIGG chains [fallback]"):
+                        chain_results.append(_fit_gigg_chain_task(payloads[int(i)]))
+                else:
+                    chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
 
         lead = chain_results[0]
         self.rng_ = default_rng(self.seed)
