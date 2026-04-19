@@ -645,6 +645,31 @@ def _exp1_phase_setting_worker(task: tuple) -> list[dict[str, Any]]:
     return rows
 
 
+def _exp1_phase_worker(task: tuple) -> dict[str, Any]:
+    sid, pg, xid, xi, r, seed, tau, sigma2, u0, alpha_kappa, beta_kappa = task
+    mu_g = float(xi) * int(pg)
+    xi_c = xi_crit_u0_rho(u0=float(u0), rho=float(tau) / math.sqrt(max(float(sigma2), 1e-12)))
+    s = experiment_seed(1, int(sid) * 100 + int(xid), r, master_seed=seed)
+    y, _ = generate_signal_group_distributed(pg=int(pg), mu_g=float(mu_g), sigma2=float(sigma2), seed=s)
+    grid = kappa_posterior_grid(y, tau=float(tau), sigma2=float(sigma2), alpha_kappa=alpha_kappa, beta_kappa=beta_kappa)
+    sm = posterior_summary_from_grid(grid["kappa"], grid["density"], tail_threshold=float(u0))
+    return {
+        "panel": "phase",
+        "p_g": int(pg),
+        "setting_id": int(sid),
+        "replicate_id": int(r),
+        "tau": float(tau),
+        "xi": float(xi),
+        "xi_crit": float(xi_c),
+        "xi_ratio": float(xi) / max(xi_c, 1e-12),
+        "u0": float(u0),
+        "alpha_kappa": float(alpha_kappa),
+        "beta_kappa": float(beta_kappa),
+        "post_mean_kappa": sm["post_mean_kappa"],
+        "post_prob_kappa_gt_u0": sm.get("tail_prob", float("nan")),
+    }
+
+
 def run_exp1_kappa_profile_regimes(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
@@ -697,11 +722,9 @@ def run_exp1_kappa_profile_regimes(
     log.info("Exp1 Panel A: null contraction, pg=%s, tau=%.2f", pg_null, tau_null)
     null_tasks: list[tuple] = []
     for sid, pg in enumerate(pg_null, start=1):
-        null_tasks.append((sid, pg, repeats, seed, tau_null, alpha_kappa, beta_kappa, tail_eps))
-    null_chunks = _parallel_rows(null_tasks, _exp1_null_setting_worker, n_jobs=n_jobs, prefer_process=False, progress_desc="Exp1A Null")
-    null_rows: list[dict] = []
-    for chunk in null_chunks:
-        null_rows.extend(chunk)
+        for r in range(1, int(repeats) + 1):
+            null_tasks.append((sid, pg, r, seed, tau_null, alpha_kappa, beta_kappa, tail_eps))
+    null_rows = _parallel_rows(null_tasks, _exp1_null_worker, n_jobs=n_jobs, prefer_process=False, progress_desc="Exp1A Null")
 
     # Summary: median E[kappa_g|Y] per p_g
     null_agg: list[dict] = []
@@ -738,11 +761,9 @@ def run_exp1_kappa_profile_regimes(
             sid += 1
             for xid, mult in enumerate(xi_mults, start=1):
                 xi_val = xi_crit_ref * float(mult)
-                phase_tasks.append((sid, pg, xid, xi_val, repeats, seed, tau, sigma2_phase, u0, alpha_kappa, beta_kappa))
-    phase_chunks = _parallel_rows(phase_tasks, _exp1_phase_setting_worker, n_jobs=n_jobs, prefer_process=False, progress_desc="Exp1B Phase")
-    phase_rows: list[dict] = []
-    for chunk in phase_chunks:
-        phase_rows.extend(chunk)
+                for r in range(1, int(repeats) + 1):
+                    phase_tasks.append((sid, pg, xid, xi_val, r, seed, tau, sigma2_phase, u0, alpha_kappa, beta_kappa))
+    phase_rows = _parallel_rows(phase_tasks, _exp1_phase_worker, n_jobs=n_jobs, prefer_process=False, progress_desc="Exp1B Phase")
 
     # Phase summary: mean P(kappa > u0) by (tau, p_g, xi_ratio)
     phase_agg: list[dict] = []
@@ -1314,7 +1335,6 @@ def run_exp3_linear_benchmark(
         "Exp3: %d settings x %d repeats = %d tasks "
         "(group_configs=%s, signals=%s, rho_within=%s, snr=%s, rho_between=%.2f), methods=%s, enforce=%s, retry_limit=%d",
         len(settings), repeats, len(tasks),
-        signals, rho_values, snr_list, rhob,
         [gc["name"] for gc in gc_list], signals, rho_values, snr_list, rhob,
         methods_use, bool(enforce_bayes_convergence), int(retry_limit),
     )

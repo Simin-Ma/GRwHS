@@ -107,6 +107,8 @@ def fit_gigg_mmle(
     randomize_group_order: bool = False,
     lambda_vectorized_update: bool = False,
     extra_beta_refresh_prob: float = 0.0,
+    no_retry: bool = False,
+    progress_bar: bool = True,
 ) -> FitResult:
     """GIGG with MMLE hyperparameter estimation (Boss et al. 2024, Section 4.2).
 
@@ -115,7 +117,11 @@ def fit_gigg_mmle(
 
     τ₀ is calibrated using the Carvalho-Polson-Scott formula τ₀ = p₀/((p-p₀)√n),
     consistent with how RHS and GR_RHS initialize their global scale.
+
+    no_retry is accepted for compatibility with experiment-level retry policies.
+    Retry control is handled by the caller; this function always runs one fit.
     """
+    _ = bool(no_retry)  # caller-level flag; intentionally unused here
     if str(task).lower() == "logistic":
         return _make_fit_result_error(
             "GIGG_MMLE",
@@ -153,6 +159,7 @@ def fit_gigg_mmle(
             randomize_group_order=bool(randomize_group_order),
             lambda_vectorized_update=bool(lambda_vectorized_update),
             extra_beta_refresh_prob=float(extra_beta_refresh_prob),
+            progress_bar=bool(progress_bar),
         )
         model, runtime = timed_call(model.fit, X, y, groups=[list(map(int, g)) for g in groups])
         return _extract_and_diagnose(model, "GIGG_MMLE", sampler, runtime)
@@ -184,6 +191,8 @@ def fit_gigg_fixed(
     randomize_group_order: bool = False,
     lambda_vectorized_update: bool = False,
     extra_beta_refresh_prob: float = 0.0,
+    no_retry: bool = False,
+    progress_bar: bool = True,
 ) -> FitResult:
     """GIGG with fixed hyperparameters (Boss et al. 2024, Table 2 ablation variants).
 
@@ -195,6 +204,7 @@ def fit_gigg_fixed(
 
     τ₀ is calibrated via CPS formula, matching GR_RHS / RHS / GIGG_MMLE.
     """
+    _ = bool(no_retry)  # caller-level flag; intentionally unused here
     if str(task).lower() == "logistic":
         return _make_fit_result_error(
             method_label,
@@ -234,6 +244,7 @@ def fit_gigg_fixed(
             randomize_group_order=bool(randomize_group_order),
             lambda_vectorized_update=bool(lambda_vectorized_update),
             extra_beta_refresh_prob=float(extra_beta_refresh_prob),
+            progress_bar=bool(progress_bar),
         )
         a_arr = [a_fixed] * G
         b_arr = [float(b_val)] * G

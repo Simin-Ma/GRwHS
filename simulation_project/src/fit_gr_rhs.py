@@ -28,6 +28,7 @@ def _build_nuts(
     sampler: SamplerConfig,
     adapt_delta: float,
     max_treedepth: int,
+    progress_bar: bool,
 ) -> GRRHS_NUTS:
     likelihood = "logistic" if str(task).lower() == "logistic" else "gaussian"
     return GRRHS_NUTS(
@@ -50,7 +51,7 @@ def _build_nuts(
         max_tree_depth=int(max_treedepth),
         dense_mass=False,
         chain_method="sequential",
-        progress_bar=False,
+        progress_bar=bool(progress_bar),
         seed=int(seed),
     )
 
@@ -72,6 +73,7 @@ def _build_collapsed(
     sampler: SamplerConfig,
     adapt_delta: float,
     max_treedepth: int,
+    progress_bar: bool,
 ) -> GRRHS_CollapsedNUTS:
     if str(task).lower() == "logistic":
         raise ValueError("GRRHS_CollapsedNUTS does not support logistic likelihood")
@@ -94,7 +96,7 @@ def _build_collapsed(
         max_tree_depth=int(max_treedepth),
         dense_mass=False,
         chain_method="sequential",
-        progress_bar=False,
+        progress_bar=bool(progress_bar),
         seed=int(seed),
         beta_draws_per_sample=1,
         sigma_jitter=1e-6,
@@ -116,6 +118,7 @@ def _build_gibbs(
     tau_target: str,
     sigma_reference: float,
     sampler: SamplerConfig,
+    progress_bar: bool,
 ) -> GRRHS_Gibbs:
     if str(task).lower() == "logistic":
         raise ValueError("GRRHS_Gibbs does not support logistic likelihood")
@@ -138,7 +141,7 @@ def _build_gibbs(
         thin=1,
         num_chains=int(sampler.chains),
         seed=int(seed),
-        progress_bar=False,
+        progress_bar=bool(progress_bar),
     )
 
 
@@ -173,6 +176,7 @@ def fit_gr_rhs(
     tau0: float | None = None,
     tau_target: str = "coefficients",
     backend: str = "nuts",
+    progress_bar: bool = True,
 ) -> FitResult:
     tracked = ["beta", "tau", "kappa", "a"]
     b = str(backend).strip().lower()
@@ -190,6 +194,7 @@ def fit_gr_rhs(
         tau0=tau0,
         tau_target=tau_target,
         sampler=sampler,
+        progress_bar=bool(progress_bar),
     )
 
     try:

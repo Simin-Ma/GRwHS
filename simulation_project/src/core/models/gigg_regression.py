@@ -595,6 +595,7 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         lambda_constraint_mode=str(payload.get("lambda_constraint_mode", "hard")),
         lambda_cap=float(payload.get("lambda_cap", _POS_CAP)),
         lambda_soft_cap=float(payload.get("lambda_soft_cap", payload.get("lambda_cap", _POS_CAP))),
+        progress_bar=bool(payload.get("progress_bar", False)),
     )
     fitted = model.fit(
         np.asarray(payload["X"], dtype=float),
@@ -666,6 +667,7 @@ class GIGGRegression:
     lambda_constraint_mode: str = "hard"  # one of {"hard", "soft", "none"}
     lambda_cap: float = _POS_CAP
     lambda_soft_cap: float = _POS_CAP
+    progress_bar: bool = False
 
     rng_: Generator = field(init=False, repr=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -868,6 +870,7 @@ class GIGGRegression:
                     "lambda_constraint_mode": self.lambda_constraint_mode,
                     "lambda_cap": self.lambda_cap,
                     "lambda_soft_cap": self.lambda_soft_cap,
+                    "progress_bar": bool(self.progress_bar),
                     "X": np.asarray(X, dtype=float),
                     "y": np.asarray(y, dtype=float),
                     "C": None if C is None else np.asarray(C, dtype=float),
@@ -881,6 +884,11 @@ class GIGGRegression:
 
         if int(self.num_chains) <= 1:
             chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
+        elif bool(self.progress_bar):
+            from simulation_project.src.core.utils.logging_utils import progress as _progress
+            chain_results = []
+            for i in _progress(range(len(payloads)), total=len(payloads), desc="GIGG chains"):
+                chain_results.append(_fit_gigg_chain_task(payloads[int(i)]))
         else:
             try:
                 with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
@@ -1069,6 +1077,10 @@ class GIGGRegression:
                 method=method_eff,
             )
 
+        _progress = None
+        if bool(self.progress_bar):
+            from simulation_project.src.core.utils.logging_utils import progress as _progress
+
         self.rng_ = default_rng(self.seed)
         rng = self.rng_
         group_arrays = [np.asarray(idxs, dtype=int) for idxs in normalised_groups]
@@ -1255,7 +1267,10 @@ class GIGGRegression:
                         rng=rng,
                     )
 
-        for _ in range(self.n_burn_in):
+        burnin_iter = range(self.n_burn_in)
+        if _progress is not None:
+            burnin_iter = _progress(burnin_iter, total=int(self.n_burn_in), desc="GIGG burn-in")
+        for _ in burnin_iter:
             _gibbs_step()
             if method_eff == "mmle" and self.mmle_burnin_only:
                 if self.share_group_hyper:
@@ -1292,7 +1307,10 @@ class GIGGRegression:
             mmle_cnt = 0
             lambda_mmle_store = np.zeros((mmle_samp_size, p), dtype=float)
             max_mmle_iters = max(1, int(self.mmle_max_iters))
-            while delta_mmle >= terminate_mmle and mmle_cnt < max_mmle_iters:
+            mmle_iter = range(max_mmle_iters)
+            if _progress is not None:
+                mmle_iter = _progress(mmle_iter, total=int(max_mmle_iters), desc="GIGG MMLE")
+            for _ in mmle_iter:
                 _gibbs_step()
                 lambda_mmle_store[mmle_cnt % mmle_samp_size] = lambda_sq
                 mmle_cnt += 1
@@ -1322,9 +1340,14 @@ class GIGGRegression:
                     delta_mmle = float(np.sum((q_new - q_vec) ** 2 + (p_new - p_vec) ** 2))
                     q_vec[:] = _clip_positive_array(q_new, floor=self.b_floor, cap=self.b_max)
                     p_vec[:] = _clip_positive_array(p_new, floor=self.jitter, cap=_POS_CAP)
+                    if delta_mmle < terminate_mmle:
+                        break
 
         sample_iters = kept * self.n_thin
-        for it in range(sample_iters):
+        sample_iter = range(sample_iters)
+        if _progress is not None:
+            sample_iter = _progress(sample_iter, total=int(sample_iters), desc="GIGG sample")
+        for it in sample_iter:
             _gibbs_step()
             if it % self.n_thin == 0:
                 coef_draws[keep_idx] = beta

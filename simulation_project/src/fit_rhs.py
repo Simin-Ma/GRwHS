@@ -29,6 +29,7 @@ def _build_rhs(
     sampler: SamplerConfig,
     adapt_delta: float,
     max_treedepth: int,
+    progress_bar: bool,
 ) -> RegularizedHorseshoeRegression:
     likelihood = "logistic" if str(task).lower() == "logistic" else "gaussian"
     tau0 = rhs_style_tau0(n=n, p=p, p0=p0)
@@ -44,7 +45,7 @@ def _build_rhs(
         target_accept_prob=float(adapt_delta),
         max_tree_depth=int(max_treedepth),
         chain_method="sequential",
-        progress_bar=False,
+        progress_bar=bool(progress_bar),
         seed=int(seed),
     )
 
@@ -58,6 +59,7 @@ def fit_rhs(
     seed: int,
     p0: int,
     sampler: SamplerConfig,
+    progress_bar: bool = True,
 ) -> FitResult:
     tracked = ["beta", "tau", "lambda", "c"]
     n, p = int(X.shape[0]), int(X.shape[1])
@@ -76,6 +78,7 @@ def fit_rhs(
             sampler=sampler,
             adapt_delta=float(sampler.adapt_delta),
             max_treedepth=int(sampler.max_treedepth),
+            progress_bar=bool(progress_bar),
         )
         if str(getattr(model, "backend", "")).strip().lower() != _SIMULATION_RHS_BACKEND:
             raise RuntimeError(
@@ -104,6 +107,7 @@ def fit_rhs(
                 sampler=sampler,
                 adapt_delta=float(sampler.strict_adapt_delta),
                 max_treedepth=int(sampler.strict_max_treedepth),
+                progress_bar=bool(progress_bar),
             )
             if str(getattr(strict, "backend", "")).strip().lower() != _SIMULATION_RHS_BACKEND:
                 raise RuntimeError(

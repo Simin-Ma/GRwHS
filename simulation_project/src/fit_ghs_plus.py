@@ -43,6 +43,7 @@ def fit_ghs_plus(
     iter_mult: int = _GHS_ITER_MULT,
     iter_floor: int = _GHS_ITER_FLOOR,
     iter_cap: int = _GHS_ITER_CAP,
+    progress_bar: bool = True,
 ) -> FitResult:
     if str(task).lower() == "logistic":
         return FitResult(
@@ -78,7 +79,7 @@ def fit_ghs_plus(
             thin=1,
             seed=int(seed),
             num_chains=int(sampler.chains),
-            progress_bar=False,
+            progress_bar=bool(progress_bar),
         )
         model, runtime = timed_call(model.fit, X, y, groups=[list(map(int, g)) for g in groups])
         beta_draws = getattr(model, "coef_samples_", None)
