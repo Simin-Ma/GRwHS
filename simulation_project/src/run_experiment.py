@@ -100,30 +100,31 @@ def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
 
 
 def _sampler_for_exp5(base: SamplerConfig, *, profile: str) -> SamplerConfig:
+    # DGP aligned with Exp3 (n=100, p=50) — standard Exp3-level sampler budget suffices.
     p = _normalize_compute_profile(profile)
     if p == "full":
         return SamplerConfig(
             chains=max(4, int(base.chains)),
-            warmup=max(1500, int(base.warmup)),
-            post_warmup_draws=max(1500, int(base.post_warmup_draws)),
-            adapt_delta=max(0.97, float(base.adapt_delta)),
-            max_treedepth=max(13, int(base.max_treedepth)),
-            strict_adapt_delta=max(0.995, float(base.strict_adapt_delta)),
-            strict_max_treedepth=max(15, int(base.strict_max_treedepth)),
-            max_divergence_ratio=min(0.01, float(base.max_divergence_ratio)),
-            rhat_threshold=min(1.02, float(base.rhat_threshold)),
+            warmup=max(800, int(base.warmup)),
+            post_warmup_draws=max(800, int(base.post_warmup_draws)),
+            adapt_delta=max(0.95, float(base.adapt_delta)),
+            max_treedepth=max(12, int(base.max_treedepth)),
+            strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
+            strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
+            max_divergence_ratio=min(0.015, float(base.max_divergence_ratio)),
+            rhat_threshold=min(1.03, float(base.rhat_threshold)),
             ess_threshold=max(400.0, float(base.ess_threshold)),
         )
     return SamplerConfig(
         chains=max(2, int(base.chains)),
-        warmup=max(800, int(base.warmup)),
-        post_warmup_draws=max(800, int(base.post_warmup_draws)),
-        adapt_delta=max(0.95, float(base.adapt_delta)),
-        max_treedepth=max(12, int(base.max_treedepth)),
-        strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
-        strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
-        max_divergence_ratio=min(0.015, float(base.max_divergence_ratio)),
-        rhat_threshold=min(1.03, float(base.rhat_threshold)),
+        warmup=max(500, int(base.warmup)),
+        post_warmup_draws=max(500, int(base.post_warmup_draws)),
+        adapt_delta=max(0.93, float(base.adapt_delta)),
+        max_treedepth=max(11, int(base.max_treedepth)),
+        strict_adapt_delta=max(0.98, float(base.strict_adapt_delta)),
+        strict_max_treedepth=max(13, int(base.strict_max_treedepth)),
+        max_divergence_ratio=min(0.02, float(base.max_divergence_ratio)),
+        rhat_threshold=min(1.05, float(base.rhat_threshold)),
         ess_threshold=max(200.0, float(base.ess_threshold)),
     )
 
@@ -1683,7 +1684,7 @@ def _exp5_worker(
     s = experiment_seed(5, int(sid), r, master_seed=seed)
     # All priors evaluated on THE SAME dataset (paired comparison)
     ds = generate_heterogeneity_dataset(
-        n=300, group_sizes=group_sizes, rho_within=0.3, rho_between=0.05,
+        n=100, group_sizes=group_sizes, rho_within=0.3, rho_between=0.05,
         sigma2=1.0, mu=mu, seed=s,
     )
     n_groups = len(group_sizes)
@@ -1762,9 +1763,9 @@ def run_exp5_prior_sensitivity(
     All prior configurations run on the SAME DGP replicate (paired evaluation),
     so differences in output reflect ONLY the prior choice, not data variation.
 
-    Scenarios:
-      S1 (equal groups):    group_sizes=[20]*5, mu=[0,0,0,1.5,4.0,10.0] (G=3 null, G=3 signal)
-      S2 (unequal groups):  group_sizes=[50,30,10,5,3], mu=[0,0,1.5,4.0,10.0]
+    DGP aligned with Exp3 scale (n=100, rho_within=0.3):
+      S1 (equal groups):   group_sizes=[10]*5  (p=50, G10x5), mu=[0,0,1.5,4.0,10.0] (2 null, 3 signal)
+      S2 (unequal groups): group_sizes=[30,10,5,3,2] (p=50, CL),  mu=[0,0,1.5,4.0,10.0] (2 null, 3 signal)
 
     Prior grid (alpha_kappa, beta_kappa):
       (0.5, 1.0): default — slight null preference
@@ -1789,8 +1790,8 @@ def run_exp5_prior_sensitivity(
     priors = list(prior_grid or _DEFAULT_PRIOR_GRID)
 
     scenarios: list[tuple[int, list[int], list[float]]] = [
-        (1, [20, 20, 20, 20, 20, 20], [0.0, 0.0, 0.0, 1.5, 4.0, 10.0]),
-        (2, [50, 30, 10, 5, 3],        [0.0, 0.0, 1.5, 4.0, 10.0]),
+        (1, [10, 10, 10, 10, 10],  [0.0, 0.0, 1.5, 4.0, 10.0]),   # G10x5: p=50, 2 null + 3 signal
+        (2, [30, 10, 5, 3, 2],     [0.0, 0.0, 1.5, 4.0, 10.0]),   # CL:    p=50, 2 null + 3 signal
     ]
 
     tasks: list[tuple] = []

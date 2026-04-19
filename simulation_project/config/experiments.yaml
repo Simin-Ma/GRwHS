@@ -34,10 +34,10 @@ exp4_variant_ablation:
     Validates that the 0415 tau0 calibration formula recovers oracle-level MSE.
 
 exp5_prior_sensitivity:
-  repeats_full: 30
-  repeats_laptop: 15
+  repeats_full: 20
+  repeats_laptop: 10
   description: >
     Exp5 — Beta prior sensitivity for kappa_g: (alpha_kappa, beta_kappa) grid.
     5 priors tested on the same DGP replicate (paired evaluation).
-    2 scenarios: equal-group (6x20) and unequal-group (50,30,10,5,3).
+    DGP aligned with Exp3 scale (n=100, p=50): S1=G10x5 ([10]x5), S2=CL ([30,10,5,3,2]).
     Shows practical robustness of GR-RHS to reasonable prior choices.
