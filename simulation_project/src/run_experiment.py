@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import csv
+import json
 import math
+import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Sequence
 
@@ -22,6 +25,7 @@ from .utils import (
     SamplerConfig,
     ensure_dir,
     experiment_seed,
+    load_pandas,
     rhs_style_tau0,
     save_dataframe,
     save_json,
@@ -100,7 +104,7 @@ def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
 
 
 def _sampler_for_exp5(base: SamplerConfig, *, profile: str) -> SamplerConfig:
-    # DGP aligned with Exp3 (n=100, p=50) — standard Exp3-level sampler budget suffices.
+    # DGP aligned with Exp3 (n=100, p=50); standard Exp3-level sampler budget suffices.
     p = _normalize_compute_profile(profile)
     if p == "full":
         return SamplerConfig(
@@ -294,6 +298,307 @@ def _result_diag_fields(res: FitResult) -> dict[str, float | str]:
         "error": str(res.error),
     }
 
+
+def _timestamp_tag() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _collect_existing_paths(obj: Any) -> set[Path]:
+    out: set[Path] = set()
+
+    def _walk(v: Any) -> None:
+        if isinstance(v, dict):
+            for vv in v.values():
+                _walk(vv)
+            return
+        if isinstance(v, (list, tuple)):
+            for vv in v:
+                _walk(vv)
+            return
+        if isinstance(v, str):
+            p = Path(v)
+            if p.exists() and p.is_file():
+                out.add(p)
+
+    _walk(obj)
+    return out
+
+
+def _analyze_single_experiment(exp_key: str, results_dir: Path) -> dict[str, Any]:
+    try:
+        from .analysis import analyze_exp1, analyze_exp2, analyze_exp3, analyze_exp4, analyze_exp5
+        analyzers = {
+            "exp1": analyze_exp1,
+            "exp2": analyze_exp2,
+            "exp3": analyze_exp3,
+            "exp4": analyze_exp4,
+            "exp5": analyze_exp5,
+        }
+        fn = analyzers.get(str(exp_key).strip().lower())
+        if fn is None:
+            return {"metrics": {}, "findings": [f"No analyzer registered for {exp_key}."]}
+        return fn(results_dir)
+    except Exception as exc:
+        return {"metrics": {}, "findings": [f"Analyzer failed for {exp_key}: {type(exc).__name__}: {exc}"]}
+
+
+def _build_run_summary_table(exp_key: str, results_dir: Path):
+    pd = load_pandas()
+
+    exp_norm = str(exp_key).strip().lower()
+    if exp_norm == "exp1":
+        rows: list[dict[str, Any]] = []
+        slope_path = results_dir / "null_slope_check.json"
+        if slope_path.exists():
+            try:
+                slope_obj = json.loads(slope_path.read_text(encoding="utf-8"))
+                rows.append({
+                    "metric": "panel_A_slope",
+                    "value": float(slope_obj.get("slope", float("nan"))),
+                })
+                ci = slope_obj.get("slope_ci", [float("nan"), float("nan")])
+                rows.append({"metric": "panel_A_slope_ci_lo", "value": float(ci[0])})
+                rows.append({"metric": "panel_A_slope_ci_hi", "value": float(ci[1])})
+                rows.append({"metric": "panel_A_pass", "value": int(bool(slope_obj.get("pass", False)))})
+            except Exception:
+                pass
+
+        phase_path = results_dir / "summary_phase.csv"
+        if phase_path.exists():
+            try:
+                phase_df = pd.read_csv(phase_path)
+                if {"xi_ratio", "mean_prob_kappa_gt_u0"}.issubset(set(phase_df.columns)):
+                    below = phase_df.loc[phase_df["xi_ratio"] < 1.0, "mean_prob_kappa_gt_u0"]
+                    above = phase_df.loc[phase_df["xi_ratio"] > 1.0, "mean_prob_kappa_gt_u0"]
+                    rows.append({"metric": "panel_B_prob_below_xi_crit", "value": float(below.mean()) if len(below) else float("nan")})
+                    rows.append({"metric": "panel_B_prob_above_xi_crit", "value": float(above.mean()) if len(above) else float("nan")})
+                    if len(below) and len(above):
+                        rows.append({"metric": "panel_B_separation", "value": float(above.mean() - below.mean())})
+            except Exception:
+                pass
+        return pd.DataFrame(rows)
+
+    summary_path = results_dir / "summary.csv"
+    raw_path = results_dir / "raw_results.csv"
+    if not summary_path.exists():
+        return pd.DataFrame()
+
+    try:
+        summary_df = pd.read_csv(summary_path)
+    except Exception:
+        return pd.DataFrame()
+
+    if summary_df.empty:
+        return summary_df
+
+    preferred_group_keys = ["method", "variant", "alpha_kappa", "beta_kappa", "setting_id", "p0_true"]
+    group_keys = [c for c in preferred_group_keys if c in set(summary_df.columns)]
+    if "method" in set(summary_df.columns):
+        group_keys = ["method"]
+    elif "variant" in set(summary_df.columns):
+        group_keys = ["variant"]
+    elif {"alpha_kappa", "beta_kappa"}.issubset(set(summary_df.columns)):
+        group_keys = ["alpha_kappa", "beta_kappa"]
+    elif "setting_id" in set(summary_df.columns):
+        group_keys = ["setting_id"]
+    elif "p0_true" in set(summary_df.columns):
+        group_keys = ["p0_true"]
+    else:
+        group_keys = []
+
+    numeric_cols = [c for c in summary_df.columns if c not in set(group_keys) and pd.api.types.is_numeric_dtype(summary_df[c])]
+    if group_keys:
+        if numeric_cols:
+            compact = summary_df.groupby(group_keys, as_index=False)[numeric_cols].mean()
+        else:
+            compact = summary_df[group_keys].copy()
+    else:
+        compact = summary_df.copy()
+
+    if raw_path.exists() and ("method" in set(group_keys)):
+        try:
+            raw_df = pd.read_csv(raw_path)
+            if {"method", "converged"}.issubset(set(raw_df.columns)):
+                cdf = raw_df.groupby("method", as_index=False).agg(
+                    n_rows=("method", "count"),
+                    n_converged=("converged", lambda s: int(s.fillna(False).astype(bool).sum())),
+                )
+                cdf["converged_rate"] = cdf["n_converged"] / cdf["n_rows"].clip(lower=1)
+                compact = cdf.merge(compact, on="method", how="left")
+        except Exception:
+            pass
+
+    if "mse_overall" in set(compact.columns):
+        compact = compact.sort_values(["mse_overall"], ascending=True, kind="stable")
+    return compact.reset_index(drop=True)
+
+
+def _markdown_table(df, max_rows: int = 30) -> str:
+    if df is None or getattr(df, "empty", True):
+        return "_No rows._"
+    rows = df.head(int(max_rows)).copy()
+    cols = [str(c) for c in rows.columns.tolist()]
+    sep = "| " + " | ".join(["---"] * len(cols)) + " |"
+    header = "| " + " | ".join(cols) + " |"
+
+    def _fmt(v: Any) -> str:
+        if isinstance(v, (float, np.floating)):
+            if np.isnan(v):
+                return "nan"
+            return f"{float(v):.6g}"
+        if isinstance(v, (int, np.integer)):
+            return str(int(v))
+        return str(v)
+
+    body = []
+    for _, r in rows.iterrows():
+        body.append("| " + " | ".join(_fmt(r[c]) for c in rows.columns) + " |")
+    if len(df) > len(rows):
+        body.append(f"\n_Only first {len(rows)} rows shown; total rows: {len(df)}._")
+    return "\n".join([header, sep] + body)
+
+
+def _write_markdown_run_summary(
+    *,
+    exp_key: str,
+    timestamp: str,
+    run_dir: Path,
+    result_paths: dict[str, Any],
+    analysis_result: dict[str, Any],
+    summary_table,
+) -> Path:
+    lines: list[str] = []
+    lines.append(f"# {str(exp_key).upper()} Run Summary")
+    lines.append("")
+    lines.append(f"- Timestamp: `{timestamp}`")
+    lines.append(f"- Run directory: `{run_dir}`")
+    lines.append("")
+    lines.append("## Output Files")
+    for k, v in sorted(result_paths.items(), key=lambda kv: kv[0]):
+        lines.append(f"- `{k}`: `{v}`")
+    lines.append("")
+    lines.append("## Compact Summary Table")
+    lines.append(_markdown_table(summary_table, max_rows=30))
+    lines.append("")
+    lines.append("## Analyzer Findings")
+    findings = list((analysis_result or {}).get("findings", []))
+    if findings:
+        for i, item in enumerate(findings, start=1):
+            lines.append(f"### Finding {i}")
+            lines.append("```text")
+            lines.append(str(item))
+            lines.append("```")
+    else:
+        lines.append("_No findings generated._")
+    lines.append("")
+
+    out_path = run_dir / "run_summary.md"
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    return out_path
+
+
+def _archive_experiment_outputs(
+    *,
+    save_root: Path,
+    results_dir: Path,
+    run_dir: Path,
+    result_paths: dict[str, Any],
+) -> list[str]:
+    artifacts_dir = ensure_dir(run_dir / "artifacts")
+    to_copy: set[Path] = set()
+
+    for p in results_dir.rglob("*"):
+        if not p.is_file():
+            continue
+        try:
+            rel = p.relative_to(results_dir)
+        except Exception:
+            rel = None
+        if rel is not None and len(rel.parts) > 0 and rel.parts[0] == "runs":
+            continue
+        to_copy.add(p)
+
+    to_copy |= _collect_existing_paths(result_paths)
+
+    copied: list[str] = []
+    for src in sorted(to_copy):
+        try:
+            rel = src.relative_to(save_root)
+        except Exception:
+            rel = Path(src.name)
+        dst = artifacts_dir / rel
+        ensure_dir(dst.parent)
+        shutil.copy2(src, dst)
+        copied.append(str(dst))
+    return copied
+
+
+def _finalize_experiment_run(
+    *,
+    exp_key: str,
+    save_dir: str,
+    results_dir: Path,
+    result_paths: dict[str, Any],
+) -> dict[str, Any]:
+    pd = load_pandas()
+
+    ts = _timestamp_tag()
+    run_dir = ensure_dir(results_dir / "runs" / ts)
+    save_root = Path(save_dir)
+
+    summary_table = _build_run_summary_table(exp_key=exp_key, results_dir=results_dir)
+    summary_table_path = run_dir / "run_summary_table.csv"
+    if summary_table is not None:
+        if getattr(summary_table, "empty", False):
+            pd.DataFrame().to_csv(summary_table_path, index=False)
+        else:
+            summary_table.to_csv(summary_table_path, index=False)
+
+    analysis_result = _analyze_single_experiment(exp_key=exp_key, results_dir=results_dir)
+    analysis_json_path = run_dir / "run_analysis.json"
+    analysis_json_path.write_text(json.dumps(analysis_result, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    summary_md_path = _write_markdown_run_summary(
+        exp_key=exp_key,
+        timestamp=ts,
+        run_dir=run_dir,
+        result_paths=result_paths,
+        analysis_result=analysis_result,
+        summary_table=summary_table,
+    )
+
+    copied_artifacts = _archive_experiment_outputs(
+        save_root=save_root,
+        results_dir=results_dir,
+        run_dir=run_dir,
+        result_paths=result_paths,
+    )
+
+    manifest = {
+        "exp_key": str(exp_key),
+        "timestamp": ts,
+        "run_dir": str(run_dir),
+        "result_paths": result_paths,
+        "run_summary_table": str(summary_table_path),
+        "run_summary_md": str(summary_md_path),
+        "run_analysis_json": str(analysis_json_path),
+        "archived_artifacts": copied_artifacts,
+    }
+    (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    (results_dir / "latest_run.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    out = dict(result_paths)
+    out.update({
+        "run_timestamp": ts,
+        "run_dir": str(run_dir),
+        "run_summary_table": str(summary_table_path),
+        "run_summary_md": str(summary_md_path),
+        "run_analysis_json": str(analysis_json_path),
+        "run_manifest": str(run_dir / "run_manifest.json"),
+        "latest_run": str(results_dir / "latest_run.json"),
+    })
+    return out
+
 # ---------------------------------------------------------------------------
 # Paired-converged subset helper
 # ---------------------------------------------------------------------------
@@ -308,7 +613,7 @@ def _paired_converged_subset(
     required_cols: Sequence[str],
     method_levels: Sequence[str] | None = None,
 ):
-    import pandas as pd
+    pd = load_pandas()
 
     group_cols_use = [str(c) for c in group_cols]
     if raw.empty:
@@ -565,7 +870,7 @@ def _kappa_group_prob_gt(result: FitResult, n_groups: int, threshold: float = 0.
     return [float(np.mean(kd[:, g] > float(threshold))) for g in range(n_groups)]
 
 # ---------------------------------------------------------------------------
-# EXP1 — kappa_g Profile Regimes
+# EXP1 - kappa_g Profile Regimes
 # ---------------------------------------------------------------------------
 # Two panels from the 1-D profile posterior (profile specialization: lambda=1,
 # a_g=1, tau fixed):
@@ -677,11 +982,11 @@ def run_exp1_kappa_profile_regimes(
     repeats: int = 500,
     save_dir: str = "simulation_project",
     *,
-    # Panel A — null contraction
+    # Panel A - null contraction
     pg_null_list: Sequence[int] | None = None,
     tau_null: float = 0.5,
     tail_eps: float = 0.1,
-    # Panel B — phase diagram
+    # Panel B - phase diagram
     pg_phase_list: Sequence[int] | None = None,
     tau_phase_list: Sequence[float] | None = None,
     xi_multiplier_list: Sequence[float] | None = None,
@@ -694,11 +999,11 @@ def run_exp1_kappa_profile_regimes(
     """
     Exp1: kappa_g profile regimes (Theorems 3.22, 3.32, Corollary 3.33).
 
-    Panel A — null contraction
+    Panel A - null contraction
       DGP: Y_j ~ N(0, sigma2), profile posterior under lambda=1, a_g=1, tau fixed.
       Validates E[kappa_g | Y_null] = O(p_g^{-1/2}): log-log slope should be -1/2.
 
-    Panel B — phase diagram
+    Panel B - phase diagram
       DGP: distributed signal Y_j ~ N(beta_val, 1), mu_g = xi * p_g.
       Sweeps xi/xi_crit across [0.3, 2.0]; P(kappa_g > u0 | Y) -> 1 iff xi > xi_crit.
       xi_crit = u0 * rho^2 / (2*(u0 + (1-u0)*rho^2)), eq. 104 of 0415 paper.
@@ -713,8 +1018,8 @@ def run_exp1_kappa_profile_regimes(
 
     pg_null = list(pg_null_list or [10, 20, 50, 100, 200, 500, 1000, 2000])
     pg_phase = list(pg_phase_list or [30, 60, 120, 240, 480])
-    # tau=0.1 produces xi_crit≈0.005 — signal is undetectable at any finite p_g,
-    # leaving flat P(κ>u0)≈prior for all xi_ratio values and destroying curve collapse.
+    # tau=0.1 produces xi_crit around 0.005; signal is undetectable at finite p_g,
+    # leaving flat P(kappa > u0) close to prior for all xi_ratio values.
     # Use [0.5, 0.7, 1.0, 1.5] so every tau produces a visible phase transition.
     tau_phase = list(tau_phase_list or [0.5, 0.7, 1.0, 1.5])
     xi_mults = list(xi_multiplier_list or [0.3, 0.5, 0.7, 0.85, 0.95, 1.05, 1.15, 1.3, 1.5, 2.0])
@@ -746,8 +1051,8 @@ def run_exp1_kappa_profile_regimes(
         })
     log_pg = np.log(np.array([r["p_g"] for r in null_agg], dtype=float))
     log_kappa = np.log(np.maximum(np.array([r["median_post_mean_kappa"] for r in null_agg], dtype=float), 1e-12))
-    # Fit slope on the asymptotic regime p_g ∈ [20, 500] only; p_g=10 is pre-asymptotic
-    # and p_g≥1000 kappa nears the numerical floor, both bias the slope estimate.
+    # Fit slope on the asymptotic regime p_g in [20, 500] only; p_g=10 is pre-asymptotic
+    # and p_g>=1000 approaches the numerical floor, both bias the slope estimate.
     fit_mask = np.array([20 <= r["p_g"] <= 500 for r in null_agg])
     slope, slope_ci = _linreg_slope_ci(log_pg[fit_mask], log_kappa[fit_mask])
     log.info("Panel A log-log slope (p_g 20-500): %.4f (95%% CI [%.4f, %.4f]), expected -0.5", slope, slope_ci[0], slope_ci[1])
@@ -781,7 +1086,7 @@ def run_exp1_kappa_profile_regimes(
         })
 
     # --- Save ---
-    import pandas as pd
+    pd = load_pandas()
     all_rows = null_rows + phase_rows
     save_dataframe(pd.DataFrame(all_rows), out_dir / "raw_results.csv")
     save_dataframe(pd.DataFrame(null_agg), out_dir / "summary_null.csv")
@@ -802,10 +1107,23 @@ def run_exp1_kappa_profile_regimes(
         log.warning("Plot exp1B failed: %s", exc)
 
     log.info("Exp1 done: %d null rows, %d phase rows", len(null_rows), len(phase_rows))
-    return {"null_raw": str(out_dir / "raw_results.csv"), "null_summary": str(out_dir / "summary_null.csv"), "phase_summary": str(out_dir / "summary_phase.csv")}
+    result_paths = {
+        "null_raw": str(out_dir / "raw_results.csv"),
+        "null_summary": str(out_dir / "summary_null.csv"),
+        "phase_summary": str(out_dir / "summary_phase.csv"),
+        "null_slope_check": str(out_dir / "null_slope_check.json"),
+        "fig1a_null_contraction": str(fig_dir / "fig1a_null_contraction.png"),
+        "fig1b_phase_diagram": str(fig_dir / "fig1b_phase_diagram.png"),
+    }
+    return _finalize_experiment_run(
+        exp_key="exp1",
+        save_dir=save_dir,
+        results_dir=out_dir,
+        result_paths=result_paths,
+    )
 
 # ---------------------------------------------------------------------------
-# EXP2 — Full-Model Group Separation
+# EXP2 - Full-Model Group Separation
 # ---------------------------------------------------------------------------
 # Tests Theorem 3.34: simultaneous null contraction + signal retention in the
 # full grouped horseshoe model.
@@ -931,7 +1249,7 @@ def run_exp2_group_separation(
       - kappa_G3 ~ 1   (strong-signal retention, Thm 3.32)
       - GR_RHS lower null MSE and higher signal retention than RHS
     """
-    import pandas as pd
+    pd = load_pandas()
 
     base = Path(save_dir)
     out_dir = ensure_dir(base / "results" / "exp2_group_separation")
@@ -1040,26 +1358,43 @@ def run_exp2_group_separation(
         log.warning("Plot exp2 failed: %s", exc)
 
     log.info("Exp2 done: %d replicates, %d kappa rows", len(rep_rows), len(kappa_rows))
-    return {"raw": str(out_dir / "raw_results.csv"), "summary": str(out_dir / "summary.csv"), "table": str(tab_dir / "table_group_separation.csv")}
+    result_paths = {
+        "raw": str(out_dir / "raw_results.csv"),
+        "summary": str(out_dir / "summary.csv"),
+        "table": str(tab_dir / "table_group_separation.csv"),
+        "kappa_realizations": str(out_dir / "kappa_realizations.csv"),
+        "meta": str(out_dir / "exp2_meta.json"),
+        "fig2a_method_comparison": str(fig_dir / "fig2a_method_comparison.png"),
+        "fig2b_kappa_by_group": str(fig_dir / "fig2b_kappa_by_group.png"),
+    }
+    if (out_dir / "kappa_summary_by_group.csv").exists():
+        result_paths["kappa_summary_by_group"] = str(out_dir / "kappa_summary_by_group.csv")
+    if (tab_dir / "table_kappa_group_separation.csv").exists():
+        result_paths["table_kappa_group_separation"] = str(tab_dir / "table_kappa_group_separation.csv")
+    return _finalize_experiment_run(
+        exp_key="exp2",
+        save_dir=save_dir,
+        results_dir=out_dir,
+        result_paths=result_paths,
+    )
 
 # ---------------------------------------------------------------------------
-# EXP3 — Linear Benchmark: Concentrated vs. Distributed vs. Boundary
+# EXP3 - Linear Benchmark: Concentrated vs. Distributed vs. Boundary
 # ---------------------------------------------------------------------------
 # Factor design directly testing the core GR-RHS hypothesis:
 #   "kappa_g mechanism is most beneficial when signals are group-concentrated"
 #
 # Factors:
 #   signal_structure: concentrated / distributed / boundary
-#     concentrated: 2/5 groups fully active, beta_j = 1/sqrt(p_g)  (dense within group)
-#     distributed:  2/5 groups each with 1 active variable, beta_j=1  (sparse within group)
-#     boundary:     2/5 groups active, beta calibrated at 1.2*xi_crit (near threshold)
+#     concentrated: 2/5 groups fully active, beta_j = 1/sqrt(p_g) (dense in group)
+#     distributed:  2/5 groups with one active variable each, beta_j = 1
+#     boundary:     2/5 groups active, beta calibrated at 1.2 * xi_crit
 #   rho_within:     0.0 (orthonormal), 0.3 (moderate), 0.8 (high)
-#   snr:            defaults 0.5 / 2.0 (concentrated and distributed only;
-#                   boundary uses its own calibrated signal level)
+#   snr:            defaults 0.5 / 2.0 (boundary uses calibrated signal level)
 #
 # Prediction:
 #   concentrated + moderate/high rho: GR-RHS wins on null_group_mse
-#   distributed: RHS matches GR-RHS (individual-level shrinkage sufficient)
+#   distributed: RHS matches GR-RHS (individual-level shrinkage is sufficient)
 #   boundary: GR-RHS separates null/signal groups; competitors may fail
 # ---------------------------------------------------------------------------
 
@@ -1067,19 +1402,19 @@ _RHO_REF_BOUNDARY = 0.1   # reference rho for xi_crit calibration in boundary se
 _SIGMA2_BOUNDARY = 1.0
 
 # ---------------------------------------------------------------------------
-# Default group configurations for Exp3 — mirrors GIGG paper Table 1 coverage
+# Default group configurations for Exp3 - mirrors GIGG paper Table 1 coverage,
 # plus GR-RHS-favorable scenarios (large null blocks, rho_between > 0).
 #
 # Each entry:
-#   name          — short label used in output CSV / meta JSON
-#   group_sizes   — list of per-group sizes (sum = p)
-#   active_groups — which group indices contain the signal (rest are null)
+#   name          - short label used in output CSV / meta JSON
+#   group_sizes   - list of per-group sizes (sum = p)
+#   active_groups - group indices containing signal (rest are null)
 #
-# G5x5  : 5 equal groups of size 5  (p=25)  — GR-RHS home turf
-# G10x5 : 5 equal groups of size 10 (p=50)  — GIGG paper C10H/D10H baseline
-# CL    : [30,10,5,3,2], signal in large groups — GIGG Table 3 CL/DL
-# CS    : [30,10,5,3,2], signal in small groups — GR-RHS κ_g advantage
-#         (large null blocks → κ_g→0 contracts 30+10+5 features collectively)
+# G5x5  : 5 equal groups of size 5  (p=25)  - GR-RHS home turf
+# G10x5 : 5 equal groups of size 10 (p=50)  - GIGG paper C10H/D10H baseline
+# CL    : [30,10,5,3,2], signal in large groups - GIGG Table 3 CL/DL
+# CS    : [30,10,5,3,2], signal in small groups - GR-RHS kappa_g advantage
+#         (large null blocks enable strong collective contraction)
 # ---------------------------------------------------------------------------
 _DEFAULT_EXP3_GROUP_CONFIGS: list[dict[str, Any]] = [
     {"name": "G5x5",  "group_sizes": [5, 5, 5, 5, 5],      "active_groups": [0, 1]},
@@ -1250,42 +1585,30 @@ def run_exp3_linear_benchmark(
     grrhs_extra_kwargs: dict | None = None,
 ) -> Dict[str, str]:
     """
-    Exp3: Full factor benchmark — signal_structure × group_config × rho_within × SNR × rho_between.
-    n_train=100, n_test=30.
+    Exp3 full-factor benchmark:
+      signal_structure x group_config x rho_within x SNR x rho_between
+    with n_train=100 and n_test=30.
 
     Signal types (default ["concentrated", "distributed", "boundary"]):
-      concentrated — all nonzero beta in G0, G1; G2/G3/G4 are pure null.
-                     GR-RHS kappa_g gate fires on G0/G1, contracts G2-G4.
-      distributed  — one nonzero beta each in G0, G1; within-group sparse.
-      boundary     — signal at 1.2×xi_crit(u0=0.5, rho_ref=0.1); near detection threshold.
+      concentrated: all nonzero beta in G0 and G1, G2/G3/G4 are null.
+      distributed: one nonzero beta in each of G0 and G1.
+      boundary: signal set to 1.2 * xi_crit(u0=0.5, rho_ref=0.1).
 
-    rho_within values (default [0.3, 0.8]):
-      0.3 — moderate within-group correlation; GR-RHS kappa_g advantage emerges
-      0.8 — high within-group correlation; GR-RHS vs competitors gap is largest
+    rho_within (default [0.3, 0.8]):
+      0.3: moderate within-group correlation.
+      0.8: high within-group correlation.
 
     snr_values (default [0.5, 2.0]):
-      2.0 — moderate SNR; all methods competitive
-      1.0 — lower SNR; group-level regularization more valuable
-      0.5 — weak SNR; individual-level methods lose to group-structured priors
+      2.0: moderate SNR.
+      0.5: low SNR.
 
     rho_between (default 0.1):
-      0.1 — mild cross-group correlation; breaks GIGG/GHS+ group-independence assumption
-      0.3 — strong cross-group correlation; GR-RHS's flexible kappa_g clearly dominates
+      0.1: mild cross-group correlation.
 
-    Methods (fixed, 6 total):
-      GR_RHS    — paper method (canonical: tau_target=groups)
-      GHS_plus  — Group Horseshoe+ (Xu et al.)
-      GIGG_MMLE — GIGG with MMLE hyperparameter selection
-      RHS       — Regularized Horseshoe (no group structure)
-      LASSO_CV  — LASSO with CV
-      OLS       — unregularized reference
-
-    Key expected patterns:
-      rho_within>0, low SNR, concentrated: GR_RHS null_mse << all competitors
-      rho_between>0, any: GIGG/GHS+ group-independence violated; GR_RHS robust
-      boundary signal: GR_RHS separates null/signal groups; individual methods fail
+    Methods:
+      GR_RHS, GHS_plus, GIGG_MMLE, RHS, LASSO_CV, OLS.
     """
-    import pandas as pd
+    pd = load_pandas()
 
     base = Path(save_dir)
     out_dir = ensure_dir(base / "results" / "exp3_linear_benchmark")
@@ -1312,8 +1635,8 @@ def run_exp3_linear_benchmark(
     rhob = float(rho_between)
     gc_list: list[dict[str, Any]] = list(group_configs) if group_configs is not None else list(_DEFAULT_EXP3_GROUP_CONFIGS)
 
-    # settings: group_config × signal × rho_within × target_snr
-    # rho=0 and rhob=0 → orthonormal design; otherwise correlated
+    # settings: group_config x signal x rho_within x target_snr
+    # rho=0 and rhob=0 -> orthonormal design; otherwise correlated
     settings: list[tuple[int, str, dict, str, float, float, float]] = []
     sid = 0
     for gc in gc_list:
@@ -1425,23 +1748,37 @@ def run_exp3_linear_benchmark(
         len(settings),
         int(conv_raw.shape[0]),
     )
-    return {"raw": str(out_dir / "raw_results.csv"), "summary": str(out_dir / "summary.csv"), "table": str(tab_dir / "table_linear_benchmark.csv")}
+    result_paths = {
+        "raw": str(out_dir / "raw_results.csv"),
+        "summary": str(out_dir / "summary.csv"),
+        "table": str(tab_dir / "table_linear_benchmark.csv"),
+        "meta": str(out_dir / "exp3_meta.json"),
+        "fig3a_mse_by_signal": str(fig_dir / "fig3a_mse_by_signal.png"),
+        "fig3b_lpd_by_signal": str(fig_dir / "fig3b_lpd_by_signal.png"),
+        "fig3c_null_signal_scatter": str(fig_dir / "fig3c_null_signal_scatter.png"),
+    }
+    return _finalize_experiment_run(
+        exp_key="exp3",
+        save_dir=save_dir,
+        results_dir=out_dir,
+        result_paths=result_paths,
+    )
 
 # ---------------------------------------------------------------------------
-# EXP4 — GR-RHS Variant Ablation: tau Calibration
+# EXP4 - GR-RHS Variant Ablation: tau Calibration
 # ---------------------------------------------------------------------------
 # Directly validates the 0415 tau calibration formula:
 #   tau0 = p0 / (p - p0) / sqrt(n)  (eq. 11, Piironen & Vehtari style)
 #
 # Compared variants:
-#   oracle:     tau0 from true p0 (upper bound — best possible calibration)
+#   oracle:     tau0 from true p0 (upper bound; best possible calibration)
 #   calibrated: tau0 from estimated p0 (default 0415 approach, auto_calibrate=True)
 #   fixed_0_1x: tau0 * 0.1 (under-shrinkage, tau too small -> over-retain noise)
 #   fixed_10x:  tau0 * 10  (over-shrinkage, tau too large -> over-suppress signal)
 #   RHS:        standard RHS (baseline, oracle p0)
 #
 # Crossed with sparsity levels p0 in {5, 15, 40} (sparse to moderate)
-# DGP: n=500, p=100 (5 groups × 20 vars), mixed strong (2.0) / weak (0.5) signals
+# DGP: n=500, p=100 (5 groups x 20 vars), mixed strong (2.0) / weak (0.5) signals
 # ---------------------------------------------------------------------------
 
 def _exp4_worker(
@@ -1583,7 +1920,7 @@ def run_exp4_variant_ablation(
     sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
-    Exp4: GR-RHS variant ablation — tau calibration strategies.
+    Exp4: GR-RHS variant ablation - tau calibration strategies.
 
     Tests the 0415 tau calibration formula:  tau0 = p0/(p-p0)/sqrt(n).
     The central prediction: calibrated-tau should match oracle-tau and dominate
@@ -1598,7 +1935,7 @@ def run_exp4_variant_ablation(
     DGP matches Exp3 scale: p=50 (5 groups of 10), n=100.
     Sparsity levels: p0 in {5, 15, 30}.
     """
-    import pandas as pd
+    pd = load_pandas()
 
     base = Path(save_dir)
     out_dir = ensure_dir(base / "results" / "exp4_variant_ablation")
@@ -1630,7 +1967,7 @@ def run_exp4_variant_ablation(
         for r in range(1, int(repeats) + 1):
             tasks.append((int(p0_v), r, seed, group_sizes, sampler, variants, bool(enforce_bayes_convergence), int(retry_limit), n, str(sampler_backend)))
 
-    log.info("Exp4: %d p0 levels × %d repeats = %d tasks", len(p0_vals), repeats, len(tasks))
+    log.info("Exp4: %d p0 levels x %d repeats = %d tasks", len(p0_vals), repeats, len(tasks))
     all_chunks = _parallel_rows(tasks, _exp4_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp4 Variant Ablation")
     rows: list[dict] = []
     for chunk in all_chunks:
@@ -1661,10 +1998,23 @@ def run_exp4_variant_ablation(
         log.warning("Plot exp4 failed: %s", exc)
 
     log.info("Exp4 done: %d rows", len(rows))
-    return {"raw": str(out_dir / "raw_results.csv"), "summary": str(out_dir / "summary.csv"), "table": str(tab_dir / "table_variant_ablation.csv")}
+    result_paths = {
+        "raw": str(out_dir / "raw_results.csv"),
+        "summary": str(out_dir / "summary.csv"),
+        "table": str(tab_dir / "table_variant_ablation.csv"),
+        "meta": str(out_dir / "exp4_meta.json"),
+        "fig4a_tau_scatter": str(base / "figures" / "fig4a_tau_scatter.png"),
+        "fig4b_mse_normalized": str(base / "figures" / "fig4b_mse_normalized.png"),
+    }
+    return _finalize_experiment_run(
+        exp_key="exp4",
+        save_dir=save_dir,
+        results_dir=out_dir,
+        result_paths=result_paths,
+    )
 
 # ---------------------------------------------------------------------------
-# EXP5 — Prior Sensitivity: (alpha_kappa, beta_kappa) Grid
+# EXP5 - Prior Sensitivity: (alpha_kappa, beta_kappa) Grid
 # ---------------------------------------------------------------------------
 # Tests how sensitive GR-RHS's group-separation performance is to the Beta
 # prior shape on kappa_g.
@@ -1776,7 +2126,7 @@ def run_exp5_prior_sensitivity(
     sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
-    Exp5: Prior sensitivity — (alpha_kappa, beta_kappa) grid.
+    Exp5: Prior sensitivity - (alpha_kappa, beta_kappa) grid.
 
     All prior configurations run on the SAME DGP replicate (paired evaluation),
     so differences in output reflect ONLY the prior choice, not data variation.
@@ -1786,13 +2136,13 @@ def run_exp5_prior_sensitivity(
       S2 (unequal groups): group_sizes=[30,10,5,3,2] (p=50, CL),  mu=[0,0,1.5,4.0,10.0] (2 null, 3 signal)
 
     Prior grid (alpha_kappa, beta_kappa):
-      (0.5, 1.0): default — slight null preference
-      (1.0, 1.0): Uniform(0,1) — flat
-      (0.5, 0.5): U-shape — mass near 0 and 1
-      (2.0, 5.0): concentrated near 0 — aggressive null shrinkage
+      (0.5, 1.0): default - slight null preference
+      (1.0, 1.0): Uniform(0,1) - flat
+      (0.5, 0.5): U-shape - mass near 0 and 1
+      (2.0, 5.0): concentrated near 0 - aggressive null shrinkage
       (1.0, 3.0): moderate null preference
     """
-    import pandas as pd
+    pd = load_pandas()
 
     base = Path(save_dir)
     out_dir = ensure_dir(base / "results" / "exp5_prior_sensitivity")
@@ -1817,7 +2167,7 @@ def run_exp5_prior_sensitivity(
         for r in range(1, int(repeats) + 1):
             tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, priors, bool(enforce_bayes_convergence), int(retry_limit), str(sampler_backend)))
 
-    log.info("Exp5: %d scenarios × %d repeats × %d priors = %d task-rows", len(scenarios), repeats, len(priors), len(tasks) * len(priors))
+    log.info("Exp5: %d scenarios x %d repeats x %d priors = %d task-rows", len(scenarios), repeats, len(priors), len(tasks) * len(priors))
     all_chunks = _parallel_rows(tasks, _exp5_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp5 Prior Sensitivity")
     rows: list[dict] = []
     for chunk in all_chunks:
@@ -1846,7 +2196,20 @@ def run_exp5_prior_sensitivity(
         log.warning("Plot exp5 failed: %s", exc)
 
     log.info("Exp5 done: %d rows", len(rows))
-    return {"raw": str(out_dir / "raw_results.csv"), "summary": str(out_dir / "summary.csv"), "table": str(tab_dir / "table_prior_sensitivity.csv")}
+    result_paths = {
+        "raw": str(out_dir / "raw_results.csv"),
+        "summary": str(out_dir / "summary.csv"),
+        "table": str(tab_dir / "table_prior_sensitivity.csv"),
+        "meta": str(out_dir / "exp5_meta.json"),
+        "fig5_prior_sensitivity": str(base / "figures" / "fig5_prior_sensitivity.png"),
+        "fig5b_kappa_separation": str(base / "figures" / "fig5b_kappa_separation.png"),
+    }
+    return _finalize_experiment_run(
+        exp_key="exp5",
+        save_dir=save_dir,
+        results_dir=out_dir,
+        result_paths=result_paths,
+    )
 
 # ---------------------------------------------------------------------------
 # Run-all orchestrator

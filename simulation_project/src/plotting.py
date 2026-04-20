@@ -1,9 +1,12 @@
 ﻿from __future__ import annotations
 
 import math
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -52,6 +55,11 @@ def _save(fig: plt.Figure, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(path, dpi=220)
+    # Keep an immutable timestamped snapshot for each generated figure.
+    history_dir = path.parent / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    fig.savefig(history_dir / f"{path.stem}_{ts}{path.suffix}", dpi=220)
     plt.close(fig)
 
 
@@ -67,7 +75,8 @@ def _records(df: Any) -> list[dict[str, Any]]:
 
 
 def _as_frame(df: Any):
-    import pandas as pd
+    from .utils import load_pandas
+    pd = load_pandas()
 
     if hasattr(df, "groupby"):
         return df
@@ -156,7 +165,8 @@ def plot_exp1_phase(df: Any, out_path: Path) -> None:
     if not rows:
         return
 
-    import pandas as pd
+    from .utils import load_pandas
+    pd = load_pandas()
     frame = pd.DataFrame(rows)
     pg_vals = sorted(frame["p_g"].unique())
     xi_vals = sorted(frame["xi_ratio"].unique())
@@ -478,7 +488,8 @@ def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
     if frame.empty or "variant" not in frame.columns:
         return
 
-    import pandas as pd
+    from .utils import load_pandas
+    pd = load_pandas()
 
     variants = _sort_methods(frame["variant"].unique())  # use consistent ordering helper
     p0_vals = sorted(frame["p0_true"].unique()) if "p0_true" in frame.columns else [None]

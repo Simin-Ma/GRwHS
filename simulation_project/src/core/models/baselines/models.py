@@ -13,6 +13,7 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 from sklearn.linear_model import LogisticRegression as _SklearnLogisticRegression
 from sklearn.linear_model import LinearRegression as _SklearnLinearRegression
+from ....utils import load_pandas
 try:
     from cmdstanpy import CmdStanModel as _CmdStanModel
 except Exception:  # pragma: no cover - optional dependency
@@ -727,7 +728,7 @@ class _BaseHorseshoeRegression:
         scalar: bool,
         thinning: int,
     ) -> Optional[np.ndarray]:
-        import pandas as pd
+        pd = load_pandas()
 
         if not isinstance(draws_df, pd.DataFrame):
             return None

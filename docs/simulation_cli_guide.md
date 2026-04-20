@@ -1,15 +1,15 @@
 # Simulation CLI Guide (By Experiment)
 
-本指南只覆盖当前有效实验体系：`simulation_project`。
+This guide covers the active simulation pipeline under `simulation_project`.
 
-## 1. 统一入口
+## 1. Unified Entry Points
 
 ```bash
 python -m simulation_project.src.run_experiment --help
 python scripts/run_simulation.py --help
 ```
 
-通用参数：
+Common CLI arguments:
 - `--experiment {all,1,2,3,4,5}`
 - `--save-dir simulation_project`
 - `--seed 20260415`
@@ -20,31 +20,31 @@ python scripts/run_simulation.py --help
 - `--max-convergence-retries <int>`
 - `--until-bayes-converged`
 - `--sampler {nuts,collapsed,gibbs}`
-- Default note: Bayesian methods use at least `4` chains by default (method-level floor).
 
-说明：
-- `scripts/run_simulation.py` 是统一封装，行为与 `python -m ...run_experiment` 一致。
-- 高级参数（`methods`、`prior_grid`、`p0_list` 等）通过 Python 函数调用传入。
+Notes:
+- `scripts/run_simulation.py` is a thin wrapper over `python -m simulation_project.src.run_experiment`.
+- Advanced parameters (`methods`, `prior_grid`, `p0_list`, and so on) are exposed in Python function calls.
+- Bayesian methods use at least `4` chains by default unless overridden by a method-specific path.
 
-## 2. 收敛与诊断约定
+## 2. Convergence And Diagnostics
 
-从当前版本开始，`raw_results.csv`（Exp2-Exp5）都会写出：
+For Exp2 to Exp5, `raw_results.csv` includes:
 - `rhat_max`
 - `bulk_ess_min`
 - `divergence_ratio`
 - `runtime_seconds`
 - `error`
 
-建议判定：
-- 优先看 `converged`。
-- 再看 `bulk_ess_min`（Exp5 特别关键）。
-- `divergence_ratio` 高通常意味着几何问题，优先提高 `adapt_delta`/`warmup`。
+Recommended checks:
+- First check `converged`.
+- Then check `bulk_ess_min` (especially important for Exp5).
+- Large `divergence_ratio` usually indicates geometry issues; increase `adapt_delta` and/or `warmup`.
 
-## 3. 按 Exp 的推荐命令
+## 3. Recommended Commands By Experiment
 
 ### Exp1 (`kappa_profile_regimes`)
 
-Exp1 是网格后验，不走 MCMC，`--sampler` 对它无效。
+Exp1 uses profile-grid posterior computation, not MCMC. `--sampler` has no effect.
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --repeats 1 --n-jobs 1 --no-enforce-bayes-convergence
@@ -53,79 +53,73 @@ python -m simulation_project.src.run_experiment --experiment 1 --save-dir simula
 
 ### Exp2 (`group_separation`)
 
-推荐 `nuts`，并开启收敛约束。
+Use `nuts` with convergence enforcement.
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile laptop --repeats 30 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 100 --n-jobs 6 --until-bayes-converged --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 100 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
 ```
 
 ### Exp3 (`linear_benchmark`)
 
-维度和组合都多，推荐有限重试。
-当前代码默认 GIGG 使用 `btrick=False`，Exp3 建议 `--max-convergence-retries 1`。
+Exp3 has a larger factorial design; use bounded retries.
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
 python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
 ```
 
+Current defaults for the GR-RHS-advantage benchmark in Exp3:
+- `signal_types=["concentrated", "distributed", "boundary"]`
+- `rho_within_values=[0.3, 0.8]`
+- `snr_values=[0.5, 2.0]`
+- `rho_between=0.1`
+- `tau_target="groups"` for GR-RHS
+
 ### Exp4 (`variant_ablation`)
 
-Exp4 current design is a compact mechanism ablation aligned with Exp3 scale:
-- DGP scale: `n=100`, `p=50`, `group_sizes=[10]*5`
-- `p0 in {5, 15, 30}`
+Exp4 now uses a compact mechanism-ablation design aligned with Exp3:
+- DGP scale: `n=100`, `p=50`, `group_sizes=[10,10,10,10,10]`
+- sparsity levels: `p0 in {5, 15, 30}`
 - variants: `oracle`, `calibrated`, `fixed_10x`, `RHS_oracle`
 
-Exp4 is sensitive to GR_RHS variants; `collapsed` remains the recommended sampler. To avoid ambiguity around `--until-bayes-converged`, use explicit retry budget in commands.
+`collapsed` remains the recommended sampler.
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 6 --max-convergence-retries 2 --sampler collapsed
 python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 50 --n-jobs 6 --max-convergence-retries 2 --sampler collapsed
 ```
 
-### Exp5 (`prior_sensitivity`) - 当前高质量推荐
+### Exp5 (`prior_sensitivity`)
 
-Exp5 current design is also aligned with Exp3 scale:
+Exp5 is also aligned to the Exp3 scale:
 - `n=100`, `rho_within=0.3`
-- scenarios: `G10x5` and `CL` (both `p=50`)
+- scenarios: `G10x5` and `CL` (both with `p=50`)
 
-当前代码已为 Exp5 加入“质量优先”采样配置（不需要手动改代码）：
-- `laptop`: `chains=2, warmup=800, draws=800, ess_threshold=200`
-- `full`: `chains=4, warmup=1500, draws=1500, ess_threshold=400`
-- 单链时 R-hat 自动跳过，避免伪失败。
-- 未显式设置 `--max-convergence-retries` 时，默认按 profile 取值：`full=2`，`laptop=1`。
-- 若需要“直到收敛”为止的模式，请显式设置：`--max-convergence-retries -1`。
-- 重试不会放宽 `R-hat/ESS/divergence` 阈值，只会增加 warmup/draw 与迭代预算。
-
-命令建议：
+Recommended commands:
 
 ```bash
-# 快速质量检查（建议先跑）
+# quick quality check
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile laptop --repeats 1 --n-jobs 1 --max-convergence-retries 2 --sampler nuts
 
-# 开发版
+# development run
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile laptop --repeats 10 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
 
-# 正式版（高质量）
+# full-quality run
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile full --repeats 30 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
 ```
 
-备注：
-- Exp5 现在更推荐 `nuts`（当前实现下 `collapsed` 在该实验上成本偏高）。
-- Exp5 使用 group-level 语义：`p0_signal_groups` + `tau_target="groups"`（已内置）。
-
-## 4. 一键全量（按推荐顺序）
+## 4. One-Click Full Pipeline
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --repeats 400 --n-jobs 8 --no-enforce-bayes-convergence
-python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 100 --n-jobs 6 --until-bayes-converged --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 100 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
 python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
 python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 50 --n-jobs 6 --max-convergence-retries 2 --sampler collapsed
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile full --repeats 30 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
 ```
 
-## 5. 快速检查各 Exp 收敛率
+## 5. Quick Convergence Check Script
 
 ```powershell
 @'
@@ -133,7 +127,7 @@ from pathlib import Path
 import pandas as pd
 
 base = Path("simulation_project/results")
-exps = [
+experiments = [
     "exp1_kappa_profile_regimes",
     "exp2_group_separation",
     "exp3_linear_benchmark",
@@ -141,52 +135,77 @@ exps = [
     "exp5_prior_sensitivity",
 ]
 
-for e in exps:
-    f = base / e / "raw_results.csv"
-    if not f.exists():
-        print(f"{e}: missing raw_results.csv")
+for exp in experiments:
+    csv_path = base / exp / "raw_results.csv"
+    if not csv_path.exists():
+        print(f"{exp}: missing raw_results.csv")
         continue
-    df = pd.read_csv(f)
+    df = pd.read_csv(csv_path)
     if "converged" not in df.columns:
-        print(f"{e}: no converged column")
+        print(f"{exp}: missing converged column")
         continue
     conv = df["converged"].fillna(False).astype(bool)
-    msg = f"{e}: {conv.sum()}/{len(df)} converged ({conv.mean():.1%})"
+    msg = f"{exp}: {conv.sum()}/{len(df)} converged ({conv.mean():.1%})"
     if "bulk_ess_min" in df.columns:
         msg += f", ess_median={df['bulk_ess_min'].median():.1f}"
     print(msg)
 '@ | python -
 ```
 
-## 6. Sweep 架构（统一跑 Exp1-Exp5）
+## 6. Sweep Runner (Exp1 To Exp5)
 
-现在支持统一 sweep 调度器：
+List and run sweeps:
 
 ```bash
 python -m simulation_project.src.run_sweep --list
 python scripts/run_sweep.py --list
 ```
 
-默认配置文件：
+Default config:
 - `simulation_project/config/sweeps.yaml`
 
-常用命令（现在只需要一个 sweep 名）：
+Typical commands:
 
 ```bash
-# 查看可用 sweep 名称
+# list sweep names
 python -m simulation_project.src.run_sweep --list
 
-# 先做 dry-run（只展开参数并校验，不执行）
+# dry-run expansion and validation only
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --dry-run
 
-# 真正执行一个 sweep（一次跑完整 Exp1-Exp5）
+# run one full sweep session
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5
 
-# 覆盖 sweep 参数（不改 yaml）
+# override sweep params without editing YAML
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --set profile=full --set n_jobs=2 --set max_convergence_retries=2
 ```
 
-输出结构：
+Output layout:
 - `simulation_project/sweeps/<sweep_name>/<session_id>/manifest.json`
 - `simulation_project/sweeps/<sweep_name>/<session_id>/runs.csv`
-- `simulation_project/sweeps/<sweep_name>/<session_id>/runs/run_XXX/`（每组独立输出）
+- `simulation_project/sweeps/<sweep_name>/<session_id>/runs/run_XXX/`
+
+## 7. Per-Run Timestamped Artifacts
+
+After each completed experiment (`exp1` to `exp5`), the runner now creates a
+timestamped run archive under that experiment's result directory:
+
+- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_manifest.json`
+- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary_table.csv`
+- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary.md`
+- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_analysis.json`
+- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/artifacts/...`
+
+The experiment directory also keeps:
+
+- `simulation_project/results/<exp_dir>/latest_run.json`
+
+This guarantees every run is reproducibly archived with its timestamp, compact
+table summary, markdown summary, and analyzer findings.
+
+Figure outputs are now versioned as well:
+
+- latest figure: `simulation_project/figures/<figure_name>.png`
+- immutable history snapshot: `simulation_project/figures/history/<figure_name>_<YYYYMMDD_HHMMSS_microseconds>.png`
+
+So each newly generated figure is preserved with its own timestamp.

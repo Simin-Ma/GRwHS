@@ -712,7 +712,7 @@ class GRRHS_Gibbs:
         XtX = X.T @ X
         Xty = X.T @ y
 
-        # group-scale prior for a_g:  a_g ~ HN(0, 畏 / 鈭歱_g)
+        # group-scale prior for a_g: a_g ~ HalfNormal(eta / sqrt(group_size_g))
         s_a = self.eta / np.sqrt(np.maximum(group_sizes.astype(float), 1.0))
 
         # initialise parameters

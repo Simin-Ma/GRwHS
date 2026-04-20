@@ -3,6 +3,7 @@
 import json
 import logging
 import math
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -261,6 +262,36 @@ def save_json(obj: Mapping[str, Any], path: Path | str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def load_pandas():
+    """
+    Import pandas with a Windows-safe platform.machine() shim.
+
+    Some Windows environments can hang in platform.machine(), which pandas
+    calls during import (pandas.compat._constants). We temporarily replace
+    platform.machine() with a lightweight env-var based implementation.
+    """
+    import importlib
+    import platform
+
+    orig_machine = getattr(platform, "machine", None)
+
+    def _fast_machine() -> str:
+        return (
+            os.environ.get("PROCESSOR_ARCHITECTURE")
+            or os.environ.get("PROCESSOR_ARCHITEW6432")
+            or "unknown"
+        )
+
+    patched = callable(orig_machine)
+    if patched:
+        platform.machine = _fast_machine  # type: ignore[assignment]
+    try:
+        return importlib.import_module("pandas")
+    finally:
+        if patched and orig_machine is not None:
+            platform.machine = orig_machine  # type: ignore[assignment]
 
 
 def timed_call(fn, *args, **kwargs) -> tuple[Any, float]:
