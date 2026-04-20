@@ -40,7 +40,6 @@ LAPTOP_METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GHS_plus", "OLS", "LASSO_CV"]
 COMPUTE_PROFILES = ("full", "laptop")
 
 _BAYESIAN_METHODS = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
-_CLASSICAL_METHODS = {"OLS", "LASSO_CV"}
 _BAYESIAN_DEFAULT_CHAINS = 4
 _UNTIL_CONVERGED_RETRY_HARD_CAP = 12
 _RETRY_MAX_WARMUP = 8000
@@ -687,24 +686,38 @@ def _parallel_rows(
     if workers <= 1:
         return [worker(t) for t in tqdm(tasks, total=len(tasks), desc=progress_desc or "Running", leave=True)]
     out: list[Any] = [None] * len(tasks)
+    done: list[bool] = [False] * len(tasks)
+    fut_map: dict[Any, int] = {}
     executor_cls = ProcessPoolExecutor if prefer_process else ThreadPoolExecutor
     try:
         with executor_cls(max_workers=workers) as ex:
             fut_map = {ex.submit(worker, tasks[i]): i for i in range(len(tasks))}
             for fut in tqdm(as_completed(fut_map), total=len(tasks), desc=progress_desc or "Running", leave=True):
-                out[fut_map[fut]] = fut.result()
+                idx = fut_map[fut]
+                out[idx] = fut.result()
+                done[idx] = True
     except Exception as exc:
         if prefer_process:
+            pending_idxs = [i for i, ok in enumerate(done) if not ok]
+            pending_tasks = [tasks[i] for i in pending_idxs]
             mode = str(process_fallback).strip().lower()
             if mode == "thread":
                 print(f"[WARN] Process pool failed ({type(exc).__name__}: {exc}). Falling back to thread pool.")
-                with ThreadPoolExecutor(max_workers=workers) as ex:
-                    fut_map = {ex.submit(worker, tasks[i]): i for i in range(len(tasks))}
-                    for fut in tqdm(as_completed(fut_map), total=len(tasks), desc=(progress_desc or "Running") + " [thread]", leave=True):
-                        out[fut_map[fut]] = fut.result()
+                if pending_tasks:
+                    with ThreadPoolExecutor(max_workers=min(workers, len(pending_tasks))) as ex:
+                        tfut_map = {ex.submit(worker, pending_tasks[i]): i for i in range(len(pending_tasks))}
+                        for fut in tqdm(as_completed(tfut_map), total=len(pending_tasks), desc=(progress_desc or "Running") + " [thread]", leave=True):
+                            loc = tfut_map[fut]
+                            out[pending_idxs[loc]] = fut.result()
+                            done[pending_idxs[loc]] = True
             elif mode == "serial":
                 print(f"[WARN] Process pool failed ({type(exc).__name__}: {exc}). Falling back to serial execution.")
-                return [worker(t) for t in tqdm(tasks, total=len(tasks), desc=(progress_desc or "Running") + " [serial]", leave=True)]
+                if pending_tasks:
+                    serial_out = [worker(t) for t in tqdm(pending_tasks, total=len(pending_tasks), desc=(progress_desc or "Running") + " [serial]", leave=True)]
+                    for loc, row in enumerate(serial_out):
+                        out[pending_idxs[loc]] = row
+                        done[pending_idxs[loc]] = True
+                return out
             else:
                 raise
         else:
@@ -1155,13 +1168,13 @@ def run_exp1_kappa_profile_regimes(
 # ---------------------------------------------------------------------------
 
 def _exp2_worker(
-    task: tuple[int, int, list[int], list[float], list[float], SamplerConfig, list[str], dict[str, Any], bool, int, int, dict]
+    task: tuple[int, int, list[int], list[float], list[float], SamplerConfig, list[str], dict[str, Any], int, bool, int, int, dict]
 ) -> tuple[list[dict], list[dict]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .metrics import group_auroc, group_l2_error, group_l2_score
     from .utils import canonical_groups, sample_correlated_design
 
-    r, seed, group_sizes, mu, xi_ratios, sampler, methods, gigg_config, enforce_convergence, max_retries, n_test, grrhs_kwargs = task
+    r, seed, group_sizes, mu, xi_ratios, sampler, methods, gigg_config, bayes_min_chains, enforce_convergence, max_retries, n_test, grrhs_kwargs = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     p0_signal_groups = int(np.sum(labels))
     n_train = 200
@@ -1179,6 +1192,7 @@ def _exp2_worker(
         ds["X"], ds["y"], ds["groups"],
         task="gaussian", seed=s, p0=p0_signal_groups,
         sampler=sampler, methods=methods, gigg_config=gigg_config,
+        bayes_min_chains=int(bayes_min_chains),
         grrhs_kwargs=grrhs_kwargs or {},
         enforce_bayes_convergence=bool(enforce_convergence),
         max_convergence_retries=int(max_retries),
@@ -1230,6 +1244,7 @@ def run_exp2_group_separation(
     save_dir: str = "simulation_project",
     *,
     profile: str = "full",
+    bayes_min_chains: int | None = None,
     methods: Sequence[str] | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
@@ -1271,6 +1286,8 @@ def run_exp2_group_separation(
 
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_profile(profile_name)
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
+    bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     # Only GR_RHS and RHS; ignore any wider method list from profile resolver
     methods_use = [m for m in (methods or ["GR_RHS", "RHS"]) if m in ("GR_RHS", "RHS")]
     if not methods_use:
@@ -1304,6 +1321,7 @@ def run_exp2_group_separation(
                     sampler,
                     [method],
                     gigg_cfg,
+                    int(bayes_min_chains_use),
                     bool(enforce_bayes_convergence),
                     int(retry_limit),
                     int(n_test),
@@ -1361,7 +1379,7 @@ def run_exp2_group_separation(
         save_dataframe(kappa_summary, out_dir / "kappa_summary_by_group.csv")
         save_dataframe(kappa_summary, tab_dir / "table_kappa_group_separation.csv")
     save_dataframe(summary_df, tab_dir / "table_group_separation.csv")
-    save_json({"rho_ref": float(rho_ref), "xi_crit": float(xi_c), "xi_ratios": xi_ratios, "mu": [round(v, 4) for v in mu], "group_sizes": group_sizes, "methods": methods_use}, out_dir / "exp2_meta.json")
+    save_json({"rho_ref": float(rho_ref), "xi_crit": float(xi_c), "xi_ratios": xi_ratios, "mu": [round(v, 4) for v in mu], "group_sizes": group_sizes, "methods": methods_use, "bayes_min_chains": int(bayes_min_chains_use)}, out_dir / "exp2_meta.json")
 
     try:
         from .plotting import plot_exp2_separation
@@ -1520,12 +1538,34 @@ def _build_benchmark_beta(
 
 
 def _exp3_worker(
-    task: tuple,
+    task: dict[str, Any] | tuple,
 ) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import generate_grouped_linear_dataset, generate_orthonormal_block_design, sigma2_for_target_snr
     from .utils import canonical_groups, sample_correlated_design
 
-    sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
+    if isinstance(task, dict):
+        sid = int(task["setting_id"])
+        signal = str(task["signal"])
+        group_cfg = dict(task["group_cfg"])
+        setting_block = str(task["setting_block"])
+        env_id = str(task["env_id"])
+        design_type = str(task["design_type"])
+        rho_within = float(task["rho_within"])
+        rho_between = float(task["rho_between"])
+        target_snr = float(task["target_snr"])
+        r = int(task["replicate_id"])
+        seed_base = int(task["seed_base"])
+        n_test = int(task["n_test"])
+        sampler = task["sampler"]
+        method_name = str(task["method"])
+        gigg_config = dict(task["gigg_config"])
+        bayes_min_chains = task.get("bayes_min_chains")
+        enforce_conv = bool(task["enforce_bayes_convergence"])
+        max_retries = int(task["max_convergence_retries"])
+        grrhs_kwargs = dict(task["grrhs_kwargs"])
+        methods = [method_name]
+    else:
+        sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
@@ -1790,31 +1830,33 @@ def run_exp3_linear_benchmark(
     grrhs_kw: dict = {"backend": str(sampler_backend), "tau_target": "groups"}
     if grrhs_extra_kwargs:
         grrhs_kw.update(grrhs_extra_kwargs)
-    tasks: list[tuple] = []
+    tasks: list[dict[str, Any]] = []
     for (sid_v, signal_v, gc_v, block_v, env_v, dt_v, rho_v, rhob_v, snr_v) in settings:
         for r in range(1, int(repeats) + 1):
             for method in methods_use:
-                tasks.append((
-                    sid_v,
-                    signal_v,
-                    gc_v,
-                    block_v,
-                    env_v,
-                    dt_v,
-                    rho_v,
-                    rhob_v,
-                    snr_v,
-                    r,
-                    seed,
-                    n_test,
-                    sampler,
-                    [method],
-                    gigg_cfg,
-                    int(bayes_min_chains_use),
-                    bool(enforce_bayes_convergence),
-                    int(retry_limit),
-                    grrhs_kw,
-                ))
+                tasks.append(
+                    {
+                        "setting_id": int(sid_v),
+                        "signal": str(signal_v),
+                        "group_cfg": dict(gc_v),
+                        "setting_block": str(block_v),
+                        "env_id": str(env_v),
+                        "design_type": str(dt_v),
+                        "rho_within": float(rho_v),
+                        "rho_between": float(rhob_v),
+                        "target_snr": float(snr_v),
+                        "replicate_id": int(r),
+                        "seed_base": int(seed),
+                        "n_test": int(n_test),
+                        "sampler": sampler,
+                        "method": str(method),
+                        "gigg_config": dict(gigg_cfg),
+                        "bayes_min_chains": int(bayes_min_chains_use),
+                        "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+                        "max_convergence_retries": int(retry_limit),
+                        "grrhs_kwargs": dict(grrhs_kw),
+                    }
+                )
 
     log.info(
         "Exp3[%s]: %d settings x %d repeats x %d methods = %d tasks "
@@ -1825,14 +1867,14 @@ def run_exp3_linear_benchmark(
         [ep["env_id"] for ep in env_points_used],
         methods_use, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit),
     )
-    bayes_tasks: list[tuple] = []
-    classical_tasks: list[tuple] = []
+    bayes_tasks: list[dict[str, Any]] = []
+    classical_tasks: list[dict[str, Any]] = []
     for t in tasks:
-        method_name = str(t[13][0]) if len(t) > 13 and isinstance(t[13], list) and t[13] else ""
-        if method_name in _CLASSICAL_METHODS:
-            classical_tasks.append(t)
-        else:
+        method_name = str(t.get("method", ""))
+        if _is_bayesian_method(method_name):
             bayes_tasks.append(t)
+        else:
+            classical_tasks.append(t)
 
     chunks_bayes: list[Any] = []
     chunks_classic: list[Any] = []
@@ -1961,13 +2003,13 @@ def run_exp3_linear_benchmark(
 # ---------------------------------------------------------------------------
 
 def _exp4_worker(
-    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], bool, int, int, str]
+    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], int, bool, int, int, str]
 ) -> list[dict[str, Any]]:
     from .fit_gr_rhs import fit_gr_rhs
     from .fit_rhs import fit_rhs
     from .utils import canonical_groups, sample_correlated_design
 
-    p0_true, r, seed, group_sizes, sampler, variants, enforce_conv, max_retries, n, backend = task
+    p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, enforce_conv, max_retries, n, backend = task
     p = int(sum(group_sizes))
     s = experiment_seed(4, int(p0_true), r, master_seed=seed)
 
@@ -2008,6 +2050,7 @@ def _exp4_worker(
                 ),
                 method="GR_RHS",
                 sampler=sampler,
+                bayes_min_chains=int(bayes_min_chains),
                 max_convergence_retries=max_retries,
                 enforce_bayes_convergence=bool(enforce_conv),
             )
@@ -2020,6 +2063,7 @@ def _exp4_worker(
                 ),
                 method="RHS",
                 sampler=sampler,
+                bayes_min_chains=int(bayes_min_chains),
                 max_convergence_retries=max_retries,
                 enforce_bayes_convergence=bool(enforce_conv),
             )
@@ -2061,13 +2105,14 @@ def _fit_with_convergence_retry(
     *,
     method: str,
     sampler: SamplerConfig,
+    bayes_min_chains: int | None = None,
     max_convergence_retries: int,
     enforce_bayes_convergence: bool,
 ) -> FitResult:
     retry_max, until_mode = _retry_budget_from_limit(int(max_convergence_retries))
     sampler_base = sampler
     if _is_bayesian_method(method):
-        sampler_base = _sampler_for_bayesian_default(sampler_base)
+        sampler_base = _sampler_for_bayesian_default(sampler_base, min_chains=bayes_min_chains)
     res: FitResult | None = None
     attempts = 1
     for attempt in range(retry_max + 1):
@@ -2094,6 +2139,7 @@ def run_exp4_variant_ablation(
     p0_list: Sequence[int] | None = None,
     include_oracle: bool = False,
     profile: str = "full",
+    bayes_min_chains: int | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
@@ -2124,6 +2170,8 @@ def run_exp4_variant_ablation(
 
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_profile(profile_name)
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
+    bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     retry_limit = (
         0
         if max_convergence_retries is None
@@ -2162,7 +2210,7 @@ def run_exp4_variant_ablation(
     for p0_v in p0_vals:
         variants = _variants_for_p0(int(p0_v))
         for r in range(1, int(repeats) + 1):
-            tasks.append((int(p0_v), r, seed, group_sizes, sampler, variants, bool(enforce_bayes_convergence), int(retry_limit), n, str(sampler_backend)))
+            tasks.append((int(p0_v), r, seed, group_sizes, sampler, variants, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit), n, str(sampler_backend)))
 
     n_variants = len(_variants_for_p0(int(p0_vals[0]))) if p0_vals else 0
     log.info(
@@ -2197,6 +2245,7 @@ def run_exp4_variant_ablation(
             "group_sizes": group_sizes,
             "n": n,
             "include_oracle": bool(include_oracle),
+            "bayes_min_chains": int(bayes_min_chains_use),
             "max_convergence_retries": int(retry_limit),
         },
         out_dir / "exp4_meta.json",
@@ -2251,13 +2300,13 @@ _DEFAULT_PRIOR_GRID: list[tuple[float, float]] = [
 
 
 def _exp5_worker(
-    task: tuple[int, int, list[int], list[float], int, SamplerConfig, list[tuple[float, float]], bool, int, str]
+    task: tuple[int, int, list[int], list[float], int, SamplerConfig, list[tuple[float, float]], int, bool, int, str]
 ) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .fit_gr_rhs import fit_gr_rhs
     from .metrics import group_auroc, group_l2_error, group_l2_score
 
-    sid, r, group_sizes, mu, seed, sampler, prior_grid, enforce_conv, max_retries, backend = task
+    sid, r, group_sizes, mu, seed, sampler, prior_grid, bayes_min_chains, enforce_conv, max_retries, backend = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     p0_signal_groups = int(np.sum(labels))
     s = experiment_seed(5, int(sid), r, master_seed=seed)
@@ -2281,6 +2330,7 @@ def _exp5_worker(
             ),
             method="GR_RHS",
             sampler=sampler,
+            bayes_min_chains=int(bayes_min_chains),
             max_convergence_retries=max_retries,
             enforce_bayes_convergence=bool(enforce_conv),
         )
@@ -2331,6 +2381,7 @@ def run_exp5_prior_sensitivity(
     *,
     prior_grid: Sequence[tuple[float, float]] | None = None,
     profile: str = "full",
+    bayes_min_chains: int | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
@@ -2362,6 +2413,8 @@ def run_exp5_prior_sensitivity(
 
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_exp5(_sampler_for_profile(profile_name), profile=profile_name)
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
+    bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     retry_limit = _resolve_convergence_retry_limit(profile_name, max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
     if max_convergence_retries is None and retry_limit < 0:
         # Exp5 is intentionally heavy; cap unlimited mode to a practical retry budget.
@@ -2376,7 +2429,7 @@ def run_exp5_prior_sensitivity(
     tasks: list[tuple] = []
     for scen_id, grp_sizes, mu in scenarios:
         for r in range(1, int(repeats) + 1):
-            tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, priors, bool(enforce_bayes_convergence), int(retry_limit), str(sampler_backend)))
+            tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, priors, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit), str(sampler_backend)))
 
     log.info("Exp5: %d scenarios x %d repeats x %d priors = %d task-rows", len(scenarios), repeats, len(priors), len(tasks) * len(priors))
     all_chunks = _parallel_rows(tasks, _exp5_worker, n_jobs=n_jobs, prefer_process=True, process_fallback="serial", progress_desc="Exp5 Prior Sensitivity")
@@ -2398,7 +2451,7 @@ def run_exp5_prior_sensitivity(
     save_dataframe(raw, out_dir / "raw_results.csv")
     save_dataframe(summary, out_dir / "summary.csv")
     save_dataframe(summary, tab_dir / "table_prior_sensitivity.csv")
-    save_json({"profile": profile_name, "prior_grid": [list(p) for p in priors], "scenarios": [[s, g, m] for s, g, m in scenarios]}, out_dir / "exp5_meta.json")
+    save_json({"profile": profile_name, "prior_grid": [list(p) for p in priors], "scenarios": [[s, g, m] for s, g, m in scenarios], "bayes_min_chains": int(bayes_min_chains_use)}, out_dir / "exp5_meta.json")
 
     try:
         from .plotting import plot_exp5_prior_sensitivity
@@ -2452,8 +2505,8 @@ def run_all_experiments(
         ("exp1", lambda: run_exp1_kappa_profile_regimes(n_jobs=n_jobs, seed=seed, save_dir=save_dir, repeats=_default_repeats("exp1", profile_name))),
         ("exp2", lambda: run_exp2_group_separation(repeats=_default_repeats("exp2", profile_name), **common)),
         ("exp3", lambda: run_exp3_linear_benchmark(repeats=_default_repeats("exp3", profile_name), **common)),
-        ("exp4", lambda: run_exp4_variant_ablation(repeats=_default_repeats("exp4", profile_name), **{k: v for k, v in common.items() if k not in ("profile", "n_jobs") or True})),
-        ("exp5", lambda: run_exp5_prior_sensitivity(repeats=_default_repeats("exp5", profile_name), **{k: v for k, v in common.items()})),
+        ("exp4", lambda: run_exp4_variant_ablation(repeats=_default_repeats("exp4", profile_name), **common)),
+        ("exp5", lambda: run_exp5_prior_sensitivity(repeats=_default_repeats("exp5", profile_name), **common)),
     ]
     for name, runner in tqdm(jobs, total=len(jobs), desc="All Experiments", leave=True):
         out[name] = runner()
