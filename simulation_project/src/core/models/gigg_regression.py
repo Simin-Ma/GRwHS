@@ -667,7 +667,7 @@ class GIGGRegression:
     lambda_constraint_mode: str = "hard"  # one of {"hard", "soft", "none"}
     lambda_cap: float = _POS_CAP
     lambda_soft_cap: float = _POS_CAP
-    progress_bar: bool = False
+    progress_bar: bool = True
 
     rng_: Generator = field(init=False, repr=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)

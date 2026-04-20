@@ -91,7 +91,7 @@ class GRRHS_NUTS:
     dense_mass: bool = False
     use_init_to_median: bool = True
     chain_method: str = "sequential"
-    progress_bar: bool = False
+    progress_bar: bool = True
     seed: int = 42
 
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -543,7 +543,7 @@ class GRRHS_Gibbs:
     slice_width_log: float = 0.5
     slice_width_logit: float = 1.0
     slice_max_steps: int = 200
-    progress_bar: bool = False
+    progress_bar: bool = True
 
     # posterior storage (set by fit)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -985,7 +985,7 @@ class GRRHS_CollapsedNUTS:
     dense_mass: bool = False
     use_init_to_median: bool = True
     chain_method: str = "sequential"
-    progress_bar: bool = False
+    progress_bar: bool = True
     seed: int = 42
     beta_draws_per_sample: int = 1   # posterior beta draws per hyperparameter sample
     sigma_jitter: float = 1e-6       # numerical jitter on Sigma_y diagonal

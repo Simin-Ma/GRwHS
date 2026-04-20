@@ -79,6 +79,10 @@ Current defaults for the GR-RHS-advantage benchmark in Exp3 (`exp3_design="core3
   - `SNR_PLUS: (0.3, 0.1, 2.0)` for concentrated/distributed
 - boundary calibration: `xi = 1.2 * xi_crit(u0=0.5, rho_profile)`,
   with `rho_profile = rho_within / sqrt(sigma2_boundary)` and `sigma2_boundary=1.0`
+- Bayesian minimum chains in Exp3:
+  - default `2` for `profile="laptop"` (exploration-friendly)
+  - default `4` for `profile="full"`
+  - override in Python with `bayes_min_chains=<k>`
 - `tau_target="groups"` for GR-RHS
 
 Legacy full-factor mode is still available from Python via `exp3_design="legacy_factorial"`.

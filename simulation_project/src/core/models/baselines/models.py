@@ -567,7 +567,7 @@ class _BaseHorseshoeRegression:
     max_tree_depth: int = 10
     dense_mass: Any = False
     chain_method: str = "sequential"
-    progress_bar: bool = False
+    progress_bar: bool = True
     stan_file: Optional[str] = None
 
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)

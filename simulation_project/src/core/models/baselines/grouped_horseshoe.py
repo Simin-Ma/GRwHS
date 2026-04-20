@@ -133,7 +133,7 @@ class GroupedHorseshoePlus:
     seed: int = 42
     num_chains: int = 1
     jitter: float = 1e-8
-    progress_bar: bool = False
+    progress_bar: bool = True
 
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_samples_: Optional[np.ndarray] = field(default=None, init=False)

@@ -40,6 +40,7 @@ LAPTOP_METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GHS_plus", "OLS", "LASSO_CV"]
 COMPUTE_PROFILES = ("full", "laptop")
 
 _BAYESIAN_METHODS = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
+_CLASSICAL_METHODS = {"OLS", "LASSO_CV"}
 _BAYESIAN_DEFAULT_CHAINS = 4
 _UNTIL_CONVERGED_RETRY_HARD_CAP = 12
 _RETRY_MAX_WARMUP = 8000
@@ -149,10 +150,12 @@ def _sampler_for_ghs_plus_default(base: SamplerConfig) -> SamplerConfig:
     )
 
 
-def _sampler_for_bayesian_default(base: SamplerConfig) -> SamplerConfig:
-    """Unified Bayesian default: all Bayesian methods use at least 4 chains."""
+def _sampler_for_bayesian_default(base: SamplerConfig, *, min_chains: int | None = None) -> SamplerConfig:
+    """Unified Bayesian default: enforce a minimum chain count for Bayesian methods."""
+    mc = int(_BAYESIAN_DEFAULT_CHAINS if min_chains is None else min_chains)
+    mc = max(1, mc)
     return SamplerConfig(
-        chains=max(_BAYESIAN_DEFAULT_CHAINS, int(base.chains)),
+        chains=max(mc, int(base.chains)),
         warmup=int(base.warmup),
         post_warmup_draws=int(base.post_warmup_draws),
         adapt_delta=float(base.adapt_delta),
@@ -675,6 +678,7 @@ def _parallel_rows(
     n_jobs: int,
     *,
     prefer_process: bool = False,
+    process_fallback: str = "thread",
     progress_desc: str | None = None,
 ) -> list[Any]:
     if len(tasks) == 0:
@@ -691,11 +695,18 @@ def _parallel_rows(
                 out[fut_map[fut]] = fut.result()
     except Exception as exc:
         if prefer_process:
-            print(f"[WARN] Process pool failed ({type(exc).__name__}: {exc}). Falling back to thread pool.")
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                fut_map = {ex.submit(worker, tasks[i]): i for i in range(len(tasks))}
-                for fut in tqdm(as_completed(fut_map), total=len(tasks), desc=(progress_desc or "Running") + " [thread]", leave=True):
-                    out[fut_map[fut]] = fut.result()
+            mode = str(process_fallback).strip().lower()
+            if mode == "thread":
+                print(f"[WARN] Process pool failed ({type(exc).__name__}: {exc}). Falling back to thread pool.")
+                with ThreadPoolExecutor(max_workers=workers) as ex:
+                    fut_map = {ex.submit(worker, tasks[i]): i for i in range(len(tasks))}
+                    for fut in tqdm(as_completed(fut_map), total=len(tasks), desc=(progress_desc or "Running") + " [thread]", leave=True):
+                        out[fut_map[fut]] = fut.result()
+            elif mode == "serial":
+                print(f"[WARN] Process pool failed ({type(exc).__name__}: {exc}). Falling back to serial execution.")
+                return [worker(t) for t in tqdm(tasks, total=len(tasks), desc=(progress_desc or "Running") + " [serial]", leave=True)]
+            else:
+                raise
         else:
             raise
     return out
@@ -731,6 +742,7 @@ def _fit_all_methods(
     grrhs_kwargs: dict[str, Any] | None = None,
     methods: Sequence[str] | None = None,
     gigg_config: dict[str, Any] | None = None,
+    bayes_min_chains: int | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int = 2,
 ) -> Dict[str, FitResult]:
@@ -754,7 +766,7 @@ def _fit_all_methods(
     def _fit_once(method: str, attempt: int) -> FitResult:
         sampler_base = sampler
         if _is_bayesian_method(method):
-            sampler_base = _sampler_for_bayesian_default(sampler_base)
+            sampler_base = _sampler_for_bayesian_default(sampler_base, min_chains=bayes_min_chains)
         if method == "GHS_plus":
             sampler_base = _sampler_for_ghs_plus_default(sampler_base)
         sampler_try = _scale_sampler_for_retry(sampler_base, attempt)
@@ -1298,7 +1310,7 @@ def run_exp2_group_separation(
                     grrhs_kw,
                 )
             )
-    results = _parallel_rows(tasks, _exp2_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp2 Group Separation")
+    results = _parallel_rows(tasks, _exp2_worker, n_jobs=n_jobs, prefer_process=True, process_fallback="serial", progress_desc="Exp2 Group Separation")
 
     rep_rows: list[dict] = []
     kappa_rows: list[dict] = []
@@ -1513,7 +1525,7 @@ def _exp3_worker(
     from .dgp_grouped_linear import generate_grouped_linear_dataset, generate_orthonormal_block_design, sigma2_for_target_snr
     from .utils import canonical_groups, sample_correlated_design
 
-    sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, enforce_conv, max_retries, grrhs_kwargs = task
+    sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
@@ -1583,6 +1595,7 @@ def _exp3_worker(
         task="gaussian", seed=s, p0=p0,
         p0_groups=p0_signal_groups,
         sampler=sampler, methods=methods, gigg_config=gigg_config,
+        bayes_min_chains=int(bayes_min_chains) if bayes_min_chains is not None else None,
         grrhs_kwargs=grrhs_kwargs or {},
         enforce_bayes_convergence=bool(enforce_conv),
         max_convergence_retries=int(max_retries),
@@ -1641,6 +1654,7 @@ def run_exp3_linear_benchmark(
     rho_between: float = 0.1,
     exp3_design: str = "core30",
     env_points: Sequence[dict[str, Any]] | None = None,
+    bayes_min_chains: int | None = None,
     group_configs: list[dict[str, Any]] | None = None,
     profile: str = "full",
     methods: Sequence[str] | None = None,
@@ -1669,6 +1683,10 @@ def run_exp3_linear_benchmark(
       boundary: signal set to xi_ratio * xi_crit(u0=0.5, rho_profile),
                 with rho_profile = rho_within / sqrt(sigma2_boundary).
 
+    bayes_min_chains:
+      Minimum number of chains for Bayesian methods in Exp3.
+      Default: 2 for laptop profile, 4 for full profile.
+
     Methods:
       GR_RHS, GHS_plus, GIGG_MMLE, RHS, LASSO_CV, OLS.
     """
@@ -1682,6 +1700,8 @@ def run_exp3_linear_benchmark(
 
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_profile(profile_name)
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
+    bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     _exp3_methods = ["GR_RHS", "GHS_plus", "GIGG_MMLE", "RHS", "LASSO_CV", "OLS"]
     methods_use = [m for m in (methods or _exp3_methods) if m in set(_exp3_methods)]
     if not methods_use:
@@ -1790,6 +1810,7 @@ def run_exp3_linear_benchmark(
                     sampler,
                     [method],
                     gigg_cfg,
+                    int(bayes_min_chains_use),
                     bool(enforce_bayes_convergence),
                     int(retry_limit),
                     grrhs_kw,
@@ -1797,16 +1818,44 @@ def run_exp3_linear_benchmark(
 
     log.info(
         "Exp3[%s]: %d settings x %d repeats x %d methods = %d tasks "
-        "(group_configs=%s, signals=%s, env_points=%s), methods=%s, enforce=%s, retry_limit=%d",
+        "(group_configs=%s, signals=%s, env_points=%s), methods=%s, bayes_min_chains=%d, enforce=%s, retry_limit=%d",
         design_mode,
         len(settings), repeats, len(methods_use), len(tasks),
         [gc["name"] for gc in gc_list], signals,
         [ep["env_id"] for ep in env_points_used],
-        methods_use, bool(enforce_bayes_convergence), int(retry_limit),
+        methods_use, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit),
     )
-    all_chunks = _parallel_rows(tasks, _exp3_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp3 Linear Benchmark")
+    bayes_tasks: list[tuple] = []
+    classical_tasks: list[tuple] = []
+    for t in tasks:
+        method_name = str(t[13][0]) if len(t) > 13 and isinstance(t[13], list) and t[13] else ""
+        if method_name in _CLASSICAL_METHODS:
+            classical_tasks.append(t)
+        else:
+            bayes_tasks.append(t)
+
+    chunks_bayes: list[Any] = []
+    chunks_classic: list[Any] = []
+    if bayes_tasks:
+        chunks_bayes = _parallel_rows(
+            bayes_tasks,
+            _exp3_worker,
+            n_jobs=n_jobs,
+            prefer_process=True,
+            process_fallback="serial",
+            progress_desc="Exp3 Linear Benchmark (Bayes)",
+        )
+    if classical_tasks:
+        chunks_classic = _parallel_rows(
+            classical_tasks,
+            _exp3_worker,
+            n_jobs=n_jobs,
+            prefer_process=False,
+            progress_desc="Exp3 Linear Benchmark (Classical)",
+        )
+
     rows: list[dict] = []
-    for chunk in all_chunks:
+    for chunk in list(chunks_bayes) + list(chunks_classic):
         rows.extend(chunk)
 
     raw = pd.DataFrame(rows)
@@ -1855,6 +1904,7 @@ def run_exp3_linear_benchmark(
         "n_train": 100,
         "n_test": int(n_test),
         "methods": methods_use,
+        "bayes_min_chains": int(bayes_min_chains_use),
         "n_settings": len(settings),
         "repeats": int(repeats),
         "enforce_bayes_convergence": bool(enforce_bayes_convergence),
@@ -2119,7 +2169,7 @@ def run_exp4_variant_ablation(
         "Exp4: %d p0 levels x %d repeats = %d tasks; variants per task=%d; retries=%d",
         len(p0_vals), repeats, len(tasks), n_variants, int(retry_limit),
     )
-    all_chunks = _parallel_rows(tasks, _exp4_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp4 Variant Ablation")
+    all_chunks = _parallel_rows(tasks, _exp4_worker, n_jobs=n_jobs, prefer_process=True, process_fallback="serial", progress_desc="Exp4 Variant Ablation")
     rows: list[dict] = []
     for chunk in all_chunks:
         rows.extend(chunk)
@@ -2329,7 +2379,7 @@ def run_exp5_prior_sensitivity(
             tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, priors, bool(enforce_bayes_convergence), int(retry_limit), str(sampler_backend)))
 
     log.info("Exp5: %d scenarios x %d repeats x %d priors = %d task-rows", len(scenarios), repeats, len(priors), len(tasks) * len(priors))
-    all_chunks = _parallel_rows(tasks, _exp5_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp5 Prior Sensitivity")
+    all_chunks = _parallel_rows(tasks, _exp5_worker, n_jobs=n_jobs, prefer_process=True, process_fallback="serial", progress_desc="Exp5 Prior Sensitivity")
     rows: list[dict] = []
     for chunk in all_chunks:
         rows.extend(chunk)
