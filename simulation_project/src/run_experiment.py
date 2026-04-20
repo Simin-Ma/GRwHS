@@ -102,7 +102,18 @@ def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
         # no_retry=True: if 10k+10k is not enough, report non-convergence rather
         # than inflating the budget beyond what the paper used.
         return {"iter_mult": 4, "iter_floor": 10000, "iter_cap": 10000, "btrick": False, "mmle_burnin_only": True, "no_retry": True}
-    return {"iter_mult": 2, "iter_floor": 500, "iter_cap": 1500, "btrick": False, "mmle_burnin_only": True}
+    # Laptop profile: modest Gibbs budget increase + lightweight stabilizers.
+    # Tuned to improve MMLE robustness without large wall-time inflation.
+    return {
+        "iter_mult": 2,
+        "iter_floor": 600,
+        "iter_cap": 2000,
+        "btrick": False,
+        "mmle_burnin_only": True,
+        "randomize_group_order": True,
+        "extra_beta_refresh_prob": 0.02,
+        "progress_bar": False,
+    }
 
 
 def _sampler_for_exp5(base: SamplerConfig, *, profile: str) -> SamplerConfig:
@@ -814,6 +825,10 @@ def _fit_all_methods(
         sampler_base = sampler
         if _is_bayesian_method(method):
             sampler_base = _sampler_for_bayesian_default(sampler_base, min_chains=bayes_min_chains)
+        if method in {"GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large"}:
+            # Keep at least two chains for GIGG diagnostics stability.
+            min_gigg_chains = max(2, int(bayes_min_chains) if bayes_min_chains is not None else 0)
+            sampler_base = _sampler_for_bayesian_default(sampler_base, min_chains=min_gigg_chains)
         if method == "GHS_plus":
             sampler_base = _sampler_for_ghs_plus_default(sampler_base)
         sampler_try = _scale_sampler_for_retry(sampler_base, attempt)
