@@ -102,17 +102,18 @@ def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
         # no_retry=True: if 10k+10k is not enough, report non-convergence rather
         # than inflating the budget beyond what the paper used.
         return {"iter_mult": 4, "iter_floor": 10000, "iter_cap": 10000, "btrick": False, "mmle_burnin_only": True, "no_retry": True}
-    # Laptop profile: modest Gibbs budget increase + lightweight stabilizers.
-    # Tuned to improve MMLE robustness without large wall-time inflation.
+    # Laptop profile: keep GIGG light by default; difficult settings get extra retry.
+    # This avoids slowing the full grid while still rescuing problematic CL/G10x5 cases.
     return {
         "iter_mult": 2,
         "iter_floor": 600,
-        "iter_cap": 2000,
+        "iter_cap": 1800,
         "btrick": False,
         "mmle_burnin_only": True,
-        "randomize_group_order": True,
-        "extra_beta_refresh_prob": 0.02,
+        "randomize_group_order": False,
+        "extra_beta_refresh_prob": 0.0,
         "progress_bar": False,
+        "extra_retry": 0,
     }
 
 
@@ -818,6 +819,7 @@ def _fit_all_methods(
         grrhs_p0 = int(p0_groups)
     methods_use = _resolve_method_list(methods, profile="full") if methods is not None else list(METHODS)
     gigg_cfg = dict(gigg_config or {})
+    gigg_extra_retry_cfg = max(0, int(gigg_cfg.pop("extra_retry", 0)))
     gigg_mmle_cfg = dict(gigg_cfg)
     gigg_fixed_cfg = {k: v for k, v in gigg_cfg.items() if k != "mmle_burnin_only"}
 
@@ -858,13 +860,17 @@ def _fit_all_methods(
     retry_max, until_mode = _retry_budget_from_limit(int(max_convergence_retries))
     _gigg_methods = {"GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large"}
     _gigg_no_retry = bool(gigg_cfg.get("no_retry", False))
+    _gigg_extra_retry = int(gigg_extra_retry_cfg)
     out: Dict[str, FitResult] = {}
     for method in methods_use:
         res: FitResult | None = None
         attempts = 1
         # GIGG methods with no_retry=True run exactly once (paper budget = 10k+10k);
         # non-convergence is reported as-is rather than retried with a larger budget.
-        method_retry_max = 0 if (_gigg_no_retry and method in _gigg_methods) else retry_max
+        if _gigg_no_retry and method in _gigg_methods:
+            method_retry_max = 0
+        else:
+            method_retry_max = retry_max + (_gigg_extra_retry if method in _gigg_methods else 0)
         if bool(enforce_bayes_convergence) and _is_bayesian_method(method):
             for attempt in range(method_retry_max + 1):
                 attempts = attempt + 1
@@ -1615,6 +1621,11 @@ def _exp3_worker(
         methods = [method_name]
     else:
         sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
+    gigg_config = dict(gigg_config)
+    if str(method_name if isinstance(task, dict) else (methods[0] if methods else "")).upper() == "GIGG_MMLE":
+        hard_setting = (group_cfg_name := str(group_cfg["name"])) in {"CL", "G10x5"} and signal in {"concentrated", "distributed"}
+        if hard_setting:
+            gigg_config["extra_retry"] = max(1, int(gigg_config.get("extra_retry", 0)))
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
@@ -2037,16 +2048,25 @@ def run_exp3_linear_benchmark(
 # ---------------------------------------------------------------------------
 # EXP4 - GR-RHS Variant Ablation: tau Calibration
 # ---------------------------------------------------------------------------
-# Directly validates the 0415 tau calibration formula:
-#   tau0 = p0 / (p - p0) / sqrt(n)  (eq. 11, Piironen & Vehtari style)
+# Mechanism-oriented ablation around tau-prior calibration:
+#   tau0 = p0 / (p - p0) / sqrt(n)  (CPS-style scaling)
+#
+# IMPORTANT SEMANTICS:
+#   p0_true in this experiment denotes the number of active coefficients
+#   (not the number of active groups).
 #
 # Compared variants:
-#   calibrated: tau0 from estimated p0 (default 0415 approach, auto_calibrate=True)
-#   fixed_10x:  tau0 * 10  (over-shrinkage, tau too large -> over-suppress signal)
+#   calibrated: auto-calibrated tau0 from p0 estimate
+#   fixed_10x:  intentionally over-permissive tau0 = 10 * tau0_oracle
 #   RHS_oracle: standard RHS baseline with oracle p0
-#   oracle:     optional full-ablation variant (disabled by default)
+#   oracle:     optional GR-RHS oracle-tau variant (disabled by default)
 #
-# Lightweight default: p0 in {5, 30}
+# Evaluation focus:
+#   - predictive error (MSE overall/null/signal)
+#   - shrinkage separation (kappa_null vs kappa_signal)
+#   - tau ratio retained as a diagnostic signal only
+#
+# Lightweight default: p0_true in {5, 30}
 # DGP aligned with Exp3 scale: n=100, p=50 (5 groups x 10 vars)
 # Default retries: 0 (fixed budget, predictable wall-time)
 # ---------------------------------------------------------------------------
@@ -2062,7 +2082,8 @@ def _exp4_worker(
     p = int(sum(group_sizes))
     s = experiment_seed(4, int(p0_true), r, master_seed=seed)
 
-    # DGP: mixed strong/weak signals, randomly placed
+    # DGP: mixed strong/weak signals, randomly placed.
+    # Here p0_true is the true active COEFFICIENT count.
     X, cov_x = sample_correlated_design(n=n, group_sizes=group_sizes, rho_within=0.3, rho_between=0.05, seed=s)
     groups = canonical_groups(group_sizes)
     rng = np.random.default_rng(s + 19)
@@ -2074,6 +2095,8 @@ def _exp4_worker(
         beta[active[n_strong:]] = 0.5
     sigma2 = 1.0
     y = X @ beta + np.random.default_rng(s + 23).normal(0.0, 1.0, n)
+    group_has_signal = np.array([np.any(np.abs(beta[g]) > 0.1) for g in groups], dtype=bool)
+    g_true_active = int(np.sum(group_has_signal))
 
     # Oracle tau for reference
     tau0_oracle = rhs_style_tau0(n=n, p=p, p0=int(p0_true))
@@ -2129,13 +2152,14 @@ def _exp4_worker(
             if res.kappa_draws is not None:
                 n_groups = len(group_sizes)
                 km = _kappa_group_means(res, n_groups)
-                # Identify signal/null groups from beta
-                group_has_signal = np.array([np.any(np.abs(beta[g]) > 0.1) for g in groups])
                 kms = np.array(km)
                 kappa_null_mean = float(np.nanmean(kms[~group_has_signal])) if np.any(~group_has_signal) else float("nan")
                 kappa_signal_mean = float(np.nanmean(kms[group_has_signal])) if np.any(group_has_signal) else float("nan")
         rows.append({
-            "p0_true": int(p0_true), "p": p, "n": n,
+            "p0_true": int(p0_true),
+            "s_true_active_coeff": int(p0_true),
+            "g_true_active": int(g_true_active),
+            "p": p, "n": n,
             "replicate_id": r, "variant": vname, "method_type": method,
             "status": res.status, "converged": bool(res.converged), "fit_attempts": _attempts_used(res),
             "tau0_oracle": float(tau0_oracle),
@@ -2197,9 +2221,9 @@ def run_exp4_variant_ablation(
     """
     Exp4: GR-RHS variant ablation - tau calibration strategies.
 
-    Tests the 0415 tau calibration formula:  tau0 = p0/(p-p0)/sqrt(n).
-    The central prediction: calibrated-tau should match oracle-tau and dominate
-    the misspecified variant (x10) and RHS baseline.
+    Tests the 0415 tau calibration formula: tau0 = p0/(p-p0)/sqrt(n).
+    Primary goal is predictive/mechanistic robustness of the calibrated variant
+    against a misspecified tau (x10) and the RHS oracle baseline.
 
     Variants:
       calibrated: auto_calibrate=True  (0415 formula with estimated p0)
@@ -2207,6 +2231,7 @@ def run_exp4_variant_ablation(
       RHS_oracle: standard RHS with oracle p0 (baseline without kappa_g layer)
       oracle:     optional; enable with include_oracle=True for full ablation
 
+    Note: p0 here denotes active coefficients (sparsity in coefficients).
     DGP matches Exp3 scale: p=50 (5 groups of 10), n=100.
     Lightweight default: p0 in {5, 30}, no convergence retries.
     """
@@ -2276,13 +2301,26 @@ def run_exp4_variant_ablation(
         mse_null=("mse_null", "mean"),
         mse_signal=("mse_signal", "mean"),
         mse_overall=("mse_overall", "mean"),
+        mse_overall_std=("mse_overall", "std"),
         tau0_oracle=("tau0_oracle", "first"),
         tau_post_mean=("tau_post_mean", "mean"),
         tau_ratio_to_oracle=("tau_ratio_to_oracle", "mean"),
         kappa_null_mean=("kappa_null_mean", "mean"),
         kappa_signal_mean=("kappa_signal_mean", "mean"),
+        g_true_active_mean=("g_true_active", "mean"),
         n_effective=("converged", "sum"),
     )
+    summary["mse_overall_sem"] = summary["mse_overall_std"] / np.sqrt(np.maximum(summary["n_effective"], 1))
+    summary["kappa_gap"] = summary["kappa_signal_mean"] - summary["kappa_null_mean"]
+
+    rhs_ref = (
+        summary.loc[summary["variant"] == "RHS_oracle", ["p0_true", "mse_overall"]]
+        .rename(columns={"mse_overall": "mse_rhs_oracle"})
+    )
+    summary = summary.merge(rhs_ref, on="p0_true", how="left")
+    denom = summary["mse_rhs_oracle"].astype(float)
+    summary["mse_rel_rhs_oracle"] = np.where(np.isfinite(denom) & (denom > 0), summary["mse_overall"] / denom, np.nan)
+    summary["mse_delta_rhs_oracle_pct"] = (summary["mse_rel_rhs_oracle"] - 1.0) * 100.0
 
     save_dataframe(raw, out_dir / "raw_results.csv")
     save_dataframe(summary, out_dir / "summary.csv")

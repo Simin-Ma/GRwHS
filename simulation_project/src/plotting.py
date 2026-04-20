@@ -467,17 +467,17 @@ def plot_exp3_benchmark(df: Any, out_dir: Path) -> None:
 
 def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
     """
-    Exp4 — ablation / τ calibration.
+    Exp4 — ablation / tau calibration.
 
-    Fig A (PRIMARY): τ_post_mean vs τ_oracle scatter.
+    Fig A (diagnostic): tau_post_mean vs tau_oracle scatter.
       - One point per (variant × p0_true) combination.
       - Color = p0_true, marker shape = variant.
       - Identity line (y=x) is the oracle target.
-      - This is the clearest diagnostic for τ calibration.
+      - This is a diagnostic view of posterior scale relative to tau0.
 
-    Fig B (secondary): Normalized MSE per variant (MSE_variant / MSE_oracle_p0).
+    Fig B (primary): Normalized MSE per variant (MSE_variant / MSE_RHS_oracle_p0).
       - One group of bars per p0, bars colored by variant.
-      - Normalizing to oracle removes the trivial p0 scaling, so all p0 values
+      - Normalizing to RHS_oracle removes the trivial p0 scaling, so all p0 values
         are on the same plot without dominating each other.
 
     The old `set_index("variant")` pattern crashed when multiple p0 values caused
@@ -535,18 +535,18 @@ def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
         lims = [min(all_x.min(), all_y.min()) * 0.85, max(all_x.max(), all_y.max()) * 1.15]
         ax_a.plot(lims, lims, "--", color="black", lw=1.3, label="identity (oracle)")
         ax_a.set_xlim(lims); ax_a.set_ylim(lims)
-        ax_a.set_xlabel("τ oracle  (p0/(p-p0)/√n)", fontsize=10)
-        ax_a.set_ylabel("τ posterior mean", fontsize=10)
-        ax_a.set_title("τ calibration scatter  (Exp4)\nPoints on identity line = perfect calibration", fontsize=9)
+        ax_a.set_xlabel("tau oracle  (p0/(p-p0)/sqrt(n))", fontsize=10)
+        ax_a.set_ylabel("tau posterior mean", fontsize=10)
+        ax_a.set_title("tau diagnostic scatter (Exp4)\nIdentity line is a prior-scale reference, not a strict target", fontsize=9)
         leg1 = ax_a.legend(handles=handles_p0 + var_handles, fontsize=8, loc="upper left",
                             ncol=2, title="color=p0, marker=variant")
         ax_a.add_artist(leg1)
         _save(fig_a, out_dir / "fig4a_tau_scatter.png")
 
-    # --- Fig B: normalized MSE bar chart (variant / oracle_p0) ---
+    # --- Fig B: normalized MSE bar chart (variant / RHS_oracle_p0) ---
     if "mse_overall" in frame.columns:
-        # Compute oracle MSE per p0 (variant=="GR_RHS_full" or first variant as reference)
-        ref_variant = "GR_RHS_full" if "GR_RHS_full" in variants else variants[0]
+        # Use RHS_oracle as canonical reference when available.
+        ref_variant = "RHS_oracle" if "RHS_oracle" in variants else variants[0]
         ref_df = frame[frame["variant"] == ref_variant]
         oracle_mse: dict = {}
         for p0 in p0_vals:
@@ -575,7 +575,7 @@ def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
         ax_b.axhline(1.0, color="black", ls="--", lw=1.2, label=f"reference ({ref_variant})")
         ax_b.set_xticks(x, labels=variants, rotation=30, ha="right", fontsize=8)
         ax_b.set_ylabel(f"MSE / MSE({ref_variant})  (normalized)", fontsize=9)
-        ax_b.set_title("Exp4: Normalized MSE per ablation variant\n<1 = better than reference; >1 = worse", fontsize=9)
+        ax_b.set_title("Exp4: Normalized MSE per ablation variant\n<1 = better than RHS_oracle; >1 = worse", fontsize=9)
         ax_b.legend(fontsize=8)
         _save(fig_b, out_dir / "fig4b_mse_normalized.png")
 

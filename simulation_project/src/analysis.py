@@ -296,34 +296,70 @@ def analyze_exp4(results_dir: Path) -> dict[str, Any]:
     per_p0: dict[int, dict] = {}
     for p0 in p0_vals:
         sub = [r for r in rows if int(_float(r.get("p0_true", -1))) == p0]
-        mse_by_v:  dict[str, list] = {}
-        tau_ratio: dict[str, list] = {}
+        mse_mean: dict[str, float] = {}
+        mse_sem: dict[str, float] = {}
+        mse_rel_rhs: dict[str, float] = {}
+        mse_delta_rhs_pct: dict[str, float] = {}
+        kappa_gap: dict[str, float] = {}
+        tau_ratio: dict[str, float] = {}
+        n_eff: dict[str, int] = {}
+
         for r in sub:
-            v  = r.get("variant", "")
+            v = r.get("variant", "")
             vm = _float(r.get("mse_overall", "nan"))
+            vse = _float(r.get("mse_overall_sem", "nan"))
+            vr = _float(r.get("mse_rel_rhs_oracle", "nan"))
+            vd = _float(r.get("mse_delta_rhs_oracle_pct", "nan"))
+            vg = _float(r.get("kappa_gap", "nan"))
             vt = _float(r.get("tau_ratio_to_oracle", "nan"))
+            vn = int(_float(r.get("n_effective", 0)))
             if not math.isnan(vm):
-                mse_by_v.setdefault(v, []).append(vm)
+                mse_mean[v] = float(vm)
+            if not math.isnan(vse):
+                mse_sem[v] = float(vse)
+            if not math.isnan(vr):
+                mse_rel_rhs[v] = float(vr)
+            if not math.isnan(vd):
+                mse_delta_rhs_pct[v] = float(vd)
+            if not math.isnan(vg):
+                kappa_gap[v] = float(vg)
             if not math.isnan(vt):
-                tau_ratio.setdefault(v, []).append(vt)
+                tau_ratio[v] = float(vt)
+            n_eff[v] = int(vn)
+
         per_p0[p0] = {
-            "mse_mean":       {v: float(np.mean(vs)) for v, vs in mse_by_v.items()},
-            "tau_ratio_mean": {v: float(np.mean(vs)) for v, vs in tau_ratio.items()},
+            "mse_mean": mse_mean,
+            "mse_sem": mse_sem,
+            "mse_rel_rhs_oracle": mse_rel_rhs,
+            "mse_delta_rhs_oracle_pct": mse_delta_rhs_pct,
+            "kappa_gap_mean": kappa_gap,
+            "tau_ratio_mean": tau_ratio,
+            "n_effective": n_eff,
         }
 
     metrics["per_p0"] = {str(k): v for k, v in per_p0.items()}
 
-    lines = ["  p0 = true number of active groups"]
+    lines = ["  p0 = true number of active coefficients (not active groups)"]
     for p0, dat in per_p0.items():
-        mse_rank = sorted(dat["mse_mean"].items(), key=lambda t: t[1])
-        oracle_mse = dat["mse_mean"].get("RHS_oracle", float("nan"))
-        calib_mse  = dat["mse_mean"].get("calibrated", float("nan"))
-        gap = (calib_mse / oracle_mse - 1) * 100 if not math.isnan(calib_mse) and oracle_mse > 1e-12 else float("nan")
+        calib_mse = dat["mse_mean"].get("calibrated", float("nan"))
+        calib_sem = dat["mse_sem"].get("calibrated", float("nan"))
+        fix_mse = dat["mse_mean"].get("fixed_10x", float("nan"))
+        rhs_mse = dat["mse_mean"].get("RHS_oracle", float("nan"))
+        rel_rhs = dat["mse_rel_rhs_oracle"].get("calibrated", float("nan"))
+        rel_fix = dat["mse_mean"].get("calibrated", float("nan")) / max(fix_mse, 1e-12) if not math.isnan(fix_mse) and fix_mse > 0 else float("nan")
+        kappa_gap = dat["kappa_gap_mean"].get("calibrated", float("nan"))
         tau_r = dat["tau_ratio_mean"].get("calibrated", float("nan"))
-        gap_str  = f"  gap={gap:+.1f}%" if not math.isnan(gap) else ""
-        tau_str  = f"  tau_post/tau_oracle={tau_r:.3f}" if not math.isnan(tau_r) else ""
+        n_eff = dat["n_effective"].get("calibrated", 0)
+        rel_rhs_str = f"{(rel_rhs - 1.0) * 100:+.1f}%" if not math.isnan(rel_rhs) else "nan"
+        rel_fix_str = f"{(rel_fix - 1.0) * 100:+.1f}%" if not math.isnan(rel_fix) else "nan"
+        sem_str = f"±{calib_sem:.5f}" if not math.isnan(calib_sem) else "±nan"
+        kappa_str = f"{kappa_gap:.3f}" if not math.isnan(kappa_gap) else "nan"
+        tau_str = f"{tau_r:.3f}" if not math.isnan(tau_r) else "nan"
         lines.append(
-            f"  p0={p0}: calibrated MSE={calib_mse:.5f}  oracle MSE={oracle_mse:.5f}{gap_str}{tau_str}"
+            f"  p0={p0}: calibrated MSE={calib_mse:.5f} {sem_str} (n={n_eff})"
+            f"  vs RHS_oracle={rhs_mse:.5f} ({rel_rhs_str})"
+            f"  vs fixed_10x={fix_mse:.5f} ({rel_fix_str})"
+            f"  kappa_gap={kappa_str}  tau_ratio(diagnostic)={tau_str}"
         )
 
     findings.append("\n".join(lines))

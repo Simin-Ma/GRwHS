@@ -94,10 +94,14 @@ Legacy full-factor mode is still available from Python via `exp3_design="legacy_
 
 Exp4 now uses a compact mechanism-ablation design aligned with Exp3:
 - DGP scale: `n=100`, `p=50`, `group_sizes=[10,10,10,10,10]`
-- default sparsity levels: `p0 in {5, 30}`
+- default sparsity levels: `p0 in {5, 30}` (`p0` = number of active coefficients)
 - default variants: `calibrated`, `fixed_10x`, `RHS_oracle`
 - optional full-ablation variant: `oracle` (Python call with `include_oracle=True`)
 - default convergence retries: `0` (fixed budget, predictable runtime)
+
+Evaluation note:
+- Primary decision metric is relative MSE against `RHS_oracle` (`mse_rel_rhs_oracle`, `<1` is better).
+- `tau_ratio_to_oracle` is retained as a diagnostic signal, not a strict pass/fail target.
 
 `collapsed` remains the recommended sampler.
 

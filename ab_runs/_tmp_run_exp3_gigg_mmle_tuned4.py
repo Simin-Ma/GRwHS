@@ -10,7 +10,7 @@ from simulation_project.src.run_experiment import run_exp3_linear_benchmark
 
 
 def main() -> None:
-    save_dir = f"ab_runs/exp3_gigg_mmle_core30_r1_tuned3_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    save_dir = f"ab_runs/exp3_gigg_mmle_core30_r1_tuned4_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     out = run_exp3_linear_benchmark(
         n_jobs=4,
         seed=20260420,
