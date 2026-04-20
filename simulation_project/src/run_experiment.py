@@ -167,8 +167,8 @@ def _sampler_for_bayesian_default(base: SamplerConfig) -> SamplerConfig:
 
 def _default_repeats(exp: str, profile: str) -> int:
     p = _normalize_compute_profile(profile)
-    full = {"exp1": 500, "exp2": 30, "exp3": 20, "exp4": 50, "exp5": 30}
-    laptop = {"exp1": 200, "exp2": 10, "exp3": 5, "exp4": 20, "exp5": 15}
+    full = {"exp1": 500, "exp2": 30, "exp3": 20, "exp4": 20, "exp5": 30}
+    laptop = {"exp1": 200, "exp2": 10, "exp3": 5, "exp4": 10, "exp5": 15}
     table = full if p == "full" else laptop
     if str(exp).lower() not in table:
         raise ValueError(f"unknown experiment: {exp!r}")
@@ -1771,14 +1771,14 @@ def run_exp3_linear_benchmark(
 #   tau0 = p0 / (p - p0) / sqrt(n)  (eq. 11, Piironen & Vehtari style)
 #
 # Compared variants:
-#   oracle:     tau0 from true p0 (upper bound; best possible calibration)
 #   calibrated: tau0 from estimated p0 (default 0415 approach, auto_calibrate=True)
-#   fixed_0_1x: tau0 * 0.1 (under-shrinkage, tau too small -> over-retain noise)
 #   fixed_10x:  tau0 * 10  (over-shrinkage, tau too large -> over-suppress signal)
-#   RHS:        standard RHS (baseline, oracle p0)
+#   RHS_oracle: standard RHS baseline with oracle p0
+#   oracle:     optional full-ablation variant (disabled by default)
 #
-# Crossed with sparsity levels p0 in {5, 15, 40} (sparse to moderate)
-# DGP: n=500, p=100 (5 groups x 20 vars), mixed strong (2.0) / weak (0.5) signals
+# Lightweight default: p0 in {5, 30}
+# DGP aligned with Exp3 scale: n=100, p=50 (5 groups x 10 vars)
+# Default retries: 0 (fixed budget, predictable wall-time)
 # ---------------------------------------------------------------------------
 
 def _exp4_worker(
@@ -1909,10 +1909,11 @@ def _fit_with_convergence_retry(
 def run_exp4_variant_ablation(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
-    repeats: int = 50,
+    repeats: int = 20,
     save_dir: str = "simulation_project",
     *,
     p0_list: Sequence[int] | None = None,
+    include_oracle: bool = False,
     profile: str = "full",
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
@@ -1927,13 +1928,13 @@ def run_exp4_variant_ablation(
     the misspecified variant (x10) and RHS baseline.
 
     Variants:
-      oracle:     auto_calibrate=False, tau0 from true p0 (best case)
       calibrated: auto_calibrate=True  (0415 formula with estimated p0)
       fixed_10x:  tau0 * 10  (over-permissive, nulls not shrunk enough)
       RHS_oracle: standard RHS with oracle p0 (baseline without kappa_g layer)
+      oracle:     optional; enable with include_oracle=True for full ablation
 
     DGP matches Exp3 scale: p=50 (5 groups of 10), n=100.
-    Sparsity levels: p0 in {5, 15, 30}.
+    Lightweight default: p0 in {5, 30}, no convergence retries.
     """
     pd = load_pandas()
 
@@ -1944,22 +1945,39 @@ def run_exp4_variant_ablation(
 
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_profile(profile_name)
-    retry_limit = _resolve_convergence_retry_limit(profile_name, max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
+    retry_limit = (
+        0
+        if max_convergence_retries is None
+        else _resolve_convergence_retry_limit(
+            profile_name,
+            max_convergence_retries,
+            until_bayes_converged=bool(until_bayes_converged),
+        )
+    )
 
     group_sizes = [10, 10, 10, 10, 10]
     p = int(sum(group_sizes))
     n = 100
-    p0_vals = list(p0_list or [5, 15, 30])
+    p0_vals = list(p0_list or [5, 30])
 
     # Variants: method + grrhs kwargs
     def _variants_for_p0(p0_true: int) -> dict[str, dict]:
         tau0_oracle = rhs_style_tau0(n=n, p=p, p0=p0_true)
-        return {
-            "oracle":     {"method": "GR_RHS", "auto_calibrate_tau": False, "tau0": tau0_oracle, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
+        variants: dict[str, dict] = {
             "calibrated": {"method": "GR_RHS", "auto_calibrate_tau": True, "tau0": None, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
             "fixed_10x":  {"method": "GR_RHS", "auto_calibrate_tau": False, "tau0": tau0_oracle * 10.0, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
             "RHS_oracle": {"method": "RHS"},
         }
+        if bool(include_oracle):
+            variants["oracle"] = {
+                "method": "GR_RHS",
+                "auto_calibrate_tau": False,
+                "tau0": tau0_oracle,
+                "p0_for_fit": p0_true,
+                "use_group_scale": True,
+                "use_local_scale": True,
+            }
+        return variants
 
     tasks: list[tuple] = []
     for p0_v in p0_vals:
@@ -1967,7 +1985,11 @@ def run_exp4_variant_ablation(
         for r in range(1, int(repeats) + 1):
             tasks.append((int(p0_v), r, seed, group_sizes, sampler, variants, bool(enforce_bayes_convergence), int(retry_limit), n, str(sampler_backend)))
 
-    log.info("Exp4: %d p0 levels x %d repeats = %d tasks", len(p0_vals), repeats, len(tasks))
+    n_variants = len(_variants_for_p0(int(p0_vals[0]))) if p0_vals else 0
+    log.info(
+        "Exp4: %d p0 levels x %d repeats = %d tasks; variants per task=%d; retries=%d",
+        len(p0_vals), repeats, len(tasks), n_variants, int(retry_limit),
+    )
     all_chunks = _parallel_rows(tasks, _exp4_worker, n_jobs=n_jobs, prefer_process=True, progress_desc="Exp4 Variant Ablation")
     rows: list[dict] = []
     for chunk in all_chunks:
@@ -1989,7 +2011,17 @@ def run_exp4_variant_ablation(
     save_dataframe(raw, out_dir / "raw_results.csv")
     save_dataframe(summary, out_dir / "summary.csv")
     save_dataframe(summary, tab_dir / "table_variant_ablation.csv")
-    save_json({"profile": profile_name, "p0_vals": p0_vals, "group_sizes": group_sizes, "n": n}, out_dir / "exp4_meta.json")
+    save_json(
+        {
+            "profile": profile_name,
+            "p0_vals": p0_vals,
+            "group_sizes": group_sizes,
+            "n": n,
+            "include_oracle": bool(include_oracle),
+            "max_convergence_retries": int(retry_limit),
+        },
+        out_dir / "exp4_meta.json",
+    )
 
     try:
         from .plotting import plot_exp4_ablation

@@ -49,3 +49,6 @@ simulation_project/results/
 *.log
 *.out
 *.err
+
+# Node dependencies
+node_modules/

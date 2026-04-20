@@ -80,14 +80,32 @@ Current defaults for the GR-RHS-advantage benchmark in Exp3:
 
 Exp4 now uses a compact mechanism-ablation design aligned with Exp3:
 - DGP scale: `n=100`, `p=50`, `group_sizes=[10,10,10,10,10]`
-- sparsity levels: `p0 in {5, 15, 30}`
-- variants: `oracle`, `calibrated`, `fixed_10x`, `RHS_oracle`
+- default sparsity levels: `p0 in {5, 30}`
+- default variants: `calibrated`, `fixed_10x`, `RHS_oracle`
+- optional full-ablation variant: `oracle` (Python call with `include_oracle=True`)
+- default convergence retries: `0` (fixed budget, predictable runtime)
 
 `collapsed` remains the recommended sampler.
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 6 --max-convergence-retries 2 --sampler collapsed
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 50 --n-jobs 6 --max-convergence-retries 2 --sampler collapsed
+python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile laptop --repeats 10 --n-jobs 6 --max-convergence-retries 0 --sampler collapsed
+python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 20 --n-jobs 6 --max-convergence-retries 0 --sampler collapsed
+```
+
+Optional full-ablation Python call:
+
+```python
+from simulation_project.src.run_experiment import run_exp4_variant_ablation
+
+run_exp4_variant_ablation(
+    profile="full",
+    repeats=20,
+    p0_list=[5, 30],
+    include_oracle=True,
+    max_convergence_retries=0,
+    sampler_backend="collapsed",
+    n_jobs=6,
+)
 ```
 
 ### Exp5 (`prior_sensitivity`)
@@ -115,7 +133,7 @@ python -m simulation_project.src.run_experiment --experiment 5 --save-dir simula
 python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --repeats 400 --n-jobs 8 --no-enforce-bayes-convergence
 python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 100 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
 python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 50 --n-jobs 6 --max-convergence-retries 2 --sampler collapsed
+python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 20 --n-jobs 6 --max-convergence-retries 0 --sampler collapsed
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile full --repeats 30 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
 ```
 
