@@ -1,4 +1,8 @@
-"""Sweep launcher for simulation_project experiments."""
+"""Sweep launcher for simulation_project experiments.
+
+On Windows, process-pool parallelism is disabled by default for stability.
+Set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to force-enable it from a spawn-safe script entrypoint.
+"""
 from __future__ import annotations
 
 import sys

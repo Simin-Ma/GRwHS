@@ -25,6 +25,9 @@ Notes:
 - `scripts/run_simulation.py` is a thin wrapper over `python -m simulation_project.src.run_experiment`.
 - Advanced parameters (`methods`, `prior_grid`, `p0_list`, and so on) are exposed in Python function calls.
 - Bayesian methods use at least `4` chains by default unless overridden by a method-specific path.
+- On Windows, process-pool parallelism is disabled by default for stability in interactive launch contexts.
+  If needed, enable it explicitly from a spawn-safe script entrypoint with
+  `SIM_ALLOW_WINDOWS_PROCESS_POOL=1`.
 
 ## 2. Convergence And Diagnostics
 

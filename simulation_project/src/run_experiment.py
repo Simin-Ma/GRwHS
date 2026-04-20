@@ -2558,7 +2558,13 @@ def run_all_experiments(
 # ---------------------------------------------------------------------------
 
 def _cli() -> None:
-    parser = argparse.ArgumentParser(description="Run the unified 5-experiment simulation pipeline")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run the unified 5-experiment simulation pipeline. "
+            "On Windows, process-pool parallelism is disabled by default; "
+            "set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to force-enable from a spawn-safe script entrypoint."
+        )
+    )
     parser.add_argument("--experiment", default="all", choices=["all", "1", "2", "3", "4", "5", "analysis"])
     parser.add_argument("--save-dir", default="simulation_project")
     parser.add_argument("--seed", type=int, default=MASTER_SEED)

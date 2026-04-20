@@ -18,6 +18,12 @@ Detailed CLI playbook:
 
 - `docs/simulation_cli_guide.md`
 
+Windows parallel safety:
+
+- Process-pool parallelism is disabled by default on Windows to prevent interactive `spawn` failures.
+- To force-enable process pools from a spawn-safe script entrypoint, set:
+  `SIM_ALLOW_WINDOWS_PROCESS_POOL=1`.
+
 Sweep entrypoint:
 
 ```bash

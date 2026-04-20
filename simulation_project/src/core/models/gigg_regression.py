@@ -2,6 +2,9 @@
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import math
+import os
+from pathlib import Path
+import sys
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
 
@@ -34,6 +37,28 @@ _GIG_SAMPLER_STATS: dict[str, int] = {
     "rejection_success": 0,
     "fallback_used": 0,
 }
+
+
+def _can_use_process_pool() -> tuple[bool, str]:
+    """Guard against Windows spawn issues in interactive launch contexts."""
+    if os.name != "nt":
+        return True, ""
+    allow_windows_process_pool = str(os.environ.get("SIM_ALLOW_WINDOWS_PROCESS_POOL", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if not allow_windows_process_pool:
+        return False, "disabled by default on Windows; set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to enable"
+    main_mod = sys.modules.get("__main__")
+    main_file = str(getattr(main_mod, "__file__", "") or "").strip()
+    argv0 = str(sys.argv[0]).strip() if sys.argv else ""
+    if argv0 in {"-", "-c"}:
+        return False, f"sys.argv[0]={argv0!r} is not spawn-safe on Windows"
+    if not main_file:
+        return False, "missing __main__.__file__ in interactive context"
+    main_file_l = main_file.lower()
+    if "<stdin>" in main_file_l or main_file_l == "-c":
+        return False, f"__main__.__file__={main_file!r} is not spawn-safe on Windows"
+    if not Path(main_file).exists():
+        return False, f"__main__.__file__={main_file!r} is not a real file path"
+    return True, ""
 
 
 def _digamma_approx(x: float) -> float:
@@ -886,15 +911,26 @@ class GIGGRegression:
             chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
         else:
             try:
-                with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
-                    fut_map = {executor.submit(_fit_gigg_chain_task, payloads[i]): i for i in range(len(payloads))}
-                    chain_results = [None] * len(payloads)
-                    fut_iter = as_completed(fut_map)
+                process_ok, process_reason = _can_use_process_pool()
+                if process_ok:
+                    with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
+                        fut_map = {executor.submit(_fit_gigg_chain_task, payloads[i]): i for i in range(len(payloads))}
+                        chain_results = [None] * len(payloads)
+                        fut_iter = as_completed(fut_map)
+                        if bool(self.progress_bar):
+                            from simulation_project.src.core.utils.logging_utils import progress as _progress
+                            fut_iter = _progress(fut_iter, total=len(payloads), desc="GIGG chains")
+                        for fut in fut_iter:
+                            chain_results[fut_map[fut]] = fut.result()
+                else:
                     if bool(self.progress_bar):
+                        print(f"[WARN] GIGG process pool disabled ({process_reason}). Running chains sequentially.")
                         from simulation_project.src.core.utils.logging_utils import progress as _progress
-                        fut_iter = _progress(fut_iter, total=len(payloads), desc="GIGG chains")
-                    for fut in fut_iter:
-                        chain_results[fut_map[fut]] = fut.result()
+                        chain_results = []
+                        for i in _progress(range(len(payloads)), total=len(payloads), desc="GIGG chains [serial]"):
+                            chain_results.append(_fit_gigg_chain_task(payloads[int(i)]))
+                    else:
+                        chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
             except Exception:
                 if bool(self.progress_bar):
                     from simulation_project.src.core.utils.logging_utils import progress as _progress

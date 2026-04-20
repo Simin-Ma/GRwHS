@@ -13,6 +13,12 @@ python -m simulation_project.src.run_experiment --help
 python scripts/run_simulation.py --help
 ```
 
+Windows parallel safety:
+
+- On Windows, process-pool parallelism is disabled by default to avoid `spawn` failures in interactive launch contexts.
+- You can explicitly re-enable it when running from a spawn-safe script entrypoint:
+  `SIM_ALLOW_WINDOWS_PROCESS_POOL=1`.
+
 Detailed command guide:
 
 - `docs/simulation_cli_guide.md`
