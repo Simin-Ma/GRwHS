@@ -62,19 +62,26 @@ python -m simulation_project.src.run_experiment --experiment 2 --save-dir simula
 
 ### Exp3 (`linear_benchmark`)
 
-Exp3 has a larger factorial design; use bounded retries.
+Exp3 now defaults to a compact Core-30 benchmark (theory-aligned, bounded compute).
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
 python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
 ```
 
-Current defaults for the GR-RHS-advantage benchmark in Exp3:
+Current defaults for the GR-RHS-advantage benchmark in Exp3 (`exp3_design="core30"`):
 - `signal_types=["concentrated", "distributed", "boundary"]`
-- `rho_within_values=[0.3, 0.8]`
-- `snr_values=[0.5, 2.0]`
-- `rho_between=0.1`
+- `group_configs=["G10x5","CL","CS"]`
+- env points:
+  - `E0: (rho_within=0.3, rho_between=0.1, target_snr=1.0)` for all signals
+  - `RW_PLUS: (0.8, 0.1, 1.0)` for all signals
+  - `RB_PLUS: (0.3, 0.3, 1.0)` for concentrated/distributed
+  - `SNR_PLUS: (0.3, 0.1, 2.0)` for concentrated/distributed
+- boundary calibration: `xi = 1.2 * xi_crit(u0=0.5, rho_profile)`,
+  with `rho_profile = rho_within / sqrt(sigma2_boundary)` and `sigma2_boundary=1.0`
 - `tau_target="groups"` for GR-RHS
+
+Legacy full-factor mode is still available from Python via `exp3_design="legacy_factorial"`.
 
 ### Exp4 (`variant_ablation`)
 
