@@ -5,7 +5,9 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 import csv
 import json
 import math
+import os
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Sequence
@@ -671,6 +673,28 @@ def _resolve_workers(n_jobs: int, n_tasks: int) -> int:
     return max(1, min(int(n_jobs), int(n_tasks)))
 
 
+def _can_use_process_pool() -> tuple[bool, str]:
+    """Best-effort guard against Windows spawn failures in interactive entrypoints."""
+    if os.name != "nt":
+        return True, ""
+    allow_windows_process_pool = str(os.environ.get("SIM_ALLOW_WINDOWS_PROCESS_POOL", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if not allow_windows_process_pool:
+        return False, "disabled by default on Windows; set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to enable"
+    main_mod = sys.modules.get("__main__")
+    main_file = str(getattr(main_mod, "__file__", "") or "").strip()
+    argv0 = str(sys.argv[0]).strip() if sys.argv else ""
+    if argv0 in {"-", "-c"}:
+        return False, f"sys.argv[0]={argv0!r} is not spawn-safe on Windows"
+    if not main_file:
+        return False, "missing __main__.__file__ in interactive context"
+    main_file_l = main_file.lower()
+    if "<stdin>" in main_file_l or main_file_l == "-c":
+        return False, f"__main__.__file__={main_file!r} is not spawn-safe on Windows"
+    if not Path(main_file).exists():
+        return False, f"__main__.__file__={main_file!r} is not a real file path"
+    return True, ""
+
+
 def _parallel_rows(
     tasks: list[Any],
     worker,
@@ -688,7 +712,17 @@ def _parallel_rows(
     out: list[Any] = [None] * len(tasks)
     done: list[bool] = [False] * len(tasks)
     fut_map: dict[Any, int] = {}
-    executor_cls = ProcessPoolExecutor if prefer_process else ThreadPoolExecutor
+    use_process = bool(prefer_process)
+    if use_process:
+        process_ok, process_reason = _can_use_process_pool()
+        if not process_ok:
+            mode = str(process_fallback).strip().lower()
+            if mode == "serial":
+                print(f"[WARN] Process pool disabled ({process_reason}). Using serial execution.")
+                return [worker(t) for t in tqdm(tasks, total=len(tasks), desc=(progress_desc or "Running") + " [serial]", leave=True)]
+            print(f"[WARN] Process pool disabled ({process_reason}). Using thread pool.")
+            use_process = False
+    executor_cls = ProcessPoolExecutor if use_process else ThreadPoolExecutor
     try:
         with executor_cls(max_workers=workers) as ex:
             fut_map = {ex.submit(worker, tasks[i]): i for i in range(len(tasks))}
@@ -697,7 +731,7 @@ def _parallel_rows(
                 out[idx] = fut.result()
                 done[idx] = True
     except Exception as exc:
-        if prefer_process:
+        if use_process:
             pending_idxs = [i for i, ok in enumerate(done) if not ok]
             pending_tasks = [tasks[i] for i in pending_idxs]
             mode = str(process_fallback).strip().lower()
