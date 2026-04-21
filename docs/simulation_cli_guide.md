@@ -32,8 +32,8 @@ Notes:
   `SIM_ALLOW_WINDOWS_PROCESS_POOL=1`.
 
 Default repeats when `--repeats` is omitted:
-- `profile=full`: `exp1=500`, `exp2=30`, `exp3=20`, `exp4=20`, `exp5=30`
-- `profile=laptop`: `exp1=200`, `exp2=10`, `exp3=5`, `exp4=10`, `exp5=15`
+- `profile=full`: `exp1=500`, `exp2=30`, `exp3=20`, `exp4=30`, `exp5=30`
+- `profile=laptop`: `exp1=200`, `exp2=10`, `exp3=5`, `exp4=15`, `exp5=15`
 
 ## 2. Convergence And Diagnostics
 
@@ -115,17 +115,17 @@ Exp4 now uses a compact mechanism-ablation design aligned with Exp3:
 - default sparsity levels: `p0 in {5, 30}` (`p0` = number of active coefficients)
 - default variants: `calibrated`, `fixed_10x`, `RHS_oracle`
 - optional full-ablation variant: `oracle` (Python call with `include_oracle=True`)
-- default convergence retries: `0` (fixed budget, predictable runtime)
+- default convergence retries: `3` (retry-until-quality within bounded budget)
 
 Evaluation note:
 - Primary decision metric is relative MSE against `RHS_oracle` (`mse_rel_rhs_oracle`, `<1` is better).
 - `tau_ratio_to_oracle` is retained as a diagnostic signal, not a strict pass/fail target.
 
-`collapsed` remains the recommended sampler.
+`gibbs` is the default/recommended sampler for Exp4.
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile laptop --repeats 10 --n-jobs 6 --max-convergence-retries 0 --sampler collapsed
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 20 --n-jobs 6 --max-convergence-retries 0 --sampler collapsed
+python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile laptop --repeats 15 --n-jobs 6 --max-convergence-retries 3 --sampler gibbs
+python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 30 --n-jobs 6 --max-convergence-retries 3 --sampler gibbs
 ```
 
 Optional full-ablation Python call:
@@ -135,11 +135,11 @@ from simulation_project.src.run_experiment import run_exp4_variant_ablation
 
 run_exp4_variant_ablation(
     profile="full",
-    repeats=20,
+    repeats=30,
     p0_list=[5, 30],
     include_oracle=True,
-    max_convergence_retries=0,
-    sampler_backend="collapsed",
+    max_convergence_retries=3,
+    sampler_backend="gibbs",
     n_jobs=6,
 )
 ```

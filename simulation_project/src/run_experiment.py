@@ -52,6 +52,8 @@ _GHS_PLUS_DEFAULT_WARMUP = 2500
 _GHS_PLUS_DEFAULT_POST_DRAWS = 2500
 _GHS_PLUS_DEFAULT_RHAT_THRESHOLD = 1.01
 _GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
+_EXP4_DEFAULT_BACKEND = "gibbs"
+_EXP4_DEFAULT_MAX_CONV_RETRIES = 3
 
 # ---------------------------------------------------------------------------
 # Compute-profile helpers
@@ -209,8 +211,8 @@ def _sampler_for_bayesian_default(base: SamplerConfig, *, min_chains: int | None
 
 def _default_repeats(exp: str, profile: str) -> int:
     p = _normalize_compute_profile(profile)
-    full = {"exp1": 500, "exp2": 30, "exp3": 20, "exp4": 20, "exp5": 30}
-    laptop = {"exp1": 200, "exp2": 10, "exp3": 5, "exp4": 10, "exp5": 15}
+    full = {"exp1": 500, "exp2": 30, "exp3": 20, "exp4": 30, "exp5": 30}
+    laptop = {"exp1": 200, "exp2": 10, "exp3": 5, "exp4": 15, "exp5": 15}
     table = full if p == "full" else laptop
     if str(exp).lower() not in table:
         raise ValueError(f"unknown experiment: {exp!r}")
@@ -242,6 +244,15 @@ def _resolve_convergence_retry_limit(
     if bool(until_bayes_converged):
         return _default_convergence_retries(profile)
     return _default_convergence_retries(profile)
+
+
+def _resolve_sampler_backend_for_experiment(exp: str, sampler_backend: str) -> str:
+    exp_key = str(exp).strip().lower()
+    backend = str(sampler_backend).strip().lower()
+    exp4_aliases = {"4", "exp4", "exp4_variant_ablation"}
+    if exp_key in exp4_aliases and backend == "nuts":
+        return str(_EXP4_DEFAULT_BACKEND)
+    return backend
 
 
 def _retry_budget_from_limit(max_convergence_retries: int) -> tuple[int, bool]:
@@ -2406,7 +2417,7 @@ def run_exp4_variant_ablation(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    sampler_backend: str = "nuts",
+    sampler_backend: str = "gibbs",
 ) -> Dict[str, str]:
     """
     Exp4: GR-RHS variant ablation - tau calibration strategies.
@@ -2423,7 +2434,7 @@ def run_exp4_variant_ablation(
 
     Note: p0 here denotes active coefficients (sparsity in coefficients).
     DGP matches Exp3 scale: p=50 (5 groups of 10), n=100.
-    Lightweight default: p0 in {5, 30}, no convergence retries.
+    Default: p0 in {5, 30}, convergence retries=3, sampler backend=gibbs.
     """
     pd = load_pandas()
     produced: set[Path] = set()
@@ -2437,15 +2448,12 @@ def run_exp4_variant_ablation(
     sampler = _sampler_for_profile(profile_name)
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
-    retry_limit = (
-        0
-        if max_convergence_retries is None
-        else _resolve_convergence_retry_limit(
-            profile_name,
-            max_convergence_retries,
-            until_bayes_converged=bool(until_bayes_converged),
-        )
+    retry_limit = _resolve_convergence_retry_limit(
+        profile_name,
+        _EXP4_DEFAULT_MAX_CONV_RETRIES if max_convergence_retries is None else max_convergence_retries,
+        until_bayes_converged=bool(until_bayes_converged),
     )
+    backend_use = _resolve_sampler_backend_for_experiment("exp4", sampler_backend)
 
     group_sizes = [10, 10, 10, 10, 10]
     p = int(sum(group_sizes))
@@ -2475,7 +2483,7 @@ def run_exp4_variant_ablation(
     for p0_v in p0_vals:
         variants = _variants_for_p0(int(p0_v))
         for r in range(1, int(repeats) + 1):
-            tasks.append((int(p0_v), r, seed, group_sizes, sampler, variants, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit), n, str(sampler_backend)))
+            tasks.append((int(p0_v), r, seed, group_sizes, sampler, variants, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit), n, str(backend_use)))
 
     n_variants = len(_variants_for_p0(int(p0_vals[0]))) if p0_vals else 0
     log.info(
@@ -2835,19 +2843,20 @@ def _cli() -> None:
     parser.add_argument("--exp3-gigg-mode", type=str, default="stable", choices=list(EXP3_GIGG_MODES),
                         help="Exp3 GIGG mode: stable (enhanced, default) or paper_ref (strict baseline).")
     parser.add_argument("--sampler", type=str, default="nuts", choices=["nuts", "collapsed", "gibbs"],
-                        help="GR-RHS posterior sampler: nuts (default), collapsed (beta marginalized, Gaussian only), gibbs (Gibbs+slice, Gaussian only)")
+                        help="GR-RHS posterior sampler: nuts (global default), collapsed (beta marginalized, Gaussian only), gibbs (Gibbs+slice, Gaussian only); Exp4 defaults to gibbs when --sampler is omitted")
     args = parser.parse_args()
     profile_name = _normalize_compute_profile(args.profile)
     exp3_gigg_mode_name = _normalize_exp3_gigg_mode(args.exp3_gigg_mode)
     enforce_conv = not bool(args.no_enforce_bayes_convergence)
     until_conv = bool(args.until_bayes_converged) or (enforce_conv and args.max_convergence_retries is None)
+    sampler_backend_cli = _resolve_sampler_backend_for_experiment(args.experiment, args.sampler)
     common = dict(
         n_jobs=args.n_jobs, seed=args.seed, save_dir=args.save_dir,
         profile=profile_name,
         enforce_bayes_convergence=enforce_conv,
         max_convergence_retries=args.max_convergence_retries,
         until_bayes_converged=until_conv,
-        sampler_backend=args.sampler,
+        sampler_backend=sampler_backend_cli,
     )
     reps = args.repeats
 

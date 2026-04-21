@@ -13,6 +13,6 @@ sweeps:
       profile: laptop
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: nuts
+      sampler_backend: gibbs
     grid:
       max_convergence_retries: [2]
