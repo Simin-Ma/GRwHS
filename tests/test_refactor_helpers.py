@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from simulation_project.src.experiment_aliases import cli_choice_to_key, normalize_sweep_experiment
+from simulation_project.src.experiment_exp1 import run_exp1_kappa_profile_regimes
+from simulation_project.src.experiment_exp2 import run_exp2_group_separation
+from simulation_project.src.experiment_exp3 import run_exp3_linear_benchmark, run_exp3a_main_benchmark, run_exp3b_boundary_stress
 from simulation_project.src.experiment_exp4 import run_exp4_variant_ablation
 from simulation_project.src.experiment_exp5 import run_exp5_prior_sensitivity
 from simulation_project.src.experiment_eval import _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
@@ -61,5 +64,10 @@ def test_new_refactor_modules_importable() -> None:
     assert _evaluate_row is not None
     assert _kappa_group_means is not None
     assert _kappa_group_prob_gt is not None
+    assert run_exp1_kappa_profile_regimes is not None
+    assert run_exp2_group_separation is not None
+    assert run_exp3_linear_benchmark is not None
+    assert run_exp3a_main_benchmark is not None
+    assert run_exp3b_boundary_stress is not None
     assert run_exp4_variant_ablation is not None
     assert run_exp5_prior_sensitivity is not None
