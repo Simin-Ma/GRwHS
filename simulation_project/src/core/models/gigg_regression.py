@@ -607,6 +607,7 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         mmle_samp_size=int(payload.get("mmle_samp_size", 1000)),
         mmle_tol_scale=float(payload.get("mmle_tol_scale", 1e-4)),
         mmle_max_iters=int(payload.get("mmle_max_iters", 50000)),
+        mmle_step_size=float(payload.get("mmle_step_size", 1.0)),
         fit_intercept=bool(payload.get("fit_intercept", True)),
         store_lambda=bool(payload["store_lambda"]),
         btrick=bool(payload["btrick"]),
@@ -679,6 +680,7 @@ class GIGGRegression:
     mmle_samp_size: int = 1000
     mmle_tol_scale: float = 1e-4
     mmle_max_iters: int = 50000
+    mmle_step_size: float = 1.0
     fit_intercept: bool = True
     store_lambda: bool = True
     btrick: bool = False
@@ -746,6 +748,7 @@ class GIGGRegression:
         self.init_strategy = init_mode
         self.init_ridge = float(max(self.init_ridge, 0.0))
         self.init_scale_blend = float(min(max(self.init_scale_blend, 0.0), 1.0))
+        self.mmle_step_size = float(min(max(self.mmle_step_size, 0.0), 1.0))
         self.extra_beta_refresh_prob = float(min(max(self.extra_beta_refresh_prob, 0.0), 1.0))
         mode = str(self.lambda_constraint_mode).strip().lower()
         if mode not in {"hard", "soft", "none"}:
@@ -882,6 +885,7 @@ class GIGGRegression:
                     "mmle_samp_size": self.mmle_samp_size,
                     "mmle_tol_scale": self.mmle_tol_scale,
                     "mmle_max_iters": self.mmle_max_iters,
+                    "mmle_step_size": self.mmle_step_size,
                     "fit_intercept": self.fit_intercept,
                     "store_lambda": self.store_lambda,
                     "btrick": self.btrick,
@@ -1312,6 +1316,7 @@ class GIGGRegression:
                     )
 
         burnin_iter = range(self.n_burn_in)
+        mmle_step = float(self.mmle_step_size)
         if _progress is not None:
             burnin_iter = _progress(burnin_iter, total=int(self.n_burn_in), desc="GIGG burn-in")
         for _ in burnin_iter:
@@ -1325,7 +1330,11 @@ class GIGGRegression:
                         shared_q = _digamma_inv(float(np.mean(mean_targets)))
                     except Exception:
                         shared_q = float(np.mean(q_vec))
-                    q_vec[:] = min(max(float(shared_q), self.b_floor), self.b_max)
+                    q_target = min(max(float(shared_q), self.b_floor), self.b_max)
+                    if mmle_step < 1.0:
+                        q_vec[:] = (1.0 - mmle_step) * q_vec + mmle_step * q_target
+                    else:
+                        q_vec[:] = q_target
                 else:
                     for gid, idxs in enumerate(group_arrays):
                         target = -float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter))))
@@ -1333,7 +1342,11 @@ class GIGGRegression:
                             q_est = _digamma_inv(target)
                         except Exception:
                             q_est = float(q_vec[gid])
-                        q_vec[gid] = min(max(float(q_est), self.b_floor), self.b_max)
+                        q_target = min(max(float(q_est), self.b_floor), self.b_max)
+                        if mmle_step < 1.0:
+                            q_vec[gid] = (1.0 - mmle_step) * q_vec[gid] + mmle_step * q_target
+                        else:
+                            q_vec[gid] = q_target
                 if self.force_a_1_over_n:
                     p_vec[:] = _clip_positive_array(
                         np.full(G, 1.0 / max(float(n), 1.0), dtype=float),
@@ -1381,8 +1394,12 @@ class GIGGRegression:
                             except Exception:
                                 est = float(q_vec[gid])
                             q_new[gid] = min(max(float(est), self.b_floor), self.b_max)
-                    delta_mmle = float(np.sum((q_new - q_vec) ** 2 + (p_new - p_vec) ** 2))
-                    q_vec[:] = _clip_positive_array(q_new, floor=self.b_floor, cap=self.b_max)
+                    if mmle_step < 1.0:
+                        q_next = (1.0 - mmle_step) * q_vec + mmle_step * q_new
+                    else:
+                        q_next = q_new
+                    delta_mmle = float(np.sum((q_next - q_vec) ** 2 + (p_new - p_vec) ** 2))
+                    q_vec[:] = _clip_positive_array(q_next, floor=self.b_floor, cap=self.b_max)
                     p_vec[:] = _clip_positive_array(p_new, floor=self.jitter, cap=_POS_CAP)
                     if delta_mmle < terminate_mmle:
                         break

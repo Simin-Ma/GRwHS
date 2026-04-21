@@ -60,7 +60,13 @@ python -m simulation_project.src.run_experiment --experiment all --save-dir simu
 Run one experiment:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+```
+
+Run analysis only:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment analysis --save-dir simulation_project
 ```
 
 Laptop profile:
@@ -71,7 +77,9 @@ python -m simulation_project.src.run_experiment --experiment all --save-dir simu
 
 Default sampler rule:
 
-- All Bayesian methods now run with at least `4` chains by default.
+- For Exp2-Exp5, Bayesian minimum chains are profile-dependent by default:
+  - `profile=laptop`: `2`
+  - `profile=full`: `4`
 
 ## Internal Runtime
 

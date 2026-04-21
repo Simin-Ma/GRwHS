@@ -29,6 +29,12 @@ Run all experiments:
 python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2
 ```
 
+Run analysis only:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment analysis --save-dir simulation_project
+```
+
 ## Active Experiments
 
 Current code exposes 5 experiments:

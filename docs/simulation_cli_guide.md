@@ -10,7 +10,7 @@ python scripts/run_simulation.py --help
 ```
 
 Common CLI arguments:
-- `--experiment {all,1,2,3,4,5}`
+- `--experiment {all,1,2,3,4,5,analysis}`
 - `--save-dir simulation_project`
 - `--seed 20260415`
 - `--repeats <int>`
@@ -24,10 +24,16 @@ Common CLI arguments:
 Notes:
 - `scripts/run_simulation.py` is a thin wrapper over `python -m simulation_project.src.run_experiment`.
 - Advanced parameters (`methods`, `prior_grid`, `p0_list`, and so on) are exposed in Python function calls.
-- Bayesian methods use at least `4` chains by default unless overridden by a method-specific path.
+- For Exp2-Exp5, Bayesian minimum chains are profile-dependent by default:
+  - `profile=laptop`: `2`
+  - `profile=full`: `4`
 - On Windows, process-pool parallelism is disabled by default for stability in interactive launch contexts.
   If needed, enable it explicitly from a spawn-safe script entrypoint with
   `SIM_ALLOW_WINDOWS_PROCESS_POOL=1`.
+
+Default repeats when `--repeats` is omitted:
+- `profile=full`: `exp1=500`, `exp2=30`, `exp3=20`, `exp4=20`, `exp5=30`
+- `profile=laptop`: `exp1=200`, `exp2=10`, `exp3=5`, `exp4=10`, `exp5=15`
 
 ## 2. Convergence And Diagnostics
 
@@ -45,13 +51,16 @@ Recommended checks:
 
 ## 3. Recommended Commands By Experiment
 
+The commands below are recommended presets. They are explicit choices and are not required to match the CLI defaults.
+
 ### Exp1 (`kappa_profile_regimes`)
 
 Exp1 uses profile-grid posterior computation, not MCMC. `--sampler` has no effect.
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --repeats 1 --n-jobs 1 --no-enforce-bayes-convergence
-python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --repeats 400 --n-jobs 8 --no-enforce-bayes-convergence
+python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --profile laptop --repeats 200 --n-jobs 8 --no-enforce-bayes-convergence
+python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --profile full --repeats 500 --n-jobs 8 --no-enforce-bayes-convergence
 ```
 
 ### Exp2 (`group_separation`)
@@ -59,8 +68,8 @@ python -m simulation_project.src.run_experiment --experiment 1 --save-dir simula
 Use `nuts` with convergence enforcement.
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile laptop --repeats 30 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 100 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile laptop --repeats 10 --n-jobs 6 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 30 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
 ```
 
 ### Exp3 (`linear_benchmark`)
@@ -68,8 +77,8 @@ python -m simulation_project.src.run_experiment --experiment 2 --save-dir simula
 Exp3 now defaults to a compact Core-30 benchmark (theory-aligned, bounded compute).
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 20 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 20 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
 ```
 
 Current defaults for the GR-RHS-advantage benchmark in Exp3 (`exp3_design="core30"`):
@@ -139,7 +148,7 @@ Recommended commands:
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile laptop --repeats 1 --n-jobs 1 --max-convergence-retries 2 --sampler nuts
 
 # development run
-python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile laptop --repeats 10 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile laptop --repeats 15 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 
 # full-quality run
 python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile full --repeats 30 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
@@ -148,11 +157,7 @@ python -m simulation_project.src.run_experiment --experiment 5 --save-dir simula
 ## 4. One-Click Full Pipeline
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --repeats 400 --n-jobs 8 --no-enforce-bayes-convergence
-python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 100 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 100 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 20 --n-jobs 6 --max-convergence-retries 0 --sampler collapsed
-python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile full --repeats 30 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --profile full --n-jobs 2
 ```
 
 ## 5. Quick Convergence Check Script

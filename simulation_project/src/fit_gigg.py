@@ -107,6 +107,7 @@ def fit_gigg_mmle(
     randomize_group_order: bool = False,
     lambda_vectorized_update: bool = False,
     extra_beta_refresh_prob: float = 0.0,
+    mmle_step_size: float = 1.0,
     no_retry: bool = False,
     progress_bar: bool = True,
 ) -> FitResult:
@@ -159,6 +160,7 @@ def fit_gigg_mmle(
             randomize_group_order=bool(randomize_group_order),
             lambda_vectorized_update=bool(lambda_vectorized_update),
             extra_beta_refresh_prob=float(extra_beta_refresh_prob),
+            mmle_step_size=float(mmle_step_size),
             progress_bar=bool(progress_bar),
         )
         model, runtime = timed_call(model.fit, X, y, groups=[list(map(int, g)) for g in groups])

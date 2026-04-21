@@ -826,8 +826,15 @@ def _fit_all_methods(
     methods_use = _resolve_method_list(methods, profile="full") if methods is not None else list(METHODS)
     gigg_cfg = dict(gigg_config or {})
     gigg_extra_retry_cfg = max(0, int(gigg_cfg.pop("extra_retry", 0)))
+    gigg_retry_cap_raw = gigg_cfg.pop("retry_cap", None)
+    gigg_retry_cap_cfg: int | None = None
+    if gigg_retry_cap_raw is not None:
+        try:
+            gigg_retry_cap_cfg = max(0, int(gigg_retry_cap_raw))
+        except Exception:
+            gigg_retry_cap_cfg = None
     gigg_mmle_cfg = dict(gigg_cfg)
-    gigg_fixed_cfg = {k: v for k, v in gigg_cfg.items() if k != "mmle_burnin_only"}
+    gigg_fixed_cfg = {k: v for k, v in gigg_cfg.items() if k not in {"mmle_burnin_only", "mmle_step_size"}}
 
     def _fit_once(method: str, attempt: int) -> FitResult:
         sampler_base = sampler
@@ -842,7 +849,7 @@ def _fit_all_methods(
         sampler_try = _scale_sampler_for_retry(sampler_base, attempt)
         gigg_try = _scale_gigg_config_for_retry(gigg_cfg, attempt)
         gigg_mmle_try = dict(gigg_try)
-        gigg_fixed_try = {k: v for k, v in gigg_try.items() if k != "mmle_burnin_only"}
+        gigg_fixed_try = {k: v for k, v in gigg_try.items() if k not in {"mmle_burnin_only", "mmle_step_size"}}
         if method == "GR_RHS":
             return fit_gr_rhs(X, y, groups, task=task, seed=seed + 1 + 100 * attempt, p0=grrhs_p0, sampler=sampler_try, **grrhs_kwargs)
         if method == "RHS":
@@ -877,6 +884,8 @@ def _fit_all_methods(
             method_retry_max = 0
         else:
             method_retry_max = retry_max + (_gigg_extra_retry if method in _gigg_methods else 0)
+        if method in _gigg_methods and (gigg_retry_cap_cfg is not None):
+            method_retry_max = min(int(method_retry_max), int(gigg_retry_cap_cfg))
         if bool(enforce_bayes_convergence) and _is_bayesian_method(method):
             for attempt in range(method_retry_max + 1):
                 attempts = attempt + 1
@@ -1632,10 +1641,20 @@ def _exp3_worker(
         hard_setting = (group_cfg_name := str(group_cfg["name"])) in {"CL", "G10x5"} and signal in {"concentrated", "distributed"}
         if hard_setting:
             gigg_config["extra_retry"] = max(1, int(gigg_config.get("extra_retry", 0)))
+            # Keep rescue behavior efficient while preserving robustness.
+            gigg_config["retry_cap"] = 2
+            # Full profile defaults to paper-locked no_retry; for hard Exp3 settings
+            # we allow one bounded rescue attempt to improve benchmark completeness.
+            if bool(gigg_config.get("no_retry", False)):
+                gigg_config["no_retry"] = False
+            gigg_config["progress_bar"] = bool(gigg_config.get("progress_bar", False))
             # For difficult Exp3 settings, prefer stronger mixing from the first attempt.
             gigg_config["randomize_group_order"] = bool(gigg_config.get("randomize_group_order", True))
             gigg_config["lambda_vectorized_update"] = bool(gigg_config.get("lambda_vectorized_update", True))
             gigg_config["extra_beta_refresh_prob"] = max(float(gigg_config.get("extra_beta_refresh_prob", 0.0)), 0.08)
+            gigg_config["init_scale_blend"] = max(float(gigg_config.get("init_scale_blend", 0.5)), 0.65)
+            # Damped MMLE updates reduce q_g oscillation in difficult correlated regimes.
+            gigg_config["mmle_step_size"] = min(max(float(gigg_config.get("mmle_step_size", 0.6)), 0.0), 1.0)
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
