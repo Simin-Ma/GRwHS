@@ -1,0 +1,1 @@
+"""External interfaces (CLI/adapters)."""

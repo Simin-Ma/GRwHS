@@ -8,6 +8,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from .domain.results.models import RunManifest
 from .utils import ensure_dir, load_pandas
 
 def _timestamp_tag() -> str:
@@ -307,16 +308,17 @@ def _finalize_experiment_run(
         result_paths=result_paths,
     )
 
-    manifest = {
-        "exp_key": str(exp_key),
-        "timestamp": ts,
-        "run_dir": str(run_dir),
-        "result_paths": result_paths,
-        "run_summary_table": str(summary_table_path),
-        "run_summary_md": str(summary_md_path),
-        "run_analysis_json": str(analysis_json_path),
-        "archived_artifacts": copied_artifacts,
-    }
+    manifest_obj = RunManifest(
+        exp_key=str(exp_key),
+        timestamp=ts,
+        run_dir=str(run_dir),
+        result_paths=dict(result_paths),
+        run_summary_table=str(summary_table_path),
+        run_summary_md=str(summary_md_path),
+        run_analysis_json=str(analysis_json_path),
+        archived_artifacts=list(copied_artifacts),
+    )
+    manifest = manifest_obj.to_dict()
     (run_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     (results_dir / "latest_run.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 

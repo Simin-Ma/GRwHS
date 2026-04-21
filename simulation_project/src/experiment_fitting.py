@@ -4,6 +4,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from .app.services.method_registry import MethodContext, build_default_method_registry
 from .experiment_runtime import (
     METHODS,
     _attach_retry_diagnostics,
@@ -36,12 +37,6 @@ def _fit_all_methods(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int = 2,
 ) -> dict[str, FitResult]:
-    from .fit_classical import fit_lasso_cv, fit_ols
-    from .fit_gigg import fit_gigg_fixed, fit_gigg_mmle
-    from .fit_ghs_plus import fit_ghs_plus
-    from .fit_gr_rhs import fit_gr_rhs
-    from .fit_rhs import fit_rhs
-
     n = X.shape[0]
     grrhs_kwargs = grrhs_kwargs or {}
     tau_target_use = str(grrhs_kwargs.get("tau_target", "coefficients")).strip().lower()
@@ -59,6 +54,8 @@ def _fit_all_methods(
         except Exception:
             gigg_retry_cap_cfg = None
 
+    registry = build_default_method_registry()
+
     def _fit_once(method: str, attempt: int) -> FitResult:
         sampler_base = sampler
         if _is_bayesian_method(method):
@@ -73,79 +70,34 @@ def _fit_all_methods(
         gigg_try = _scale_gigg_config_for_retry(gigg_cfg, attempt)
         gigg_mmle_try = dict(gigg_try)
         gigg_fixed_try = {k: v for k, v in gigg_try.items() if k not in {"mmle_burnin_only", "mmle_step_size"}}
-        if method == "GR_RHS":
-            return fit_gr_rhs(
-                X,
-                y,
-                groups,
-                task=task,
-                seed=seed + 1 + 100 * attempt,
-                p0=grrhs_p0,
-                sampler=sampler_try,
-                **grrhs_kwargs,
-            )
-        if method == "RHS":
-            return fit_rhs(X, y, groups, task=task, seed=seed + 2 + 100 * attempt, p0=p0, sampler=sampler_try)
-        if method == "GIGG_MMLE":
-            return fit_gigg_mmle(
-                X,
-                y,
-                groups,
-                task=task,
-                seed=seed + 3 + 100 * attempt,
-                sampler=sampler_try,
-                p0=p0,
-                **gigg_mmle_try,
-            )
-        if method == "GIGG_b_small":
-            return fit_gigg_fixed(
-                X,
-                y,
-                groups,
-                task=task,
-                seed=seed + 5 + 100 * attempt,
-                sampler=sampler_try,
-                p0=p0,
-                a_val=1.0 / n,
-                b_val=1.0 / n,
-                method_label="GIGG_b_small",
-                **gigg_fixed_try,
-            )
-        if method == "GIGG_GHS":
-            return fit_gigg_fixed(
-                X,
-                y,
-                groups,
-                task=task,
-                seed=seed + 6 + 100 * attempt,
-                sampler=sampler_try,
-                p0=p0,
-                a_val=0.5,
-                b_val=0.5,
-                method_label="GIGG_GHS",
-                **gigg_fixed_try,
-            )
-        if method == "GIGG_b_large":
-            return fit_gigg_fixed(
-                X,
-                y,
-                groups,
-                task=task,
-                seed=seed + 7 + 100 * attempt,
-                sampler=sampler_try,
-                p0=p0,
-                a_val=1.0 / n,
-                b_val=1.0,
-                method_label="GIGG_b_large",
-                **gigg_fixed_try,
-            )
-        if method == "GHS_plus":
-            return fit_ghs_plus(X, y, groups, task=task, seed=seed + 4 + 100 * attempt, p0=p0, sampler=sampler_try)
-        if method == "OLS":
-            return fit_ols(X, y, task=task, seed=seed + 8)
-        if method == "LASSO_CV":
-            return fit_lasso_cv(X, y, task=task, seed=seed + 9)
-        raise ValueError(f"Unsupported method: {method}")
+        offset_map = {
+            "GR_RHS": 1,
+            "RHS": 2,
+            "GIGG_MMLE": 3,
+            "GHS_plus": 4,
+            "GIGG_b_small": 5,
+            "GIGG_GHS": 6,
+            "GIGG_b_large": 7,
+            "OLS": 8,
+            "LASSO_CV": 9,
+        }
+        if method not in offset_map:
+            raise ValueError(f"Unsupported method: {method}")
+        ctx = MethodContext(
+            X=X,
+            y=y,
+            groups=[list(map(int, g)) for g in groups],
+            task=task,
+            seed=int(seed + offset_map[method] + 100 * attempt),
+            p0=int(p0),
+            grrhs_p0=int(grrhs_p0),
+            n=int(n),
+            sampler=sampler_try,
+            grrhs_kwargs=dict(grrhs_kwargs),
+            gigg_mmle_kwargs=gigg_mmle_try,
+            gigg_fixed_kwargs=gigg_fixed_try,
+        )
+        return registry.run(method, ctx)
 
     retry_max, until_mode = _retry_budget_from_limit(int(max_convergence_retries))
     gigg_methods = {"GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large"}

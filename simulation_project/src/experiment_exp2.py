@@ -239,9 +239,6 @@ def run_exp2_group_separation(
 
     save_dataframe(raw, out_dir / "raw_results.csv")
     _record_produced_paths(produced, out_dir / "raw_results.csv")
-    _record_produced_paths(produced, out_dir / "raw_results.csv")
-    _record_produced_paths(produced, out_dir / "raw_results.csv")
-    _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(summary_df, out_dir / "summary.csv")
     _record_produced_paths(produced, out_dir / "summary.csv")
     save_dataframe(kappa_df, out_dir / "kappa_realizations.csv")

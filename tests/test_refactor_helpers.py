@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from simulation_project.src.app.orchestration import run_all_experiments
+from simulation_project.src.app.services import MethodRegistry, build_default_method_registry
+from simulation_project.src.domain.config.models import RunCommonConfig
+from simulation_project.src.domain.results.models import RunManifest
 from simulation_project.src.experiment_aliases import cli_choice_to_key, normalize_sweep_experiment
 from simulation_project.src.experiment_exp1 import run_exp1_kappa_profile_regimes
 from simulation_project.src.experiment_exp2 import run_exp2_group_separation
@@ -71,3 +75,40 @@ def test_new_refactor_modules_importable() -> None:
     assert run_exp3b_boundary_stress is not None
     assert run_exp4_variant_ablation is not None
     assert run_exp5_prior_sensitivity is not None
+    assert run_all_experiments is not None
+
+
+def test_architecture_models_and_registry() -> None:
+    cfg = RunCommonConfig(
+        n_jobs=2,
+        seed=123,
+        save_dir="simulation_project",
+        profile="full",
+        enforce_bayes_convergence=True,
+        max_convergence_retries=2,
+        until_bayes_converged=True,
+        sampler_backend="nuts",
+    )
+    cfg_kwargs = cfg.as_kwargs()
+    assert cfg_kwargs["n_jobs"] == 2
+    assert cfg_kwargs["sampler_backend"] == "nuts"
+
+    manifest = RunManifest(
+        exp_key="expX",
+        timestamp="20260101_000000",
+        run_dir="d:/tmp/run",
+        result_paths={"summary": "d:/tmp/run/summary.csv"},
+        run_summary_table="d:/tmp/run/table.csv",
+        run_summary_md="d:/tmp/run/summary.md",
+        run_analysis_json="d:/tmp/run/analysis.json",
+        archived_artifacts=["d:/tmp/run/artifacts/a.csv"],
+    )
+    manifest_dict = manifest.to_dict()
+    assert manifest_dict["exp_key"] == "expX"
+    assert "archived_artifacts" in manifest_dict
+
+    registry = build_default_method_registry()
+    assert isinstance(registry, MethodRegistry)
+    names = registry.names()
+    assert "GR_RHS" in names
+    assert "RHS" in names
