@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+from simulation_project.src.app.experiments import (
+    run_exp1_kappa_profile_regimes as app_run_exp1_kappa_profile_regimes,
+    run_exp2_group_separation as app_run_exp2_group_separation,
+    run_exp3_linear_benchmark as app_run_exp3_linear_benchmark,
+    run_exp3a_main_benchmark as app_run_exp3a_main_benchmark,
+    run_exp3b_boundary_stress as app_run_exp3b_boundary_stress,
+    run_exp4_variant_ablation as app_run_exp4_variant_ablation,
+    run_exp5_prior_sensitivity as app_run_exp5_prior_sensitivity,
+)
 from simulation_project.src.app.orchestration import run_all_experiments
 from simulation_project.src.app.services import MethodRegistry, build_default_method_registry
 from simulation_project.src.domain.config.models import RunCommonConfig
@@ -76,6 +85,16 @@ def test_new_refactor_modules_importable() -> None:
     assert run_exp4_variant_ablation is not None
     assert run_exp5_prior_sensitivity is not None
     assert run_all_experiments is not None
+
+
+def test_app_layer_experiments_importable() -> None:
+    assert app_run_exp1_kappa_profile_regimes is not None
+    assert app_run_exp2_group_separation is not None
+    assert app_run_exp3_linear_benchmark is not None
+    assert app_run_exp3a_main_benchmark is not None
+    assert app_run_exp3b_boundary_stress is not None
+    assert app_run_exp4_variant_ablation is not None
+    assert app_run_exp5_prior_sensitivity is not None
 
 
 def test_architecture_models_and_registry() -> None:

@@ -50,6 +50,9 @@ Current code exposes 7 runnable experiment targets:
 ## Structure
 
 - `simulation_project/`: active pipeline
+- `simulation_project/src/app/`: orchestration, experiment modules, and app services
+- `simulation_project/src/domain/`: typed config/result models
+- `simulation_project/src/interfaces/`: CLI interface adapters
 - `simulation_project/src/core/`: internal model/inference runtime used by the pipeline
 - `scripts/run_simulation.py`: launcher wrapper
 - `docs/`: updated protocol and planning docs for the unified pipeline

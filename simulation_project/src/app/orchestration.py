@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 
 from ..domain.config.models import RunCommonConfig
 from ..experiment_aliases import CLI_EXPERIMENT_CHOICES, cli_choice_to_key
-from ..experiment_runtime import (
+from .services.runtime import (
     COMPUTE_PROFILES,
     EXP3_GIGG_MODES,
     _default_repeats,
