@@ -6,6 +6,7 @@ import numpy as np
 
 from simulation_project.src.core.models.baselines import RegularizedHorseshoeRegression
 
+from .fit_helpers import as_int_groups, fit_error_result
 from .utils import (
     FitResult,
     SamplerConfig,
@@ -85,7 +86,7 @@ def fit_rhs(
                 f"Simulation benchmark RHS backend must be '{_SIMULATION_RHS_BACKEND}'. "
                 f"Received '{getattr(model, 'backend', None)}'."
             )
-        model, runtime = timed_call(model.fit, X, y, groups=[list(map(int, g)) for g in groups])
+        model, runtime = timed_call(model.fit, X, y, groups=as_int_groups(groups))
         beta_draws = getattr(model, "coef_samples_", None)
         beta_mean = getattr(model, "coef_", None)
 
@@ -114,7 +115,7 @@ def fit_rhs(
                     f"Simulation benchmark RHS backend must be '{_SIMULATION_RHS_BACKEND}'. "
                     f"Received '{getattr(strict, 'backend', None)}'."
                 )
-            strict, runtime2 = timed_call(strict.fit, X, y, groups=[list(map(int, g)) for g in groups])
+            strict, runtime2 = timed_call(strict.fit, X, y, groups=as_int_groups(groups))
             beta_draws = getattr(strict, "coef_samples_", None)
             beta_mean = getattr(strict, "coef_", None)
             rhat_max, ess_min, div_ratio, converged, details = diagnostics_summary_for_method(
@@ -140,18 +141,4 @@ def fit_rhs(
             diagnostics=details,
         )
     except Exception as exc:
-        return FitResult(
-            method="RHS",
-            status="error",
-            beta_mean=None,
-            beta_draws=None,
-            kappa_draws=None,
-            group_scale_draws=None,
-            runtime_seconds=float("nan"),
-            rhat_max=float("nan"),
-            bulk_ess_min=float("nan"),
-            divergence_ratio=float("nan"),
-            converged=False,
-            error=f"{type(exc).__name__}: {exc}",
-            diagnostics={},
-        )
+        return fit_error_result("RHS", f"{type(exc).__name__}: {exc}")

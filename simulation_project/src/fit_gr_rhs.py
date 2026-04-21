@@ -6,6 +6,7 @@ import numpy as np
 
 from simulation_project.src.core.models.grrhs_nuts import GRRHS_NUTS, GRRHS_CollapsedNUTS, GRRHS_Gibbs
 
+from .fit_helpers import as_int_groups, fit_error_result
 from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
 
 BACKENDS = ("nuts", "collapsed", "gibbs")
@@ -212,7 +213,7 @@ def fit_gr_rhs(
             return _build_model(b, **kw)
 
         model = _make(seed, float(sampler.adapt_delta), int(sampler.max_treedepth))
-        model, runtime = timed_call(model.fit, X, y, groups=[list(map(int, g)) for g in groups])
+        model, runtime = timed_call(model.fit, X, y, groups=as_int_groups(groups))
         beta_draws = getattr(model, "coef_samples_", None)
         beta_mean = getattr(model, "coef_mean_", None)
         tau_draws = getattr(model, "tau_samples_", None)
@@ -229,7 +230,7 @@ def fit_gr_rhs(
         # Auto-retry with stricter NUTS settings (only meaningful for gradient-based samplers)
         if b in ("nuts", "collapsed") and np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
             strict = _make(seed + 999, float(sampler.strict_adapt_delta), int(sampler.strict_max_treedepth))
-            strict, runtime2 = timed_call(strict.fit, X, y, groups=[list(map(int, g)) for g in groups])
+            strict, runtime2 = timed_call(strict.fit, X, y, groups=as_int_groups(groups))
             beta_draws = getattr(strict, "coef_samples_", None)
             beta_mean = getattr(strict, "coef_mean_", None)
             tau_draws = getattr(strict, "tau_samples_", None)
@@ -259,19 +260,6 @@ def fit_gr_rhs(
             diagnostics=details,
         )
     except Exception as exc:
-        return FitResult(
-            method="GR_RHS",
-            status="error",
-            beta_mean=None,
-            beta_draws=None,
-            kappa_draws=None,
-            group_scale_draws=None,
-            tau_draws=None,
-            runtime_seconds=float("nan"),
-            rhat_max=float("nan"),
-            bulk_ess_min=float("nan"),
-            divergence_ratio=float("nan"),
-            converged=False,
-            error=f"{type(exc).__name__}: {exc}",
-            diagnostics={},
-        )
+        res = fit_error_result("GR_RHS", f"{type(exc).__name__}: {exc}")
+        res.tau_draws = None
+        return res

@@ -6,6 +6,7 @@ import numpy as np
 
 from simulation_project.src.core.models.baselines import GroupedHorseshoePlus
 
+from .fit_helpers import as_int_groups, fit_error_result, scaled_iteration_budget
 from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
 
 # GHS+ Gibbs mixes far more slowly than HMC for the group-level shrinkage
@@ -23,12 +24,12 @@ def _ghs_iters(
     iter_floor: int = _GHS_ITER_FLOOR,
     iter_cap: int = _GHS_ITER_CAP,
 ) -> tuple[int, int]:
-    mult = max(1, int(iter_mult))
-    floor = max(10, int(iter_floor))
-    cap = max(floor, int(iter_cap))
-    burnin = min(max(int(sampler.warmup) * mult, floor), cap)
-    draws = min(max(int(sampler.post_warmup_draws) * mult, floor), cap)
-    return burnin, draws
+    return scaled_iteration_budget(
+        sampler,
+        iter_mult=iter_mult,
+        iter_floor=iter_floor,
+        iter_cap=iter_cap,
+    )
 
 
 def fit_ghs_plus(
@@ -46,20 +47,9 @@ def fit_ghs_plus(
     progress_bar: bool = True,
 ) -> FitResult:
     if str(task).lower() == "logistic":
-        return FitResult(
-            method="GHS_plus",
-            status="error",
-            beta_mean=None,
-            beta_draws=None,
-            kappa_draws=None,
-            group_scale_draws=None,
-            runtime_seconds=float("nan"),
-            rhat_max=float("nan"),
-            bulk_ess_min=float("nan"),
-            divergence_ratio=float("nan"),
-            converged=False,
-            error="NotImplementedError: Group Horseshoe+ is gaussian-only in this repository",
-            diagnostics={},
+        return fit_error_result(
+            "GHS_plus",
+            "NotImplementedError: Group Horseshoe+ is gaussian-only in this repository",
         )
 
     try:
@@ -81,7 +71,7 @@ def fit_ghs_plus(
             num_chains=int(sampler.chains),
             progress_bar=bool(progress_bar),
         )
-        model, runtime = timed_call(model.fit, X, y, groups=[list(map(int, g)) for g in groups])
+        model, runtime = timed_call(model.fit, X, y, groups=as_int_groups(groups))
         beta_draws = getattr(model, "coef_samples_", None)
         beta_mean = getattr(model, "coef_mean_", None)
         group_draws = getattr(model, "group_lambda_samples_", None)
@@ -110,18 +100,4 @@ def fit_ghs_plus(
             diagnostics=details,
         )
     except Exception as exc:
-        return FitResult(
-            method="GHS_plus",
-            status="error",
-            beta_mean=None,
-            beta_draws=None,
-            kappa_draws=None,
-            group_scale_draws=None,
-            runtime_seconds=float("nan"),
-            rhat_max=float("nan"),
-            bulk_ess_min=float("nan"),
-            divergence_ratio=float("nan"),
-            converged=False,
-            error=f"{type(exc).__name__}: {exc}",
-            diagnostics={},
-        )
+        return fit_error_result("GHS_plus", f"{type(exc).__name__}: {exc}")

@@ -6,9 +6,10 @@ import numpy as np
 
 from simulation_project.src.core.models.gigg_regression import GIGGRegression
 
+from .fit_helpers import as_int_groups, fit_error_result, scaled_iteration_budget
 from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
 
-# ── iteration counts ────────────────────────────────────────────────────────
+# Iteration counts
 # Boss et al. (2024) use 10 000 burn-in + 10 000 draws in all simulations
 # (Section 5.2). Defaults here match that budget exactly so direct calls to
 # fit_gigg_mmle / fit_gigg_fixed reproduce the paper's computational setting.
@@ -26,29 +27,11 @@ def _gigg_iters(
     iter_floor: int = _DEFAULT_GIGG_ITER_FLOOR,
     iter_cap: int = _DEFAULT_GIGG_ITER_CAP,
 ) -> tuple[int, int]:
-    mult = max(1, int(iter_mult))
-    floor = max(10, int(iter_floor))
-    cap = max(floor, int(iter_cap))
-    burnin = min(max(int(sampler.warmup) * mult, floor), cap)
-    draws = min(max(int(sampler.post_warmup_draws) * mult, floor), cap)
-    return burnin, draws
-
-
-def _make_fit_result_error(method: str, error: str) -> FitResult:
-    return FitResult(
-        method=method,
-        status="error",
-        beta_mean=None,
-        beta_draws=None,
-        kappa_draws=None,
-        group_scale_draws=None,
-        runtime_seconds=float("nan"),
-        rhat_max=float("nan"),
-        bulk_ess_min=float("nan"),
-        divergence_ratio=float("nan"),
-        converged=False,
-        error=error,
-        diagnostics={},
+    return scaled_iteration_budget(
+        sampler,
+        iter_mult=iter_mult,
+        iter_floor=iter_floor,
+        iter_cap=iter_cap,
     )
 
 
@@ -85,7 +68,7 @@ def _extract_and_diagnose(
     )
 
 
-# ── GIGG MMLE ────────────────────────────────────────────────────────────────
+# GIGG MMLE
 
 def fit_gigg_mmle(
     X: np.ndarray,
@@ -116,21 +99,22 @@ def fit_gigg_mmle(
     Fixes a_g = 1/n for all groups and estimates b_g via MMLE during burn-in,
     matching the paper's recommended default procedure.
 
-    τ₀ is calibrated using the Carvalho-Polson-Scott formula τ₀ = p₀/((p-p₀)√n),
-    consistent with how RHS and GR_RHS initialize their global scale.
+    tau is calibrated using the Carvalho-Polson-Scott formula
+    tau = p0 / ((p - p0) * sqrt(n)), consistent with how RHS and GR_RHS
+    initialize their global scale.
 
     no_retry is accepted for compatibility with experiment-level retry policies.
     Retry control is handled by the caller; this function always runs one fit.
     """
     _ = bool(no_retry)  # caller-level flag; intentionally unused here
     if str(task).lower() == "logistic":
-        return _make_fit_result_error(
+        return fit_error_result(
             "GIGG_MMLE",
             "NotImplementedError: GIGG_MMLE is gaussian-only in this repository",
         )
 
     n, p = X.shape
-    # CPS τ₀ calibration — same formula used for RHS / GR_RHS
+    # CPS tau calibration: same formula used for RHS / GR_RHS.
     tau0 = rhs_style_tau0(n=n, p=p, p0=max(int(p0), 1))
     gigg_burnin, gigg_draws = _gigg_iters(
         sampler,
@@ -163,13 +147,13 @@ def fit_gigg_mmle(
             mmle_step_size=float(mmle_step_size),
             progress_bar=bool(progress_bar),
         )
-        model, runtime = timed_call(model.fit, X, y, groups=[list(map(int, g)) for g in groups])
+        model, runtime = timed_call(model.fit, X, y, groups=as_int_groups(groups))
         return _extract_and_diagnose(model, "GIGG_MMLE", sampler, runtime)
     except Exception as exc:
-        return _make_fit_result_error("GIGG_MMLE", f"{type(exc).__name__}: {exc}")
+        return fit_error_result("GIGG_MMLE", f"{type(exc).__name__}: {exc}")
 
 
-# ── GIGG Fixed ───────────────────────────────────────────────────────────────
+# GIGG Fixed
 
 def fit_gigg_fixed(
     X: np.ndarray,
@@ -200,15 +184,15 @@ def fit_gigg_fixed(
 
     Key variants that reproduce Table 2 / Table 3 comparisons:
 
-        GIGG_b_small  a=1/n, b=1/n  — near-individualistic; best for concentrated signals
-        GIGG_GHS      a=1/2, b=1/2  — group horseshoe (special case, Section 2.1)
-        GIGG_b_large  a=1/n, b=1    — best for distributed (dense within-group) signals
+        GIGG_b_small  a=1/n, b=1/n  - near-individualistic; best for concentrated signals
+        GIGG_GHS      a=1/2, b=1/2  - group horseshoe (special case, Section 2.1)
+        GIGG_b_large  a=1/n, b=1    - best for distributed (dense within-group) signals
 
-    τ₀ is calibrated via CPS formula, matching GR_RHS / RHS / GIGG_MMLE.
+    tau is calibrated via CPS formula, matching GR_RHS / RHS / GIGG_MMLE.
     """
     _ = bool(no_retry)  # caller-level flag; intentionally unused here
     if str(task).lower() == "logistic":
-        return _make_fit_result_error(
+        return fit_error_result(
             method_label,
             "NotImplementedError: GIGG_fixed is gaussian-only in this repository",
         )
@@ -222,7 +206,7 @@ def fit_gigg_fixed(
         iter_floor=iter_floor,
         iter_cap=iter_cap,
     )
-    G = len(list(groups))
+    n_groups = len(list(groups))
 
     try:
         model = GIGGRegression(
@@ -248,16 +232,16 @@ def fit_gigg_fixed(
             extra_beta_refresh_prob=float(extra_beta_refresh_prob),
             progress_bar=bool(progress_bar),
         )
-        a_arr = [a_fixed] * G
-        b_arr = [float(b_val)] * G
+        a_arr = [a_fixed] * n_groups
+        b_arr = [float(b_val)] * n_groups
         model, runtime = timed_call(
             model.fit,
             X,
             y,
-            groups=[list(map(int, g)) for g in groups],
+            groups=as_int_groups(groups),
             a=a_arr,
             b=b_arr,
         )
         return _extract_and_diagnose(model, method_label, sampler, runtime)
     except Exception as exc:
-        return _make_fit_result_error(method_label, f"{type(exc).__name__}: {exc}")
+        return fit_error_result(method_label, f"{type(exc).__name__}: {exc}")

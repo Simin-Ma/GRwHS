@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 
 import yaml
 
+from .experiment_aliases import normalize_sweep_experiment
 from .run_experiment import (
     run_exp1_kappa_profile_regimes,
     run_exp2_group_separation,
@@ -36,40 +37,6 @@ _RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {
     "exp4": run_exp4_variant_ablation,
     "exp5": run_exp5_prior_sensitivity,
 }
-
-_EXP_ALIASES: dict[str, str] = {
-    "all": "all",
-    "exp1-5": "all",
-    "exp1_to_exp5": "all",
-    "pipeline": "all",
-    "1": "exp1",
-    "exp1": "exp1",
-    "exp1_kappa_profile_regimes": "exp1",
-    "2": "exp2",
-    "exp2": "exp2",
-    "exp2_group_separation": "exp2",
-    "3": "exp3",
-    "exp3": "exp3",
-    "exp3_linear_benchmark": "exp3",
-    "exp3a": "exp3a",
-    "exp3a_main_benchmark": "exp3a",
-    "exp3b": "exp3b",
-    "exp3b_boundary_stress": "exp3b",
-    "4": "exp4",
-    "exp4": "exp4",
-    "exp4_variant_ablation": "exp4",
-    "5": "exp5",
-    "exp5": "exp5",
-    "exp5_prior_sensitivity": "exp5",
-}
-
-
-def _normalize_exp_name(value: Any) -> str:
-    key = str(value).strip().lower()
-    if key not in _EXP_ALIASES:
-        raise ValueError(f"unknown experiment alias: {value!r}")
-    return _EXP_ALIASES[key]
-
 
 def _load_sweep_config(path: Path) -> dict[str, Any]:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -183,7 +150,7 @@ def run_sweep(
     if not isinstance(spec, Mapping):
         raise ValueError(f"sweep spec for {sweep_name!r} must be a mapping")
 
-    exp_name = _normalize_exp_name(spec.get("experiment", ""))
+    exp_name = normalize_sweep_experiment(spec.get("experiment", ""))
     runner = _RUNNERS[exp_name]
 
     defaults = cfg.get("defaults", {})

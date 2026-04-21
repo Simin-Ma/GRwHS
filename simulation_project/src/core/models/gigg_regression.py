@@ -2,15 +2,15 @@
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import math
-import os
 from pathlib import Path
 import tempfile
-import sys
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
 
 import numpy as np
 from numpy.random import Generator, default_rng
+
+from ..utils.parallel_runtime import can_use_process_pool
 
 try:
     from scipy.stats import geninvgauss as _scipy_geninvgauss
@@ -38,30 +38,6 @@ _GIG_SAMPLER_STATS: dict[str, int] = {
     "rejection_success": 0,
     "fallback_used": 0,
 }
-
-
-def _can_use_process_pool() -> tuple[bool, str]:
-    """Guard against Windows spawn issues in interactive launch contexts."""
-    if os.name != "nt":
-        return True, ""
-    allow_windows_process_pool = str(os.environ.get("SIM_ALLOW_WINDOWS_PROCESS_POOL", "")).strip().lower() in {"1", "true", "yes", "on"}
-    if not allow_windows_process_pool:
-        return False, "disabled by default on Windows; set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to enable"
-    main_mod = sys.modules.get("__main__")
-    main_file = str(getattr(main_mod, "__file__", "") or "").strip()
-    argv0 = str(sys.argv[0]).strip() if sys.argv else ""
-    if argv0 in {"-", "-c"}:
-        return False, f"sys.argv[0]={argv0!r} is not spawn-safe on Windows"
-    if not main_file:
-        return False, "missing __main__.__file__ in interactive context"
-    main_file_l = main_file.lower()
-    if "<stdin>" in main_file_l or main_file_l == "-c":
-        return False, f"__main__.__file__={main_file!r} is not spawn-safe on Windows"
-    if not Path(main_file).exists():
-        return False, f"__main__.__file__={main_file!r} is not a real file path"
-    return True, ""
-
-
 def _digamma_approx(x: float) -> float:
     """Lightweight digamma approximation with recurrence + asymptotic expansion."""
     xx = float(x)
@@ -898,7 +874,7 @@ class GIGGRegression:
         process_reason = ""
         try:
             if int(self.num_chains) > 1:
-                process_ok, process_reason = _can_use_process_pool()
+                process_ok, process_reason = can_use_process_pool()
                 if process_ok:
                     tmpdir_obj = tempfile.TemporaryDirectory(prefix="gigg_shared_")
                     tmpdir = Path(tmpdir_obj.name)

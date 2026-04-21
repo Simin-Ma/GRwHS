@@ -4,9 +4,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import json
 import math
-import os
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Sequence
@@ -14,12 +12,14 @@ from typing import Any, Dict, Sequence
 import numpy as np
 from tqdm.auto import tqdm
 
+from .core.utils.parallel_runtime import can_use_process_pool
 from .dgp_normal_means import (
     generate_null_group,
     generate_signal_group_distributed,
     kappa_posterior_grid,
     posterior_summary_from_grid,
 )
+from .experiment_aliases import CLI_EXPERIMENT_CHOICES, cli_choice_to_key
 from .utils import (
     MASTER_SEED,
     FitResult,
@@ -750,28 +750,6 @@ def _resolve_workers(n_jobs: int, n_tasks: int) -> int:
     return max(1, min(int(n_jobs), int(n_tasks)))
 
 
-def _can_use_process_pool() -> tuple[bool, str]:
-    """Best-effort guard against Windows spawn failures in interactive entrypoints."""
-    if os.name != "nt":
-        return True, ""
-    allow_windows_process_pool = str(os.environ.get("SIM_ALLOW_WINDOWS_PROCESS_POOL", "")).strip().lower() in {"1", "true", "yes", "on"}
-    if not allow_windows_process_pool:
-        return False, "disabled by default on Windows; set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to enable"
-    main_mod = sys.modules.get("__main__")
-    main_file = str(getattr(main_mod, "__file__", "") or "").strip()
-    argv0 = str(sys.argv[0]).strip() if sys.argv else ""
-    if argv0 in {"-", "-c"}:
-        return False, f"sys.argv[0]={argv0!r} is not spawn-safe on Windows"
-    if not main_file:
-        return False, "missing __main__.__file__ in interactive context"
-    main_file_l = main_file.lower()
-    if "<stdin>" in main_file_l or main_file_l == "-c":
-        return False, f"__main__.__file__={main_file!r} is not spawn-safe on Windows"
-    if not Path(main_file).exists():
-        return False, f"__main__.__file__={main_file!r} is not a real file path"
-    return True, ""
-
-
 def _parallel_rows(
     tasks: list[Any],
     worker,
@@ -791,7 +769,7 @@ def _parallel_rows(
     fut_map: dict[Any, int] = {}
     use_process = bool(prefer_process)
     if use_process:
-        process_ok, process_reason = _can_use_process_pool()
+        process_ok, process_reason = can_use_process_pool()
         if not process_ok:
             mode = str(process_fallback).strip().lower()
             if mode == "serial":
@@ -2280,7 +2258,6 @@ def _exp4_worker(
     from .utils import canonical_groups, sample_correlated_design
 
     p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, enforce_conv, max_retries, n, backend = task
-    produced: set[Path] = set()
     p = int(sum(group_sizes))
     s = experiment_seed(4, int(p0_true), r, master_seed=seed)
 
@@ -2831,7 +2808,7 @@ def _cli() -> None:
             "set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to force-enable from a spawn-safe script entrypoint."
         )
     )
-    parser.add_argument("--experiment", default="all", choices=["all", "1", "2", "3", "3a", "3b", "4", "5", "analysis"])
+    parser.add_argument("--experiment", default="all", choices=list(CLI_EXPERIMENT_CHOICES))
     parser.add_argument("--save-dir", default="simulation_project")
     parser.add_argument("--seed", type=int, default=MASTER_SEED)
     parser.add_argument("--repeats", type=int, default=None)
@@ -2845,11 +2822,12 @@ def _cli() -> None:
     parser.add_argument("--sampler", type=str, default="nuts", choices=["nuts", "collapsed", "gibbs"],
                         help="GR-RHS posterior sampler: nuts (global default), collapsed (beta marginalized, Gaussian only), gibbs (Gibbs+slice, Gaussian only); Exp4 defaults to gibbs when --sampler is omitted")
     args = parser.parse_args()
+    exp_key = cli_choice_to_key(args.experiment)
     profile_name = _normalize_compute_profile(args.profile)
     exp3_gigg_mode_name = _normalize_exp3_gigg_mode(args.exp3_gigg_mode)
     enforce_conv = not bool(args.no_enforce_bayes_convergence)
     until_conv = bool(args.until_bayes_converged) or (enforce_conv and args.max_convergence_retries is None)
-    sampler_backend_cli = _resolve_sampler_backend_for_experiment(args.experiment, args.sampler)
+    sampler_backend_cli = _resolve_sampler_backend_for_experiment(exp_key, args.sampler)
     common = dict(
         n_jobs=args.n_jobs, seed=args.seed, save_dir=args.save_dir,
         profile=profile_name,
@@ -2876,31 +2854,87 @@ def _cli() -> None:
         with open(out_path, "w") as _f:
             json.dump(result.get("metrics", {}), _f, indent=2)
 
-    if args.experiment == "all":
+    if exp_key == "all":
         run_all_experiments(**common, exp3_gigg_mode=exp3_gigg_mode_name)
-    elif args.experiment == "1":
-        run_exp1_kappa_profile_regimes(n_jobs=args.n_jobs, seed=args.seed, save_dir=args.save_dir, repeats=reps or _default_repeats("exp1", profile_name))
-        _print_exp_analysis("Exp1: kappa_g Profile Regimes", analyze_exp1(_base / "results" / "exp1_kappa_profile_regimes"))
-    elif args.experiment == "2":
-        run_exp2_group_separation(repeats=reps or _default_repeats("exp2", profile_name), **common)
-        _print_exp_analysis("Exp2: Group Separation", analyze_exp2(_base / "results" / "exp2_group_separation"))
-    elif args.experiment == "3":
-        run_exp3_linear_benchmark(repeats=reps or _default_repeats("exp3", profile_name), gigg_mode=exp3_gigg_mode_name, **common)
-        _print_exp_analysis("Exp3: Linear Benchmark", analyze_exp3(_base / "results" / "exp3_linear_benchmark"))
-    elif args.experiment == "3a":
-        run_exp3a_main_benchmark(repeats=reps or _default_repeats("exp3", profile_name), gigg_mode=exp3_gigg_mode_name, **common)
-        _print_exp_analysis("Exp3a: Main Benchmark", analyze_exp3(_base / "results" / "exp3a_main_benchmark"))
-    elif args.experiment == "3b":
-        run_exp3b_boundary_stress(repeats=reps or _default_repeats("exp3", profile_name), gigg_mode=exp3_gigg_mode_name, **common)
-        _print_exp_analysis("Exp3b: Boundary Stress", analyze_exp3(_base / "results" / "exp3b_boundary_stress"))
-    elif args.experiment == "4":
-        run_exp4_variant_ablation(repeats=reps or _default_repeats("exp4", profile_name), **common)
-        _print_exp_analysis("Exp4: Variant Ablation", analyze_exp4(_base / "results" / "exp4_variant_ablation"))
-    elif args.experiment == "5":
-        run_exp5_prior_sensitivity(repeats=reps or _default_repeats("exp5", profile_name), **common)
-        _print_exp_analysis("Exp5: Prior Sensitivity", analyze_exp5(_base / "results" / "exp5_prior_sensitivity"))
-    elif args.experiment == "analysis":
+    elif exp_key == "analysis":
         run_analysis(save_dir=args.save_dir)
+    else:
+        dispatch: dict[str, dict[str, Any]] = {
+            "exp1": {
+                "run": lambda: run_exp1_kappa_profile_regimes(
+                    n_jobs=args.n_jobs,
+                    seed=args.seed,
+                    save_dir=args.save_dir,
+                    repeats=reps or _default_repeats("exp1", profile_name),
+                ),
+                "analyze": analyze_exp1,
+                "label": "Exp1: kappa_g Profile Regimes",
+                "results_subdir": "exp1_kappa_profile_regimes",
+            },
+            "exp2": {
+                "run": lambda: run_exp2_group_separation(
+                    repeats=reps or _default_repeats("exp2", profile_name),
+                    **common,
+                ),
+                "analyze": analyze_exp2,
+                "label": "Exp2: Group Separation",
+                "results_subdir": "exp2_group_separation",
+            },
+            "exp3": {
+                "run": lambda: run_exp3_linear_benchmark(
+                    repeats=reps or _default_repeats("exp3", profile_name),
+                    gigg_mode=exp3_gigg_mode_name,
+                    **common,
+                ),
+                "analyze": analyze_exp3,
+                "label": "Exp3: Linear Benchmark",
+                "results_subdir": "exp3_linear_benchmark",
+            },
+            "exp3a": {
+                "run": lambda: run_exp3a_main_benchmark(
+                    repeats=reps or _default_repeats("exp3", profile_name),
+                    gigg_mode=exp3_gigg_mode_name,
+                    **common,
+                ),
+                "analyze": analyze_exp3,
+                "label": "Exp3a: Main Benchmark",
+                "results_subdir": "exp3a_main_benchmark",
+            },
+            "exp3b": {
+                "run": lambda: run_exp3b_boundary_stress(
+                    repeats=reps or _default_repeats("exp3", profile_name),
+                    gigg_mode=exp3_gigg_mode_name,
+                    **common,
+                ),
+                "analyze": analyze_exp3,
+                "label": "Exp3b: Boundary Stress",
+                "results_subdir": "exp3b_boundary_stress",
+            },
+            "exp4": {
+                "run": lambda: run_exp4_variant_ablation(
+                    repeats=reps or _default_repeats("exp4", profile_name),
+                    **common,
+                ),
+                "analyze": analyze_exp4,
+                "label": "Exp4: Variant Ablation",
+                "results_subdir": "exp4_variant_ablation",
+            },
+            "exp5": {
+                "run": lambda: run_exp5_prior_sensitivity(
+                    repeats=reps or _default_repeats("exp5", profile_name),
+                    **common,
+                ),
+                "analyze": analyze_exp5,
+                "label": "Exp5: Prior Sensitivity",
+                "results_subdir": "exp5_prior_sensitivity",
+            },
+        }
+        spec = dispatch[exp_key]
+        spec["run"]()
+        analyzer = spec["analyze"]
+        label = str(spec["label"])
+        results_subdir = str(spec["results_subdir"])
+        _print_exp_analysis(label, analyzer(_base / "results" / results_subdir))
 
 
 if __name__ == "__main__":
