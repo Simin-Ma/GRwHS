@@ -351,6 +351,22 @@ def _timestamp_tag() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+def _stable_name_seed(name: str, *, mod: int = 1000) -> int:
+    code = 0
+    for ch in str(name):
+        code = (code * 131 + ord(ch)) % int(mod)
+    return int(code)
+
+
+def _record_produced_paths(store: set[Path], *paths: Path) -> None:
+    for p in paths:
+        try:
+            if Path(p).exists() and Path(p).is_file():
+                store.add(Path(p).resolve())
+        except Exception:
+            continue
+
+
 def _collect_existing_paths(obj: Any) -> set[Path]:
     out: set[Path] = set()
 
@@ -559,24 +575,12 @@ def _write_markdown_run_summary(
 def _archive_experiment_outputs(
     *,
     save_root: Path,
-    results_dir: Path,
     run_dir: Path,
+    produced_paths: set[Path],
     result_paths: dict[str, Any],
 ) -> list[str]:
     artifacts_dir = ensure_dir(run_dir / "artifacts")
-    to_copy: set[Path] = set()
-
-    for p in results_dir.rglob("*"):
-        if not p.is_file():
-            continue
-        try:
-            rel = p.relative_to(results_dir)
-        except Exception:
-            rel = None
-        if rel is not None and len(rel.parts) > 0 and rel.parts[0] == "runs":
-            continue
-        to_copy.add(p)
-
+    to_copy: set[Path] = set(produced_paths)
     to_copy |= _collect_existing_paths(result_paths)
 
     copied: list[str] = []
@@ -597,6 +601,7 @@ def _finalize_experiment_run(
     exp_key: str,
     save_dir: str,
     results_dir: Path,
+    produced_paths: set[Path] | None,
     result_paths: dict[str, Any],
 ) -> dict[str, Any]:
     pd = load_pandas()
@@ -628,8 +633,8 @@ def _finalize_experiment_run(
 
     copied_artifacts = _archive_experiment_outputs(
         save_root=save_root,
-        results_dir=results_dir,
         run_dir=run_dir,
+        produced_paths=set(produced_paths or set()),
         result_paths=result_paths,
     )
 
@@ -1139,6 +1144,7 @@ def run_exp1_kappa_profile_regimes(
       xi_crit = u0 * rho^2 / (2*(u0 + (1-u0)*rho^2)), eq. 104 of 0415 paper.
     """
     from .plotting import plot_exp1, plot_exp1_phase
+    produced: set[Path] = set()
 
     base = Path(save_dir)
     out_dir = ensure_dir(base / "results" / "exp1_kappa_profile_regimes")
@@ -1218,20 +1224,26 @@ def run_exp1_kappa_profile_regimes(
     pd = load_pandas()
     all_rows = null_rows + phase_rows
     save_dataframe(pd.DataFrame(all_rows), out_dir / "raw_results.csv")
+    _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(pd.DataFrame(null_agg), out_dir / "summary_null.csv")
+    _record_produced_paths(produced, out_dir / "summary_null.csv")
     save_dataframe(pd.DataFrame(phase_agg), out_dir / "summary_phase.csv")
+    _record_produced_paths(produced, out_dir / "summary_phase.csv")
     # Statistically correct criterion: does the 95% CI for slope contain the theoretical -0.5?
     # Also require the point estimate to be in a plausible range [-0.8, -0.25] to reject degenerate fits.
     _pass_ci_contains = slope_ci[0] < -0.5 < slope_ci[1]
     _pass_estimate = -0.8 < slope < -0.25
     save_json({"slope": slope, "slope_ci": list(slope_ci), "expected_slope": -0.5, "fit_range_pg": [20, 500], "ci_contains_theory": _pass_ci_contains, "pass": bool(_pass_ci_contains and _pass_estimate)}, out_dir / "null_slope_check.json")
+    _record_produced_paths(produced, out_dir / "null_slope_check.json")
 
     try:
         plot_exp1(pd.DataFrame(null_agg), slope=slope, slope_ci=slope_ci, out_path=fig_dir / "fig1a_null_contraction.png")
+        _record_produced_paths(produced, fig_dir / "fig1a_null_contraction.png")
     except Exception as exc:
         log.warning("Plot exp1A failed: %s", exc)
     try:
         plot_exp1_phase(pd.DataFrame(phase_agg), out_path=fig_dir / "fig1b_phase_diagram.png")
+        _record_produced_paths(produced, fig_dir / "fig1b_phase_diagram.png")
     except Exception as exc:
         log.warning("Plot exp1B failed: %s", exc)
 
@@ -1248,6 +1260,7 @@ def run_exp1_kappa_profile_regimes(
         exp_key="exp1",
         save_dir=save_dir,
         results_dir=out_dir,
+        produced_paths=produced,
         result_paths=result_paths,
     )
 
@@ -1381,6 +1394,7 @@ def run_exp2_group_separation(
       - GR_RHS lower null MSE and higher signal retention than RHS
     """
     pd = load_pandas()
+    produced: set[Path] = set()
 
     base = Path(save_dir)
     out_dir = ensure_dir(base / "results" / "exp2_group_separation")
@@ -1477,17 +1491,28 @@ def run_exp2_group_separation(
         kappa_summary = pd.DataFrame()
 
     save_dataframe(raw, out_dir / "raw_results.csv")
+    _record_produced_paths(produced, out_dir / "raw_results.csv")
+    _record_produced_paths(produced, out_dir / "raw_results.csv")
+    _record_produced_paths(produced, out_dir / "raw_results.csv")
+    _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(summary_df, out_dir / "summary.csv")
+    _record_produced_paths(produced, out_dir / "summary.csv")
     save_dataframe(kappa_df, out_dir / "kappa_realizations.csv")
+    _record_produced_paths(produced, out_dir / "kappa_realizations.csv")
     if not kappa_summary.empty:
         save_dataframe(kappa_summary, out_dir / "kappa_summary_by_group.csv")
+        _record_produced_paths(produced, out_dir / "kappa_summary_by_group.csv")
         save_dataframe(kappa_summary, tab_dir / "table_kappa_group_separation.csv")
+        _record_produced_paths(produced, tab_dir / "table_kappa_group_separation.csv")
     save_dataframe(summary_df, tab_dir / "table_group_separation.csv")
+    _record_produced_paths(produced, tab_dir / "table_group_separation.csv")
     save_json({"rho_ref": float(rho_ref), "xi_crit": float(xi_c), "xi_ratios": xi_ratios, "mu": [round(v, 4) for v in mu], "group_sizes": group_sizes, "methods": methods_use, "bayes_min_chains": int(bayes_min_chains_use)}, out_dir / "exp2_meta.json")
+    _record_produced_paths(produced, out_dir / "exp2_meta.json")
 
     try:
         from .plotting import plot_exp2_separation
         plot_exp2_separation(summary_df, kappa_df, out_dir=fig_dir)
+        _record_produced_paths(produced, fig_dir / "fig2a_method_comparison.png", fig_dir / "fig2b_kappa_by_group.png")
     except Exception as exc:
         log.warning("Plot exp2 failed: %s", exc)
 
@@ -1509,6 +1534,7 @@ def run_exp2_group_separation(
         exp_key="exp2",
         save_dir=save_dir,
         results_dir=out_dir,
+        produced_paths=produced,
         result_paths=result_paths,
     )
 
@@ -1873,6 +1899,7 @@ def run_exp3_linear_benchmark(
       stable:    enhanced mode with bounded rescue/stabilization in hard settings.
     """
     pd = load_pandas()
+    produced: set[Path] = set()
 
     base = Path(save_dir)
     out_name = str(result_dir_name).strip() or "exp3_linear_benchmark"
@@ -2097,10 +2124,13 @@ def run_exp3_linear_benchmark(
     agg_df["n_reps"] = agg_df["n_reps_converged"]
 
     save_dataframe(raw, out_dir / "raw_results.csv")
+    _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(agg_df, out_dir / "summary.csv")
+    _record_produced_paths(produced, out_dir / "summary.csv")
     table_df = metric_df.merge(counts_df[group_keys + ["n_reps_converged"]], on=group_keys, how="left")
     table_df = table_df.rename(columns={"n_reps_converged": "n_reps"})
     save_dataframe(table_df, tab_dir / "table_linear_benchmark.csv")
+    _record_produced_paths(produced, tab_dir / "table_linear_benchmark.csv")
     save_json({
         "exp3_design": design_mode,
         "profile": profile_name,
@@ -2124,11 +2154,13 @@ def run_exp3_linear_benchmark(
         "max_convergence_retries": int(retry_limit),
         "until_bayes_converged": bool(until_bayes_converged),
     }, out_dir / "exp3_meta.json")
+    _record_produced_paths(produced, out_dir / "exp3_meta.json")
 
     try:
         from .plotting import plot_exp3_benchmark
         if not table_df.empty:
             plot_exp3_benchmark(table_df, out_dir=fig_dir)
+            _record_produced_paths(produced, fig_dir / "fig3a_mse_by_signal.png", fig_dir / "fig3b_lpd_by_signal.png", fig_dir / "fig3c_null_signal_scatter.png")
         else:
             log.warning("Plot exp3 skipped: no converged rows available.")
     except Exception as exc:
@@ -2153,6 +2185,7 @@ def run_exp3_linear_benchmark(
         exp_key=str(exp_key_name),
         save_dir=save_dir,
         results_dir=out_dir,
+        produced_paths=produced,
         result_paths=result_paths,
     )
 
@@ -2230,6 +2263,7 @@ def _exp4_worker(
     from .utils import canonical_groups, sample_correlated_design
 
     p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, enforce_conv, max_retries, n, backend = task
+    produced: set[Path] = set()
     p = int(sum(group_sizes))
     s = experiment_seed(4, int(p0_true), r, master_seed=seed)
 
@@ -2258,7 +2292,7 @@ def _exp4_worker(
             res = _fit_with_convergence_retry(
                 lambda st, att, _s=spec, _s_val=s, _vn=vname, _be=backend: fit_gr_rhs(
                     X, y, groups, task="gaussian",
-                    seed=_s_val + 31 + hash(_vn) % 1000 + 100 * att,
+                    seed=_s_val + 31 + _stable_name_seed(_vn, mod=1000) + 100 * att,
                     p0=int(_s.get("p0_for_fit", p0_true)),
                     sampler=st,
                     auto_calibrate_tau=bool(_s.get("auto_calibrate_tau", False)),
@@ -2386,6 +2420,7 @@ def run_exp4_variant_ablation(
     Lightweight default: p0 in {5, 30}, no convergence retries.
     """
     pd = load_pandas()
+    produced: set[Path] = set()
 
     base = Path(save_dir)
     out_dir = ensure_dir(base / "results" / "exp4_variant_ablation")
@@ -2474,7 +2509,10 @@ def run_exp4_variant_ablation(
 
     save_dataframe(raw, out_dir / "raw_results.csv")
     save_dataframe(summary, out_dir / "summary.csv")
+    _record_produced_paths(produced, out_dir / "summary.csv")
+    _record_produced_paths(produced, out_dir / "summary.csv")
     save_dataframe(summary, tab_dir / "table_variant_ablation.csv")
+    _record_produced_paths(produced, tab_dir / "table_variant_ablation.csv")
     save_json(
         {
             "profile": profile_name,
@@ -2487,10 +2525,12 @@ def run_exp4_variant_ablation(
         },
         out_dir / "exp4_meta.json",
     )
+    _record_produced_paths(produced, out_dir / "exp4_meta.json")
 
     try:
         from .plotting import plot_exp4_ablation
         plot_exp4_ablation(summary, out_dir=base / "figures")
+        _record_produced_paths(produced, base / "figures" / "fig4a_tau_scatter.png", base / "figures" / "fig4b_mse_normalized.png")
     except Exception as exc:
         log.warning("Plot exp4 failed: %s", exc)
 
@@ -2507,6 +2547,7 @@ def run_exp4_variant_ablation(
         exp_key="exp4",
         save_dir=save_dir,
         results_dir=out_dir,
+        produced_paths=produced,
         result_paths=result_paths,
     )
 
@@ -2642,6 +2683,7 @@ def run_exp5_prior_sensitivity(
       (1.0, 3.0): moderate null preference
     """
     pd = load_pandas()
+    produced: set[Path] = set()
 
     base = Path(save_dir)
     out_dir = ensure_dir(base / "results" / "exp5_prior_sensitivity")
@@ -2688,11 +2730,14 @@ def run_exp5_prior_sensitivity(
     save_dataframe(raw, out_dir / "raw_results.csv")
     save_dataframe(summary, out_dir / "summary.csv")
     save_dataframe(summary, tab_dir / "table_prior_sensitivity.csv")
+    _record_produced_paths(produced, tab_dir / "table_prior_sensitivity.csv")
     save_json({"profile": profile_name, "prior_grid": [list(p) for p in priors], "scenarios": [[s, g, m] for s, g, m in scenarios], "bayes_min_chains": int(bayes_min_chains_use)}, out_dir / "exp5_meta.json")
+    _record_produced_paths(produced, out_dir / "exp5_meta.json")
 
     try:
         from .plotting import plot_exp5_prior_sensitivity
         plot_exp5_prior_sensitivity(summary, out_dir=base / "figures")
+        _record_produced_paths(produced, base / "figures" / "fig5_prior_sensitivity.png", base / "figures" / "fig5b_kappa_separation.png")
     except Exception as exc:
         log.warning("Plot exp5 failed: %s", exc)
 
@@ -2709,6 +2754,7 @@ def run_exp5_prior_sensitivity(
         exp_key="exp5",
         save_dir=save_dir,
         results_dir=out_dir,
+        produced_paths=produced,
         result_paths=result_paths,
     )
 
