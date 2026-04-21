@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from simulation_project.src.experiment_aliases import cli_choice_to_key, normalize_sweep_experiment
+from simulation_project.src.experiment_eval import _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
+from simulation_project.src.experiment_fitting import _fit_all_methods, _fit_with_convergence_retry
 from simulation_project.src.fit_helpers import as_int_groups, fit_error_result, scaled_iteration_budget
 from simulation_project.src.utils import SamplerConfig
 
@@ -49,3 +51,11 @@ def test_fit_error_result_shape() -> None:
 def test_as_int_groups() -> None:
     groups = as_int_groups([(0, 1), [2, 3]])
     assert groups == [[0, 1], [2, 3]]
+
+
+def test_new_refactor_modules_importable() -> None:
+    assert _fit_all_methods is not None
+    assert _fit_with_convergence_retry is not None
+    assert _evaluate_row is not None
+    assert _kappa_group_means is not None
+    assert _kappa_group_prob_gt is not None
