@@ -9,7 +9,7 @@ import numpy as np
 from numpy.random import Generator, default_rng
 from scipy.linalg import cho_factor, cho_solve, solve_triangular
 
-from simulation_project.src.core.inference.woodbury import beta_sample_woodbury, beta_sample_cholesky
+from simulation_project.src.core.inference.woodbury import beta_sample_woodbury
 
 
 _MIN_POS = 1e-10

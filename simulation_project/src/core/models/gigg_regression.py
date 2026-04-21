@@ -4,6 +4,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import math
 import os
 from pathlib import Path
+import tempfile
 import sys
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
@@ -135,7 +136,6 @@ def _groups_from_grp_idx(grp_idx: Sequence[int], p: int) -> List[List[int]]:
     if grp.size != p:
         raise ValueError("grp_idx length must equal number of columns in X.")
     gmin = int(grp.min())
-    gmax = int(grp.max())
     if gmin == 1:
         grp0 = grp - 1
     elif gmin == 0:
@@ -196,9 +196,9 @@ def _target_log_scalar_standardized(x: float, lam: float, beta: float) -> float:
 
 def _gig_mode_standardized(lam: float, beta: float) -> float:
     b = max(float(beta), _POS_FLOOR)
-    l = float(lam)
-    disc = math.sqrt((l - 1.0) ** 2 + b * b)
-    mode = ((l - 1.0) + disc) / b
+    lam_val = float(lam)
+    disc = math.sqrt((lam_val - 1.0) ** 2 + b * b)
+    mode = ((lam_val - 1.0) + disc) / b
     return _clip_positive_scalar(mode, floor=_POS_FLOOR, cap=_POS_CAP)
 
 
@@ -587,6 +587,35 @@ def _sample_invgamma_vector(shape: np.ndarray | float, scale: np.ndarray, rng: G
 
 
 def _fit_gigg_chain_task(payload: dict) -> dict:
+    if payload.get("X_file"):
+        X_arr = np.load(str(payload["X_file"]), allow_pickle=False)
+    else:
+        X_arr = np.asarray(payload["X"], dtype=float)
+    if payload.get("y_file"):
+        y_arr = np.load(str(payload["y_file"]), allow_pickle=False)
+    else:
+        y_arr = np.asarray(payload["y"], dtype=float)
+    if payload.get("C_file"):
+        C_arr = np.load(str(payload["C_file"]), allow_pickle=False)
+    else:
+        C_arr = np.asarray(payload["C"], dtype=float) if payload["C"] is not None else None
+    if payload.get("alpha_inits_file"):
+        alpha_inits_arr = np.load(str(payload["alpha_inits_file"]), allow_pickle=False)
+    else:
+        alpha_inits_arr = np.asarray(payload["alpha_inits"], dtype=float) if payload["alpha_inits"] is not None else None
+    if payload.get("beta_inits_file"):
+        beta_inits_arr = np.load(str(payload["beta_inits_file"]), allow_pickle=False)
+    else:
+        beta_inits_arr = np.asarray(payload["beta_inits"], dtype=float) if payload["beta_inits"] is not None else None
+    if payload.get("a_file"):
+        a_arr = np.load(str(payload["a_file"]), allow_pickle=False)
+    else:
+        a_arr = np.asarray(payload["a"], dtype=float) if payload["a"] is not None else None
+    if payload.get("b_file"):
+        b_arr = np.load(str(payload["b_file"]), allow_pickle=False)
+    else:
+        b_arr = np.asarray(payload["b"], dtype=float) if payload["b"] is not None else None
+
     model = GIGGRegression(
         method=str(payload["method"]),
         n_burn_in=int(payload["n_burn_in"]),
@@ -624,14 +653,14 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         progress_bar=bool(payload.get("progress_bar", False)),
     )
     fitted = model.fit(
-        np.asarray(payload["X"], dtype=float),
-        np.asarray(payload["y"], dtype=float),
+        X_arr,
+        y_arr,
         groups=payload["groups"],
-        C=np.asarray(payload["C"], dtype=float) if payload["C"] is not None else None,
-        alpha_inits=np.asarray(payload["alpha_inits"], dtype=float) if payload["alpha_inits"] is not None else None,
-        beta_inits=np.asarray(payload["beta_inits"], dtype=float) if payload["beta_inits"] is not None else None,
-        a=np.asarray(payload["a"], dtype=float) if payload["a"] is not None else None,
-        b=np.asarray(payload["b"], dtype=float) if payload["b"] is not None else None,
+        C=C_arr,
+        alpha_inits=alpha_inits_arr,
+        beta_inits=beta_inits_arr,
+        a=a_arr,
+        b=b_arr,
         method=str(payload["method"]),
     )
     return {
@@ -863,108 +892,154 @@ class GIGGRegression:
         b: Optional[np.ndarray],
         method: str,
     ) -> "GIGGRegression":
-        payloads: List[dict] = []
-        for chain_idx in range(int(self.num_chains)):
-            payloads.append(
-                {
-                    "method": method,
-                    "n_burn_in": self.n_burn_in,
-                    "n_samples": self.n_samples,
-                    "n_thin": self.n_thin,
-                    "jitter": self.jitter,
-                    "seed": int(self.seed) + chain_idx,
-                    "a_value": self.a_value,
-                    "b_init": self.b_init,
-                    "b_floor": self.b_floor,
-                    "b_max": self.b_max,
-                    "tau_sq_init": self.tau_sq_init,
-                    "sigma_sq_init": self.sigma_sq_init,
-                    "mmle_update": self.mmle_update,
-                    "mmle_burnin_only": self.mmle_burnin_only,
-                    "share_group_hyper": self.share_group_hyper,
-                    "mmle_samp_size": self.mmle_samp_size,
-                    "mmle_tol_scale": self.mmle_tol_scale,
-                    "mmle_max_iters": self.mmle_max_iters,
-                    "mmle_step_size": self.mmle_step_size,
-                    "fit_intercept": self.fit_intercept,
-                    "store_lambda": self.store_lambda,
-                    "btrick": self.btrick,
-                    "stable_solve": self.stable_solve,
-                    "init_strategy": self.init_strategy,
-                    "init_ridge": self.init_ridge,
-                    "init_scale_blend": self.init_scale_blend,
-                    "randomize_group_order": self.randomize_group_order,
-                    "lambda_vectorized_update": self.lambda_vectorized_update,
-                    "extra_beta_refresh_prob": self.extra_beta_refresh_prob,
-                    "lambda_constraint_mode": self.lambda_constraint_mode,
-                    "lambda_cap": self.lambda_cap,
-                    "lambda_soft_cap": self.lambda_soft_cap,
-                    "progress_bar": bool(self.progress_bar),
-                    "X": np.asarray(X, dtype=float),
-                    "y": np.asarray(y, dtype=float),
-                    "C": None if C is None else np.asarray(C, dtype=float),
-                    "groups": [list(g) for g in groups],
-                    "alpha_inits": None if alpha_inits is None else np.asarray(alpha_inits, dtype=float),
-                    "beta_inits": None if beta_inits is None else np.asarray(beta_inits, dtype=float),
-                    "a": None if a is None else np.asarray(a, dtype=float),
-                    "b": None if b is None else np.asarray(b, dtype=float),
-                }
-            )
+        tmpdir_obj: tempfile.TemporaryDirectory[str] | None = None
+        data_paths: dict[str, Path] = {}
+        try:
+            if int(self.num_chains) > 1:
+                tmpdir_obj = tempfile.TemporaryDirectory(prefix="gigg_shared_")
+                tmpdir = Path(tmpdir_obj.name)
+                x_path = tmpdir / "X.npy"
+                y_path = tmpdir / "y.npy"
+                np.save(x_path, np.asarray(X, dtype=float), allow_pickle=False)
+                np.save(y_path, np.asarray(y, dtype=float), allow_pickle=False)
+                data_paths["X_file"] = x_path
+                data_paths["y_file"] = y_path
+                if C is not None:
+                    c_path = tmpdir / "C.npy"
+                    np.save(c_path, np.asarray(C, dtype=float), allow_pickle=False)
+                    data_paths["C_file"] = c_path
+                if alpha_inits is not None:
+                    ai_path = tmpdir / "alpha_inits.npy"
+                    np.save(ai_path, np.asarray(alpha_inits, dtype=float), allow_pickle=False)
+                    data_paths["alpha_inits_file"] = ai_path
+                if beta_inits is not None:
+                    bi_path = tmpdir / "beta_inits.npy"
+                    np.save(bi_path, np.asarray(beta_inits, dtype=float), allow_pickle=False)
+                    data_paths["beta_inits_file"] = bi_path
+                if a is not None:
+                    a_path = tmpdir / "a.npy"
+                    np.save(a_path, np.asarray(a, dtype=float), allow_pickle=False)
+                    data_paths["a_file"] = a_path
+                if b is not None:
+                    b_path = tmpdir / "b.npy"
+                    np.save(b_path, np.asarray(b, dtype=float), allow_pickle=False)
+                    data_paths["b_file"] = b_path
 
-        if int(self.num_chains) <= 1:
-            chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
-        else:
-            try:
-                process_ok, process_reason = _can_use_process_pool()
-                if process_ok:
-                    with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
-                        fut_map = {executor.submit(_fit_gigg_chain_task, payloads[i]): i for i in range(len(payloads))}
-                        chain_results = [None] * len(payloads)
-                        fut_iter = as_completed(fut_map)
+            payloads: List[dict] = []
+            for chain_idx in range(int(self.num_chains)):
+                payloads.append(
+                    {
+                        "method": method,
+                        "n_burn_in": self.n_burn_in,
+                        "n_samples": self.n_samples,
+                        "n_thin": self.n_thin,
+                        "jitter": self.jitter,
+                        "seed": int(self.seed) + chain_idx,
+                        "a_value": self.a_value,
+                        "b_init": self.b_init,
+                        "b_floor": self.b_floor,
+                        "b_max": self.b_max,
+                        "tau_sq_init": self.tau_sq_init,
+                        "sigma_sq_init": self.sigma_sq_init,
+                        "mmle_update": self.mmle_update,
+                        "mmle_burnin_only": self.mmle_burnin_only,
+                        "share_group_hyper": self.share_group_hyper,
+                        "mmle_samp_size": self.mmle_samp_size,
+                        "mmle_tol_scale": self.mmle_tol_scale,
+                        "mmle_max_iters": self.mmle_max_iters,
+                        "mmle_step_size": self.mmle_step_size,
+                        "fit_intercept": self.fit_intercept,
+                        "store_lambda": self.store_lambda,
+                        "btrick": self.btrick,
+                        "stable_solve": self.stable_solve,
+                        "init_strategy": self.init_strategy,
+                        "init_ridge": self.init_ridge,
+                        "init_scale_blend": self.init_scale_blend,
+                        "randomize_group_order": self.randomize_group_order,
+                        "lambda_vectorized_update": self.lambda_vectorized_update,
+                        "extra_beta_refresh_prob": self.extra_beta_refresh_prob,
+                        "lambda_constraint_mode": self.lambda_constraint_mode,
+                        "lambda_cap": self.lambda_cap,
+                        "lambda_soft_cap": self.lambda_soft_cap,
+                        "progress_bar": bool(self.progress_bar),
+                        "X": None if data_paths else np.asarray(X, dtype=float),
+                        "y": None if data_paths else np.asarray(y, dtype=float),
+                        "C": None if data_paths else (None if C is None else np.asarray(C, dtype=float)),
+                        "groups": [list(g) for g in groups],
+                        "alpha_inits": None if data_paths else (None if alpha_inits is None else np.asarray(alpha_inits, dtype=float)),
+                        "beta_inits": None if data_paths else (None if beta_inits is None else np.asarray(beta_inits, dtype=float)),
+                        "a": None if data_paths else (None if a is None else np.asarray(a, dtype=float)),
+                        "b": None if data_paths else (None if b is None else np.asarray(b, dtype=float)),
+                        "X_file": str(data_paths["X_file"]) if "X_file" in data_paths else None,
+                        "y_file": str(data_paths["y_file"]) if "y_file" in data_paths else None,
+                        "C_file": str(data_paths["C_file"]) if "C_file" in data_paths else None,
+                        "alpha_inits_file": str(data_paths["alpha_inits_file"]) if "alpha_inits_file" in data_paths else None,
+                        "beta_inits_file": str(data_paths["beta_inits_file"]) if "beta_inits_file" in data_paths else None,
+                        "a_file": str(data_paths["a_file"]) if "a_file" in data_paths else None,
+                        "b_file": str(data_paths["b_file"]) if "b_file" in data_paths else None,
+                    }
+                )
+
+            if int(self.num_chains) <= 1:
+                chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
+            else:
+                try:
+                    process_ok, process_reason = _can_use_process_pool()
+                    if process_ok:
+                        with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
+                            fut_map = {executor.submit(_fit_gigg_chain_task, payloads[i]): i for i in range(len(payloads))}
+                            chain_results = [None] * len(payloads)
+                            fut_iter = as_completed(fut_map)
+                            if bool(self.progress_bar):
+                                from simulation_project.src.core.utils.logging_utils import progress as _progress
+
+                                fut_iter = _progress(fut_iter, total=len(payloads), desc="GIGG chains")
+                            for fut in fut_iter:
+                                chain_results[fut_map[fut]] = fut.result()
+                    else:
                         if bool(self.progress_bar):
+                            print(f"[WARN] GIGG process pool disabled ({process_reason}). Running chains sequentially.")
                             from simulation_project.src.core.utils.logging_utils import progress as _progress
-                            fut_iter = _progress(fut_iter, total=len(payloads), desc="GIGG chains")
-                        for fut in fut_iter:
-                            chain_results[fut_map[fut]] = fut.result()
-                else:
+
+                            chain_results = []
+                            for i in _progress(range(len(payloads)), total=len(payloads), desc="GIGG chains [serial]"):
+                                chain_results.append(_fit_gigg_chain_task(payloads[int(i)]))
+                        else:
+                            chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
+                except Exception:
                     if bool(self.progress_bar):
-                        print(f"[WARN] GIGG process pool disabled ({process_reason}). Running chains sequentially.")
                         from simulation_project.src.core.utils.logging_utils import progress as _progress
+
                         chain_results = []
-                        for i in _progress(range(len(payloads)), total=len(payloads), desc="GIGG chains [serial]"):
+                        for i in _progress(range(len(payloads)), total=len(payloads), desc="GIGG chains [fallback]"):
                             chain_results.append(_fit_gigg_chain_task(payloads[int(i)]))
                     else:
                         chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
-            except Exception:
-                if bool(self.progress_bar):
-                    from simulation_project.src.core.utils.logging_utils import progress as _progress
-                    chain_results = []
-                    for i in _progress(range(len(payloads)), total=len(payloads), desc="GIGG chains [fallback]"):
-                        chain_results.append(_fit_gigg_chain_task(payloads[int(i)]))
-                else:
-                    chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
 
-        lead = chain_results[0]
-        self.rng_ = default_rng(self.seed)
-        self.coef_samples_ = self._stack_chain_draws([item["coef_samples"] for item in chain_results])
-        self.alpha_samples_ = self._stack_chain_draws([item["alpha_samples"] for item in chain_results])
-        self.tau_samples_ = self._stack_chain_draws([item["tau_samples"] for item in chain_results])
-        self.sigma_samples_ = self._stack_chain_draws([item["sigma_samples"] for item in chain_results])
-        self.gamma_samples_ = self._stack_chain_draws([item["gamma_samples"] for item in chain_results])
-        self.tau2_samples_ = self._stack_chain_draws([item["tau2_samples"] for item in chain_results])
-        self.sigma2_samples_ = self._stack_chain_draws([item["sigma2_samples"] for item in chain_results])
-        self.gamma2_samples_ = self._stack_chain_draws([item["gamma2_samples"] for item in chain_results])
-        self.lambda_samples_ = self._stack_chain_draws([item["lambda_samples"] for item in chain_results])
-        self.b_samples_ = self._stack_chain_draws([item["b_samples"] for item in chain_results])
+            lead = chain_results[0]
+            self.rng_ = default_rng(self.seed)
+            self.coef_samples_ = self._stack_chain_draws([item["coef_samples"] for item in chain_results])
+            self.alpha_samples_ = self._stack_chain_draws([item["alpha_samples"] for item in chain_results])
+            self.tau_samples_ = self._stack_chain_draws([item["tau_samples"] for item in chain_results])
+            self.sigma_samples_ = self._stack_chain_draws([item["sigma_samples"] for item in chain_results])
+            self.gamma_samples_ = self._stack_chain_draws([item["gamma_samples"] for item in chain_results])
+            self.tau2_samples_ = self._stack_chain_draws([item["tau2_samples"] for item in chain_results])
+            self.sigma2_samples_ = self._stack_chain_draws([item["sigma2_samples"] for item in chain_results])
+            self.gamma2_samples_ = self._stack_chain_draws([item["gamma2_samples"] for item in chain_results])
+            self.lambda_samples_ = self._stack_chain_draws([item["lambda_samples"] for item in chain_results])
+            self.b_samples_ = self._stack_chain_draws([item["b_samples"] for item in chain_results])
 
-        coef_draws = self._flatten_param_draws(self.coef_samples_)
-        alpha_draws = self._flatten_param_draws(self.alpha_samples_)
-        b_draws = self._flatten_param_draws(self.b_samples_)
-        self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
-        self.alpha_mean_ = None if alpha_draws is None else alpha_draws.mean(axis=0)
-        self.b_mean_ = None if b_draws is None else b_draws.mean(axis=0)
-        self.intercept_ = float(lead["intercept"])
-        return self
+            coef_draws = self._flatten_param_draws(self.coef_samples_)
+            alpha_draws = self._flatten_param_draws(self.alpha_samples_)
+            b_draws = self._flatten_param_draws(self.b_samples_)
+            self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
+            self.alpha_mean_ = None if alpha_draws is None else alpha_draws.mean(axis=0)
+            self.b_mean_ = None if b_draws is None else b_draws.mean(axis=0)
+            self.intercept_ = float(lead["intercept"])
+            return self
+        finally:
+            if tmpdir_obj is not None:
+                tmpdir_obj.cleanup()
 
     def _draw_beta_standard(
         self,

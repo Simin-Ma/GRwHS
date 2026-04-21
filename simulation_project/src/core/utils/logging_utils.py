@@ -1,13 +1,12 @@
 ﻿# simulation_project/src/core/utils/logging_utils.py
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Optional
 
 _HAS_RICH = False
 try:  # Optional colored logging

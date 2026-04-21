@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-import csv
 import json
 import math
 import os
@@ -397,6 +396,11 @@ def _build_run_summary_table(exp_key: str, results_dir: Path):
     pd = load_pandas()
 
     exp_norm = str(exp_key).strip().lower()
+    parse_warnings: list[str] = []
+
+    def _warn(msg: str) -> None:
+        parse_warnings.append(str(msg))
+
     if exp_norm == "exp1":
         rows: list[dict[str, Any]] = []
         slope_path = results_dir / "null_slope_check.json"
@@ -411,8 +415,8 @@ def _build_run_summary_table(exp_key: str, results_dir: Path):
                 rows.append({"metric": "panel_A_slope_ci_lo", "value": float(ci[0])})
                 rows.append({"metric": "panel_A_slope_ci_hi", "value": float(ci[1])})
                 rows.append({"metric": "panel_A_pass", "value": int(bool(slope_obj.get("pass", False)))})
-            except Exception:
-                pass
+            except Exception as exc:
+                _warn(f"null_slope_check parse failed: {type(exc).__name__}: {exc}")
 
         phase_path = results_dir / "summary_phase.csv"
         if phase_path.exists():
@@ -425,8 +429,12 @@ def _build_run_summary_table(exp_key: str, results_dir: Path):
                     rows.append({"metric": "panel_B_prob_above_xi_crit", "value": float(above.mean()) if len(above) else float("nan")})
                     if len(below) and len(above):
                         rows.append({"metric": "panel_B_separation", "value": float(above.mean() - below.mean())})
-            except Exception:
-                pass
+            except Exception as exc:
+                _warn(f"summary_phase parse failed: {type(exc).__name__}: {exc}")
+        if parse_warnings:
+            rows.append({"metric": "parse_warning_count", "value": int(len(parse_warnings))})
+            for idx, msg in enumerate(parse_warnings, start=1):
+                rows.append({"metric": f"parse_warning_{idx}", "value": str(msg)})
         return pd.DataFrame(rows)
 
     summary_path = results_dir / "summary.csv"
@@ -476,8 +484,8 @@ def _build_run_summary_table(exp_key: str, results_dir: Path):
                 )
                 cdf["converged_rate"] = cdf["n_converged"] / cdf["n_rows"].clip(lower=1)
                 compact = cdf.merge(compact, on="method", how="left")
-        except Exception:
-            pass
+        except Exception as exc:
+            compact["parse_warning_raw_results"] = f"{type(exc).__name__}: {exc}"
 
     if "mse_overall" in set(compact.columns):
         compact = compact.sort_values(["mse_overall"], ascending=True, kind="stable")
@@ -862,8 +870,6 @@ def _fit_all_methods(
             gigg_retry_cap_cfg = max(0, int(gigg_retry_cap_raw))
         except Exception:
             gigg_retry_cap_cfg = None
-    gigg_mmle_cfg = dict(gigg_cfg)
-    gigg_fixed_cfg = {k: v for k, v in gigg_cfg.items() if k not in {"mmle_burnin_only", "mmle_step_size"}}
 
     def _fit_once(method: str, attempt: int) -> FitResult:
         sampler_base = sampler
@@ -1137,7 +1143,6 @@ def run_exp1_kappa_profile_regimes(
     base = Path(save_dir)
     out_dir = ensure_dir(base / "results" / "exp1_kappa_profile_regimes")
     fig_dir = ensure_dir(base / "figures")
-    tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp1", base / "logs" / "exp1_kappa_profile_regimes.log")
 
     pg_null = list(pg_null_list or [10, 20, 50, 100, 200, 500, 1000, 2000])
@@ -1271,7 +1276,7 @@ def _exp2_worker(
 ) -> tuple[list[dict], list[dict]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .metrics import group_auroc, group_l2_error, group_l2_score
-    from .utils import canonical_groups, sample_correlated_design
+    from .utils import sample_correlated_design
 
     r, seed, group_sizes, mu, xi_ratios, sampler, methods, gigg_config, bayes_min_chains, enforce_convergence, max_retries, n_test, grrhs_kwargs = task
     labels = (np.asarray(mu) > 0.0).astype(int)
@@ -1640,7 +1645,7 @@ def _build_benchmark_beta(
 def _exp3_worker(
     task: dict[str, Any] | tuple,
 ) -> list[dict[str, Any]]:
-    from .dgp_grouped_linear import generate_grouped_linear_dataset, generate_orthonormal_block_design, sigma2_for_target_snr
+    from .dgp_grouped_linear import generate_orthonormal_block_design
     from .utils import canonical_groups, sample_correlated_design
 
     if isinstance(task, dict):
@@ -2239,7 +2244,6 @@ def _exp4_worker(
     beta[active[:n_strong]] = 2.0
     if active[n_strong:].size > 0:
         beta[active[n_strong:]] = 0.5
-    sigma2 = 1.0
     y = X @ beta + np.random.default_rng(s + 23).normal(0.0, 1.0, n)
     group_has_signal = np.array([np.any(np.abs(beta[g]) > 0.1) for g in groups], dtype=bool)
     g_true_active = int(np.sum(group_has_signal))
@@ -2537,7 +2541,7 @@ def _exp5_worker(
 ) -> list[dict[str, Any]]:
     from .dgp_grouped_linear import generate_heterogeneity_dataset
     from .fit_gr_rhs import fit_gr_rhs
-    from .metrics import group_auroc, group_l2_error, group_l2_score
+    from .metrics import group_auroc, group_l2_score
 
     sid, r, group_sizes, mu, seed, sampler, prior_grid, bayes_min_chains, enforce_conv, max_retries, backend = task
     labels = (np.asarray(mu) > 0.0).astype(int)
@@ -2575,7 +2579,7 @@ def _exp5_worker(
         kappa_signal_mean = float("nan")
         kappa_null_prob_gt_0_1 = float("nan")
         if is_valid:
-            from .metrics import group_l2_error, group_l2_score, group_auroc, mse_null_signal_overall
+            from .metrics import group_l2_score, group_auroc, mse_null_signal_overall
             m = mse_null_signal_overall(res.beta_mean, ds["beta0"])
             mse_null = m["mse_null"]
             mse_signal = m["mse_signal"]
@@ -2762,7 +2766,7 @@ def run_all_experiments(
 def _cli() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the unified 5-experiment simulation pipeline. "
+            "Run the unified simulation pipeline (Exp1, Exp2, Exp3a, Exp3b, Exp4, Exp5). "
             "On Windows, process-pool parallelism is disabled by default; "
             "set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to force-enable from a spawn-safe script entrypoint."
         )

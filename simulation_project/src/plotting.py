@@ -169,7 +169,6 @@ def plot_exp1_phase(df: Any, out_path: Path) -> None:
     pd = load_pandas()
     frame = pd.DataFrame(rows)
     pg_vals = sorted(frame["p_g"].unique())
-    xi_vals = sorted(frame["xi_ratio"].unique())
     cmap = plt.cm.get_cmap("plasma", len(pg_vals) + 1)
 
     fig, ax = plt.subplots(figsize=(7.5, 4.5))
@@ -238,8 +237,8 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
         sig_vals = summary["signal_group_mse"].to_numpy() if "signal_group_mse" in summary else np.full(len(methods), np.nan)
         null_sem = summary["null_group_mse_std"].to_numpy() / np.sqrt(np.maximum(summary["n_effective"].to_numpy(), 1)) if "null_group_mse_std" in summary.columns else None
         sig_sem = summary["signal_group_mse_std"].to_numpy() / np.sqrt(np.maximum(summary["n_effective"].to_numpy(), 1)) if "signal_group_mse_std" in summary.columns else None
-        bars_null = ax.bar(x - w / 2, null_vals, width=w, color=colors, alpha=0.7, label="null groups")
-        bars_sig = ax.bar(x + w / 2, sig_vals, width=w, color=colors, alpha=1.0, label="signal groups", edgecolor="white", linewidth=0.5)
+        ax.bar(x - w / 2, null_vals, width=w, color=colors, alpha=0.7, label="null groups")
+        ax.bar(x + w / 2, sig_vals, width=w, color=colors, alpha=1.0, label="signal groups", edgecolor="white", linewidth=0.5)
         if null_sem is not None:
             ax.errorbar(x - w / 2, null_vals, yerr=null_sem, fmt="none", color="black", capsize=3, lw=1)
         if sig_sem is not None:
@@ -512,7 +511,7 @@ def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
                     continue
                 xv = float(vsub["tau0_oracle"].mean())
                 yv = float(vsub["tau_post_mean"].mean())
-                sc = ax_a.scatter(
+                ax_a.scatter(
                     xv, yv,
                     color=cmap_p0(k),
                     marker=var_marker[v],
@@ -534,7 +533,8 @@ def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
         all_y = frame["tau_post_mean"].dropna().to_numpy()
         lims = [min(all_x.min(), all_y.min()) * 0.85, max(all_x.max(), all_y.max()) * 1.15]
         ax_a.plot(lims, lims, "--", color="black", lw=1.3, label="identity (oracle)")
-        ax_a.set_xlim(lims); ax_a.set_ylim(lims)
+        ax_a.set_xlim(lims)
+        ax_a.set_ylim(lims)
         ax_a.set_xlabel("tau oracle  (p0/(p-p0)/sqrt(n))", fontsize=10)
         ax_a.set_ylabel("tau posterior mean", fontsize=10)
         ax_a.set_title("tau diagnostic scatter (Exp4)\nIdentity line is a prior-scale reference, not a strict target", fontsize=9)

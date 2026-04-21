@@ -37,13 +37,15 @@ python -m simulation_project.src.run_experiment --experiment analysis --save-dir
 
 ## Active Experiments
 
-Current code exposes 5 experiments:
+Current code exposes 7 runnable experiment targets:
 
 1. `exp1` kappa profile regimes
 2. `exp2` group separation
-3. `exp3` linear benchmark
-4. `exp4` tau variant ablation
-5. `exp5` beta-prior sensitivity
+3. `exp3` linear benchmark (aggregated view)
+4. `exp3a` main benchmark
+5. `exp3b` boundary stress benchmark
+6. `exp4` tau variant ablation
+7. `exp5` beta-prior sensitivity
 
 ## Structure
 

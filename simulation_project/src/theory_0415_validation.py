@@ -487,7 +487,6 @@ def _check_lemma_331_phase_diagram(cfg: ValidationConfig) -> CheckResult:
     errs = []
     for k in grid:
         th = float(theta_profile(np.asarray([k]), rho)[0])
-        ps = float(psi_profile(np.asarray([k]), rho)[0])
         ps_p = float(_finite_diff(lambda x: float(psi_profile(np.asarray([x]), rho)[0]), float(k), h=1e-6))
         ana = ps_p * (xi - 0.5 * th)
         errs.append(abs(ana - dF_num(float(k))))

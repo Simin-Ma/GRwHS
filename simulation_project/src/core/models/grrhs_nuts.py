@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 import math
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import jax.numpy as jnp
 from jax import random
@@ -14,7 +14,7 @@ import numpyro
 import numpyro.distributions as dist
 from numpyro.diagnostics import summary as diagnostics_summary
 from numpyro.infer import MCMC, NUTS
-from scipy.special import betaln, gammaln
+from scipy.special import betaln
 
 from simulation_project.src.core.inference.samplers import slice_sample_1d
 from simulation_project.src.core.inference.woodbury import beta_sample_woodbury, beta_sample_cholesky
@@ -224,7 +224,7 @@ class GRRHS_NUTS:
             )
 
         sigma2 = sigma * sigma
-        c2 = numpyro.deterministic("c2", sigma2 * kappa / (1.0 - kappa + _EPS))
+        numpyro.deterministic("c2", sigma2 * kappa / (1.0 - kappa + _EPS))
 
         a_j = a[group_id]
         kappa_j = kappa[group_id]
@@ -765,7 +765,7 @@ class GRRHS_Gibbs:
 
             # ---- log sigma | rest  (1-D slice) ----
             def _lc_s(r: float) -> float:
-                return self._lc_log_sigma(r, beta, y, X @ beta, tau2, lam2, a2_j, kappa_j)
+                return self._lc_log_sigma(r, beta, y, Xbeta, tau2, lam2, a2_j, kappa_j)
             log_sigma = slice_sample_1d(_lc_s, log_sigma, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
             sigma2 = math.exp(2.0 * log_sigma)
 
@@ -799,7 +799,6 @@ class GRRHS_Gibbs:
 
             # ---- logit kappa_g | rest  (1-D slice per group; factorizes in profile mode) ----
             if self.shared_kappa:
-                g0_members = np.arange(p)
                 def _lc_ksh(w: float) -> float:
                     return self._lc_logit_kappa_g(w, beta, sigma2, tau2, lam2, float(np.mean(a2_j)))
                 logit_kappa[0] = slice_sample_1d(_lc_ksh, logit_kappa[0], rng, width=self.slice_width_logit, max_steps=self.slice_max_steps)
@@ -892,7 +891,6 @@ class GRRHS_Gibbs:
         self.lambda_mean_ = _flat2(self.lambda_samples_).mean(axis=0)
         self.a_mean_ = _flat2(self.a_samples_).mean(axis=0)
         self.kappa_mean_ = _flat2(self.kappa_samples_).mean(axis=0)
-        sigma2_mean = self.sigma_mean_ ** 2
         self.c2_samples_ = (np.asarray(self.sigma_samples_, dtype=float) ** 2)[..., None] * (
             np.asarray(self.kappa_samples_, dtype=float)
             / np.maximum(1.0 - np.asarray(self.kappa_samples_, dtype=float), 1e-12)
@@ -1071,7 +1069,7 @@ class GRRHS_CollapsedNUTS:
                     ),
                 )
 
-            c2 = numpyro.deterministic("c2", sigma2 * kappa / (1.0 - kappa + _EPS))
+            numpyro.deterministic("c2", sigma2 * kappa / (1.0 - kappa + _EPS))
 
             tau2 = tau * tau
 
