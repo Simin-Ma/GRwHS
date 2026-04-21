@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from simulation_project.src.experiment_aliases import cli_choice_to_key, normalize_sweep_experiment
+from simulation_project.src.experiment_exp4 import run_exp4_variant_ablation
+from simulation_project.src.experiment_exp5 import run_exp5_prior_sensitivity
 from simulation_project.src.experiment_eval import _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
 from simulation_project.src.experiment_fitting import _fit_all_methods, _fit_with_convergence_retry
 from simulation_project.src.fit_helpers import as_int_groups, fit_error_result, scaled_iteration_budget
@@ -59,3 +61,5 @@ def test_new_refactor_modules_importable() -> None:
     assert _evaluate_row is not None
     assert _kappa_group_means is not None
     assert _kappa_group_prob_gt is not None
+    assert run_exp4_variant_ablation is not None
+    assert run_exp5_prior_sensitivity is not None
