@@ -1,4 +1,4 @@
-exp1_kappa_profile_regimes:
+﻿exp1_kappa_profile_regimes:
   repeats_full: 500
   repeats_laptop: 200
   description: >
@@ -14,13 +14,25 @@ exp2_group_separation:
     6-group gradient DGP calibrated at xi_crit(u0=0.5, rho_ref=0.1).
     Validates GR-RHS null shrinkage, signal retention, group AUROC, MLPD.
 
-exp3_linear_benchmark:
+exp3a_main_benchmark:
   repeats_full: 100
   repeats_laptop: 30
   description: >
-    Exp3 — linear regression benchmark across signal types and correlation levels.
-    signal_types: concentrated, distributed, boundary (calibrated at 1.2*xi_crit).
-    rho_within: 0.0, 0.3, 0.8; snr: 0.3, 0.7, 2.0 (not for boundary).
+    Exp3a — linear regression main benchmark.
+    signal_types: concentrated, distributed.
+    core30 env: E0 (rw=0.3, rb=0.1), RW_PLUS (rw=0.8, rb=0.1), with rw > rb enforced.
+    No SNR axis in core30 (target_snr fixed to 1.0).
+    Methods: GR_RHS, RHS, GIGG_MMLE, GIGG_b_small, GIGG_GHS, GIGG_b_large, GHS_plus, OLS, LASSO_CV.
+    Metrics: mse_null, mse_signal, mse_overall, lpd_test (MLPD), coverage_95.
+
+exp3b_boundary_stress:
+  repeats_full: 100
+  repeats_laptop: 30
+  description: >
+    Exp3b — boundary-only stress benchmark.
+    signal_types: boundary (calibrated at 1.2*xi_crit).
+    core30 env: E0 (rw=0.3, rb=0.1), RW_PLUS (rw=0.8, rb=0.1), with rw > rb enforced.
+    No SNR axis in core30 (target_snr fixed to 1.0).
     Methods: GR_RHS, RHS, GIGG_MMLE, GIGG_b_small, GIGG_GHS, GIGG_b_large, GHS_plus, OLS, LASSO_CV.
     Metrics: mse_null, mse_signal, mse_overall, lpd_test (MLPD), coverage_95.
 

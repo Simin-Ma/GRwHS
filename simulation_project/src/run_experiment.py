@@ -40,6 +40,7 @@ from .utils import (
 METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus", "OLS", "LASSO_CV"]
 LAPTOP_METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GHS_plus", "OLS", "LASSO_CV"]
 COMPUTE_PROFILES = ("full", "laptop")
+EXP3_GIGG_MODES = ("paper_ref", "stable")
 
 _BAYESIAN_METHODS = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
 _BAYESIAN_DEFAULT_CHAINS = 4
@@ -62,6 +63,32 @@ def _normalize_compute_profile(profile: str) -> str:
     if p not in COMPUTE_PROFILES:
         raise ValueError(f"unknown compute profile: {profile!r}; expected one of {COMPUTE_PROFILES}")
     return p
+
+
+def _normalize_exp3_gigg_mode(gigg_mode: str) -> str:
+    mode = str(gigg_mode).strip().lower()
+    if mode not in EXP3_GIGG_MODES:
+        raise ValueError(f"unknown exp3 gigg_mode: {gigg_mode!r}; expected one of {EXP3_GIGG_MODES}")
+    return mode
+
+
+def _exp3_gigg_config_for_mode(base_cfg: dict[str, Any], *, gigg_mode: str) -> dict[str, Any]:
+    mode = _normalize_exp3_gigg_mode(gigg_mode)
+    out = dict(base_cfg)
+    if mode == "paper_ref":
+        # Strict reference mode: keep original MMLE trajectory and disable
+        # Exp3-only stabilization/rescue behavior.
+        out["mmle_step_size"] = 1.0
+        out["randomize_group_order"] = False
+        out["lambda_vectorized_update"] = False
+        out["extra_beta_refresh_prob"] = 0.0
+        out["init_scale_blend"] = 0.5
+        out["extra_retry"] = 0
+        out.pop("retry_cap", None)
+        out["no_retry"] = True
+    else:
+        out.setdefault("extra_retry", 0)
+    return out
 
 
 def _resolve_method_list(methods: Sequence[str] | None, *, profile: str) -> list[str]:
@@ -353,6 +380,8 @@ def _analyze_single_experiment(exp_key: str, results_dir: Path) -> dict[str, Any
             "exp1": analyze_exp1,
             "exp2": analyze_exp2,
             "exp3": analyze_exp3,
+            "exp3a": analyze_exp3,
+            "exp3b": analyze_exp3,
             "exp4": analyze_exp4,
             "exp5": analyze_exp5,
         }
@@ -1493,8 +1522,6 @@ def run_exp2_group_separation(
 #   env points:
 #     E0        : (rw=0.3, rb=0.1, snr=1.0) [all signals]
 #     RW_PLUS   : (rw=0.8, rb=0.1, snr=1.0) [all signals]
-#     RB_PLUS   : (rw=0.3, rb=0.3, snr=1.0) [concentrated/distributed]
-#     SNR_PLUS  : (rw=0.3, rb=0.1, snr=2.0) [concentrated/distributed]
 #
 # Prediction:
 #   concentrated + moderate/high rho: GR-RHS wins on null_group_mse
@@ -1543,23 +1570,26 @@ _DEFAULT_EXP3_ENV_POINTS_CORE30: list[dict[str, Any]] = [
         "target_snr": 1.0,
         "signals": ["concentrated", "distributed", "boundary"],
     },
-    {
-        "env_id": "RB_PLUS",
-        "setting_block": "rb_axis",
-        "rho_within": 0.3,
-        "rho_between": 0.3,
-        "target_snr": 1.0,
-        "signals": ["concentrated", "distributed"],
-    },
-    {
-        "env_id": "SNR_PLUS",
-        "setting_block": "snr_axis",
-        "rho_within": 0.3,
-        "rho_between": 0.1,
-        "target_snr": 2.0,
-        "signals": ["concentrated", "distributed"],
-    },
 ]
+
+
+def _exp3_keep_env_point_rw_gt_rb(ep: dict[str, Any]) -> bool:
+    """Keep Exp3 environment point iff within-group correlation is strictly larger."""
+    rw = float(ep.get("rho_within", float("nan")))
+    rb = float(ep.get("rho_between", float("nan")))
+    return bool(np.isfinite(rw) and np.isfinite(rb) and (rw > rb))
+
+
+def _exp3_filter_env_points_rw_gt_rb(points: Sequence[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for ep in points:
+        epi = dict(ep)
+        if _exp3_keep_env_point_rw_gt_rb(epi):
+            kept.append(epi)
+        else:
+            dropped.append(epi)
+    return kept, dropped
 
 
 def _build_benchmark_beta(
@@ -1629,6 +1659,7 @@ def _exp3_worker(
         sampler = task["sampler"]
         method_name = str(task["method"])
         gigg_config = dict(task["gigg_config"])
+        gigg_mode = str(task.get("gigg_mode", "stable"))
         bayes_min_chains = task.get("bayes_min_chains")
         enforce_conv = bool(task["enforce_bayes_convergence"])
         max_retries = int(task["max_convergence_retries"])
@@ -1636,25 +1667,31 @@ def _exp3_worker(
         methods = [method_name]
     else:
         sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
+        gigg_mode = "stable"
     gigg_config = dict(gigg_config)
+    gigg_mode_name = _normalize_exp3_gigg_mode(gigg_mode)
     if str(method_name if isinstance(task, dict) else (methods[0] if methods else "")).upper() == "GIGG_MMLE":
-        hard_setting = (group_cfg_name := str(group_cfg["name"])) in {"CL", "G10x5"} and signal in {"concentrated", "distributed"}
-        if hard_setting:
-            gigg_config["extra_retry"] = max(1, int(gigg_config.get("extra_retry", 0)))
-            # Keep rescue behavior efficient while preserving robustness.
-            gigg_config["retry_cap"] = 2
-            # Full profile defaults to paper-locked no_retry; for hard Exp3 settings
-            # we allow one bounded rescue attempt to improve benchmark completeness.
-            if bool(gigg_config.get("no_retry", False)):
-                gigg_config["no_retry"] = False
-            gigg_config["progress_bar"] = bool(gigg_config.get("progress_bar", False))
-            # For difficult Exp3 settings, prefer stronger mixing from the first attempt.
-            gigg_config["randomize_group_order"] = bool(gigg_config.get("randomize_group_order", True))
-            gigg_config["lambda_vectorized_update"] = bool(gigg_config.get("lambda_vectorized_update", True))
-            gigg_config["extra_beta_refresh_prob"] = max(float(gigg_config.get("extra_beta_refresh_prob", 0.0)), 0.08)
-            gigg_config["init_scale_blend"] = max(float(gigg_config.get("init_scale_blend", 0.5)), 0.65)
-            # Damped MMLE updates reduce q_g oscillation in difficult correlated regimes.
-            gigg_config["mmle_step_size"] = min(max(float(gigg_config.get("mmle_step_size", 0.6)), 0.0), 1.0)
+        if gigg_mode_name == "paper_ref":
+            gigg_config["extra_retry"] = 0
+            gigg_config.pop("retry_cap", None)
+        else:
+            hard_setting = (group_cfg_name := str(group_cfg["name"])) in {"CL", "G10x5"} and signal in {"concentrated", "distributed"}
+            if hard_setting:
+                gigg_config["extra_retry"] = max(1, int(gigg_config.get("extra_retry", 0)))
+                # Keep rescue behavior efficient while preserving robustness.
+                gigg_config["retry_cap"] = 2
+                # Full profile defaults to paper-locked no_retry; for hard Exp3 settings
+                # we allow one bounded rescue attempt to improve benchmark completeness.
+                if bool(gigg_config.get("no_retry", False)):
+                    gigg_config["no_retry"] = False
+                gigg_config["progress_bar"] = bool(gigg_config.get("progress_bar", False))
+                # For difficult Exp3 settings, prefer stronger mixing from the first attempt.
+                gigg_config["randomize_group_order"] = bool(gigg_config.get("randomize_group_order", True))
+                gigg_config["lambda_vectorized_update"] = bool(gigg_config.get("lambda_vectorized_update", True))
+                gigg_config["extra_beta_refresh_prob"] = max(float(gigg_config.get("extra_beta_refresh_prob", 0.0)), 0.08)
+                gigg_config["init_scale_blend"] = max(float(gigg_config.get("init_scale_blend", 0.5)), 0.65)
+                # Damped MMLE updates reduce q_g oscillation in difficult correlated regimes.
+                gigg_config["mmle_step_size"] = min(max(float(gigg_config.get("mmle_step_size", 0.6)), 0.0), 1.0)
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
@@ -1744,6 +1781,7 @@ def _exp3_worker(
             kappa_null_mean = float(np.mean(_null_vals)) if _null_vals else float("nan")
         out_rows.append({
             "setting_id": int(sid),
+            "gigg_mode": str(gigg_mode_name),
             "group_config": group_cfg_name,
             "signal": signal,
             "setting_block": str(setting_block),
@@ -1793,18 +1831,24 @@ def run_exp3_linear_benchmark(
     n_test: int = 30,
     sampler_backend: str = "nuts",
     grrhs_extra_kwargs: dict | None = None,
+    gigg_mode: str = "stable",
+    result_dir_name: str = "exp3_linear_benchmark",
+    exp_key: str = "exp3",
 ) -> Dict[str, str]:
     """
     Exp3 benchmark with two design modes:
 
       core30 (default):
-        compact, theory-aligned design with 10 settings per group config
-        (4 concentrated + 4 distributed + 2 boundary) = 30 total settings
-        under default group configs [G10x5, CL, CS].
+        compact, theory-aligned design with rw>rb constraint and no SNR axis.
+        Under current defaults this yields 6 settings per group config
+        (2 concentrated + 2 distributed + 2 boundary) = 18 total settings
+        across [G10x5, CL, CS].
 
       legacy_factorial:
-        full-factor design:
-          signal_structure x group_config x rho_within x SNR x rho_between
+        factor design without SNR axis:
+          signal_structure x group_config x rho_within x rho_between
+        with automatic filtering of combinations that violate rw>rb.
+        target_snr is fixed at 1.0 in this mode.
 
     Signal types (default ["concentrated", "distributed", "boundary"]):
       concentrated: all nonzero beta in G0 and G1, G2/G3/G4 are null.
@@ -1818,14 +1862,20 @@ def run_exp3_linear_benchmark(
 
     Methods:
       GR_RHS, GHS_plus, GIGG_MMLE, RHS, LASSO_CV, OLS.
+
+    gigg_mode:
+      paper_ref: strict baseline mode (no Exp3 hard-setting rescue/stabilization).
+      stable:    enhanced mode with bounded rescue/stabilization in hard settings.
     """
     pd = load_pandas()
 
     base = Path(save_dir)
-    out_dir = ensure_dir(base / "results" / "exp3_linear_benchmark")
-    fig_dir = ensure_dir(base / "figures")
-    tab_dir = ensure_dir(base / "tables")
-    log = setup_logger("exp3", base / "logs" / "exp3_linear_benchmark.log")
+    out_name = str(result_dir_name).strip() or "exp3_linear_benchmark"
+    exp_key_name = str(exp_key).strip().lower() or "exp3"
+    out_dir = ensure_dir(base / "results" / out_name)
+    fig_dir = ensure_dir(base / "figures" / out_name)
+    tab_dir = ensure_dir(base / "tables" / out_name)
+    log = setup_logger(str(exp_key_name), base / "logs" / f"{out_name}.log")
 
     profile_name = _normalize_compute_profile(profile)
     sampler = _sampler_for_profile(profile_name)
@@ -1835,7 +1885,8 @@ def run_exp3_linear_benchmark(
     methods_use = [m for m in (methods or _exp3_methods) if m in set(_exp3_methods)]
     if not methods_use:
         methods_use = list(_exp3_methods)
-    gigg_cfg = _gigg_config_for_profile(profile_name)
+    gigg_mode_name = _normalize_exp3_gigg_mode(gigg_mode)
+    gigg_cfg = _exp3_gigg_config_for_mode(_gigg_config_for_profile(profile_name), gigg_mode=gigg_mode_name)
     retry_limit = _resolve_convergence_retry_limit(
         profile_name,
         max_convergence_retries,
@@ -1856,7 +1907,19 @@ def run_exp3_linear_benchmark(
     env_points_used: list[dict[str, Any]] = []
 
     if design_mode == "core30":
-        points = list(env_points) if env_points is not None else list(_DEFAULT_EXP3_ENV_POINTS_CORE30)
+        points_raw = list(env_points) if env_points is not None else list(_DEFAULT_EXP3_ENV_POINTS_CORE30)
+        points, dropped_points = _exp3_filter_env_points_rw_gt_rb(points_raw)
+        if dropped_points:
+            log.warning(
+                "Exp3: dropped %d env point(s) with rw<=rb: %s",
+                len(dropped_points),
+                [
+                    (str(ep.get("env_id", "?")), float(ep.get("rho_within", float("nan"))), float(ep.get("rho_between", float("nan"))))
+                    for ep in dropped_points
+                ],
+            )
+        if not points:
+            raise ValueError("No valid Exp3 env points remain after enforcing rw>rb.")
         for ep in points:
             env_points_used.append(
                 {
@@ -1882,8 +1945,20 @@ def run_exp3_linear_benchmark(
                     settings.append((sid, signal, gc, str(ep["setting_block"]), str(ep["env_id"]), design, rho, rhob, snr))
     else:
         rho_values = list(rho_within_values if rho_within_values is not None else [0.3, 0.8])
-        snr_list = list(snr_values if snr_values is not None else [0.5, 2.0])
+        if snr_values is not None:
+            log.warning("Exp3 legacy_factorial ignores snr_values (SNR axis removed); using fixed target_snr=1.0.")
+        snr_list = [1.0]
         rhob = float(rho_between)
+        rho_values_valid = [float(rho) for rho in rho_values if float(rho) > rhob]
+        rho_values_dropped = [float(rho) for rho in rho_values if float(rho) <= rhob]
+        if rho_values_dropped:
+            log.warning(
+                "Exp3 legacy_factorial: dropped rho_within values that violate rw>rb (rb=%.3f): %s",
+                rhob,
+                rho_values_dropped,
+            )
+        if not rho_values_valid:
+            raise ValueError(f"No valid rho_within values remain after enforcing rw>rb with rho_between={rhob}.")
         env_points_used = [
             {
                 "env_id": f"LEGACY_RW{float(rho):.1f}_SNR{float(snr):.1f}",
@@ -1893,12 +1968,12 @@ def run_exp3_linear_benchmark(
                 "target_snr": float(snr),
                 "signals": list(signals),
             }
-            for rho in rho_values
+            for rho in rho_values_valid
             for snr in snr_list
         ]
         for gc in gc_list:
             for signal in signals:
-                for rho in rho_values:
+                for rho in rho_values_valid:
                     for snr in snr_list:
                         sid += 1
                         design = "orthonormal" if float(rho) == 0.0 and rhob == 0.0 else "correlated"
@@ -1940,6 +2015,7 @@ def run_exp3_linear_benchmark(
                         "sampler": sampler,
                         "method": str(method),
                         "gigg_config": dict(gigg_cfg),
+                        "gigg_mode": str(gigg_mode_name),
                         "bayes_min_chains": int(bayes_min_chains_use),
                         "enforce_bayes_convergence": bool(enforce_bayes_convergence),
                         "max_convergence_retries": int(retry_limit),
@@ -1949,12 +2025,12 @@ def run_exp3_linear_benchmark(
 
     log.info(
         "Exp3[%s]: %d settings x %d repeats x %d methods = %d tasks "
-        "(group_configs=%s, signals=%s, env_points=%s), methods=%s, bayes_min_chains=%d, enforce=%s, retry_limit=%d",
+        "(group_configs=%s, signals=%s, env_points=%s), methods=%s, bayes_min_chains=%d, enforce=%s, retry_limit=%d, gigg_mode=%s",
         design_mode,
         len(settings), repeats, len(methods_use), len(tasks),
         [gc["name"] for gc in gc_list], signals,
         [ep["env_id"] for ep in env_points_used],
-        methods_use, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit),
+        methods_use, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit), str(gigg_mode_name),
     )
     bayes_tasks: list[dict[str, Any]] = []
     classical_tasks: list[dict[str, Any]] = []
@@ -1993,7 +2069,7 @@ def run_exp3_linear_benchmark(
 
     ok_raw = raw.loc[raw["status"] == "ok"].copy()
     conv_raw = ok_raw.loc[ok_raw["converged"].fillna(False).astype(bool)].copy()
-    group_keys = ["group_config", "signal", "setting_block", "env_id", "design_type", "rho_within", "rho_between", "target_snr", "method"]
+    group_keys = ["gigg_mode", "group_config", "signal", "setting_block", "env_id", "design_type", "rho_within", "rho_between", "target_snr", "method"]
 
     counts_df = raw.groupby(group_keys, as_index=False).agg(
         n_reps_total=("replicate_id", "count"),
@@ -2023,6 +2099,7 @@ def run_exp3_linear_benchmark(
     save_json({
         "exp3_design": design_mode,
         "profile": profile_name,
+        "gigg_mode": str(gigg_mode_name),
         "group_configs": [{"name": gc["name"], "group_sizes": gc["group_sizes"], "active_groups": gc["active_groups"]} for gc in gc_list],
         "signals": signals,
         "env_points": env_points_used,
@@ -2068,10 +2145,50 @@ def run_exp3_linear_benchmark(
         "fig3c_null_signal_scatter": str(fig_dir / "fig3c_null_signal_scatter.png"),
     }
     return _finalize_experiment_run(
-        exp_key="exp3",
+        exp_key=str(exp_key_name),
         save_dir=save_dir,
         results_dir=out_dir,
         result_paths=result_paths,
+    )
+
+
+def run_exp3a_main_benchmark(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 20,
+    save_dir: str = "simulation_project",
+    **kwargs,
+) -> Dict[str, str]:
+    """Exp3a: main benchmark (concentrated + distributed only)."""
+    return run_exp3_linear_benchmark(
+        n_jobs=n_jobs,
+        seed=seed,
+        repeats=repeats,
+        save_dir=save_dir,
+        signal_types=["concentrated", "distributed"],
+        result_dir_name="exp3a_main_benchmark",
+        exp_key="exp3a",
+        **kwargs,
+    )
+
+
+def run_exp3b_boundary_stress(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 20,
+    save_dir: str = "simulation_project",
+    **kwargs,
+) -> Dict[str, str]:
+    """Exp3b: boundary-only stress benchmark."""
+    return run_exp3_linear_benchmark(
+        n_jobs=n_jobs,
+        seed=seed,
+        repeats=repeats,
+        save_dir=save_dir,
+        signal_types=["boundary"],
+        result_dir_name="exp3b_boundary_stress",
+        exp_key="exp3b",
+        **kwargs,
     )
 
 # ---------------------------------------------------------------------------
@@ -2605,9 +2722,11 @@ def run_all_experiments(
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
     sampler_backend: str = "nuts",
+    exp3_gigg_mode: str = "stable",
     skip_analysis: bool = False,
 ) -> Dict[str, Any]:
     profile_name = _normalize_compute_profile(profile)
+    exp3_gigg_mode_name = _normalize_exp3_gigg_mode(exp3_gigg_mode)
     retry_limit = max_convergence_retries
     common = dict(
         n_jobs=n_jobs, seed=seed, save_dir=save_dir, profile=profile_name,
@@ -2620,14 +2739,15 @@ def run_all_experiments(
     jobs: list[tuple[str, Any]] = [
         ("exp1", lambda: run_exp1_kappa_profile_regimes(n_jobs=n_jobs, seed=seed, save_dir=save_dir, repeats=_default_repeats("exp1", profile_name))),
         ("exp2", lambda: run_exp2_group_separation(repeats=_default_repeats("exp2", profile_name), **common)),
-        ("exp3", lambda: run_exp3_linear_benchmark(repeats=_default_repeats("exp3", profile_name), **common)),
+        ("exp3a", lambda: run_exp3a_main_benchmark(repeats=_default_repeats("exp3", profile_name), gigg_mode=exp3_gigg_mode_name, **common)),
+        ("exp3b", lambda: run_exp3b_boundary_stress(repeats=_default_repeats("exp3", profile_name), gigg_mode=exp3_gigg_mode_name, **common)),
         ("exp4", lambda: run_exp4_variant_ablation(repeats=_default_repeats("exp4", profile_name), **common)),
         ("exp5", lambda: run_exp5_prior_sensitivity(repeats=_default_repeats("exp5", profile_name), **common)),
     ]
     for name, runner in tqdm(jobs, total=len(jobs), desc="All Experiments", leave=True):
         out[name] = runner()
     save_json(
-        {"profile": profile_name, "enforce_bayes_convergence": bool(enforce_bayes_convergence), "max_convergence_retries": retry_limit, "until_bayes_converged": bool(until_bayes_converged), "results": out},
+        {"profile": profile_name, "enforce_bayes_convergence": bool(enforce_bayes_convergence), "max_convergence_retries": retry_limit, "until_bayes_converged": bool(until_bayes_converged), "exp3_gigg_mode": str(exp3_gigg_mode_name), "results": out},
         Path(save_dir) / "results" / "run_manifest.json",
     )
     if not skip_analysis:
@@ -2647,7 +2767,7 @@ def _cli() -> None:
             "set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to force-enable from a spawn-safe script entrypoint."
         )
     )
-    parser.add_argument("--experiment", default="all", choices=["all", "1", "2", "3", "4", "5", "analysis"])
+    parser.add_argument("--experiment", default="all", choices=["all", "1", "2", "3", "3a", "3b", "4", "5", "analysis"])
     parser.add_argument("--save-dir", default="simulation_project")
     parser.add_argument("--seed", type=int, default=MASTER_SEED)
     parser.add_argument("--repeats", type=int, default=None)
@@ -2656,10 +2776,13 @@ def _cli() -> None:
     parser.add_argument("--no-enforce-bayes-convergence", action="store_true")
     parser.add_argument("--max-convergence-retries", type=int, default=None)
     parser.add_argument("--until-bayes-converged", action="store_true")
+    parser.add_argument("--exp3-gigg-mode", type=str, default="stable", choices=list(EXP3_GIGG_MODES),
+                        help="Exp3 GIGG mode: stable (enhanced, default) or paper_ref (strict baseline).")
     parser.add_argument("--sampler", type=str, default="nuts", choices=["nuts", "collapsed", "gibbs"],
                         help="GR-RHS posterior sampler: nuts (default), collapsed (beta marginalized, Gaussian only), gibbs (Gibbs+slice, Gaussian only)")
     args = parser.parse_args()
     profile_name = _normalize_compute_profile(args.profile)
+    exp3_gigg_mode_name = _normalize_exp3_gigg_mode(args.exp3_gigg_mode)
     enforce_conv = not bool(args.no_enforce_bayes_convergence)
     until_conv = bool(args.until_bayes_converged) or (enforce_conv and args.max_convergence_retries is None)
     common = dict(
@@ -2689,7 +2812,7 @@ def _cli() -> None:
             json.dump(result.get("metrics", {}), _f, indent=2)
 
     if args.experiment == "all":
-        run_all_experiments(**common)
+        run_all_experiments(**common, exp3_gigg_mode=exp3_gigg_mode_name)
     elif args.experiment == "1":
         run_exp1_kappa_profile_regimes(n_jobs=args.n_jobs, seed=args.seed, save_dir=args.save_dir, repeats=reps or _default_repeats("exp1", profile_name))
         _print_exp_analysis("Exp1: kappa_g Profile Regimes", analyze_exp1(_base / "results" / "exp1_kappa_profile_regimes"))
@@ -2697,8 +2820,14 @@ def _cli() -> None:
         run_exp2_group_separation(repeats=reps or _default_repeats("exp2", profile_name), **common)
         _print_exp_analysis("Exp2: Group Separation", analyze_exp2(_base / "results" / "exp2_group_separation"))
     elif args.experiment == "3":
-        run_exp3_linear_benchmark(repeats=reps or _default_repeats("exp3", profile_name), **common)
+        run_exp3_linear_benchmark(repeats=reps or _default_repeats("exp3", profile_name), gigg_mode=exp3_gigg_mode_name, **common)
         _print_exp_analysis("Exp3: Linear Benchmark", analyze_exp3(_base / "results" / "exp3_linear_benchmark"))
+    elif args.experiment == "3a":
+        run_exp3a_main_benchmark(repeats=reps or _default_repeats("exp3", profile_name), gigg_mode=exp3_gigg_mode_name, **common)
+        _print_exp_analysis("Exp3a: Main Benchmark", analyze_exp3(_base / "results" / "exp3a_main_benchmark"))
+    elif args.experiment == "3b":
+        run_exp3b_boundary_stress(repeats=reps or _default_repeats("exp3", profile_name), gigg_mode=exp3_gigg_mode_name, **common)
+        _print_exp_analysis("Exp3b: Boundary Stress", analyze_exp3(_base / "results" / "exp3b_boundary_stress"))
     elif args.experiment == "4":
         run_exp4_variant_ablation(repeats=reps or _default_repeats("exp4", profile_name), **common)
         _print_exp_analysis("Exp4: Variant Ablation", analyze_exp4(_base / "results" / "exp4_variant_ablation"))

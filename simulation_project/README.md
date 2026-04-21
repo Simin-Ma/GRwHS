@@ -45,9 +45,11 @@ Default sweep config:
 
 1. `run_exp1_kappa_profile_regimes`
 2. `run_exp2_group_separation`
-3. `run_exp3_linear_benchmark`
-4. `run_exp4_variant_ablation`
-5. `run_exp5_prior_sensitivity`
+3. `run_exp3_linear_benchmark` (legacy combined entry)
+4. `run_exp3a_main_benchmark` (concentrated + distributed)
+5. `run_exp3b_boundary_stress` (boundary-only)
+6. `run_exp4_variant_ablation`
+7. `run_exp5_prior_sensitivity`
 
 ## Typical Commands
 
@@ -58,6 +60,19 @@ python -m simulation_project.src.run_experiment --experiment all --save-dir simu
 ```
 
 Run one experiment:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+```
+
+Run Exp3a / Exp3b separately:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3b --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+```
+
+Legacy combined entry is still available:
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts

@@ -10,7 +10,7 @@ python scripts/run_simulation.py --help
 ```
 
 Common CLI arguments:
-- `--experiment {all,1,2,3,4,5,analysis}`
+- `--experiment {all,1,2,3,3a,3b,4,5,analysis}`
 - `--save-dir simulation_project`
 - `--seed 20260415`
 - `--repeats <int>`
@@ -72,23 +72,32 @@ python -m simulation_project.src.run_experiment --experiment 2 --save-dir simula
 python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 30 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
 ```
 
-### Exp3 (`linear_benchmark`)
+### Exp3a (`main_benchmark`)
 
-Exp3 now defaults to a compact Core-30 benchmark (theory-aligned, bounded compute).
+Exp3a is the primary benchmark layer (concentrated + distributed).
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile full --repeats 20 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile full --repeats 20 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
 ```
 
-Current defaults for the GR-RHS-advantage benchmark in Exp3 (`exp3_design="core30"`):
-- `signal_types=["concentrated", "distributed", "boundary"]`
+### Exp3b (`boundary_stress`)
+
+Exp3b is the boundary-only stress layer.
+
+```bash
+python -m simulation_project.src.run_experiment --experiment 3b --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3b --save-dir simulation_project --profile full --repeats 20 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
+```
+
+Current defaults for Exp3a/Exp3b (`exp3_design="core30"`):
 - `group_configs=["G10x5","CL","CS"]`
-- env points:
-  - `E0: (rho_within=0.3, rho_between=0.1, target_snr=1.0)` for all signals
-  - `RW_PLUS: (0.8, 0.1, 1.0)` for all signals
-  - `RB_PLUS: (0.3, 0.3, 1.0)` for concentrated/distributed
-  - `SNR_PLUS: (0.3, 0.1, 2.0)` for concentrated/distributed
+- env points (enforced `rho_within > rho_between`):
+  - `E0: (rho_within=0.3, rho_between=0.1, target_snr=1.0)`
+  - `RW_PLUS: (0.8, 0.1, 1.0)`
+- no SNR axis in core30 (target_snr fixed to 1.0)
+- Exp3a signal types: `["concentrated", "distributed"]`
+- Exp3b signal types: `["boundary"]`
 - boundary calibration: `xi = 1.2 * xi_crit(u0=0.5, rho_profile)`,
   with `rho_profile = rho_within / sqrt(sigma2_boundary)` and `sigma2_boundary=1.0`
 - Bayesian minimum chains in Exp3:
@@ -97,7 +106,7 @@ Current defaults for the GR-RHS-advantage benchmark in Exp3 (`exp3_design="core3
   - override in Python with `bayes_min_chains=<k>`
 - `tau_target="groups"` for GR-RHS
 
-Legacy full-factor mode is still available from Python via `exp3_design="legacy_factorial"`.
+Legacy full-factor mode is still available from Python via `exp3_design="legacy_factorial"` (without SNR axis).
 
 ### Exp4 (`variant_ablation`)
 
@@ -171,7 +180,8 @@ base = Path("simulation_project/results")
 experiments = [
     "exp1_kappa_profile_regimes",
     "exp2_group_separation",
-    "exp3_linear_benchmark",
+    "exp3a_main_benchmark",
+    "exp3b_boundary_stress",
     "exp4_variant_ablation",
     "exp5_prior_sensitivity",
 ]

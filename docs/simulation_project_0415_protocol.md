@@ -32,7 +32,8 @@ The active code path includes 5 experiments (`exp1`-`exp5`).
 ```bash
 python -m simulation_project.src.run_experiment --help
 python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3b --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 python -m simulation_project.src.run_experiment --experiment analysis --save-dir simulation_project
 ```
 
