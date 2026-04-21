@@ -417,6 +417,12 @@ def _build_run_summary_table(exp_key: str, results_dir: Path):
     def _warn(msg: str) -> None:
         parse_warnings.append(str(msg))
 
+    def _warning_table():
+        rows: list[dict[str, Any]] = [{"metric": "parse_warning_count", "value": int(len(parse_warnings))}]
+        for idx, msg in enumerate(parse_warnings, start=1):
+            rows.append({"metric": f"parse_warning_{idx}", "value": str(msg)})
+        return pd.DataFrame(rows)
+
     if exp_norm == "exp1":
         rows: list[dict[str, Any]] = []
         slope_path = results_dir / "null_slope_check.json"
@@ -448,20 +454,20 @@ def _build_run_summary_table(exp_key: str, results_dir: Path):
             except Exception as exc:
                 _warn(f"summary_phase parse failed: {type(exc).__name__}: {exc}")
         if parse_warnings:
-            rows.append({"metric": "parse_warning_count", "value": int(len(parse_warnings))})
-            for idx, msg in enumerate(parse_warnings, start=1):
-                rows.append({"metric": f"parse_warning_{idx}", "value": str(msg)})
+            rows.extend(_warning_table().to_dict(orient="records"))
         return pd.DataFrame(rows)
 
     summary_path = results_dir / "summary.csv"
     raw_path = results_dir / "raw_results.csv"
     if not summary_path.exists():
-        return pd.DataFrame()
+        _warn(f"summary.csv missing: {summary_path}")
+        return _warning_table()
 
     try:
         summary_df = pd.read_csv(summary_path)
-    except Exception:
-        return pd.DataFrame()
+    except Exception as exc:
+        _warn(f"summary.csv parse failed: {type(exc).__name__}: {exc}")
+        return _warning_table()
 
     if summary_df.empty:
         return summary_df

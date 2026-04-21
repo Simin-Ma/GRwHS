@@ -894,36 +894,40 @@ class GIGGRegression:
     ) -> "GIGGRegression":
         tmpdir_obj: tempfile.TemporaryDirectory[str] | None = None
         data_paths: dict[str, Path] = {}
+        process_ok = False
+        process_reason = ""
         try:
             if int(self.num_chains) > 1:
-                tmpdir_obj = tempfile.TemporaryDirectory(prefix="gigg_shared_")
-                tmpdir = Path(tmpdir_obj.name)
-                x_path = tmpdir / "X.npy"
-                y_path = tmpdir / "y.npy"
-                np.save(x_path, np.asarray(X, dtype=float), allow_pickle=False)
-                np.save(y_path, np.asarray(y, dtype=float), allow_pickle=False)
-                data_paths["X_file"] = x_path
-                data_paths["y_file"] = y_path
-                if C is not None:
-                    c_path = tmpdir / "C.npy"
-                    np.save(c_path, np.asarray(C, dtype=float), allow_pickle=False)
-                    data_paths["C_file"] = c_path
-                if alpha_inits is not None:
-                    ai_path = tmpdir / "alpha_inits.npy"
-                    np.save(ai_path, np.asarray(alpha_inits, dtype=float), allow_pickle=False)
-                    data_paths["alpha_inits_file"] = ai_path
-                if beta_inits is not None:
-                    bi_path = tmpdir / "beta_inits.npy"
-                    np.save(bi_path, np.asarray(beta_inits, dtype=float), allow_pickle=False)
-                    data_paths["beta_inits_file"] = bi_path
-                if a is not None:
-                    a_path = tmpdir / "a.npy"
-                    np.save(a_path, np.asarray(a, dtype=float), allow_pickle=False)
-                    data_paths["a_file"] = a_path
-                if b is not None:
-                    b_path = tmpdir / "b.npy"
-                    np.save(b_path, np.asarray(b, dtype=float), allow_pickle=False)
-                    data_paths["b_file"] = b_path
+                process_ok, process_reason = _can_use_process_pool()
+                if process_ok:
+                    tmpdir_obj = tempfile.TemporaryDirectory(prefix="gigg_shared_")
+                    tmpdir = Path(tmpdir_obj.name)
+                    x_path = tmpdir / "X.npy"
+                    y_path = tmpdir / "y.npy"
+                    np.save(x_path, np.asarray(X, dtype=float), allow_pickle=False)
+                    np.save(y_path, np.asarray(y, dtype=float), allow_pickle=False)
+                    data_paths["X_file"] = x_path
+                    data_paths["y_file"] = y_path
+                    if C is not None:
+                        c_path = tmpdir / "C.npy"
+                        np.save(c_path, np.asarray(C, dtype=float), allow_pickle=False)
+                        data_paths["C_file"] = c_path
+                    if alpha_inits is not None:
+                        ai_path = tmpdir / "alpha_inits.npy"
+                        np.save(ai_path, np.asarray(alpha_inits, dtype=float), allow_pickle=False)
+                        data_paths["alpha_inits_file"] = ai_path
+                    if beta_inits is not None:
+                        bi_path = tmpdir / "beta_inits.npy"
+                        np.save(bi_path, np.asarray(beta_inits, dtype=float), allow_pickle=False)
+                        data_paths["beta_inits_file"] = bi_path
+                    if a is not None:
+                        a_path = tmpdir / "a.npy"
+                        np.save(a_path, np.asarray(a, dtype=float), allow_pickle=False)
+                        data_paths["a_file"] = a_path
+                    if b is not None:
+                        b_path = tmpdir / "b.npy"
+                        np.save(b_path, np.asarray(b, dtype=float), allow_pickle=False)
+                        data_paths["b_file"] = b_path
 
             payloads: List[dict] = []
             for chain_idx in range(int(self.num_chains)):
@@ -984,7 +988,6 @@ class GIGGRegression:
                 chain_results = [_fit_gigg_chain_task(payload) for payload in payloads]
             else:
                 try:
-                    process_ok, process_reason = _can_use_process_pool()
                     if process_ok:
                         with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
                             fut_map = {executor.submit(_fit_gigg_chain_task, payloads[i]): i for i in range(len(payloads))}
