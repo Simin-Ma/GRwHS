@@ -255,6 +255,12 @@ def _scale_gigg_config_for_retry(cfg: dict[str, Any], attempt: int) -> dict[str,
     out["iter_mult"] = max(1, int(out.get("iter_mult", 1)) * mul)
     out["iter_floor"] = min(_RETRY_MAX_GIGG_ITER, max(10, int(out.get("iter_floor", 500)) * mul))
     out["iter_cap"] = min(_RETRY_MAX_GIGG_ITER, max(out["iter_floor"], int(out.get("iter_cap", 1500)) * mul))
+    # Retries should improve mixing quality, not only increase iteration counts.
+    out["randomize_group_order"] = bool(out.get("randomize_group_order", True))
+    out["lambda_vectorized_update"] = bool(out.get("lambda_vectorized_update", True))
+    refresh_prev = float(out.get("extra_beta_refresh_prob", 0.0))
+    refresh_target = min(0.20, 0.08 + 0.04 * float(k - 1))
+    out["extra_beta_refresh_prob"] = max(refresh_prev, refresh_target)
     return out
 
 
@@ -1626,6 +1632,10 @@ def _exp3_worker(
         hard_setting = (group_cfg_name := str(group_cfg["name"])) in {"CL", "G10x5"} and signal in {"concentrated", "distributed"}
         if hard_setting:
             gigg_config["extra_retry"] = max(1, int(gigg_config.get("extra_retry", 0)))
+            # For difficult Exp3 settings, prefer stronger mixing from the first attempt.
+            gigg_config["randomize_group_order"] = bool(gigg_config.get("randomize_group_order", True))
+            gigg_config["lambda_vectorized_update"] = bool(gigg_config.get("lambda_vectorized_update", True))
+            gigg_config["extra_beta_refresh_prob"] = max(float(gigg_config.get("extra_beta_refresh_prob", 0.0)), 0.08)
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
