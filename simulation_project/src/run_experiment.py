@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-# Backward-compatible facade: keep historical import path stable while
-# delegating implementation to experiment modules.
+# Public experiment entrypoint facade.
 from .experiments import (
     run_exp1_kappa_profile_regimes,
     run_exp2_group_separation,

@@ -1,0 +1,95 @@
+# simulation_project
+
+Single-default simulation framework for GR-RHS Exp1-Exp5 (with Exp3c high-dimensional stress).
+
+## Entrypoints
+
+```bash
+python -m simulation_project.src.run_experiment --help
+python scripts/run_simulation.py --help
+```
+
+Sweep runner:
+
+```bash
+python -m simulation_project.src.run_sweep --list
+python scripts/run_sweep.py --list
+```
+
+## Unified Protocol
+
+- No `laptop/full` split.
+- No `--profile` CLI option.
+- Default pipeline order: `Exp1 -> Exp2 -> Exp3a -> Exp3b -> Exp3c -> Exp4 -> Exp5 -> analysis`.
+- Scientific conclusion gate: Exp2-Exp5 Bayesian rows must satisfy `converged=True` and `status=ok`.
+
+Default repeats when `--repeats` is omitted:
+
+- `exp1=500`
+- `exp2=100`
+- `exp3a=100`
+- `exp3b=100`
+- `exp3c=30`
+- `exp4=30`
+- `exp5=20`
+
+## Experiments
+
+1. `run_exp1_kappa_profile_regimes`
+2. `run_exp2_group_separation`
+3. `run_exp3a_main_benchmark`
+4. `run_exp3b_boundary_stress`
+5. `run_exp3c_highdim_stress`
+6. `run_exp4_variant_ablation`
+7. `run_exp5_prior_sensitivity`
+
+`run_exp3_linear_benchmark` is still available as a combined Exp3 entry, but the default paper pipeline uses `3a/3b/3c`.
+
+## Typical Commands
+
+Run full default pipeline:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --n-jobs 2
+```
+
+Run one experiment:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2
+```
+
+Run analysis only:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment analysis
+```
+
+## Output Layout
+
+Default CLI output is sessionized:
+
+`outputs/simulation_project/sessions/<timestamp>_cli_<experiment>/`
+
+Useful pointers:
+
+- `outputs/simulation_project/latest_session.txt`
+- `outputs/simulation_project/latest_session.json`
+- `outputs/simulation_project/session_index.jsonl`
+
+Analysis artifacts include:
+
+- `results/analysis_report.txt`
+- `results/analysis_report.json`
+- `results/diagnostics_runtime_table.csv`
+
+## Optional Quick Script
+
+`scripts/run_laptop_best_2h.py` is retained as an optional quick-check utility only.
+It is not the default scientific protocol.
+
+## Runtime Notes
+
+- On Windows, process pools are disabled by default in interactive launch contexts.
+- To force-enable process pools from a spawn-safe script entrypoint:
+  `SIM_ALLOW_WINDOWS_PROCESS_POOL=1`
