@@ -31,25 +31,71 @@ from ..utils import (
 )
 
 def _exp2_worker(
-    task: tuple[int, int, list[int], list[float], list[float], SamplerConfig, list[str], dict[str, Any], int, bool, int, int, dict]
+    task: tuple[
+        int,
+        int,
+        list[int],
+        list[float],
+        list[float],
+        float,
+        float,
+        float,
+        int,
+        SamplerConfig,
+        list[str],
+        dict[str, Any],
+        int,
+        bool,
+        int,
+        int,
+        dict,
+    ]
 ) -> tuple[list[dict], list[dict]]:
     from .dgp.grouped_linear import generate_heterogeneity_dataset
     from .analysis.metrics import group_auroc, group_l2_error, group_l2_score
     from ..utils import sample_correlated_design
 
-    r, seed, group_sizes, mu, xi_ratios, sampler, methods, gigg_config, bayes_min_chains, enforce_convergence, max_retries, n_test, grrhs_kwargs = task
+    (
+        r,
+        seed,
+        group_sizes,
+        mu,
+        xi_ratios,
+        rho_within,
+        rho_between,
+        sigma2,
+        n_train,
+        sampler,
+        methods,
+        gigg_config,
+        bayes_min_chains,
+        enforce_convergence,
+        max_retries,
+        n_test,
+        grrhs_kwargs,
+    ) = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     p0_signal_groups = int(np.sum(labels))
-    n_train = 200
     s = experiment_seed(2, 1, r, master_seed=seed)
 
     ds = generate_heterogeneity_dataset(
-        n=n_train, group_sizes=group_sizes, rho_within=0.3, rho_between=0.05,
-        sigma2=1.0, mu=mu, seed=s,
+        n=int(n_train),
+        group_sizes=group_sizes,
+        rho_within=float(rho_within),
+        rho_between=float(rho_between),
+        sigma2=float(sigma2),
+        mu=mu,
+        seed=s,
     )
-    X_test, _ = sample_correlated_design(n=n_test, group_sizes=group_sizes, rho_within=0.3, rho_between=0.05, seed=s + 77777)
+    X_test, _ = sample_correlated_design(
+        n=int(n_test),
+        group_sizes=group_sizes,
+        rho_within=float(rho_within),
+        rho_between=float(rho_between),
+        seed=s + 77777,
+    )
     rng_test = np.random.default_rng(s + 88888)
-    y_test = X_test @ ds["beta0"] + rng_test.normal(0.0, 1.0, n_test)
+    y_test = X_test @ ds["beta0"] + rng_test.normal(0.0, math.sqrt(float(sigma2)), int(n_test))
 
     fits = _fit_all_methods(
         ds["X"], ds["y"], ds["groups"],
@@ -120,15 +166,22 @@ def run_exp2_group_separation(
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
     rho_ref: float = 0.1,
+    group_sizes: Sequence[int] | None = None,
+    xi_ratios: Sequence[float] | None = None,
+    n_train: int = 200,
     n_test: int = 50,
+    rho_within: float = 0.3,
+    rho_between: float = 0.05,
+    sigma2: float = 1.0,
     sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
     Exp2: Toy-example group separation (Theorem 3.34), single-default protocol.
 
-    6-group gradient design calibrated at xi_crit(u0=0.5, rho=rho_ref=0.1):
+    Default design calibrated at xi_crit(u0=0.5, rho=rho_ref=0.1):
       group_sizes = [30, 20, 15, 10, 5, 5]
       xi_ratios   = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0]
+      n_train=200, n_test=50, rho_within=0.3, rho_between=0.05, sigma2=1.0
 
     Methods: GR_RHS vs RHS only; summary uses paired-converged subset.
 
@@ -158,15 +211,35 @@ def run_exp2_group_separation(
     gigg_cfg = _gigg_config_default()
     retry_limit = _resolve_convergence_retry_limit(max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
 
-    sigma2 = 1.0
-    xi_c = xi_crit_u0_rho(u0=0.5, rho=float(rho_ref) / math.sqrt(sigma2))
+    if int(n_train) <= 0 or int(n_test) <= 0:
+        raise ValueError("n_train and n_test must be positive integers.")
+    if float(sigma2) <= 0.0:
+        raise ValueError("sigma2 must be > 0.")
+    if float(rho_within) <= float(rho_between):
+        raise ValueError("Expected rho_within > rho_between for grouped design.")
 
-    group_sizes = [30, 20, 15, 10, 5, 5]
-    xi_ratios   = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0]
-    mu = [xi_ratios[i] * xi_c * group_sizes[i] for i in range(len(group_sizes))]
+    group_sizes_use = [int(v) for v in (group_sizes or [30, 20, 15, 10, 5, 5])]
+    if not group_sizes_use or any(v <= 0 for v in group_sizes_use):
+        raise ValueError("group_sizes must be a non-empty sequence of positive integers.")
+    xi_ratios_use = [float(v) for v in (xi_ratios or [0.0, 0.5, 1.0, 2.0, 4.0, 8.0])]
+    if len(xi_ratios_use) != len(group_sizes_use):
+        raise ValueError("xi_ratios length must equal group_sizes length.")
 
-    log.info("Exp2 toy: rho_ref=%.2f, xi_crit=%.4f, xi_ratios=%s, mu=%s",
-             rho_ref, xi_c, xi_ratios, [round(v, 3) for v in mu])
+    sigma2_use = float(sigma2)
+    xi_c = xi_crit_u0_rho(u0=0.5, rho=float(rho_ref) / math.sqrt(sigma2_use))
+    mu = [xi_ratios_use[i] * xi_c * group_sizes_use[i] for i in range(len(group_sizes_use))]
+
+    log.info(
+        "Exp2 toy: rho_ref=%.2f, xi_crit=%.4f, rho_within=%.2f, rho_between=%.2f, n_train=%d, sigma2=%.2f, xi_ratios=%s, mu=%s",
+        rho_ref,
+        xi_c,
+        float(rho_within),
+        float(rho_between),
+        int(n_train),
+        sigma2_use,
+        xi_ratios_use,
+        [round(v, 3) for v in mu],
+    )
 
     grrhs_kw = {"backend": str(sampler_backend), "tau_target": "groups"}
     # Method-level task granularity gives smoother progress updates and better
@@ -178,9 +251,13 @@ def run_exp2_group_separation(
                 (
                     r,
                     seed,
-                    group_sizes,
+                    group_sizes_use,
                     mu,
-                    xi_ratios,
+                    xi_ratios_use,
+                    float(rho_within),
+                    float(rho_between),
+                    sigma2_use,
+                    int(n_train),
                     sampler,
                     [method],
                     gigg_cfg,
@@ -294,7 +371,23 @@ def run_exp2_group_separation(
         _record_produced_paths(produced, tab_dir / "table_kappa_group_separation.csv")
     save_dataframe(summary_df, tab_dir / "table_group_separation.csv")
     _record_produced_paths(produced, tab_dir / "table_group_separation.csv")
-    save_json({"rho_ref": float(rho_ref), "xi_crit": float(xi_c), "xi_ratios": xi_ratios, "mu": [round(v, 4) for v in mu], "group_sizes": group_sizes, "methods": methods_use, "bayes_min_chains": int(bayes_min_chains_use)}, out_dir / "exp2_meta.json")
+    save_json(
+        {
+            "rho_ref": float(rho_ref),
+            "rho_within": float(rho_within),
+            "rho_between": float(rho_between),
+            "sigma2": sigma2_use,
+            "xi_crit": float(xi_c),
+            "xi_ratios": xi_ratios_use,
+            "mu": [round(v, 4) for v in mu],
+            "group_sizes": group_sizes_use,
+            "n_train": int(n_train),
+            "n_test": int(n_test),
+            "methods": methods_use,
+            "bayes_min_chains": int(bayes_min_chains_use),
+        },
+        out_dir / "exp2_meta.json",
+    )
     _record_produced_paths(produced, out_dir / "exp2_meta.json")
     save_json(
         {

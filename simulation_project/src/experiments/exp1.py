@@ -257,6 +257,98 @@ def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
     }
 
 
+def _build_exp1_density_story_rows(
+    *,
+    pg_values: Sequence[int],
+    xi_ratio_values: Sequence[float],
+    tau: float,
+    sigma2: float,
+    u0: float,
+    repeats: int,
+    seed: int,
+    alpha_kappa: float,
+    beta_kappa: float,
+    grid_size: int = 1201,
+) -> list[dict[str, Any]]:
+    """
+    Build posterior-density curves for the Exp1 main figure.
+
+    For each (p_g, xi/xi_crit), average profile posterior densities across
+    replicates, then normalize to integrate to one.
+    """
+    pg_list = sorted({int(v) for v in pg_values if int(v) > 0})
+    xi_list = [float(v) for v in xi_ratio_values]
+    n_rep = int(repeats)
+    if not pg_list or not xi_list or n_rep <= 0:
+        return []
+
+    rho_profile = float(tau) / math.sqrt(max(float(sigma2), 1e-12))
+    xi_crit_ref = xi_crit_u0_rho(u0=float(u0), rho=rho_profile)
+
+    out: list[dict[str, Any]] = []
+    for sid, pg in enumerate(pg_list, start=1):
+        for xid, xi_ratio in enumerate(xi_list, start=1):
+            xi_val = float(xi_ratio) * float(xi_crit_ref)
+            kappa_grid: np.ndarray | None = None
+            density_sum: np.ndarray | None = None
+            n_eff = 0
+            for r in range(1, n_rep + 1):
+                s = experiment_seed(
+                    15_000 + 100 * int(sid) + int(xid),
+                    int(pg),
+                    int(r),
+                    master_seed=int(seed) + 9_000_000,
+                )
+                y, _ = generate_signal_group_distributed(
+                    pg=int(pg),
+                    mu_g=float(xi_val) * int(pg),
+                    sigma2=float(sigma2),
+                    seed=s,
+                )
+                grid = kappa_posterior_grid(
+                    y,
+                    tau=float(tau),
+                    sigma2=float(sigma2),
+                    alpha_kappa=float(alpha_kappa),
+                    beta_kappa=float(beta_kappa),
+                    grid_size=int(grid_size),
+                )
+                g = np.asarray(grid["kappa"], dtype=float)
+                d = np.asarray(grid["density"], dtype=float)
+                if g.size < 2:
+                    continue
+                if kappa_grid is None:
+                    kappa_grid = g.copy()
+                    density_sum = np.zeros_like(d)
+                if density_sum is None or d.shape != density_sum.shape:
+                    continue
+                density_sum += d
+                n_eff += 1
+
+            if kappa_grid is None or density_sum is None or n_eff <= 0:
+                continue
+            density_mean = density_sum / float(n_eff)
+            area = float(np.trapezoid(density_mean, kappa_grid))
+            if area > 0:
+                density_mean = density_mean / area
+
+            for kappa_v, dens_v in zip(kappa_grid.tolist(), density_mean.tolist()):
+                out.append(
+                    {
+                        "tau": float(tau),
+                        "p_g": int(pg),
+                        "u0": float(u0),
+                        "xi_ratio": float(xi_ratio),
+                        "xi_crit": float(xi_crit_ref),
+                        "xi": float(xi_val),
+                        "kappa": float(kappa_v),
+                        "density": float(dens_v),
+                        "n_replicates": int(n_eff),
+                    }
+                )
+    return out
+
+
 def run_exp1_kappa_profile_regimes(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
@@ -273,6 +365,12 @@ def run_exp1_kappa_profile_regimes(
     xi_multiplier_list: Sequence[float] | None = None,
     u0: float = 0.5,
     sigma2_phase: float = 1.0,
+    # Main-text posterior-density story (GRASP-like figure)
+    density_story_xi_ratio_list: Sequence[float] | None = None,
+    density_story_pg_list: Sequence[int] | None = None,
+    density_story_tau: float | None = None,
+    density_story_repeats: int | None = None,
+    density_story_grid_size: int = 1201,
     # Shared prior
     alpha_kappa: float = 0.5,
     beta_kappa: float = 1.0,
@@ -295,8 +393,15 @@ def run_exp1_kappa_profile_regimes(
       DGP: distributed signal Y_j ~ N(beta_val, 1), mu_g = xi * p_g.
       Sweeps xi/xi_crit across [0.3, 2.0]; P(kappa_g > u0 | Y) -> 1 iff xi > xi_crit.
       xi_crit = u0 * rho^2 / (2*(u0 + (1-u0)*rho^2)), eq. 104 of 0415 paper.
+
+    Main figure (density story)
+      x = kappa_g, y = p(kappa_g | Y), with xi/xi_crit in {0.7, 1.0, 1.3}.
+      Uses small vs large p_g facets to show sharper concentration as p_g grows.
     """
-    from .analysis.plotting import plot_exp1, plot_exp1_phase, plot_exp1_phase_kappa_overlay
+    from .analysis.plotting import (
+        plot_exp1_posterior_density_main,
+        plot_exp1_single_story_readable,
+    )
     produced: set[Path] = set()
 
     base = Path(save_dir)
@@ -305,7 +410,7 @@ def run_exp1_kappa_profile_regimes(
     log = setup_logger("exp1", base / "logs" / "exp1_kappa_profile_regimes.log")
 
     pg_null = list(pg_null_list or [10, 20, 50, 100, 200, 500, 1000, 2000])
-    pg_phase = list(pg_phase_list or [30, 60, 120, 240, 480])
+    pg_phase = list(pg_phase_list or [50, 100, 200, 500])
     # tau=0.1 produces xi_crit around 0.005; signal is undetectable at finite p_g,
     # leaving flat P(kappa > u0) close to prior for all xi_ratio values.
     # Use [0.5, 0.7, 1.0, 1.5] so every tau produces a visible phase transition.
@@ -385,11 +490,25 @@ def run_exp1_kappa_profile_regimes(
                     phase_tasks.append((sid, pg, xid, xi_val, r, seed, tau, sigma2_phase, u0, alpha_kappa, beta_kappa))
     phase_rows = _parallel_rows(phase_tasks, _exp1_phase_worker, n_jobs=n_jobs, prefer_process=False, progress_desc="Exp1B Phase")
 
-    # Phase summary: mean P(kappa > u0) by (tau, p_g, xi_ratio)
+    # Phase summary: mean P(kappa > u0) by (tau, p_g, xi_ratio).
+    # Round xi_ratio to a fixed grid to avoid floating split artifacts in
+    # downstream plots (e.g., 1.5 represented by several near-equal floats).
     phase_agg: list[dict] = []
-    keys_seen = sorted({(float(r["tau"]), int(r["p_g"]), float(r["xi_ratio"])) for r in phase_rows})
+    xi_round_digits = 6
+    keys_seen = sorted(
+        {
+            (float(r["tau"]), int(r["p_g"]), round(float(r["xi_ratio"]), xi_round_digits))
+            for r in phase_rows
+        }
+    )
     for tau_v, pg_v, xi_r in keys_seen:
-        sub = [r for r in phase_rows if float(r["tau"]) == tau_v and int(r["p_g"]) == pg_v and abs(float(r["xi_ratio"]) - xi_r) < 1e-8]
+        sub = [
+            r
+            for r in phase_rows
+            if float(r["tau"]) == tau_v
+            and int(r["p_g"]) == pg_v
+            and round(float(r["xi_ratio"]), xi_round_digits) == xi_r
+        ]
         probs = np.array([float(r["post_prob_kappa_gt_u0"]) for r in sub])
         post_kappa = np.array([float(r["post_mean_kappa"]) for r in sub], dtype=float)
         kappa_star = np.array([float(r.get("kappa_star_theory", float("nan"))) for r in sub], dtype=float)
@@ -403,6 +522,45 @@ def run_exp1_kappa_profile_regimes(
             "n_replicates": len(probs),
         })
 
+    # --- Main-text posterior-density curves ---
+    if tau_phase:
+        tau_arr = np.asarray(tau_phase, dtype=float)
+        tau_ref = (
+            float(density_story_tau)
+            if density_story_tau is not None
+            else float(tau_arr[int(np.argmin(np.abs(tau_arr - 1.0)))])
+        )
+    else:
+        tau_ref = float(density_story_tau) if density_story_tau is not None else 1.0
+    density_pg_default = [5, 10, 20, 50, 100, 200, 500]
+    density_pg = sorted({int(v) for v in (density_story_pg_list or density_pg_default) if int(v) > 0})
+    density_xi_ratios = [float(v) for v in (density_story_xi_ratio_list or [0.7, 1.0, 1.3])]
+    density_repeats_eff = (
+        int(density_story_repeats)
+        if density_story_repeats is not None
+        else int(max(20, min(int(repeats), 200)))
+    )
+    density_rows = _build_exp1_density_story_rows(
+        pg_values=density_pg,
+        xi_ratio_values=density_xi_ratios,
+        tau=float(tau_ref),
+        sigma2=float(sigma2_phase),
+        u0=float(u0),
+        repeats=int(density_repeats_eff),
+        seed=int(seed),
+        alpha_kappa=float(alpha_kappa),
+        beta_kappa=float(beta_kappa),
+        grid_size=int(density_story_grid_size),
+    )
+    log.info(
+        "Exp1 density story: tau=%.3f, pg=%s, xi_ratios=%s, repeats=%d, rows=%d",
+        float(tau_ref),
+        density_pg,
+        density_xi_ratios,
+        int(density_repeats_eff),
+        len(density_rows),
+    )
+
     # --- Save ---
     pd = load_pandas()
     all_rows = null_rows + phase_rows + full_rows
@@ -412,6 +570,9 @@ def run_exp1_kappa_profile_regimes(
     _record_produced_paths(produced, out_dir / "summary_null.csv")
     save_dataframe(pd.DataFrame(phase_agg), out_dir / "summary_phase.csv")
     _record_produced_paths(produced, out_dir / "summary_phase.csv")
+    if density_rows:
+        save_dataframe(pd.DataFrame(density_rows), out_dir / "summary_density_main.csv")
+        _record_produced_paths(produced, out_dir / "summary_density_main.csv")
     if full_agg:
         save_dataframe(pd.DataFrame(full_agg), out_dir / "summary_null_full.csv")
         _record_produced_paths(produced, out_dir / "summary_null_full.csv")
@@ -439,33 +600,45 @@ def run_exp1_kappa_profile_regimes(
         )
         _record_produced_paths(produced, out_dir / "null_slope_check_full.json")
 
+    main_fig_path = fig_dir / "fig1_single_story_readable.png"
+    appendix_fig_path = fig_dir / "fig1_appendix_theory_checks.png"
+    main_ok = False
+    if density_rows:
+        try:
+            plot_exp1_posterior_density_main(
+                pd.DataFrame(density_rows),
+                out_path=main_fig_path,
+                xi_ratio_order=density_xi_ratios,
+            )
+            _record_produced_paths(produced, main_fig_path)
+            main_ok = True
+        except Exception as exc:
+            log.warning("Plot exp1 posterior-density main failed: %s", exc)
+
+    if not main_ok:
+        try:
+            plot_exp1_single_story_readable(
+                pd.DataFrame(phase_agg),
+                out_path=main_fig_path,
+                u0=float(u0),
+                slope=float(slope),
+                slope_ci=(float(slope_ci[0]), float(slope_ci[1])),
+            )
+            _record_produced_paths(produced, main_fig_path)
+        except Exception as exc:
+            log.warning("Plot exp1 single-story fallback failed: %s", exc)
+
     try:
-        plot_exp1(
-            pd.DataFrame(null_agg),
-            slope=slope,
-            slope_ci=slope_ci,
-            out_path=fig_dir / "fig1a_null_contraction.png",
-            full_df=(pd.DataFrame(full_agg) if full_agg else None),
-            full_slope=(float(full_slope) if np.isfinite(full_slope) else None),
-            full_slope_ci=(
-                (float(full_slope_ci[0]), float(full_slope_ci[1]))
-                if (np.isfinite(full_slope_ci[0]) and np.isfinite(full_slope_ci[1]))
-                else None
-            ),
+        plot_exp1_single_story_readable(
+            pd.DataFrame(phase_agg),
+            out_path=appendix_fig_path,
+            u0=float(u0),
+            slope=float(slope),
+            slope_ci=(float(slope_ci[0]), float(slope_ci[1])),
         )
-        _record_produced_paths(produced, fig_dir / "fig1a_null_contraction.png")
+        _record_produced_paths(produced, appendix_fig_path)
     except Exception as exc:
-        log.warning("Plot exp1A failed: %s", exc)
-    try:
-        plot_exp1_phase(pd.DataFrame(phase_agg), out_path=fig_dir / "fig1b_phase_diagram.png")
-        _record_produced_paths(produced, fig_dir / "fig1b_phase_diagram.png")
-    except Exception as exc:
-        log.warning("Plot exp1B failed: %s", exc)
-    try:
-        plot_exp1_phase_kappa_overlay(pd.DataFrame(phase_agg), out_path=fig_dir / "fig1c_kappa_phase_overlay.png")
-        _record_produced_paths(produced, fig_dir / "fig1c_kappa_phase_overlay.png")
-    except Exception as exc:
-        log.warning("Plot exp1C (kappa overlay) failed: %s", exc)
+        log.warning("Plot exp1 appendix theory-check failed: %s", exc)
 
     log.info("Exp1 done: %d null rows, %d phase rows", len(null_rows), len(phase_rows))
     result_paths = {
@@ -473,10 +646,11 @@ def run_exp1_kappa_profile_regimes(
         "null_summary": str(out_dir / "summary_null.csv"),
         "phase_summary": str(out_dir / "summary_phase.csv"),
         "null_slope_check": str(out_dir / "null_slope_check.json"),
-        "fig1a_null_contraction": str(fig_dir / "fig1a_null_contraction.png"),
-        "fig1b_phase_diagram": str(fig_dir / "fig1b_phase_diagram.png"),
-        "fig1c_kappa_phase_overlay": str(fig_dir / "fig1c_kappa_phase_overlay.png"),
+        "fig1_single_story_readable": str(main_fig_path),
+        "fig1_appendix_theory_checks": str(appendix_fig_path),
     }
+    if density_rows:
+        result_paths["density_main_summary"] = str(out_dir / "summary_density_main.csv")
     if full_agg:
         result_paths["null_summary_full"] = str(out_dir / "summary_null_full.csv")
         result_paths["null_slope_check_full"] = str(out_dir / "null_slope_check_full.json")

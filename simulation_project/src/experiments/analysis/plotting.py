@@ -3,7 +3,7 @@
 import math
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import matplotlib
 matplotlib.use("Agg")
@@ -55,13 +55,19 @@ def _prior_label(alpha: float, beta: float) -> str:
 
 def _save(fig: plt.Figure, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(path, dpi=220)
+    suptitle = getattr(fig, "_suptitle", None)
+    has_suptitle = bool(suptitle is not None and str(suptitle.get_text()).strip())
+    if has_suptitle:
+        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.95))
+    else:
+        fig.tight_layout()
+    save_kws = dict(dpi=240, bbox_inches="tight", pad_inches=0.10)
+    fig.savefig(path, **save_kws)
     # Keep an immutable timestamped snapshot for each generated figure.
     history_dir = path.parent / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    fig.savefig(history_dir / f"{path.stem}_{ts}{path.suffix}", dpi=220)
+    fig.savefig(history_dir / f"{path.stem}_{ts}{path.suffix}", **save_kws)
     plt.close(fig)
 
 
@@ -199,15 +205,15 @@ def plot_exp1(
 
 def plot_exp1_phase(df: Any, out_path: Path) -> None:
     """
-    Exp1 Panel B �� phase diagram (Corollary 3.33).
+    Exp1 Panel B phase diagram (Corollary 3.33).
 
-    Single panel: x = ��/��_crit (dimensionless, tau-normalized), y = P(�� > u0 | Y).
-    Lines are colored by p_g; tau is averaged over since the x-axis already
-    normalizes it out �� so curves for different tau should overlap, confirming
-    that xi/xi_crit is the right scale.
+    Use xi/xi_crit on x-axis and P(kappa_g > u0 | Y) on y-axis.
+    To avoid floating-point split artifacts (e.g., "1.5" appearing as
+    multiple near-identical x values), x is rounded to a fixed display grid.
 
-    A shaded band shows the tau-variability. The vertical line at ��/��_crit=1
-    marks the theoretical transition point.
+    Per p_g curve:
+      line  = mean across tau
+      band  = interquartile range across tau (q25-q75)
     """
     rows = _records(df)
     if not rows:
@@ -215,28 +221,38 @@ def plot_exp1_phase(df: Any, out_path: Path) -> None:
 
     from ...utils import load_pandas
     pd = load_pandas()
-    frame = pd.DataFrame(rows)
+    frame = pd.DataFrame(rows).copy()
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
     pg_vals = sorted(frame["p_g"].unique())
     cmap = plt.cm.get_cmap("plasma", len(pg_vals) + 1)
 
     fig, ax = plt.subplots(figsize=(7.5, 4.5))
 
     for j, pg in enumerate(pg_vals):
-        sub = frame[frame["p_g"] == pg]
-        # Average P(kappa>u0) over tau values at each xi_ratio
-        agg = sub.groupby("xi_ratio")["mean_prob_kappa_gt_u0"].agg(["mean", "min", "max"]).reset_index()
-        agg = agg.sort_values("xi_ratio")
+        sub = frame[frame["p_g"] == pg].copy()
+        agg = (
+            sub.groupby("xi_plot", as_index=False)["mean_prob_kappa_gt_u0"]
+            .agg(
+                mean="mean",
+                q25=lambda s: float(np.quantile(np.asarray(s, dtype=float), 0.25)),
+                q75=lambda s: float(np.quantile(np.asarray(s, dtype=float), 0.75)),
+            )
+            .sort_values("xi_plot")
+        )
         color = cmap(j)
-        ax.plot(agg["xi_ratio"], agg["mean"], "o-", color=color, lw=1.8, ms=5, label=f"p_g={int(pg)}", zorder=3)
-        # Shaded band shows tau-variability (how much curves differ across tau)
-        if not (agg["min"] == agg["max"]).all():
-            ax.fill_between(agg["xi_ratio"], agg["min"], agg["max"], alpha=0.12, color=color)
+        ax.plot(agg["xi_plot"], agg["mean"], "o-", color=color, lw=1.8, ms=5, label=f"p_g={int(pg)}", zorder=3)
+        if not (agg["q25"] == agg["q75"]).all():
+            ax.fill_between(agg["xi_plot"], agg["q25"], agg["q75"], alpha=0.12, color=color)
 
-    ax.axvline(1.0, color="black", linestyle="--", lw=1.5, label="�� = ��_crit  (theory threshold)")
+    ax.axvline(1.0, color="black", linestyle="--", lw=1.5, label="xi = xi_crit (theory threshold)")
     ax.axhline(0.5, color="gray", linestyle=":", lw=0.9)
-    ax.set_xlabel("�� / ��_crit  (signal strength / critical threshold)", fontsize=10)
-    ax.set_ylabel("P(��_g > u? | Y)", fontsize=10)
-    ax.set_title("Phase diagram: signal retention  (Cor. 3.33)\nShaded band = variation across �� values; curves should overlap when normalized", fontsize=9)
+    ax.set_xlabel("xi / xi_crit (signal strength / critical threshold)", fontsize=10)
+    ax.set_ylabel("P(kappa_g > u0 | Y)", fontsize=10)
+    ax.set_title(
+        "Phase diagram: signal retention (Cor. 3.33)\n"
+        "Band = IQR across tau; curves should align under xi/xi_crit normalization",
+        fontsize=9,
+    )
     ax.set_ylim(-0.04, 1.08)
     ax.legend(fontsize=8, ncol=2, loc="upper left")
     _save(fig, out_path)
@@ -252,22 +268,30 @@ def plot_exp1_phase_kappa_overlay(df: Any, out_path: Path) -> None:
 
     from ...utils import load_pandas
     pd = load_pandas()
-    frame = pd.DataFrame(rows)
+    frame = pd.DataFrame(rows).copy()
     req = {"p_g", "xi_ratio", "mean_post_mean_kappa", "mean_kappa_star_theory"}
     if not req.issubset(set(frame.columns)):
         return
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
 
     pg_vals = sorted(frame["p_g"].unique())
     cmap = plt.cm.get_cmap("viridis", len(pg_vals) + 1)
 
     fig, ax = plt.subplots(figsize=(7.8, 4.8))
     for j, pg in enumerate(pg_vals):
-        sub = frame[frame["p_g"] == pg]
-        agg = sub.groupby("xi_ratio")["mean_post_mean_kappa"].agg(["mean", "min", "max"]).reset_index()
-        agg = agg.sort_values("xi_ratio")
+        sub = frame[frame["p_g"] == pg].copy()
+        agg = (
+            sub.groupby("xi_plot", as_index=False)["mean_post_mean_kappa"]
+            .agg(
+                mean="mean",
+                q25=lambda s: float(np.quantile(np.asarray(s, dtype=float), 0.25)),
+                q75=lambda s: float(np.quantile(np.asarray(s, dtype=float), 0.75)),
+            )
+            .sort_values("xi_plot")
+        )
         color = cmap(j)
         ax.plot(
-            agg["xi_ratio"],
+            agg["xi_plot"],
             agg["mean"],
             "o-",
             color=color,
@@ -276,13 +300,14 @@ def plot_exp1_phase_kappa_overlay(df: Any, out_path: Path) -> None:
             label=f"Empirical E[kappa], p_g={int(pg)}",
             zorder=3,
         )
-        if not (agg["min"] == agg["max"]).all():
-            ax.fill_between(agg["xi_ratio"], agg["min"], agg["max"], alpha=0.10, color=color)
+        if not (agg["q25"] == agg["q75"]).all():
+            ax.fill_between(agg["xi_plot"], agg["q25"], agg["q75"], alpha=0.10, color=color)
 
-    theo = frame.groupby("xi_ratio")["mean_kappa_star_theory"].mean().reset_index().sort_values("xi_ratio")
+    # Use median across tau to reduce sensitivity to one extreme tau branch.
+    theo = frame.groupby("xi_plot")["mean_kappa_star_theory"].median().reset_index().sort_values("xi_plot")
     theo_vals = np.clip(theo["mean_kappa_star_theory"].to_numpy(dtype=float), 0.0, 1.0)
     ax.plot(
-        theo["xi_ratio"],
+        theo["xi_plot"],
         theo_vals,
         "--",
         color="black",
@@ -296,6 +321,1350 @@ def plot_exp1_phase_kappa_overlay(df: Any, out_path: Path) -> None:
     ax.set_title("Exp1 phase overlay: empirical E[kappa] vs theory kappa*(xi)", fontsize=9)
     ax.set_ylim(-0.03, 1.05)
     ax.legend(fontsize=7, ncol=2, loc="upper left")
+    _save(fig, out_path)
+
+
+def _exp1_representative_pg(pg_vals: list[int]) -> list[int]:
+    vals = sorted(int(v) for v in pg_vals)
+    if len(vals) <= 3:
+        return vals
+    return [vals[0], vals[len(vals) // 2], vals[-1]]
+
+
+def plot_exp1_phase_readable(
+    df: Any,
+    out_path: Path,
+    *,
+    u0: float = 0.5,
+    representative_pg: list[int] | None = None,
+) -> None:
+    """
+    Exp1 readable phase plot:
+      - show only representative p_g curves (small/medium/large)
+      - keep physical x-axis (xi/xi_crit)
+      - use IQR band across tau
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"p_g", "xi_ratio", "mean_prob_kappa_gt_u0"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    all_pg = sorted(int(v) for v in frame["p_g"].unique())
+    reps = sorted(int(v) for v in (representative_pg or _exp1_representative_pg(all_pg)))
+
+    fig, ax = plt.subplots(figsize=(8.0, 4.8))
+    xi_vals = sorted(float(v) for v in frame["xi_plot"].unique())
+    if not xi_vals:
+        return
+    xmin, xmax = float(min(xi_vals)), float(max(xi_vals))
+    ax.axvspan(xmin, 1.0, alpha=0.06, color="#b0bec5")
+    ax.axvspan(1.0, xmax, alpha=0.06, color="#c8e6c9")
+    ax.axvline(1.0, color="black", linestyle="--", lw=1.4, label="xi = xi_crit")
+    ax.axhline(float(u0), color="gray", linestyle=":", lw=1.0, label=f"u0={float(u0):.2f}")
+
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+    for i, pg in enumerate(reps):
+        sub = frame[frame["p_g"].astype(int) == int(pg)].copy()
+        if sub.empty:
+            continue
+        agg = (
+            sub.groupby("xi_plot", as_index=False)["mean_prob_kappa_gt_u0"]
+            .agg(
+                mean="mean",
+                q25=lambda s: float(np.quantile(np.asarray(s, dtype=float), 0.25)),
+                q75=lambda s: float(np.quantile(np.asarray(s, dtype=float), 0.75)),
+            )
+            .sort_values("xi_plot")
+        )
+        c = colors[i % len(colors)]
+        ax.plot(
+            agg["xi_plot"],
+            agg["mean"],
+            "o-",
+            color=c,
+            lw=2.0,
+            ms=6,
+            label=f"p_g={int(pg)}",
+            zorder=3,
+        )
+        ax.fill_between(agg["xi_plot"], agg["q25"], agg["q75"], color=c, alpha=0.14)
+
+    ax.set_xlabel("xi / xi_crit")
+    ax.set_ylabel("P(kappa_g > u0 | Y)")
+    ax.set_ylim(-0.03, 1.05)
+    ax.set_title("Exp1 readable phase view: representative group sizes + uncertainty")
+    ax.grid(axis="y", alpha=0.22)
+    ax.legend(fontsize=8, loc="upper left")
+    _save(fig, out_path)
+
+
+def plot_exp1_kappa_residual_readable(
+    df: Any,
+    out_path: Path,
+    *,
+    representative_pg: list[int] | None = None,
+) -> None:
+    """
+    Residual view for Exp1:
+      residual = empirical E[kappa_g|Y] - theory kappa*(xi)
+    This is usually easier to read than direct overlays when lines are close.
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"p_g", "xi_ratio", "mean_post_mean_kappa", "mean_kappa_star_theory"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    theo = (
+        frame.groupby("xi_plot", as_index=False)["mean_kappa_star_theory"]
+        .median()
+        .rename(columns={"mean_kappa_star_theory": "kappa_theory"})
+    )
+    theo["kappa_theory"] = np.clip(theo["kappa_theory"].to_numpy(dtype=float), 0.0, 1.0)
+
+    all_pg = sorted(int(v) for v in frame["p_g"].unique())
+    reps = sorted(int(v) for v in (representative_pg or _exp1_representative_pg(all_pg)))
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+
+    fig, ax = plt.subplots(figsize=(8.0, 4.8))
+    ax.axhline(0.0, color="black", lw=1.2, ls="--")
+    ax.axhspan(-0.05, 0.05, color="#eeeeee", alpha=0.7, zorder=0, label="near-theory band")
+    ax.axvline(1.0, color="gray", linestyle=":", lw=1.2)
+
+    for i, pg in enumerate(reps):
+        sub = frame[frame["p_g"].astype(int) == int(pg)].copy()
+        if sub.empty:
+            continue
+        agg = (
+            sub.groupby("xi_plot", as_index=False)["mean_post_mean_kappa"]
+            .agg(
+                mean="mean",
+                q25=lambda s: float(np.quantile(np.asarray(s, dtype=float), 0.25)),
+                q75=lambda s: float(np.quantile(np.asarray(s, dtype=float), 0.75)),
+            )
+            .sort_values("xi_plot")
+        )
+        merged = agg.merge(theo, on="xi_plot", how="left")
+        resid = merged["mean"].to_numpy(dtype=float) - merged["kappa_theory"].to_numpy(dtype=float)
+        resid_lo = merged["q25"].to_numpy(dtype=float) - merged["kappa_theory"].to_numpy(dtype=float)
+        resid_hi = merged["q75"].to_numpy(dtype=float) - merged["kappa_theory"].to_numpy(dtype=float)
+        c = colors[i % len(colors)]
+        ax.plot(merged["xi_plot"], resid, "o-", color=c, lw=2.0, ms=6, label=f"p_g={int(pg)}")
+        ax.fill_between(merged["xi_plot"], resid_lo, resid_hi, color=c, alpha=0.14)
+
+    ax.set_xlabel("xi / xi_crit")
+    ax.set_ylabel("Empirical - Theory (E[kappa_g|Y] - kappa*(xi))")
+    ax.set_title("Exp1 residual view: where and by how much empirical departs from theory")
+    ax.grid(axis="y", alpha=0.22)
+    ax.legend(fontsize=8, loc="upper left")
+    _save(fig, out_path)
+
+
+def plot_exp1_phase_heatmap_readable(df: Any, out_path: Path) -> None:
+    """
+    Heatmap supplement for Exp1:
+      x = xi/xi_crit bins (display grid)
+      y = p_g
+      color = mean P(kappa_g > u0 | Y), averaged over tau.
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"p_g", "xi_ratio", "mean_prob_kappa_gt_u0"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    work = (
+        frame.groupby(["p_g", "xi_plot"], as_index=False)["mean_prob_kappa_gt_u0"]
+        .mean()
+        .rename(columns={"mean_prob_kappa_gt_u0": "prob"})
+    )
+    piv = work.pivot(index="p_g", columns="xi_plot", values="prob").sort_index().sort_index(axis=1)
+    if piv.empty:
+        return
+
+    z = piv.to_numpy(dtype=float)
+    fig, ax = plt.subplots(figsize=(8.2, 4.4))
+    im = ax.imshow(z, aspect="auto", cmap="viridis", vmin=0.0, vmax=1.0, origin="lower")
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Mean P(kappa_g > u0 | Y)")
+
+    xi_cols = [float(v) for v in piv.columns.tolist()]
+    pg_rows = [int(v) for v in piv.index.tolist()]
+    ax.set_xticks(np.arange(len(xi_cols)))
+    ax.set_xticklabels([f"{x:.2f}".rstrip("0").rstrip(".") for x in xi_cols], rotation=0, fontsize=8)
+    ax.set_yticks(np.arange(len(pg_rows)))
+    ax.set_yticklabels([str(v) for v in pg_rows], fontsize=9)
+    ax.set_xlabel("xi / xi_crit (display bins)")
+    ax.set_ylabel("p_g")
+    ax.set_title("Exp1 heatmap supplement: retention probability across (xi/xi_crit, p_g)")
+
+    if xi_cols:
+        xi_arr = np.asarray(xi_cols, dtype=float)
+        left = np.where(xi_arr <= 1.0)[0]
+        right = np.where(xi_arr > 1.0)[0]
+        if left.size and right.size:
+            x_thr = 0.5 * (float(left.max()) + float(right.min()))
+        else:
+            x_thr = float(np.argmin(np.abs(xi_arr - 1.0)))
+        ax.axvline(x_thr, color="white", lw=1.5, ls="--")
+
+    _save(fig, out_path)
+
+
+def plot_exp1_phase_by_tau_readable(
+    df: Any,
+    out_path: Path,
+    *,
+    u0: float = 0.5,
+    representative_pg: list[int] | None = None,
+) -> None:
+    """
+    Faceted phase plot by tau:
+      - each panel is one tau
+      - curves are representative p_g values
+      - avoids cross-tau averaging that can smooth the transition near xi/xi_crit=1
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"tau", "p_g", "xi_ratio", "mean_prob_kappa_gt_u0"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    tau_vals = sorted(float(v) for v in frame["tau"].unique())
+    if not tau_vals:
+        return
+    all_pg = sorted(int(v) for v in frame["p_g"].unique())
+    reps = sorted(int(v) for v in (representative_pg or _exp1_representative_pg(all_pg)))
+
+    # Glance style: keep only smallest/largest p_g to make trend obvious at first sight.
+    if representative_pg is None:
+        reps = [all_pg[0], all_pg[-1]] if len(all_pg) >= 2 else all_pg
+    else:
+        reps = sorted(int(v) for v in representative_pg)
+
+    n = len(tau_vals)
+    ncols = 2 if n > 1 else 1
+    nrows = int(math.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(7.6 * ncols, 4.9 * nrows), squeeze=False)
+    colors = ["#1f77b4", "#d62728"]
+
+    legend_added = False
+    for i, tau in enumerate(tau_vals):
+        r, c = divmod(i, ncols)
+        ax = axes[r][c]
+        sub_tau = frame[np.isclose(frame["tau"].astype(float), float(tau))].copy()
+        xi_vals = sorted(float(v) for v in sub_tau["xi_plot"].unique())
+        if xi_vals:
+            ax.axvspan(min(xi_vals), 1.0, alpha=0.08, color="#eceff1")
+            ax.axvspan(1.0, max(xi_vals), alpha=0.08, color="#e8f5e9")
+        ax.axvline(1.0, color="black", lw=2.0, ls="--")
+        ax.axhline(float(u0), color="#666666", lw=1.2, ls=":")
+
+        anno_lines: list[str] = []
+        for j, pg in enumerate(reps):
+            sub = sub_tau[sub_tau["p_g"].astype(int) == int(pg)].copy()
+            if sub.empty:
+                continue
+            agg = (
+                sub.groupby("xi_plot", as_index=False)["mean_prob_kappa_gt_u0"]
+                .mean()
+                .sort_values("xi_plot")
+            )
+            ax.plot(
+                agg["xi_plot"],
+                agg["mean_prob_kappa_gt_u0"],
+                "o-",
+                color=colors[j % len(colors)],
+                lw=3.0,
+                ms=7.2,
+                markeredgecolor="white",
+                markeredgewidth=0.8,
+                label=f"p_g={int(pg)}",
+                zorder=3,
+            )
+            try:
+                p_lo = float(agg.loc[np.isclose(agg["xi_plot"], 0.85), "mean_prob_kappa_gt_u0"].iloc[0])
+                p_hi = float(agg.loc[np.isclose(agg["xi_plot"], 1.15), "mean_prob_kappa_gt_u0"].iloc[0])
+                anno_lines.append(f"p_g={int(pg)}: Delta_wide={p_hi - p_lo:+.2f}")
+            except Exception:
+                pass
+
+        ax.set_ylim(-0.03, 1.05)
+        ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
+        ax.set_xticks([0.5, 0.85, 1.0, 1.15, 1.5, 2.0])
+        ax.set_title(f"tau = {tau:.2g}", fontsize=12, fontweight="semibold")
+        ax.set_xlabel("xi / xi_crit", fontsize=11)
+        ax.set_ylabel("P(kappa_g > u0 | Y)", fontsize=11)
+        ax.tick_params(labelsize=10)
+        ax.grid(axis="y", alpha=0.18)
+        if anno_lines:
+            ax.text(
+                0.03,
+                0.06,
+                "\n".join(anno_lines),
+                transform=ax.transAxes,
+                fontsize=9,
+                color="#222222",
+                bbox=dict(boxstyle="round,pad=0.28", facecolor="white", edgecolor="#cccccc", alpha=0.92),
+            )
+        if not legend_added:
+            ax.legend(fontsize=9, title="Only min/max p_g", title_fontsize=9, loc="upper left", framealpha=0.96)
+            legend_added = True
+
+    for k in range(n, nrows * ncols):
+        r, c = divmod(k, ncols)
+        axes[r][c].set_visible(False)
+
+    fig.suptitle("Exp1 Main Phase (Glance View): Fixed tau, compare smallest vs largest p_g", fontsize=15, fontweight="bold")
+    _save(fig, out_path)
+
+
+def plot_exp1_phase_zoom_by_tau_readable(
+    df: Any,
+    out_path: Path,
+    *,
+    u0: float = 0.5,
+    representative_pg: list[int] | None = None,
+    x_min: float = 0.85,
+    x_max: float = 1.15,
+) -> None:
+    """
+    Faceted phase plot by tau, zoomed around the threshold x=1.
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"tau", "p_g", "xi_ratio", "mean_prob_kappa_gt_u0"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    xmin = float(x_min)
+    xmax = float(x_max)
+    if not (xmin < 1.0 < xmax):
+        return
+
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    frame = frame[(frame["xi_plot"] >= xmin) & (frame["xi_plot"] <= xmax)].copy()
+    if frame.empty:
+        return
+
+    tau_vals = sorted(float(v) for v in frame["tau"].unique())
+    if not tau_vals:
+        return
+    all_pg = sorted(int(v) for v in frame["p_g"].unique())
+    reps = sorted(int(v) for v in (representative_pg or _exp1_representative_pg(all_pg)))
+
+    if representative_pg is None:
+        reps = [all_pg[0], all_pg[-1]] if len(all_pg) >= 2 else all_pg
+    else:
+        reps = sorted(int(v) for v in representative_pg)
+
+    n = len(tau_vals)
+    ncols = 2 if n > 1 else 1
+    nrows = int(math.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(7.6 * ncols, 4.9 * nrows), squeeze=False)
+    colors = ["#1f77b4", "#d62728"]
+
+    legend_added = False
+    zoom_ticks = [0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15]
+    zoom_ticks = [x for x in zoom_ticks if xmin <= x <= xmax]
+
+    for i, tau in enumerate(tau_vals):
+        r, c = divmod(i, ncols)
+        ax = axes[r][c]
+        sub_tau = frame[np.isclose(frame["tau"].astype(float), float(tau))].copy()
+        ax.axvspan(xmin, 1.0, alpha=0.09, color="#eceff1")
+        ax.axvspan(1.0, xmax, alpha=0.09, color="#e8f5e9")
+        ax.axvline(1.0, color="black", lw=2.0, ls="--")
+        ax.axhline(float(u0), color="#666666", lw=1.2, ls=":")
+
+        anno_lines: list[str] = []
+        for j, pg in enumerate(reps):
+            sub = sub_tau[sub_tau["p_g"].astype(int) == int(pg)].copy()
+            if sub.empty:
+                continue
+            agg = (
+                sub.groupby("xi_plot", as_index=False)["mean_prob_kappa_gt_u0"]
+                .mean()
+                .sort_values("xi_plot")
+            )
+            ax.plot(
+                agg["xi_plot"],
+                agg["mean_prob_kappa_gt_u0"],
+                "o-",
+                color=colors[j % len(colors)],
+                lw=3.0,
+                ms=7.2,
+                markeredgecolor="white",
+                markeredgewidth=0.8,
+                label=f"p_g={int(pg)}",
+                zorder=3,
+            )
+            try:
+                p_l = float(agg.loc[np.isclose(agg["xi_plot"], 0.95), "mean_prob_kappa_gt_u0"].iloc[0])
+                p_r = float(agg.loc[np.isclose(agg["xi_plot"], 1.05), "mean_prob_kappa_gt_u0"].iloc[0])
+                anno_lines.append(f"p_g={int(pg)}: Delta_local={p_r - p_l:+.2f}")
+            except Exception:
+                pass
+
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(-0.03, 1.05)
+        ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
+        ax.set_xticks(zoom_ticks)
+        ax.set_title(f"tau = {tau:.2g}", fontsize=12, fontweight="semibold")
+        ax.set_xlabel("xi / xi_crit", fontsize=11)
+        ax.set_ylabel("P(kappa_g > u0 | Y)", fontsize=11)
+        ax.tick_params(labelsize=10)
+        ax.grid(axis="y", alpha=0.18)
+        if anno_lines:
+            ax.text(
+                0.03,
+                0.06,
+                "\n".join(anno_lines),
+                transform=ax.transAxes,
+                fontsize=9,
+                color="#222222",
+                bbox=dict(boxstyle="round,pad=0.28", facecolor="white", edgecolor="#cccccc", alpha=0.92),
+            )
+        if not legend_added:
+            ax.legend(fontsize=9, title="Only min/max p_g", title_fontsize=9, loc="upper left", framealpha=0.96)
+            legend_added = True
+
+    for k in range(n, nrows * ncols):
+        r, c = divmod(k, ncols)
+        axes[r][c].set_visible(False)
+
+    fig.suptitle("Exp1 Threshold Zoom (Glance View): x in [0.85, 1.15] with Delta_local labels", fontsize=15, fontweight="bold")
+    _save(fig, out_path)
+
+
+def plot_exp1_threshold_sharpness_readable(
+    df: Any,
+    out_path: Path,
+    *,
+    local_left: float = 0.95,
+    local_right: float = 1.05,
+    wide_left: float = 0.85,
+    wide_right: float = 1.15,
+) -> None:
+    """
+    Threshold sharpness diagnostics with both local and wide deltas:
+      Delta_local = P(x=local_right) - P(x=local_left)
+      Delta_wide  = P(x=wide_right)  - P(x=wide_left)
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"tau", "p_g", "xi_ratio", "mean_prob_kappa_gt_u0"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    work = (
+        frame.groupby(["tau", "p_g", "xi_plot"], as_index=False)["mean_prob_kappa_gt_u0"]
+        .mean()
+        .rename(columns={"mean_prob_kappa_gt_u0": "prob"})
+    )
+    wide = work.pivot_table(
+        index=["tau", "p_g"],
+        columns="xi_plot",
+        values="prob",
+        aggfunc="mean",
+    )
+    if wide.empty:
+        return
+
+    ll = float(local_left)
+    lr = float(local_right)
+    wl = float(wide_left)
+    wr = float(wide_right)
+
+    rows_delta: list[dict[str, Any]] = []
+    for (tau, pg), row in wide.iterrows():
+        if ll in wide.columns and lr in wide.columns:
+            dl = float(row[lr] - row[ll])
+            if np.isfinite(dl):
+                rows_delta.append({"tau": float(tau), "p_g": int(pg), "kind": "local", "delta": dl})
+        if wl in wide.columns and wr in wide.columns:
+            dw = float(row[wr] - row[wl])
+            if np.isfinite(dw):
+                rows_delta.append({"tau": float(tau), "p_g": int(pg), "kind": "wide", "delta": dw})
+
+    if not rows_delta:
+        return
+    delta = pd.DataFrame(rows_delta)
+
+    fig, ax = plt.subplots(figsize=(8.8, 5.3))
+
+    # Glance style: one panel, tau-averaged local/wide deltas.
+    palette = {"local": "#1f77b4", "wide": "#ff7f0e"}
+    labels = {
+        "local": f"Delta_local = P({lr:.2f})-P({ll:.2f})",
+        "wide": f"Delta_wide = P({wr:.2f})-P({wl:.2f})",
+    }
+    end_texts: list[str] = []
+    for kind in ["local", "wide"]:
+        sub = delta[delta["kind"] == kind].copy()
+        if sub.empty:
+            continue
+        agg = (
+            sub.groupby("p_g", as_index=False)["delta"]
+            .agg(mean="mean", min="min", max="max")
+            .sort_values("p_g")
+        )
+        x = agg["p_g"].to_numpy(dtype=float)
+        y = agg["mean"].to_numpy(dtype=float)
+        ylo = agg["min"].to_numpy(dtype=float)
+        yhi = agg["max"].to_numpy(dtype=float)
+        ax.plot(
+            x,
+            y,
+            "o-",
+            color=palette[kind],
+            lw=2.6,
+            ms=6.8,
+            markeredgecolor="white",
+            markeredgewidth=0.8,
+            label=labels[kind],
+        )
+        ax.fill_between(x, ylo, yhi, color=palette[kind], alpha=0.14)
+        end_texts.append(f"{kind}: {y[0]:.2f} -> {y[-1]:.2f}")
+    ax.axhline(0.0, color="black", lw=1.2, ls="--")
+    ax.set_xscale("log")
+    ax.set_xlabel("p_g (log scale)", fontsize=11)
+    ax.set_ylabel("Delta P", fontsize=11)
+    ax.set_title("Threshold Sharpness Summary", fontsize=13, fontweight="semibold")
+    ax.tick_params(labelsize=10)
+    ax.grid(axis="y", alpha=0.18)
+    ax.legend(fontsize=9, loc="upper left", framealpha=0.95)
+    if end_texts:
+        ax.text(
+            0.03,
+            0.06,
+            " | ".join(end_texts),
+            transform=ax.transAxes,
+            fontsize=9,
+            color="#222222",
+            bbox=dict(boxstyle="round,pad=0.28", facecolor="white", edgecolor="#cccccc", alpha=0.92),
+        )
+    ax.annotate(
+        "Higher = sharper transition",
+        xy=(0.87, 0.82),
+        xytext=(0.55, 0.67),
+        textcoords="axes fraction",
+        xycoords="axes fraction",
+        arrowprops=dict(arrowstyle="->", lw=1.4, color="#444444"),
+        fontsize=10,
+        color="#333333",
+    )
+
+    fig.suptitle("Exp1 Sharpness (Glance View): Delta_local and Delta_wide rise with p_g", fontsize=15, fontweight="bold")
+    _save(fig, out_path)
+
+
+def plot_exp1_threshold_jump_readable(
+    df: Any,
+    out_path: Path,
+    *,
+    xi_left: float = 0.95,
+    xi_right: float = 1.05,
+) -> None:
+    """
+    Local threshold-jump diagnostic:
+      delta = P(kappa_g > u0 | x=xi_right) - P(kappa_g > u0 | x=xi_left)
+    reported by p_g and by tau.
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"tau", "p_g", "xi_ratio", "mean_prob_kappa_gt_u0"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    xl = float(xi_left)
+    xr = float(xi_right)
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+
+    work = (
+        frame.groupby(["tau", "p_g", "xi_plot"], as_index=False)["mean_prob_kappa_gt_u0"]
+        .mean()
+        .rename(columns={"mean_prob_kappa_gt_u0": "prob"})
+    )
+    wide = work.pivot_table(
+        index=["tau", "p_g"],
+        columns="xi_plot",
+        values="prob",
+        aggfunc="mean",
+    )
+    if xl not in wide.columns or xr not in wide.columns:
+        return
+    delta = (wide[xr] - wide[xl]).reset_index(name="delta")
+    if delta.empty:
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.2, 4.3))
+
+    # Left panel: tau-averaged jump with min-max band across tau.
+    ax = axes[0]
+    agg = (
+        delta.groupby("p_g", as_index=False)["delta"]
+        .agg(mean="mean", min="min", max="max")
+        .sort_values("p_g")
+    )
+    x = agg["p_g"].to_numpy(dtype=float)
+    y = agg["mean"].to_numpy(dtype=float)
+    ylo = agg["min"].to_numpy(dtype=float)
+    yhi = agg["max"].to_numpy(dtype=float)
+    ax.plot(x, y, "o-", color="#1f77b4", lw=2.2, ms=6, label="mean over tau")
+    ax.fill_between(x, ylo, yhi, color="#1f77b4", alpha=0.16, label="range over tau")
+    ax.axhline(0.0, color="black", lw=1.1, ls="--")
+    ax.set_xscale("log")
+    ax.set_xlabel("p_g (log scale)")
+    ax.set_ylabel(f"Delta P = P(x={xr:.2f}) - P(x={xl:.2f})")
+    ax.set_title("Local jump around threshold (tau-averaged)")
+    ax.grid(axis="y", alpha=0.2)
+    ax.legend(fontsize=8, loc="upper left")
+
+    # Right panel: per-tau lines.
+    ax = axes[1]
+    tau_vals = sorted(float(v) for v in delta["tau"].unique())
+    cmap = plt.cm.get_cmap("tab10", len(tau_vals) + 1)
+    for i, tau in enumerate(tau_vals):
+        sub = delta[np.isclose(delta["tau"].astype(float), float(tau))].sort_values("p_g")
+        ax.plot(
+            sub["p_g"].to_numpy(dtype=float),
+            sub["delta"].to_numpy(dtype=float),
+            "o-",
+            color=cmap(i),
+            lw=1.9,
+            ms=5,
+            label=f"tau={tau:.2g}",
+        )
+    ax.axhline(0.0, color="black", lw=1.1, ls="--")
+    ax.set_xscale("log")
+    ax.set_xlabel("p_g (log scale)")
+    ax.set_ylabel(f"Delta P = P(x={xr:.2f}) - P(x={xl:.2f})")
+    ax.set_title("Local jump around threshold (by tau)")
+    ax.grid(axis="y", alpha=0.2)
+    ax.legend(fontsize=8, loc="upper left")
+
+    fig.suptitle(
+        f"Exp1 threshold diagnostic: local jump from x={xl:.2f} to x={xr:.2f}",
+        fontsize=11,
+        y=1.02,
+    )
+    _save(fig, out_path)
+
+
+def _exp1_interp_x_at_prob(x: np.ndarray, p: np.ndarray, target: float) -> float:
+    """
+    Invert a monotone response curve p(x) by linear interpolation.
+    Returns NaN if target is outside the observed probability range.
+    """
+    x = np.asarray(x, dtype=float)
+    p = np.asarray(p, dtype=float)
+    m = np.isfinite(x) & np.isfinite(p)
+    if int(np.sum(m)) < 2:
+        return float("nan")
+
+    x = x[m]
+    p = p[m]
+    order = np.argsort(x)
+    x = x[order]
+    p = np.clip(p[order], 0.0, 1.0)
+
+    # Enforce the expected monotone shape to stabilize finite-sample wiggles.
+    p = np.maximum.accumulate(p)
+
+    t = float(target)
+    if t < float(p[0]) or t > float(p[-1]):
+        return float("nan")
+
+    idx = int(np.searchsorted(p, t, side="left"))
+    if idx <= 0:
+        return float(x[0])
+    if idx >= len(p):
+        return float(x[-1])
+
+    x0, x1 = float(x[idx - 1]), float(x[idx])
+    p0, p1 = float(p[idx - 1]), float(p[idx])
+    if abs(p1 - p0) < 1e-12:
+        return float(x1)
+    w = (t - p0) / (p1 - p0)
+    return float(x0 + w * (x1 - x0))
+
+
+def plot_exp1_posterior_density_main(
+    df: Any,
+    out_path: Path,
+    *,
+    xi_ratio_order: Sequence[float] | None = None,
+    y_mode: str = "density",
+    log_floor: float = 1e-4,
+) -> None:
+    """
+    Main-text Exp1 figure:
+      x = kappa_g, y = p(kappa_g | Y)
+      Facet by xi/xi_crit in {0.7, 1.0, 1.3},
+      with black-and-white line-style encoding for p_g values.
+      Style target: classic paper figure (no bright colors).
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"p_g", "xi_ratio", "kappa", "density"}
+    if not req.issubset(set(frame.columns)):
+        return
+    mode = str(y_mode).strip().lower()
+    if mode not in {"density", "log_density", "relative_density"}:
+        mode = "density"
+
+    frame["p_g"] = frame["p_g"].astype(int)
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    frame["kappa"] = frame["kappa"].astype(float)
+    frame["density"] = frame["density"].astype(float)
+    frame = frame[np.isfinite(frame["kappa"]) & np.isfinite(frame["density"])]
+    if frame.empty:
+        return
+
+    all_pg = sorted(int(v) for v in frame["p_g"].unique())
+    if not all_pg:
+        return
+
+    ratio_targets = [float(v) for v in (xi_ratio_order or [0.7, 1.0, 1.3])]
+    ncols = len(ratio_targets)
+    fig, axes = plt.subplots(1, ncols, figsize=(5.6 * ncols, 4.9), sharey=False)
+    if ncols == 1:
+        axes = [axes]
+
+    line_styles = [
+        "-",
+        "--",
+        "-.",
+        ":",
+        (0, (5, 1)),
+        (0, (3, 1, 1, 1)),
+        (0, (1, 1)),
+    ]
+    pg_styles = {
+        int(pg): {
+            "color": "black",
+            "ls": line_styles[idx % len(line_styles)],
+            "lw": 2.1 if idx == 0 else 1.9,
+            "label": f"p_g = {int(pg)}",
+        }
+        for idx, pg in enumerate(all_pg)
+    }
+
+    avail_global = sorted(float(v) for v in frame["xi_plot"].unique())
+    if not avail_global:
+        return
+    avail_arr_global = np.asarray(avail_global, dtype=float)
+
+    with plt.rc_context({"font.family": "serif"}):
+        for panel_idx, (ax, target) in enumerate(zip(axes, ratio_targets), start=1):
+            idx = int(np.argmin(np.abs(avail_arr_global - float(target))))
+            chosen = float(avail_arr_global[idx])
+            if abs(chosen - float(target)) > 0.03:
+                continue
+
+            any_curve = False
+            local_peak = 0.0
+            local_min = float("inf")
+            local_max = float("-inf")
+            for pg in all_pg:
+                sub_pg = frame[(frame["p_g"] == int(pg)) & np.isclose(frame["xi_plot"], chosen, atol=1e-9)].copy()
+                if sub_pg.empty:
+                    continue
+
+                agg = (
+                    sub_pg.groupby("kappa", as_index=False)["density"]
+                    .mean()
+                    .sort_values("kappa")
+                )
+                x = agg["kappa"].to_numpy(dtype=float)
+                y = agg["density"].to_numpy(dtype=float)
+                if x.size < 2:
+                    continue
+                area = float(np.trapezoid(y, x))
+                if area > 0:
+                    y = y / area
+                y_plot = y.copy()
+                if mode == "relative_density":
+                    peak = float(np.nanmax(y_plot))
+                    if peak > 0:
+                        y_plot = y_plot / peak
+                elif mode == "log_density":
+                    y_plot = np.log10(np.maximum(y_plot, float(log_floor)))
+
+                style = pg_styles[int(pg)]
+                ax.plot(
+                    x,
+                    y_plot,
+                    linestyle=style["ls"],
+                    lw=float(style["lw"]),
+                    color=str(style["color"]),
+                    label=str(style["label"]),
+                )
+                if mode == "log_density":
+                    local_min = min(local_min, float(np.nanmin(y_plot)))
+                    local_max = max(local_max, float(np.nanmax(y_plot)))
+                else:
+                    local_peak = max(local_peak, float(np.nanmax(y_plot)))
+                any_curve = True
+
+            if not any_curve:
+                continue
+
+            panel_tag = chr(ord("a") + panel_idx - 1)
+            status = "< 1" if float(target) < 1.0 else ("> 1" if float(target) > 1.0 else "= 1")
+            ax.set_xlim(0.0, 1.0)
+            if mode == "log_density":
+                span = max(local_max - local_min, 0.5)
+                ax.set_ylim(local_min - 0.06 * span, local_max + 0.10 * span)
+            else:
+                ax.set_ylim(0.0, local_peak * 1.08 if local_peak > 0 else 1.0)
+            ax.set_xlabel("kappa_g", fontsize=12)
+            ax.set_title(f"({panel_tag})  xi/xi_crit {status}", fontsize=12)
+            ax.tick_params(axis="both", labelsize=10, length=5)
+            ax.legend(
+                fontsize=8.5,
+                frameon=False,
+                loc="upper right",
+                ncol=2,
+                handlelength=1.8,
+                columnspacing=0.8,
+            )
+
+        if mode == "density":
+            y_label = "p(kappa_g | Y)"
+        elif mode == "relative_density":
+            y_label = "p(kappa_g | Y) / max p"
+        else:
+            y_label = "log10 p(kappa_g | Y)"
+        axes[0].set_ylabel(y_label, fontsize=12)
+
+    tau_note = ""
+    if "tau" in frame.columns:
+        tau_vals = sorted(float(v) for v in frame["tau"].dropna().unique())
+        if len(tau_vals) == 1:
+            tau_note = f" (tau={tau_vals[0]:.2f})"
+    pg_note = f", p_g in [{int(all_pg[0])}, {int(all_pg[-1])}]"
+    mode_note = {
+        "density": "density scale",
+        "relative_density": "peak-normalized scale",
+        "log_density": "log10 density scale",
+    }[mode]
+    fig.suptitle(
+        "Exp1: posterior density p(kappa_g | Y) in kappa_g space with varying p_g"
+        + tau_note
+        + pg_note
+        + f" [{mode_note}]",
+        fontsize=13,
+    )
+    _save(fig, out_path)
+
+
+def _posterior_quantile_from_density(x: np.ndarray, d: np.ndarray, q: float) -> float:
+    x = np.asarray(x, dtype=float)
+    d = np.asarray(d, dtype=float)
+    m = np.isfinite(x) & np.isfinite(d)
+    if int(np.sum(m)) < 2:
+        return float("nan")
+    x = x[m]
+    d = d[m]
+    order = np.argsort(x)
+    x = x[order]
+    d = np.maximum(d[order], 0.0)
+    area = float(np.trapezoid(d, x))
+    if not np.isfinite(area) or area <= 0:
+        return float("nan")
+    d = d / area
+    cdf = np.concatenate([[0.0], np.cumsum(0.5 * (d[1:] + d[:-1]) * np.diff(x))])
+    cdf = cdf / max(float(cdf[-1]), 1e-12)
+    return float(np.interp(float(q), cdf, x))
+
+
+def plot_exp1_posterior_density_heatmap(
+    df: Any,
+    out_path: Path,
+    *,
+    xi_ratio_order: Sequence[float] | None = None,
+    log_floor: float = 1e-5,
+) -> None:
+    """
+    Non-overlapping Exp1 density view:
+      x = kappa_g, y = p_g, color = log10 p(kappa_g | Y), faceted by xi/xi_crit.
+    Includes posterior median and IQR ribbons as white guide lines.
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"p_g", "xi_ratio", "kappa", "density"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    frame["p_g"] = frame["p_g"].astype(int)
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    frame["kappa"] = frame["kappa"].astype(float)
+    frame["density"] = frame["density"].astype(float)
+    frame = frame[np.isfinite(frame["kappa"]) & np.isfinite(frame["density"])]
+    if frame.empty:
+        return
+
+    all_pg = sorted(int(v) for v in frame["p_g"].unique())
+    if not all_pg:
+        return
+    all_kappa = np.asarray(sorted(float(v) for v in frame["kappa"].unique()), dtype=float)
+    if all_kappa.size < 2:
+        return
+
+    ratio_targets = [float(v) for v in (xi_ratio_order or [0.7, 1.0, 1.3])]
+    ncols = len(ratio_targets)
+    fig, axes = plt.subplots(1, ncols, figsize=(5.6 * ncols, 4.9), sharey=True)
+    if ncols == 1:
+        axes = [axes]
+
+    avail_global = np.asarray(sorted(float(v) for v in frame["xi_plot"].unique()), dtype=float)
+    if avail_global.size == 0:
+        return
+
+    image_handle = None
+    with plt.rc_context({"font.family": "serif"}):
+        for panel_idx, (ax, target) in enumerate(zip(axes, ratio_targets), start=1):
+            chosen = float(avail_global[int(np.argmin(np.abs(avail_global - float(target))))])
+            if abs(chosen - float(target)) > 0.03:
+                continue
+            sub_ratio = frame[np.isclose(frame["xi_plot"], chosen, atol=1e-9)].copy()
+            if sub_ratio.empty:
+                continue
+
+            z = np.full((len(all_pg), all_kappa.size), np.nan, dtype=float)
+            med = np.full(len(all_pg), np.nan, dtype=float)
+            q25 = np.full(len(all_pg), np.nan, dtype=float)
+            q75 = np.full(len(all_pg), np.nan, dtype=float)
+
+            for row_idx, pg in enumerate(all_pg):
+                sub = (
+                    sub_ratio[sub_ratio["p_g"] == int(pg)]
+                    .groupby("kappa", as_index=False)["density"]
+                    .mean()
+                    .sort_values("kappa")
+                )
+                if sub.empty:
+                    continue
+                x = sub["kappa"].to_numpy(dtype=float)
+                y = sub["density"].to_numpy(dtype=float)
+                if x.size < 2:
+                    continue
+                y_interp = np.interp(all_kappa, x, y, left=0.0, right=0.0)
+                area = float(np.trapezoid(y_interp, all_kappa))
+                if area > 0:
+                    y_interp = y_interp / area
+                z[row_idx, :] = y_interp
+                med[row_idx] = _posterior_quantile_from_density(all_kappa, y_interp, 0.50)
+                q25[row_idx] = _posterior_quantile_from_density(all_kappa, y_interp, 0.25)
+                q75[row_idx] = _posterior_quantile_from_density(all_kappa, y_interp, 0.75)
+
+            z_plot = np.log10(np.maximum(z, float(log_floor)))
+            image_handle = ax.imshow(
+                z_plot,
+                origin="lower",
+                aspect="auto",
+                cmap="viridis",
+                interpolation="nearest",
+            )
+
+            y_rows = np.arange(len(all_pg), dtype=float)
+            if np.any(np.isfinite(med)):
+                ax.plot(med, y_rows, color="white", lw=1.8, label="median")
+            if np.any(np.isfinite(q25)) and np.any(np.isfinite(q75)):
+                ax.plot(q25, y_rows, color="white", lw=1.0, ls="--", alpha=0.85, label="IQR")
+                ax.plot(q75, y_rows, color="white", lw=1.0, ls="--", alpha=0.85)
+
+            xt_vals = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=float)
+            xt_pos = np.interp(xt_vals, all_kappa, np.arange(all_kappa.size, dtype=float))
+            ax.set_xticks(xt_pos)
+            ax.set_xticklabels([f"{v:.2g}" for v in xt_vals], fontsize=10)
+
+            ax.set_yticks(np.arange(len(all_pg), dtype=float))
+            ax.set_yticklabels([str(v) for v in all_pg], fontsize=10)
+            ax.set_xlabel("kappa_g", fontsize=12)
+            panel_tag = chr(ord("a") + panel_idx - 1)
+            status = "< 1" if float(target) < 1.0 else ("> 1" if float(target) > 1.0 else "= 1")
+            ax.set_title(f"({panel_tag})  xi/xi_crit {status}", fontsize=12)
+            ax.tick_params(axis="both", length=4)
+            if panel_idx == ncols:
+                ax.legend(fontsize=8.5, frameon=False, loc="upper right")
+
+        axes[0].set_ylabel("p_g", fontsize=12)
+
+    if image_handle is not None:
+        cbar = fig.colorbar(image_handle, ax=axes, fraction=0.022, pad=0.015)
+        cbar.set_label("log10 p(kappa_g | Y)", fontsize=11)
+        cbar.ax.tick_params(labelsize=9)
+
+    fig.suptitle(
+        "Exp1 Density Heatmap View: non-overlapping posterior density across p_g",
+        fontsize=13,
+    )
+    _save(fig, out_path)
+
+
+def plot_exp1_single_story_readable(
+    df: Any,
+    out_path: Path,
+    *,
+    u0: float = 0.5,
+    slope: float | None = None,
+    slope_ci: tuple[float, float] | None = None,
+) -> None:
+    """
+    One-figure storytelling view for Exp1:
+      Panel A: threshold zoom, smallest vs largest p_g
+      Panel B: Delta_local and Delta_wide vs p_g (should increase)
+      Panel C: W50 vs p_g (should decrease)
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"tau", "p_g", "xi_ratio", "mean_prob_kappa_gt_u0"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    work = (
+        frame.groupby(["tau", "p_g", "xi_plot"], as_index=False)["mean_prob_kappa_gt_u0"]
+        .mean()
+        .rename(columns={"mean_prob_kappa_gt_u0": "prob"})
+    )
+    if work.empty:
+        return
+
+    # Tau-averaged curve by (p_g, xi).
+    curve = (
+        work.groupby(["p_g", "xi_plot"], as_index=False)["prob"]
+        .mean()
+        .sort_values(["p_g", "xi_plot"])
+    )
+    pg_vals = sorted(int(v) for v in curve["p_g"].unique())
+    if not pg_vals:
+        return
+    pg_min, pg_max = int(pg_vals[0]), int(pg_vals[-1])
+
+    # Metrics per p_g.
+    metric_rows: list[dict[str, Any]] = []
+    for pg in pg_vals:
+        sub = curve[curve["p_g"].astype(int) == int(pg)].sort_values("xi_plot")
+        x = sub["xi_plot"].to_numpy(dtype=float)
+        p = sub["prob"].to_numpy(dtype=float)
+        if x.size < 2:
+            continue
+        p95 = np.nan
+        p105 = np.nan
+        p85 = np.nan
+        p115 = np.nan
+        try:
+            p95 = float(sub.loc[np.isclose(sub["xi_plot"], 0.95), "prob"].iloc[0])
+            p105 = float(sub.loc[np.isclose(sub["xi_plot"], 1.05), "prob"].iloc[0])
+        except Exception:
+            pass
+        try:
+            p85 = float(sub.loc[np.isclose(sub["xi_plot"], 0.85), "prob"].iloc[0])
+            p115 = float(sub.loc[np.isclose(sub["xi_plot"], 1.15), "prob"].iloc[0])
+        except Exception:
+            pass
+        x25 = _exp1_interp_x_at_prob(x, p, 0.25)
+        x75 = _exp1_interp_x_at_prob(x, p, 0.75)
+        metric_rows.append(
+            {
+                "p_g": int(pg),
+                "delta_local": float(p105 - p95) if np.isfinite(p95) and np.isfinite(p105) else float("nan"),
+                "delta_wide": float(p115 - p85) if np.isfinite(p85) and np.isfinite(p115) else float("nan"),
+                "w50": float(x75 - x25) if np.isfinite(x25) and np.isfinite(x75) and x75 >= x25 else float("nan"),
+            }
+        )
+    metrics = pd.DataFrame(metric_rows).sort_values("p_g")
+    if metrics.empty:
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(16.0, 5.5))
+
+    # Panel A: threshold zoom with min/max p_g.
+    ax = axes[0]
+    for color, pg in [("#1f77b4", pg_min), ("#d62728", pg_max)]:
+        sub = curve[curve["p_g"].astype(int) == int(pg)].sort_values("xi_plot")
+        sub = sub[(sub["xi_plot"] >= 0.85) & (sub["xi_plot"] <= 1.15)].copy()
+        if sub.empty:
+            continue
+        ax.plot(
+            sub["xi_plot"].to_numpy(dtype=float),
+            sub["prob"].to_numpy(dtype=float),
+            "o-",
+            color=color,
+            lw=3.0,
+            ms=7.2,
+            markeredgecolor="white",
+            markeredgewidth=0.8,
+            label=f"p_g={int(pg)}",
+        )
+    ax.axvspan(0.85, 1.0, alpha=0.08, color="#eceff1")
+    ax.axvspan(1.0, 1.15, alpha=0.08, color="#e8f5e9")
+    ax.axvline(1.0, color="black", lw=2.0, ls="--")
+    ax.axhline(float(u0), color="#666666", lw=1.2, ls=":")
+    ax.set_xlim(0.85, 1.15)
+    ax.set_ylim(-0.03, 1.05)
+    ax.set_xticks([0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15])
+    ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_title("A. Threshold Region (Small vs Large p_g)", fontsize=12, fontweight="semibold")
+    ax.set_xlabel("xi / xi_crit", fontsize=11)
+    ax.set_ylabel("P(kappa_g > u0 | Y)", fontsize=11)
+    ax.tick_params(labelsize=10)
+    ax.grid(axis="y", alpha=0.18)
+    ax.legend(fontsize=9, loc="upper left", framealpha=0.96)
+
+    # Panel B: Delta curves.
+    ax = axes[1]
+    mm = metrics[np.isfinite(metrics["delta_local"]) | np.isfinite(metrics["delta_wide"])].copy()
+    if not mm.empty:
+        if np.any(np.isfinite(mm["delta_local"])):
+            ax.plot(
+                mm["p_g"].to_numpy(dtype=float),
+                mm["delta_local"].to_numpy(dtype=float),
+                "o-",
+                color="#1f77b4",
+                lw=2.8,
+                ms=6.8,
+                markeredgecolor="white",
+                markeredgewidth=0.8,
+                label="Delta_local = P(1.05)-P(0.95)",
+            )
+        if np.any(np.isfinite(mm["delta_wide"])):
+            ax.plot(
+                mm["p_g"].to_numpy(dtype=float),
+                mm["delta_wide"].to_numpy(dtype=float),
+                "s-",
+                color="#ff7f0e",
+                lw=2.8,
+                ms=6.2,
+                markeredgecolor="white",
+                markeredgewidth=0.8,
+                label="Delta_wide = P(1.15)-P(0.85)",
+            )
+        ax.set_xscale("log")
+        ax.axhline(0.0, color="black", lw=1.1, ls="--")
+        ax.set_title("B. Phase Sharpness Metrics", fontsize=12, fontweight="semibold")
+        ax.set_xlabel("p_g (log scale)", fontsize=11)
+        ax.set_ylabel("Delta P (higher is sharper)", fontsize=11)
+        ax.tick_params(labelsize=10)
+        ax.grid(axis="y", alpha=0.18)
+        ax.legend(fontsize=8.7, loc="upper left", framealpha=0.96)
+
+    # Panel C: transition width W50.
+    ax = axes[2]
+    mw = metrics[np.isfinite(metrics["w50"])].copy()
+    if not mw.empty:
+        ax.plot(
+            mw["p_g"].to_numpy(dtype=float),
+            mw["w50"].to_numpy(dtype=float),
+            "o-",
+            color="#2ca02c",
+            lw=2.8,
+            ms=6.8,
+            markeredgecolor="white",
+            markeredgewidth=0.8,
+        )
+        ax.set_xscale("log")
+        ax.set_title("C. Transition Width W50", fontsize=12, fontweight="semibold")
+        ax.set_xlabel("p_g (log scale)", fontsize=11)
+        ax.set_ylabel("W50 = x@P0.75 - x@P0.25 (lower is sharper)", fontsize=11)
+        ax.tick_params(labelsize=10)
+        ax.grid(axis="y", alpha=0.18)
+        ax.annotate(
+            "Expected trend: downward",
+            xy=(0.86, 0.24),
+            xytext=(0.49, 0.52),
+            textcoords="axes fraction",
+            xycoords="axes fraction",
+            arrowprops=dict(arrowstyle="->", lw=1.3, color="#444444"),
+            fontsize=9.5,
+            color="#333333",
+        )
+
+    title = "Exp1 Single-Figure Evidence: Finite-sample smooth transition + asymptotic threshold sharpening"
+    if slope is not None and np.isfinite(float(slope)):
+        if slope_ci is not None and np.isfinite(float(slope_ci[0])) and np.isfinite(float(slope_ci[1])):
+            title += f" | null slope={float(slope):.3f} (95% CI [{float(slope_ci[0]):.3f}, {float(slope_ci[1]):.3f}])"
+        else:
+            title += f" | null slope={float(slope):.3f}"
+    fig.suptitle(title, fontsize=14, fontweight="bold")
+    _save(fig, out_path)
+
+
+def plot_exp1_transition_width_readable(
+    df: Any,
+    out_path: Path,
+    *,
+    p_low: float = 0.25,
+    p_high: float = 0.75,
+) -> None:
+    """
+    Transition-width diagnostic for Exp1:
+      W = x@P(p_high) - x@P(p_low), where x = xi/xi_crit.
+    Smaller W means a sharper threshold transition.
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"tau", "p_g", "xi_ratio", "mean_prob_kappa_gt_u0"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    lo = float(p_low)
+    hi = float(p_high)
+    if not (0.0 < lo < hi < 1.0):
+        return
+
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    work = (
+        frame.groupby(["tau", "p_g", "xi_plot"], as_index=False)["mean_prob_kappa_gt_u0"]
+        .mean()
+        .rename(columns={"mean_prob_kappa_gt_u0": "prob"})
+    )
+    if work.empty:
+        return
+
+    rows_width: list[dict[str, Any]] = []
+    for (tau, pg), sub in work.groupby(["tau", "p_g"]):
+        sub = sub.sort_values("xi_plot")
+        x = sub["xi_plot"].to_numpy(dtype=float)
+        p = sub["prob"].to_numpy(dtype=float)
+        x_lo = _exp1_interp_x_at_prob(x, p, lo)
+        x_hi = _exp1_interp_x_at_prob(x, p, hi)
+        if np.isfinite(x_lo) and np.isfinite(x_hi) and (x_hi >= x_lo):
+            rows_width.append(
+                {
+                    "tau": float(tau),
+                    "p_g": int(pg),
+                    "x_at_low": float(x_lo),
+                    "x_at_high": float(x_hi),
+                    "width": float(x_hi - x_lo),
+                }
+            )
+
+    if not rows_width:
+        return
+
+    width_df = pd.DataFrame(rows_width)
+    fig, ax = plt.subplots(figsize=(8.8, 5.3))
+
+    # Glance style: one panel with tau-averaged width.
+    agg = (
+        width_df.groupby("p_g", as_index=False)["width"]
+        .agg(mean="mean", min="min", max="max")
+        .sort_values("p_g")
+    )
+    x = agg["p_g"].to_numpy(dtype=float)
+    y = agg["mean"].to_numpy(dtype=float)
+    ylo = agg["min"].to_numpy(dtype=float)
+    yhi = agg["max"].to_numpy(dtype=float)
+    ax.plot(
+        x,
+        y,
+        "o-",
+        color="#1f77b4",
+        lw=2.6,
+        ms=6.8,
+        markeredgecolor="white",
+        markeredgewidth=0.8,
+        label="mean over tau",
+    )
+    ax.fill_between(x, ylo, yhi, color="#1f77b4", alpha=0.16, label="range over tau")
+    ax.set_xscale("log")
+    ax.set_xlabel("p_g (log scale)", fontsize=11)
+    ax.set_ylabel(f"W50 = x@P={hi:.2f} - x@P={lo:.2f}", fontsize=11)
+    ax.set_title("Tau-averaged Transition Width", fontsize=12, fontweight="semibold")
+    ax.tick_params(labelsize=10)
+    ax.grid(axis="y", alpha=0.18)
+    ax.legend(fontsize=9, loc="upper right", framealpha=0.95)
+    ax.text(
+        0.03,
+        0.92,
+        "Lower W50 = sharper threshold",
+        transform=ax.transAxes,
+        fontsize=9,
+        color="#333333",
+        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="#cccccc", alpha=0.9),
+    )
+    ax.annotate(
+        "Downward trend supports\nasymptotic threshold sharpening",
+        xy=(0.80, 0.25),
+        xytext=(0.52, 0.50),
+        textcoords="axes fraction",
+        xycoords="axes fraction",
+        arrowprops=dict(arrowstyle="->", lw=1.4, color="#444444"),
+        fontsize=10,
+        color="#333333",
+    )
+
+    fig.suptitle(
+        "Exp1 Width (Glance View): W50 shrinks as p_g grows",
+        fontsize=15,
+        fontweight="bold",
+    )
     _save(fig, out_path)
 
 

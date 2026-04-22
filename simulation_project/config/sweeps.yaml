@@ -16,3 +16,22 @@ sweeps:
     grid:
       max_convergence_retries: [2]
 
+  exp2_kappa_threshold_small:
+    experiment: exp2
+    description: Small Exp2 sweep to push high-signal groups across kappa=0.5.
+    fixed:
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: nuts
+      repeats: 12
+      n_jobs: 2
+      bayes_min_chains: 2
+      n_train: 300
+      n_test: 50
+      rho_within: 0.3
+      rho_between: 0.05
+      group_sizes: [30, 20, 15, 10, 5, 5]
+      xi_ratios: [0.0, 0.5, 1.0, 2.0, 6.0, 10.0]
+    grid:
+      rho_ref: [0.2, 0.3, 0.4, 0.5]
+
