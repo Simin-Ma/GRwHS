@@ -22,8 +22,12 @@ python -m simulation_project.src.run_experiment --help
 Run all experiments:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --save-dir outputs/simulation_project --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --n-jobs 2
 ```
+
+Default output layout is now session-based and centralized under:
+
+`outputs/simulation_project/sessions/<timestamp>_cli_<experiment>/`
 
 ## Documentation
 

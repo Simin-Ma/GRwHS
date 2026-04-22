@@ -17,6 +17,7 @@ from .runtime import (
     _normalize_exp3_gigg_mode,
     _resolve_sampler_backend_for_experiment,
 )
+from ..output_layout import resolve_analysis_dir, resolve_run_save_dir
 from ..utils import MASTER_SEED, save_json
 from .exp1 import run_exp1_kappa_profile_regimes
 from .exp2 import run_exp2_group_separation
@@ -89,7 +90,16 @@ def _cli() -> None:
         )
     )
     parser.add_argument("--experiment", default="all", choices=list(CLI_EXPERIMENT_CHOICES))
-    parser.add_argument("--save-dir", default="outputs/simulation_project")
+    parser.add_argument(
+        "--save-dir",
+        default=None,
+        help="Explicit output directory. Relative paths are normalized under the workspace.",
+    )
+    parser.add_argument(
+        "--workspace",
+        default="simulation_project",
+        help="Workspace root for organized outputs (default resolves to outputs/simulation_project).",
+    )
     parser.add_argument("--seed", type=int, default=MASTER_SEED)
     parser.add_argument("--repeats", type=int, default=None)
     parser.add_argument("--n-jobs", type=int, default=1)
@@ -118,10 +128,18 @@ def _cli() -> None:
     enforce_conv = not bool(args.no_enforce_bayes_convergence)
     until_conv = bool(args.until_bayes_converged) or (enforce_conv and args.max_convergence_retries is None)
     sampler_backend_cli = _resolve_sampler_backend_for_experiment(exp_key, args.sampler)
+    if exp_key == "analysis":
+        save_dir_resolved = resolve_analysis_dir(args.save_dir, workspace=args.workspace)
+    else:
+        save_dir_resolved = resolve_run_save_dir(
+            args.save_dir,
+            workspace=args.workspace,
+            run_label=f"cli_{exp_key}",
+        )
     common_cfg = RunCommonConfig(
         n_jobs=args.n_jobs,
         seed=args.seed,
-        save_dir=args.save_dir,
+        save_dir=str(save_dir_resolved),
         profile=profile_name,
         enforce_bayes_convergence=enforce_conv,
         max_convergence_retries=args.max_convergence_retries,
@@ -132,7 +150,7 @@ def _cli() -> None:
 
     from .analysis.report import analyze_exp1, analyze_exp2, analyze_exp3, analyze_exp4, analyze_exp5, _safe_print, run_analysis
 
-    base = Path(args.save_dir)
+    base = Path(str(save_dir_resolved))
 
     def _print_exp_analysis(label: str, result: dict) -> None:
         sep = "=" * 68
@@ -149,14 +167,14 @@ def _cli() -> None:
     if exp_key == "all":
         run_all_experiments(**common_cfg.as_kwargs(), exp3_gigg_mode=exp3_gigg_mode_name)
     elif exp_key == "analysis":
-        run_analysis(save_dir=args.save_dir)
+        run_analysis(save_dir=str(save_dir_resolved))
     else:
         dispatch: dict[str, dict[str, Any]] = {
             "exp1": {
                 "run": lambda: run_exp1_kappa_profile_regimes(
                     n_jobs=args.n_jobs,
                     seed=args.seed,
-                    save_dir=args.save_dir,
+                    save_dir=str(save_dir_resolved),
                     repeats=reps or _default_repeats("exp1", profile_name),
                 ),
                 "analyze": analyze_exp1,

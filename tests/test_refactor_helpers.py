@@ -17,6 +17,7 @@ from simulation_project.src.experiments.method_registry import MethodRegistry, b
 from simulation_project.src.experiments.orchestration import run_all_experiments
 from simulation_project.src.experiments.methods.helpers import as_int_groups, fit_error_result, scaled_iteration_budget
 from simulation_project.src.experiments.schemas import RunCommonConfig, RunManifest
+from simulation_project.src.output_layout import resolve_analysis_dir, resolve_run_save_dir, resolve_workspace_dir
 from simulation_project.src.utils import SamplerConfig
 
 
@@ -130,3 +131,20 @@ def test_architecture_models_and_registry() -> None:
     names = registry.names()
     assert "GR_RHS" in names
     assert "RHS" in names
+
+
+def test_output_layout_auto_session_and_analysis_resolution(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    auto_dir = resolve_run_save_dir(None, workspace=str(workspace), run_label="cli_exp3")
+    assert auto_dir.exists()
+    assert "sessions" in auto_dir.as_posix()
+
+    latest_dir = resolve_analysis_dir(None, workspace=str(workspace))
+    assert latest_dir == auto_dir
+
+
+def test_output_layout_relative_explicit_path_is_centralized(tmp_path) -> None:
+    workspace = resolve_workspace_dir(str(tmp_path / "workspace"), create=True)
+    explicit = resolve_run_save_dir("my_custom/output", workspace=str(workspace), run_label="cli_exp1")
+    assert explicit.exists()
+    assert (workspace / "adhoc") in explicit.parents

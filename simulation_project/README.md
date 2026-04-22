@@ -56,39 +56,53 @@ Default sweep config:
 Run all:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --save-dir outputs/simulation_project --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --n-jobs 2
 ```
 
 Run one experiment:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3a --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3a --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 ```
 
 Run Exp3a / Exp3b separately:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3a --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3b --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3a --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3b --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 ```
 
 Legacy combined entry is still available:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3 --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 ```
 
 Run analysis only:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment analysis --save-dir outputs/simulation_project
+python -m simulation_project.src.run_experiment --experiment analysis
 ```
 
 Laptop profile:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --save-dir outputs/simulation_project --profile laptop --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --profile laptop --n-jobs 2
 ```
+
+## Unified Output Layout
+
+By default, each CLI run gets an isolated session directory:
+
+`outputs/simulation_project/sessions/<timestamp>_cli_<experiment>/`
+
+Quick pointers:
+
+- Latest run pointer: `outputs/simulation_project/latest_session.txt`
+- Latest run metadata: `outputs/simulation_project/latest_session.json`
+- Session index: `outputs/simulation_project/session_index.jsonl`
+
+Custom paths still work with `--save-dir`, but relative paths are normalized under the workspace to keep outputs centralized.
 
 Default sampler rule:
 

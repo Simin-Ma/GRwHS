@@ -24,6 +24,7 @@ from .experiments import (
 )
 from .experiments.orchestration import run_all_experiments
 from .experiment_aliases import normalize_sweep_experiment
+from .output_layout import resolve_explicit_save_dir, resolve_workspace_dir
 from .utils import ensure_dir, save_json
 
 
@@ -180,7 +181,14 @@ def run_sweep(
     if overrides:
         common.update(dict(overrides))
 
-    base_save_dir = str(save_dir or common.get("save_dir", "outputs/simulation_project"))
+    if save_dir is not None:
+        base_save_dir = str(resolve_explicit_save_dir(str(save_dir), workspace="simulation_project", create=True))
+    else:
+        fallback = common.get("save_dir", None)
+        if fallback is None or str(fallback).strip() == "":
+            base_save_dir = str(resolve_workspace_dir("simulation_project", create=True))
+        else:
+            base_save_dir = str(resolve_explicit_save_dir(str(fallback), workspace="simulation_project", create=True))
     sweep_root = ensure_dir(Path(base_save_dir) / "sweeps" / str(sweep_name))
     session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     session_dir = ensure_dir(sweep_root / session_id)
@@ -300,6 +308,11 @@ def _cli() -> None:
     parser.add_argument("--list", action="store_true", help="List available sweep names from config")
     parser.add_argument("--sweep", default="", help="Sweep name to run")
     parser.add_argument("--save-dir", default=None, help="Override base save_dir for this sweep session")
+    parser.add_argument(
+        "--workspace",
+        default="simulation_project",
+        help="Workspace root for organized outputs (default resolves to outputs/simulation_project).",
+    )
     parser.add_argument("--max-runs", type=int, default=None, help="Limit number of expanded grid runs")
     parser.add_argument("--dry-run", action="store_true", help="Expand and validate sweep without executing runs")
     parser.add_argument("--fail-fast", action="store_true", help="Stop at first failed run")
@@ -328,10 +341,13 @@ def _cli() -> None:
         raise SystemExit("Please provide --sweep <name> or use --list.")
 
     overrides = _parse_set_items(args.set)
+    save_dir_use = args.save_dir
+    if save_dir_use is None:
+        save_dir_use = str(resolve_workspace_dir(args.workspace, create=True))
     out = run_sweep(
         sweep_name=str(args.sweep).strip(),
         config_path=str(args.config),
-        save_dir=args.save_dir,
+        save_dir=save_dir_use,
         max_runs=args.max_runs,
         dry_run=bool(args.dry_run),
         fail_fast=bool(args.fail_fast),

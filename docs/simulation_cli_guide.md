@@ -11,7 +11,8 @@ python scripts/run_simulation.py --help
 
 Common CLI arguments:
 - `--experiment {all,1,2,3,3a,3b,4,5,analysis}`
-- `--save-dir outputs/simulation_project`
+- `--workspace simulation_project` (resolves to `outputs/simulation_project`)
+- `--save-dir <path>` (optional explicit override)
 - `--seed 20260415`
 - `--repeats <int>`
 - `--n-jobs <int>`
@@ -23,6 +24,8 @@ Common CLI arguments:
 
 Notes:
 - `scripts/run_simulation.py` is a thin wrapper over `python -m simulation_project.src.run_experiment`.
+- If `--save-dir` is omitted, each run gets an isolated session directory:
+  `outputs/simulation_project/sessions/<timestamp>_cli_<experiment>/`.
 - Advanced parameters (`methods`, `prior_grid`, `p0_list`, and so on) are exposed in Python function calls.
 - For Exp2-Exp5, Bayesian minimum chains are profile-dependent by default:
   - `profile=laptop`: `2`
@@ -241,23 +244,25 @@ Output layout:
 After each completed experiment (`exp1` to `exp5`), the runner now creates a
 timestamped run archive under that experiment's result directory:
 
-- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_manifest.json`
-- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary_table.csv`
-- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary.md`
-- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_analysis.json`
-- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/artifacts/...`
+- `session_root = outputs/simulation_project/sessions/<timestamp>_cli_<experiment>`
+
+- `<session_root>/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_manifest.json`
+- `<session_root>/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary_table.csv`
+- `<session_root>/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary.md`
+- `<session_root>/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_analysis.json`
+- `<session_root>/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/artifacts/...`
 
 The experiment directory also keeps:
 
-- `outputs/simulation_project/results/<exp_dir>/latest_run.json`
+- `<session_root>/results/<exp_dir>/latest_run.json`
 
 This guarantees every run is reproducibly archived with its timestamp, compact
 table summary, markdown summary, and analyzer findings.
 
 Figure outputs are now versioned as well:
 
-- latest figure: `outputs/simulation_project/figures/<figure_name>.png`
-- immutable history snapshot: `outputs/simulation_project/figures/history/<figure_name>_<YYYYMMDD_HHMMSS_microseconds>.png`
+- latest figure: `<session_root>/figures/<figure_name>.png`
+- immutable history snapshot: `<session_root>/figures/history/<figure_name>_<YYYYMMDD_HHMMSS_microseconds>.png`
 
 So each newly generated figure is preserved with its own timestamp.
 
