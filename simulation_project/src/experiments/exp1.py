@@ -152,6 +152,7 @@ def _summarize_null_panel(null_rows: list[dict[str, Any]]) -> tuple[list[dict[st
         means = np.asarray([float(r.get("post_mean_kappa", float("nan"))) for r in sub], dtype=float)
         tails = np.asarray([float(r.get("tail_prob_kappa_gt_eps", float("nan"))) for r in sub], dtype=float)
         means = means[np.isfinite(means)]
+        tails_finite = tails[np.isfinite(tails)]
         null_agg.append(
             {
                 "p_g": int(pg),
@@ -160,7 +161,7 @@ def _summarize_null_panel(null_rows: list[dict[str, Any]]) -> tuple[list[dict[st
                 "q25_post_mean_kappa": float(np.quantile(means, 0.25)) if means.size else float("nan"),
                 "q75_post_mean_kappa": float(np.quantile(means, 0.75)) if means.size else float("nan"),
                 "std_post_mean_kappa": float(np.std(means, ddof=1)) if means.size > 1 else float("nan"),
-                "mean_tail_prob_kappa_gt_eps": float(np.nanmean(tails)),
+                "mean_tail_prob_kappa_gt_eps": float(np.mean(tails_finite)) if tails_finite.size else float("nan"),
                 "n_replicates": int(len(sub)),
             }
         )
