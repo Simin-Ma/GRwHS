@@ -1,10 +1,14 @@
 # Python cache
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
 
 # Virtual environments
 .venv/
 env/
+.venv-sim/
+jax-env/
 
 # IDE settings
 .vscode/
