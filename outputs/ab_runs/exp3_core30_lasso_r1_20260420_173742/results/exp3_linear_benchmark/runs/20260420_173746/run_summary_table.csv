@@ -1,0 +1,2 @@
+method,n_rows,n_converged,converged_rate,rho_within,rho_between,target_snr,n_reps_total,n_reps_ok,n_reps_converged,mse_null,mse_signal,mse_overall,lpd_test,coverage_95,avg_ci_length,kappa_null_mean,kappa_signal_mean,n_reps
+LASSO_CV,30,30,1.0,0.45,0.14,1.2,1.0,1.0,1.0,0.021168126760119605,0.10802646105467993,0.034483612611589845,-2.2202904038661226,,,,,1.0

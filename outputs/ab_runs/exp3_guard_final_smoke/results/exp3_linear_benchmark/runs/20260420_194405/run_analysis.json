@@ -1,0 +1,26 @@
+{
+  "metrics": {
+    "per_signal": {
+      "concentrated": {
+        "mse_rank": [
+          [
+            "RHS",
+            0.05534883463019793
+          ]
+        ],
+        "lpd_mean": {
+          "RHS": -2.9116780949422685
+        },
+        "methods_present": [
+          "RHS"
+        ]
+      }
+    },
+    "all_methods_in_summary": [
+      "RHS"
+    ]
+  },
+  "findings": [
+    "  Methods present in summary: ['RHS']\n  NOTE: ['GR_RHS'] absent from summary (likely did not converge -- check logs)\n  signal=concentrated: GR_RHS not in results (did not converge)\n    All: RHS: 0.05535"
+  ]
+}

@@ -147,7 +147,7 @@ def run_exp1_kappa_profile_regimes(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
     repeats: int = 500,
-    save_dir: str = "simulation_project",
+    save_dir: str = "outputs/simulation_project",
     *,
     # Panel A - null contraction
     pg_null_list: Sequence[int] | None = None,
@@ -295,6 +295,7 @@ def run_exp1_kappa_profile_regimes(
         produced_paths=produced,
         result_paths=result_paths,
     )
+
 
 
 

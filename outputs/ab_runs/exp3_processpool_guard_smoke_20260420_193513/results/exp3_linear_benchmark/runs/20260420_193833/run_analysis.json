@@ -1,0 +1,54 @@
+{
+  "metrics": {
+    "per_signal": {
+      "boundary": {
+        "mse_rank": [
+          [
+            "RHS",
+            0.014318206562903897
+          ]
+        ],
+        "lpd_mean": {
+          "RHS": -2.008066180975301
+        },
+        "methods_present": [
+          "RHS"
+        ]
+      },
+      "concentrated": {
+        "mse_rank": [
+          [
+            "RHS",
+            0.06070460059032194
+          ]
+        ],
+        "lpd_mean": {
+          "RHS": -2.640388305877237
+        },
+        "methods_present": [
+          "RHS"
+        ]
+      },
+      "distributed": {
+        "mse_rank": [
+          [
+            "RHS",
+            0.0015155458894880445
+          ]
+        ],
+        "lpd_mean": {
+          "RHS": -1.6972583653223503
+        },
+        "methods_present": [
+          "RHS"
+        ]
+      }
+    },
+    "all_methods_in_summary": [
+      "RHS"
+    ]
+  },
+  "findings": [
+    "  Methods present in summary: ['RHS']\n  NOTE: ['GR_RHS'] absent from summary (likely did not converge -- check logs)\n  signal=boundary: GR_RHS not in results (did not converge)\n    All: RHS: 0.01432\n  signal=concentrated: GR_RHS not in results (did not converge)\n    All: RHS: 0.06070\n  signal=distributed: GR_RHS not in results (did not converge)\n    All: RHS: 0.00152"
+  ]
+}

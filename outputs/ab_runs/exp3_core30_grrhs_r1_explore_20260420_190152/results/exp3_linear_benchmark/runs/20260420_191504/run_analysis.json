@@ -1,0 +1,54 @@
+{
+  "metrics": {
+    "per_signal": {
+      "boundary": {
+        "mse_rank": [
+          [
+            "GR_RHS",
+            0.009426531435842647
+          ]
+        ],
+        "lpd_mean": {
+          "GR_RHS": -1.6773183274139791
+        },
+        "methods_present": [
+          "GR_RHS"
+        ]
+      },
+      "concentrated": {
+        "mse_rank": [
+          [
+            "GR_RHS",
+            0.045135392573622285
+          ]
+        ],
+        "lpd_mean": {
+          "GR_RHS": -2.652186823694841
+        },
+        "methods_present": [
+          "GR_RHS"
+        ]
+      },
+      "distributed": {
+        "mse_rank": [
+          [
+            "GR_RHS",
+            0.008753214743143526
+          ]
+        ],
+        "lpd_mean": {
+          "GR_RHS": -1.8279509964919285
+        },
+        "methods_present": [
+          "GR_RHS"
+        ]
+      }
+    },
+    "all_methods_in_summary": [
+      "GR_RHS"
+    ]
+  },
+  "findings": [
+    "  Methods present in summary: ['GR_RHS']\n  NOTE: ['RHS'] absent from summary (likely did not converge -- check logs)\n  signal=boundary: GR_RHS MSE=0.00943 (rank 1/1, +0.0% vs best GR_RHS)\n    All: GR_RHS: 0.00943\n  signal=concentrated: GR_RHS MSE=0.04514 (rank 1/1, +0.0% vs best GR_RHS)\n    All: GR_RHS: 0.04514\n  signal=distributed: GR_RHS MSE=0.00875 (rank 1/1, +0.0% vs best GR_RHS)\n    All: GR_RHS: 0.00875"
+  ]
+}

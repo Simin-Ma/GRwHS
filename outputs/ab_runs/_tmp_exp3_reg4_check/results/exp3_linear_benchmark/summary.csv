@@ -1,0 +1,3 @@
+group_config,signal,setting_block,env_id,design_type,rho_within,rho_between,target_snr,method,n_reps_total,n_reps_ok,n_reps_converged,mse_null,mse_signal,mse_overall,lpd_test,coverage_95,avg_ci_length,kappa_null_mean,kappa_signal_mean,n_reps
+G10x5,concentrated,anchor,E0,correlated,0.3,0.1,1.0,OLS,1,1,1,0.21250585550228535,0.19395081245469054,0.20508383828324747,-4.29111078835233,,,,,1
+G10x5,concentrated,anchor,E0,correlated,0.3,0.1,1.0,RHS,1,1,1,0.03241852541202618,0.08974429845745549,0.05534883463019793,-2.9116780949422685,0.98,0.9329765932143198,,,1

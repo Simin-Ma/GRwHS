@@ -1,0 +1,92 @@
+{
+  "metrics": {
+    "per_signal": {
+      "boundary": {
+        "mse_rank": [
+          [
+            "LASSO_CV",
+            0.026259188573548337
+          ],
+          [
+            "RHS",
+            0.030567848545677106
+          ],
+          [
+            "OLS",
+            0.06460064264406447
+          ]
+        ],
+        "lpd_mean": {
+          "LASSO_CV": -2.037707144176652,
+          "OLS": -2.628575052838096,
+          "RHS": -2.117351310872035
+        },
+        "methods_present": [
+          "LASSO_CV",
+          "OLS",
+          "RHS"
+        ]
+      },
+      "concentrated": {
+        "mse_rank": [
+          [
+            "RHS",
+            0.06301628315376273
+          ],
+          [
+            "LASSO_CV",
+            0.06317048030756903
+          ],
+          [
+            "OLS",
+            0.6763670538802383
+          ]
+        ],
+        "lpd_mean": {
+          "LASSO_CV": -2.6832192979596314,
+          "OLS": -4.246107561497066,
+          "RHS": -2.6878626110631934
+        },
+        "methods_present": [
+          "LASSO_CV",
+          "OLS",
+          "RHS"
+        ]
+      },
+      "distributed": {
+        "mse_rank": [
+          [
+            "RHS",
+            0.00689511083493981
+          ],
+          [
+            "LASSO_CV",
+            0.009908956934631516
+          ],
+          [
+            "OLS",
+            0.09864007284826874
+          ]
+        ],
+        "lpd_mean": {
+          "LASSO_CV": -1.8486531396173487,
+          "OLS": -3.058604358823452,
+          "RHS": -1.7750936793200285
+        },
+        "methods_present": [
+          "LASSO_CV",
+          "OLS",
+          "RHS"
+        ]
+      }
+    },
+    "all_methods_in_summary": [
+      "LASSO_CV",
+      "OLS",
+      "RHS"
+    ]
+  },
+  "findings": [
+    "  Methods present in summary: ['LASSO_CV', 'OLS', 'RHS']\n  NOTE: ['GR_RHS'] absent from summary (likely did not converge -- check logs)\n  signal=boundary: GR_RHS not in results (did not converge)\n    All: LASSO_CV: 0.02626    RHS: 0.03057    OLS: 0.06460\n  signal=concentrated: GR_RHS not in results (did not converge)\n    All: RHS: 0.06302    LASSO_CV: 0.06317    OLS: 0.67637\n  signal=distributed: GR_RHS not in results (did not converge)\n    All: RHS: 0.00690    LASSO_CV: 0.00991    OLS: 0.09864"
+  ]
+}

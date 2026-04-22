@@ -139,7 +139,7 @@ def run_exp5_prior_sensitivity(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
     repeats: int = 30,
-    save_dir: str = "simulation_project",
+    save_dir: str = "outputs/simulation_project",
     *,
     prior_grid: Sequence[tuple[float, float]] | None = None,
     profile: str = "full",
@@ -242,6 +242,7 @@ def run_exp5_prior_sensitivity(
         produced_paths=produced,
         result_paths=result_paths,
     )
+
 
 
 

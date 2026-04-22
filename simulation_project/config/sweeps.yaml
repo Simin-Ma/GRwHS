@@ -1,7 +1,7 @@
 version: 1
 
 defaults:
-  save_dir: simulation_project
+  save_dir: outputs/simulation_project
   n_jobs: 1
   seed: 20260415
 
@@ -16,3 +16,4 @@ sweeps:
       sampler_backend: gibbs
     grid:
       max_convergence_retries: [2]
+

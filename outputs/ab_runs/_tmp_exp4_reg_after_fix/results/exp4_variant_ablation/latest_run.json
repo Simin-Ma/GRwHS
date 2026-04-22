@@ -1,0 +1,24 @@
+{
+  "exp_key": "exp4",
+  "timestamp": "20260420_184906",
+  "run_dir": "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906",
+  "result_paths": {
+    "raw": "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\raw_results.csv",
+    "summary": "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\summary.csv",
+    "table": "ab_runs\\_tmp_exp4_reg_after_fix\\tables\\table_variant_ablation.csv",
+    "meta": "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\exp4_meta.json",
+    "fig4a_tau_scatter": "ab_runs\\_tmp_exp4_reg_after_fix\\figures\\fig4a_tau_scatter.png",
+    "fig4b_mse_normalized": "ab_runs\\_tmp_exp4_reg_after_fix\\figures\\fig4b_mse_normalized.png"
+  },
+  "run_summary_table": "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906\\run_summary_table.csv",
+  "run_summary_md": "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906\\run_summary.md",
+  "run_analysis_json": "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906\\run_analysis.json",
+  "archived_artifacts": [
+    "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906\\artifacts\\figures\\fig4a_tau_scatter.png",
+    "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906\\artifacts\\figures\\fig4b_mse_normalized.png",
+    "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906\\artifacts\\results\\exp4_variant_ablation\\exp4_meta.json",
+    "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906\\artifacts\\results\\exp4_variant_ablation\\raw_results.csv",
+    "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906\\artifacts\\results\\exp4_variant_ablation\\summary.csv",
+    "ab_runs\\_tmp_exp4_reg_after_fix\\results\\exp4_variant_ablation\\runs\\20260420_184906\\artifacts\\tables\\table_variant_ablation.csv"
+  ]
+}

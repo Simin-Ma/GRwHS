@@ -28,7 +28,7 @@ from .exp5 import run_exp5_prior_sensitivity
 def run_all_experiments(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
-    save_dir: str = "simulation_project",
+    save_dir: str = "outputs/simulation_project",
     *,
     profile: str = "full",
     enforce_bayes_convergence: bool = True,
@@ -89,7 +89,7 @@ def _cli() -> None:
         )
     )
     parser.add_argument("--experiment", default="all", choices=list(CLI_EXPERIMENT_CHOICES))
-    parser.add_argument("--save-dir", default="simulation_project")
+    parser.add_argument("--save-dir", default="outputs/simulation_project")
     parser.add_argument("--seed", type=int, default=MASTER_SEED)
     parser.add_argument("--repeats", type=int, default=None)
     parser.add_argument("--n-jobs", type=int, default=1)
@@ -227,6 +227,7 @@ def _cli() -> None:
         label = str(spec["label"])
         results_subdir = str(spec["results_subdir"])
         _print_exp_analysis(label, analyzer(base / "results" / results_subdir))
+
 
 
 

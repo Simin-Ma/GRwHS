@@ -1,0 +1,2 @@
+setting_id,alpha_kappa,beta_kappa,mse_null,mse_signal,group_auroc,kappa_null_mean,kappa_signal_mean,kappa_null_prob_gt_0_1,n_effective
+2,2.0,2.0,0.004623405596918766,0.014668057623278158,1.0,0.38199482348014135,0.7064423740555843,0.8275,1

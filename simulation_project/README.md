@@ -1,4 +1,4 @@
-﻿# simulation_project
+# simulation_project
 
 `simulation_project` is the only active experimental framework in this repository.
 
@@ -56,38 +56,38 @@ Default sweep config:
 Run all:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --save-dir outputs/simulation_project --n-jobs 2
 ```
 
 Run one experiment:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 ```
 
 Run Exp3a / Exp3b separately:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3b --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3b --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 ```
 
 Legacy combined entry is still available:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3 --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3 --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 ```
 
 Run analysis only:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment analysis --save-dir simulation_project
+python -m simulation_project.src.run_experiment --experiment analysis --save-dir outputs/simulation_project
 ```
 
 Laptop profile:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --profile laptop --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --save-dir outputs/simulation_project --profile laptop --n-jobs 2
 ```
 
 Default sampler rule:
@@ -111,3 +111,5 @@ Simulation methods now use in-tree runtime modules under:
 - `simulation_project/src/cli/` (CLI entrypoint)
 
 No external `grrhs` package directory is required.
+
+

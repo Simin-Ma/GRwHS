@@ -1,0 +1,2 @@
+setting_id,signal,design_type,rho_within,target_snr,sigma2,replicate_id,method,status,converged,fit_attempts,kappa_null_mean,kappa_signal_mean,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error,mse_null,mse_signal,mse_overall,avg_ci_length,coverage_95,lpd_test
+1,concentrated,orthonormal,0.0,2.0,1.0,1,GHS_plus,ok,True,1,,,3.894800699999905,1.0009557387065977,2607.976215219161,,,0.001703507358454678,0.013805678035081875,0.0065443756291055566,0.34984509768230465,1.0,-1.3419746165621471

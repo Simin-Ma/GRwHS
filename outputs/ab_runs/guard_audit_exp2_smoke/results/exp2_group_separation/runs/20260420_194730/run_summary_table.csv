@@ -1,0 +1,2 @@
+method,n_rows,n_converged,converged_rate,null_group_mse,null_group_mse_std,signal_group_mse,signal_group_mse_std,mse_overall,group_auroc,group_auroc_std,lpd_test,lpd_test_std,n_effective
+RHS,1,1,1.0,0.1080857347252463,,0.1153993098704679,,0.0060571155244886,1.0,,-1.4384586125185663,,1.0

@@ -1,0 +1,39 @@
+{
+  "profile": "full",
+  "group_configs": [
+    {
+      "name": "G5x5",
+      "group_sizes": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "active_groups": [
+        0,
+        1
+      ]
+    }
+  ],
+  "signals": [
+    "boundary"
+  ],
+  "rho_within_values": [
+    0.3
+  ],
+  "rho_between": 0.1,
+  "snr_values": [
+    0.5
+  ],
+  "n_train": 100,
+  "n_test": 30,
+  "methods": [
+    "GIGG_MMLE"
+  ],
+  "n_settings": 1,
+  "repeats": 1,
+  "enforce_bayes_convergence": true,
+  "max_convergence_retries": 0,
+  "until_bayes_converged": true
+}

@@ -1,0 +1,17 @@
+{
+  "profile": "laptop",
+  "p0_vals": [
+    5
+  ],
+  "group_sizes": [
+    10,
+    10,
+    10,
+    10,
+    10
+  ],
+  "n": 100,
+  "include_oracle": false,
+  "bayes_min_chains": 2,
+  "max_convergence_retries": 0
+}

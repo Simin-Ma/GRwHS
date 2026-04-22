@@ -1,0 +1,2 @@
+2026-04-21 19:21:44,050 | INFO | Exp3[core30]: 12 settings x 1 repeats x 1 methods = 12 tasks (group_configs=['G10x5', 'CL', 'CS'], signals=['concentrated', 'distributed'], env_points=['E0', 'RW_PLUS']), methods=['OLS'], bayes_min_chains=2, enforce=False, retry_limit=0, gigg_mode=stable
+2026-04-21 19:21:46,932 | INFO | Exp3 done: 12 rows, 12 settings, 12 converged rows used for metrics

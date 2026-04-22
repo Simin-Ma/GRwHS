@@ -1,12 +1,12 @@
-﻿# Thesis Figure Plan (Unified Pipeline)
+# Thesis Figure Plan (Unified Pipeline)
 
 This figure plan assumes all results are generated from `simulation_project`.
 
 ## Sources
 
-- experiment outputs: `simulation_project/results/`
-- figures: `simulation_project/figures/`
-- tables: `simulation_project/tables/`
+- experiment outputs: `outputs/simulation_project/results/`
+- figures: `outputs/simulation_project/figures/`
+- tables: `outputs/simulation_project/tables/`
 
 ## Suggested Figure Blocks
 
@@ -18,5 +18,7 @@ This figure plan assumes all results are generated from `simulation_project`.
 ## Reproducible Runner
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --save-dir outputs/simulation_project --n-jobs 2
 ```
+
+

@@ -424,7 +424,7 @@ def analyze_exp5(results_dir: Path) -> dict[str, Any]:
 # Master runner
 # ---------------------------------------------------------------------------
 
-def run_analysis(save_dir: str = "simulation_project") -> dict[str, Any]:
+def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]:
     base = Path(save_dir)
     res  = base / "results"
 
@@ -474,4 +474,5 @@ def run_analysis(save_dir: str = "simulation_project") -> dict[str, Any]:
         json.dump(all_metrics, f, indent=2)
 
     return all_metrics
+
 

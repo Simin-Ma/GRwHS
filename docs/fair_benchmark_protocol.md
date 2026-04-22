@@ -1,4 +1,4 @@
-﻿# Fair Benchmark Protocol (Unified)
+# Fair Benchmark Protocol (Unified)
 
 This document now tracks the fairness contract for the **single active simulation pipeline**.
 
@@ -22,5 +22,6 @@ All benchmark runs should use `simulation_project/src/run_experiment.py` only.
 ## Where to Run
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --save-dir outputs/simulation_project --n-jobs 2
 ```
+

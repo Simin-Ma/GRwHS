@@ -1,0 +1,61 @@
+setting_id,signal,design_type,rho_within,target_snr,sigma2,replicate_id,method,status,converged,fit_attempts,kappa_null_mean,kappa_signal_mean,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error,mse_null,mse_signal,mse_overall,avg_ci_length,coverage_95,lpd_test
+1,concentrated,orthonormal,0.0,2.0,1.0,1,GR_RHS,error,False,1,,,1.3060968999925535,,64.88444678863095,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,1,RHS,error,False,1,,,1.24245809999411,,60.825643465521985,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,1,GIGG_MMLE,error,False,1,,,13.452673600011622,,36.24465629936845,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,1,GHS_plus,error,False,1,,,0.052982300010626204,,18.16468348573705,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,1,OLS,ok,True,1,,,0.0005644000048050657,,,,,0.011999957616673522,0.009460746515941136,0.010984273176380566,,,-1.5277926106480573
+1,concentrated,orthonormal,0.0,2.0,1.0,1,LASSO_CV,ok,True,1,,,0.01708370000415016,,,,,0.005038798536082822,0.016163159389691314,0.009488542877526217,,,-1.3709302707974356
+1,concentrated,orthonormal,0.0,2.0,1.0,2,GR_RHS,error,False,1,,,1.2228415999998106,,56.17532123845833,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,2,RHS,error,False,1,,,2.989180699994904,,68.23303927511044,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,2,GIGG_MMLE,error,False,1,,,13.531407200003741,,59.55604643062177,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,2,GHS_plus,error,False,1,,,0.05375310000090394,,20.191935670345284,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,2,OLS,ok,True,1,,,0.0004934000025968999,,,,,0.009231235496061148,0.014399276414469402,0.011298451863424451,,,-1.5974785714035882
+1,concentrated,orthonormal,0.0,2.0,1.0,2,LASSO_CV,ok,True,1,,,0.018305299992789514,,,,,0.00206119025286164,0.02010503840120216,0.009278729512197848,,,-1.4647411556286793
+1,concentrated,orthonormal,0.0,2.0,1.0,3,GR_RHS,error,False,1,,,1.2186215999972774,,77.71027233500801,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,3,RHS,error,False,1,,,1.286774799998966,,69.31626795499946,0.004,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,3,GIGG_MMLE,error,False,1,,,13.561175299997558,,30.412049636098583,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,3,GHS_plus,error,False,1,,,0.05178759999398608,,14.091595363502108,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,3,OLS,ok,True,1,,,0.0005042999982833862,,,,,0.01938570680820136,0.019735217446456114,0.019525511063503264,,,-1.9289738068023188
+1,concentrated,orthonormal,0.0,2.0,1.0,3,LASSO_CV,ok,True,1,,,0.017910599999595433,,,,,0.010569544759333267,0.014304845905329534,0.012063665217731771,,,-1.759668469394466
+1,concentrated,orthonormal,0.0,2.0,1.0,4,GR_RHS,error,False,1,,,1.197307099995669,,95.24618343725294,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,4,RHS,error,False,1,,,1.2928875000070548,,52.82023726586314,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,4,GIGG_MMLE,error,False,1,,,13.519948200002545,,37.64760004660953,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,4,GHS_plus,error,False,1,,,0.052119899992248975,,11.47894408602741,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,4,OLS,ok,True,1,,,0.0005006999999750406,,,,,0.015313754417096882,0.0177270505121166,0.016279072855104774,,,-1.86247087563627
+1,concentrated,orthonormal,0.0,2.0,1.0,4,LASSO_CV,ok,True,1,,,0.0169917000021087,,,,,0.007257069837593667,0.019215769790272487,0.012040549818665194,,,-1.7606410969434947
+1,concentrated,orthonormal,0.0,2.0,1.0,5,GR_RHS,error,False,1,,,1.1994339999946533,,72.69061384643653,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,5,RHS,error,False,1,,,1.2403448999975808,,52.28408619996989,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,5,GIGG_MMLE,error,False,1,,,13.498340000005555,,49.9894332826995,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,5,GHS_plus,error,False,1,,,0.05167570000048727,,17.282573831317674,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+1,concentrated,orthonormal,0.0,2.0,1.0,5,OLS,ok,True,1,,,0.0004791999963345006,,,,,0.008837385505568784,0.012598259757536184,0.010341735206355744,,,-1.4710932595702175
+1,concentrated,orthonormal,0.0,2.0,1.0,5,LASSO_CV,ok,True,1,,,0.017261500004678965,,,,,0.00040229501170186007,0.017445187368317096,0.007219451954347955,,,-1.4724866220200492
+2,distributed,orthonormal,0.0,2.0,1.0,1,GR_RHS,error,False,1,,,1.1740645000099903,,94.20682432367214,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,1,RHS,error,False,1,,,1.300243200006662,,80.08269818297536,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,1,GIGG_MMLE,error,False,1,,,13.542347700000391,,50.98471652969766,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,1,GHS_plus,error,False,1,,,0.05295400001341477,,14.796806211473505,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,1,OLS,ok,True,1,,,0.0004940000071655959,,,,,0.010335468541690113,0.0014514270713835843,0.009624745224065591,,,-1.3977737200469116
+2,distributed,orthonormal,0.0,2.0,1.0,1,LASSO_CV,ok,True,1,,,0.0174230999982683,,,,,0.0005757844019975572,0.021305274000489587,0.0022341435698769196,,,-1.3852501302687017
+2,distributed,orthonormal,0.0,2.0,1.0,2,GR_RHS,error,False,1,,,1.520877200004179,,73.41266218264906,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,2,RHS,ok,True,1,,,1.4078803000011249,,128.73471584849838,0.0,,0.00013939143678295916,0.015433076679398897,0.001362886256192234,0.1796484768148512,1.0,-1.5317381348504986
+2,distributed,orthonormal,0.0,2.0,1.0,2,GIGG_MMLE,error,False,1,,,13.53418529999908,,49.711185743053456,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,2,GHS_plus,error,False,1,,,0.05252509999263566,,17.10488223313317,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,2,OLS,ok,True,1,,,0.00048069999320432544,,,,,0.012551713149983977,0.03388091294481061,0.014258049133570108,,,-1.7453649202299402
+2,distributed,orthonormal,0.0,2.0,1.0,2,LASSO_CV,ok,True,1,,,0.01769100000092294,,,,,0.0002721320652200785,0.007354409903191904,0.0008387142922578246,,,-1.5000663190085692
+2,distributed,orthonormal,0.0,2.0,1.0,3,GR_RHS,error,False,1,,,1.2229296000004979,,66.76713963076452,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,3,RHS,error,False,1,,,1.4200008000043454,,113.24216531786173,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,3,GIGG_MMLE,error,False,1,,,13.495467700005975,,72.24934971831281,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,3,GHS_plus,error,False,1,,,0.05109269999957178,,14.600036451341241,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,3,OLS,ok,True,1,,,0.0004929999995511025,,,,,0.012072378995009707,0.01413592298734848,0.01223746251439681,,,-1.5379065055628
+2,distributed,orthonormal,0.0,2.0,1.0,3,LASSO_CV,ok,True,1,,,0.01727470000332687,,,,,0.0021373022663404074,0.04440270391150099,0.005518534397953254,,,-1.3673011563458461
+2,distributed,orthonormal,0.0,2.0,1.0,4,GR_RHS,error,False,1,,,1.242772800003877,,64.88900340677385,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,4,RHS,error,False,1,,,1.3350973000051454,,71.9032212844846,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,4,GIGG_MMLE,error,False,1,,,13.582335700004478,,31.91285975696787,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,4,GHS_plus,error,False,1,,,0.05154700001003221,,14.769865329614921,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,4,OLS,ok,True,1,,,0.0004993000038666651,,,,,0.008261632439350668,0.002126542156034488,0.007770825216685373,,,-2.1526093305624387
+2,distributed,orthonormal,0.0,2.0,1.0,4,LASSO_CV,ok,True,1,,,0.017951500005437993,,,,,0.00020541948683072475,0.03497568080450315,0.002987040392244519,,,-1.8819662441449463
+2,distributed,orthonormal,0.0,2.0,1.0,5,GR_RHS,error,False,1,,,1.2759179999993648,,63.58933990993107,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,5,RHS,error,False,1,,,1.455480999997235,,72.24928682812943,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,5,GIGG_MMLE,error,False,1,,,13.529222199998912,,50.921529859572296,,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,5,GHS_plus,error,False,1,,,0.05329429999983404,,22.717551065064118,,ConvergenceError: GHS_plus did not converge after 1 attempt(s),,,,,,
+2,distributed,orthonormal,0.0,2.0,1.0,5,OLS,ok,True,1,,,0.0004938999918522313,,,,,0.010829165527898867,0.016835929511701788,0.0113097066466031,,,-1.458087582222418
+2,distributed,orthonormal,0.0,2.0,1.0,5,LASSO_CV,ok,True,1,,,0.017331800001556985,,,,,4.699951686685761e-06,0.02676905523407367,0.0021458483742776446,,,-1.325435189222411

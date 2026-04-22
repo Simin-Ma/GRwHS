@@ -1,0 +1,2 @@
+method,n_rows,n_converged,converged_rate,rho_within,rho_between,target_snr,n_reps_total,n_reps_ok,n_reps_converged,mse_null,mse_signal,mse_overall,lpd_test,coverage_95,avg_ci_length,kappa_null_mean,kappa_signal_mean,n_reps
+GIGG_MMLE,90,63,0.7,0.45,0.14,1.2,3.0,2.1,2.1,0.06451853309423147,0.20402575877568255,0.09383823218384066,-2.143317338558465,0.29238095238095235,0.14948429167201813,,,2.1

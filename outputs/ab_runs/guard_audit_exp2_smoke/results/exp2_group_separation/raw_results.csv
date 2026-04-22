@@ -1,0 +1,2 @@
+replicate_id,method,status,converged,fit_attempts,null_group_mse,signal_group_mse,group_auroc,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error,mse_null,mse_signal,mse_overall,avg_ci_length,coverage_95,lpd_test
+1,RHS,ok,True,1,0.10808573472524638,0.11539930987046797,1.0,18.425878199996077,1.0220334217624012,163.71804709508746,0.0,,0.0036028578241748795,0.007693287324697864,0.0060571155244886704,0.4073681713857997,0.9733333333333334,-1.4384586125185665

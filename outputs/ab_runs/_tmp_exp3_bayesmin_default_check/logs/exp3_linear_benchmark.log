@@ -1,0 +1,2 @@
+2026-04-20 18:27:47,118 | INFO | Exp3[core30]: 1 settings x 1 repeats x 1 methods = 1 tasks (group_configs=['G10x5'], signals=['concentrated', 'distributed', 'boundary'], env_points=['E0']), methods=['OLS'], bayes_min_chains=2, enforce=True, retry_limit=0
+2026-04-20 18:27:48,689 | INFO | Exp3 done: 1 rows, 1 settings, 1 converged rows used for metrics

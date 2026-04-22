@@ -1,0 +1,1 @@
+2026-04-21 16:20:41,078 | INFO | Exp3[core30]: 16 settings x 2 repeats x 1 methods = 32 tasks (group_configs=['G10x5', 'CL'], signals=['concentrated', 'distributed'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['GIGG_MMLE'], bayes_min_chains=2, enforce=True, retry_limit=1

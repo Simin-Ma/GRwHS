@@ -1,0 +1,2 @@
+variant,p0_true,mse_null,mse_signal,mse_overall,tau0_oracle,tau_post_mean,tau_ratio_to_oracle,kappa_null_mean,kappa_signal_mean,n_effective
+calibrated,5.0,0.0002421651182895,0.0037770599678883,0.0005956546032493,0.0111111111111111,0.1926365056373179,17.337285507358615,0.2738847754211934,0.780267703667283,1.0

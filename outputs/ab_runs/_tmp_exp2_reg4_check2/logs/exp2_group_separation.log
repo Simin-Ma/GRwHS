@@ -1,0 +1,2 @@
+2026-04-20 18:59:08,931 | INFO | Exp2 toy: rho_ref=0.50, xi_crit=0.1000, xi_ratios=[0.0, 1.0, 4.0, 8.0], mu=[0.0, 2.0, 6.0, 8.0]
+2026-04-20 18:59:23,479 | INFO | Exp2 done: 1 replicates, 0 kappa rows

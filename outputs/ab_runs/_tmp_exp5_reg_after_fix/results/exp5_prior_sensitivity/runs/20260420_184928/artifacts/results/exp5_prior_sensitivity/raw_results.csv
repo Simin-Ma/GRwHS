@@ -1,0 +1,3 @@
+setting_id,replicate_id,prior_id,alpha_kappa,beta_kappa,p0_signal_groups,tau_target,status,converged,fit_attempts,mse_null,mse_signal,group_auroc,kappa_null_mean,kappa_signal_mean,kappa_null_prob_gt_0_1,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error
+1,1,1,0.5,1.0,3,groups,error,False,1,,,,,,,16.81312810000236,1.020685076713562,170.61174914861397,0.002,ConvergenceError: GR_RHS did not converge after 1 attempt(s)
+2,1,1,0.5,1.0,3,groups,error,False,1,,,,,,,34.21805889999814,1.0116666555404663,193.4890708238302,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s)

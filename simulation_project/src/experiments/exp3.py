@@ -339,7 +339,7 @@ def run_exp3_linear_benchmark(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
     repeats: int = 20,
-    save_dir: str = "simulation_project",
+    save_dir: str = "outputs/simulation_project",
     *,
     signal_types: Sequence[str] | None = None,
     rho_within_values: Sequence[float] | None = None,
@@ -689,7 +689,7 @@ def run_exp3a_main_benchmark(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
     repeats: int = 20,
-    save_dir: str = "simulation_project",
+    save_dir: str = "outputs/simulation_project",
     **kwargs,
 ) -> Dict[str, str]:
     """Exp3a: main benchmark (concentrated + distributed only)."""
@@ -709,7 +709,7 @@ def run_exp3b_boundary_stress(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
     repeats: int = 20,
-    save_dir: str = "simulation_project",
+    save_dir: str = "outputs/simulation_project",
     **kwargs,
 ) -> Dict[str, str]:
     """Exp3b: boundary-only stress benchmark."""
@@ -723,6 +723,7 @@ def run_exp3b_boundary_stress(
         exp_key="exp3b",
         **kwargs,
     )
+
 
 
 

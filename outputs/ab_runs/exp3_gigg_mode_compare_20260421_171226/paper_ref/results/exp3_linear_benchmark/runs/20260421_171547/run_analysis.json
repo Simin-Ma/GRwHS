@@ -1,0 +1,40 @@
+{
+  "metrics": {
+    "per_signal": {
+      "concentrated": {
+        "mse_rank": [
+          [
+            "GIGG_MMLE",
+            0.03059715148581081
+          ]
+        ],
+        "lpd_mean": {
+          "GIGG_MMLE": -2.4768554806872953
+        },
+        "methods_present": [
+          "GIGG_MMLE"
+        ]
+      },
+      "distributed": {
+        "mse_rank": [
+          [
+            "GIGG_MMLE",
+            0.014498786101925183
+          ]
+        ],
+        "lpd_mean": {
+          "GIGG_MMLE": -1.8409027809892138
+        },
+        "methods_present": [
+          "GIGG_MMLE"
+        ]
+      }
+    },
+    "all_methods_in_summary": [
+      "GIGG_MMLE"
+    ]
+  },
+  "findings": [
+    "  Methods present in summary: ['GIGG_MMLE']\n  NOTE: ['GR_RHS', 'RHS'] absent from summary (likely did not converge -- check logs)\n  signal=concentrated: GR_RHS not in results (did not converge)\n    All: GIGG_MMLE: 0.03060\n  signal=distributed: GR_RHS not in results (did not converge)\n    All: GIGG_MMLE: 0.01450"
+  ]
+}

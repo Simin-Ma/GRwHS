@@ -1,0 +1,2 @@
+2026-04-19 19:05:26,180 | INFO | Exp3: 12 settings x 1 repeats = 12 tasks (signals=['concentrated', 'distributed', 'boundary'], rho_within=[0.3, 0.8], snr=[0.5, 2.0], rho_between=0.10), methods=['OLS'], enforce=True, retry_limit=0
+2026-04-19 19:05:27,923 | INFO | Exp3 done: 12 rows, 12 settings, 12 converged rows used for metrics

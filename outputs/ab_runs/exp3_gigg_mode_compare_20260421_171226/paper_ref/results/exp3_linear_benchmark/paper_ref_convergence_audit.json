@@ -1,0 +1,219 @@
+{
+  "path": "D:\\FilesP\\GR-RHS\\ab_runs\\exp3_gigg_mode_compare_20260421_171226\\paper_ref\\results\\exp3_linear_benchmark\\raw_results.csv",
+  "overall": {
+    "n_total": 48,
+    "ok_rate": 0.10416666666666667,
+    "converged_rate": 0.10416666666666667,
+    "ok_and_converged_rate": 0.10416666666666667,
+    "attempts_mean": 1.0,
+    "attempts_max": 1,
+    "runtime_median": 4.101312449995021,
+    "runtime_p90": 4.200120329992205,
+    "rhat_median_ok": 1.0175806270343808,
+    "ess_median_ok": 361.0613522487824,
+    "div_median_ok": NaN,
+    "rhat_median_conv": 1.0175806270343808,
+    "ess_median_conv": 361.0613522487824,
+    "div_median_conv": NaN
+  },
+  "quality_threshold_rates_on_ok": {
+    "rhat_le_1.03_rate_ok": 1.0,
+    "ess_ge_120_rate_ok": 1.0,
+    "div_le_0.01_rate_ok": 0.0
+  },
+  "by_group_signal": [
+    {
+      "group_config": "CL",
+      "signal": "concentrated",
+      "n": 12,
+      "ok_rate": 0.0,
+      "conv_rate": 0.0,
+      "ok_conv_rate": 0.0,
+      "attempts_mean": 1.0,
+      "rt_median": 4.090986900002463,
+      "rhat_median": 1.1644948711292171,
+      "ess_median": 61.96031931354998,
+      "div_median": NaN
+    },
+    {
+      "group_config": "CL",
+      "signal": "distributed",
+      "n": 12,
+      "ok_rate": 0.16666666666666666,
+      "conv_rate": 0.16666666666666666,
+      "ok_conv_rate": 0.16666666666666666,
+      "attempts_mean": 1.0,
+      "rt_median": 4.097052500001155,
+      "rhat_median": 1.0868397846534223,
+      "ess_median": 102.152314192054,
+      "div_median": NaN
+    },
+    {
+      "group_config": "G10x5",
+      "signal": "concentrated",
+      "n": 12,
+      "ok_rate": 0.08333333333333333,
+      "conv_rate": 0.08333333333333333,
+      "ok_conv_rate": 0.08333333333333333,
+      "attempts_mean": 1.0,
+      "rt_median": 4.126725050002278,
+      "rhat_median": 1.1135263069521457,
+      "ess_median": 120.6166558480553,
+      "div_median": NaN
+    },
+    {
+      "group_config": "G10x5",
+      "signal": "distributed",
+      "n": 12,
+      "ok_rate": 0.16666666666666666,
+      "conv_rate": 0.16666666666666666,
+      "ok_conv_rate": 0.16666666666666666,
+      "attempts_mean": 1.0,
+      "rt_median": 4.129537450004136,
+      "rhat_median": 1.1294366363715462,
+      "ess_median": 66.75893467365384,
+      "div_median": NaN
+    }
+  ],
+  "worst_envs_by_conv": [
+    {
+      "group_config": "CL",
+      "signal": "concentrated",
+      "env_id": "E0",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.159295599994948,
+      "rhat_median": 1.1487477964487816,
+      "ess_median": 41.0551753151849,
+      "div_median": NaN
+    },
+    {
+      "group_config": "CL",
+      "signal": "concentrated",
+      "env_id": "RB_PLUS",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.120957599996473,
+      "rhat_median": 1.3190581520160185,
+      "ess_median": 84.02634801213797,
+      "div_median": NaN
+    },
+    {
+      "group_config": "CL",
+      "signal": "concentrated",
+      "env_id": "RW_PLUS",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.047767000010936,
+      "rhat_median": 1.145083108496508,
+      "ess_median": 111.1770483694238,
+      "div_median": NaN
+    },
+    {
+      "group_config": "CL",
+      "signal": "concentrated",
+      "env_id": "SNR_PLUS",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.075946800003294,
+      "rhat_median": 1.1759465063307857,
+      "ess_median": 61.26067007026264,
+      "div_median": NaN
+    },
+    {
+      "group_config": "CL",
+      "signal": "distributed",
+      "env_id": "RB_PLUS",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.096379800001159,
+      "rhat_median": 1.031598173221383,
+      "ess_median": 105.14475527805132,
+      "div_median": NaN
+    },
+    {
+      "group_config": "CL",
+      "signal": "distributed",
+      "env_id": "SNR_PLUS",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.0469063999917125,
+      "rhat_median": 1.0743313304763156,
+      "ess_median": 125.72938292095948,
+      "div_median": NaN
+    },
+    {
+      "group_config": "G10x5",
+      "signal": "concentrated",
+      "env_id": "E0",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.085267399990698,
+      "rhat_median": 1.1723886262111651,
+      "ess_median": 79.64440526069865,
+      "div_median": NaN
+    },
+    {
+      "group_config": "G10x5",
+      "signal": "concentrated",
+      "env_id": "RB_PLUS",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.167417300006491,
+      "rhat_median": 1.0773693452760271,
+      "ess_median": 67.3120990851366,
+      "div_median": NaN
+    },
+    {
+      "group_config": "G10x5",
+      "signal": "concentrated",
+      "env_id": "RW_PLUS",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.10017560000415,
+      "rhat_median": 1.1307393248253077,
+      "ess_median": 253.17567257543865,
+      "div_median": NaN
+    },
+    {
+      "group_config": "G10x5",
+      "signal": "distributed",
+      "env_id": "RB_PLUS",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.094896299997345,
+      "rhat_median": 1.5776986202748418,
+      "ess_median": 73.37405524937175,
+      "div_median": NaN
+    },
+    {
+      "group_config": "G10x5",
+      "signal": "distributed",
+      "env_id": "RW_PLUS",
+      "n": 3,
+      "conv_rate": 0.0,
+      "rt_median": 4.177349000005052,
+      "rhat_median": 1.1307586818542343,
+      "ess_median": 34.582303237583574,
+      "div_median": NaN
+    },
+    {
+      "group_config": "CL",
+      "signal": "distributed",
+      "env_id": "E0",
+      "n": 3,
+      "conv_rate": 0.3333333333333333,
+      "rt_median": 4.1160539999982575,
+      "rhat_median": 1.183204377386621,
+      "ess_median": 70.20947084113226,
+      "div_median": NaN
+    }
+  ],
+  "failure_counts": [
+    {
+      "status": "error",
+      "error_short": "ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s)",
+      "size": 43
+    }
+  ]
+}

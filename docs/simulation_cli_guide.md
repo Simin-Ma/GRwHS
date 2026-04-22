@@ -11,7 +11,7 @@ python scripts/run_simulation.py --help
 
 Common CLI arguments:
 - `--experiment {all,1,2,3,3a,3b,4,5,analysis}`
-- `--save-dir simulation_project`
+- `--save-dir outputs/simulation_project`
 - `--seed 20260415`
 - `--repeats <int>`
 - `--n-jobs <int>`
@@ -58,9 +58,9 @@ The commands below are recommended presets. They are explicit choices and are no
 Exp1 uses profile-grid posterior computation, not MCMC. `--sampler` has no effect.
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --repeats 1 --n-jobs 1 --no-enforce-bayes-convergence
-python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --profile laptop --repeats 200 --n-jobs 8 --no-enforce-bayes-convergence
-python -m simulation_project.src.run_experiment --experiment 1 --save-dir simulation_project --profile full --repeats 500 --n-jobs 8 --no-enforce-bayes-convergence
+python -m simulation_project.src.run_experiment --experiment 1 --save-dir outputs/simulation_project --repeats 1 --n-jobs 1 --no-enforce-bayes-convergence
+python -m simulation_project.src.run_experiment --experiment 1 --save-dir outputs/simulation_project --profile laptop --repeats 200 --n-jobs 8 --no-enforce-bayes-convergence
+python -m simulation_project.src.run_experiment --experiment 1 --save-dir outputs/simulation_project --profile full --repeats 500 --n-jobs 8 --no-enforce-bayes-convergence
 ```
 
 ### Exp2 (`group_separation`)
@@ -68,8 +68,8 @@ python -m simulation_project.src.run_experiment --experiment 1 --save-dir simula
 Use `nuts` with convergence enforcement.
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile laptop --repeats 10 --n-jobs 6 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 2 --save-dir simulation_project --profile full --repeats 30 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 2 --save-dir outputs/simulation_project --profile laptop --repeats 10 --n-jobs 6 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 2 --save-dir outputs/simulation_project --profile full --repeats 30 --n-jobs 6 --max-convergence-retries 2 --sampler nuts
 ```
 
 ### Exp3a (`main_benchmark`)
@@ -77,8 +77,8 @@ python -m simulation_project.src.run_experiment --experiment 2 --save-dir simula
 Exp3a is the primary benchmark layer (concentrated + distributed).
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile full --repeats 20 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir outputs/simulation_project --profile full --repeats 20 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
 ```
 
 ### Exp3b (`boundary_stress`)
@@ -86,8 +86,8 @@ python -m simulation_project.src.run_experiment --experiment 3a --save-dir simul
 Exp3b is the boundary-only stress layer.
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3b --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3b --save-dir simulation_project --profile full --repeats 20 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3b --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 8 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3b --save-dir outputs/simulation_project --profile full --repeats 20 --n-jobs 8 --max-convergence-retries 2 --sampler nuts
 ```
 
 Current defaults for Exp3a/Exp3b (`exp3_design="core30"`):
@@ -124,8 +124,8 @@ Evaluation note:
 `gibbs` is the default/recommended sampler for Exp4.
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile laptop --repeats 15 --n-jobs 6 --max-convergence-retries 3 --sampler gibbs
-python -m simulation_project.src.run_experiment --experiment 4 --save-dir simulation_project --profile full --repeats 30 --n-jobs 6 --max-convergence-retries 3 --sampler gibbs
+python -m simulation_project.src.run_experiment --experiment 4 --save-dir outputs/simulation_project --profile laptop --repeats 15 --n-jobs 6 --max-convergence-retries 3 --sampler gibbs
+python -m simulation_project.src.run_experiment --experiment 4 --save-dir outputs/simulation_project --profile full --repeats 30 --n-jobs 6 --max-convergence-retries 3 --sampler gibbs
 ```
 
 Optional full-ablation Python call:
@@ -154,19 +154,19 @@ Recommended commands:
 
 ```bash
 # quick quality check
-python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile laptop --repeats 1 --n-jobs 1 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 5 --save-dir outputs/simulation_project --profile laptop --repeats 1 --n-jobs 1 --max-convergence-retries 2 --sampler nuts
 
 # development run
-python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile laptop --repeats 15 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 5 --save-dir outputs/simulation_project --profile laptop --repeats 15 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
 
 # full-quality run
-python -m simulation_project.src.run_experiment --experiment 5 --save-dir simulation_project --profile full --repeats 30 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 5 --save-dir outputs/simulation_project --profile full --repeats 30 --n-jobs 2 --max-convergence-retries 2 --sampler nuts
 ```
 
 ## 4. One-Click Full Pipeline
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --profile full --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --save-dir outputs/simulation_project --profile full --n-jobs 2
 ```
 
 ## 5. Quick Convergence Check Script
@@ -176,7 +176,7 @@ python -m simulation_project.src.run_experiment --experiment all --save-dir simu
 from pathlib import Path
 import pandas as pd
 
-base = Path("simulation_project/results")
+base = Path("outputs/simulation_project/results")
 experiments = [
     "exp1_kappa_profile_regimes",
     "exp2_group_separation",
@@ -232,31 +232,33 @@ python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --set profile=fu
 ```
 
 Output layout:
-- `simulation_project/sweeps/<sweep_name>/<session_id>/manifest.json`
-- `simulation_project/sweeps/<sweep_name>/<session_id>/runs.csv`
-- `simulation_project/sweeps/<sweep_name>/<session_id>/runs/run_XXX/`
+- `outputs/simulation_project/sweeps/<sweep_name>/<session_id>/manifest.json`
+- `outputs/simulation_project/sweeps/<sweep_name>/<session_id>/runs.csv`
+- `outputs/simulation_project/sweeps/<sweep_name>/<session_id>/runs/run_XXX/`
 
 ## 7. Per-Run Timestamped Artifacts
 
 After each completed experiment (`exp1` to `exp5`), the runner now creates a
 timestamped run archive under that experiment's result directory:
 
-- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_manifest.json`
-- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary_table.csv`
-- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary.md`
-- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_analysis.json`
-- `simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/artifacts/...`
+- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_manifest.json`
+- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary_table.csv`
+- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_summary.md`
+- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/run_analysis.json`
+- `outputs/simulation_project/results/<exp_dir>/runs/<YYYYMMDD_HHMMSS>/artifacts/...`
 
 The experiment directory also keeps:
 
-- `simulation_project/results/<exp_dir>/latest_run.json`
+- `outputs/simulation_project/results/<exp_dir>/latest_run.json`
 
 This guarantees every run is reproducibly archived with its timestamp, compact
 table summary, markdown summary, and analyzer findings.
 
 Figure outputs are now versioned as well:
 
-- latest figure: `simulation_project/figures/<figure_name>.png`
-- immutable history snapshot: `simulation_project/figures/history/<figure_name>_<YYYYMMDD_HHMMSS_microseconds>.png`
+- latest figure: `outputs/simulation_project/figures/<figure_name>.png`
+- immutable history snapshot: `outputs/simulation_project/figures/history/<figure_name>_<YYYYMMDD_HHMMSS_microseconds>.png`
 
 So each newly generated figure is preserved with its own timestamp.
+
+

@@ -1,0 +1,2 @@
+2026-04-19 16:00:16,258 | INFO | Exp3: 2 settings x 5 repeats = 10 tasks, methods=['GIGG_MMLE'], enforce=True, retry_limit=1
+2026-04-19 16:01:45,470 | INFO | Exp3 done: 10 rows, 2 settings, 9 converged rows used for metrics

@@ -1,0 +1,5 @@
+signal,design_type,rho_within,method,n_reps_total,n_reps_ok,n_reps_converged,mse_null,mse_signal,mse_overall,lpd_test,coverage_95,avg_ci_length,kappa_null_mean,kappa_signal_mean,n_reps
+concentrated,orthonormal,0.0,GR_RHS,20,0,0,,,,,,,,,0
+concentrated,orthonormal,0.0,RHS,20,1,1,0.0015891712961909465,0.02277940884660754,0.010065266316357582,-2.174398163284498,0.88,0.35942053258110535,,,1
+distributed,orthonormal,0.0,GR_RHS,20,0,0,,,,,,,,,0
+distributed,orthonormal,0.0,RHS,20,1,1,0.00013939143678295916,0.015433076679398897,0.001362886256192234,-1.5317381348504986,1.0,0.1796484768148512,,,1

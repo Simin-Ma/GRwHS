@@ -1,0 +1,40 @@
+{
+  "metrics": {
+    "per_signal": {
+      "concentrated": {
+        "mse_rank": [
+          [
+            "OLS",
+            0.976673086961292
+          ]
+        ],
+        "lpd_mean": {
+          "OLS": -3.480969325840457
+        },
+        "methods_present": [
+          "OLS"
+        ]
+      },
+      "distributed": {
+        "mse_rank": [
+          [
+            "OLS",
+            0.11317978791020006
+          ]
+        ],
+        "lpd_mean": {
+          "OLS": -3.057048159188554
+        },
+        "methods_present": [
+          "OLS"
+        ]
+      }
+    },
+    "all_methods_in_summary": [
+      "OLS"
+    ]
+  },
+  "findings": [
+    "  Methods present in summary: ['OLS']\n  NOTE: ['GR_RHS', 'RHS'] absent from summary (likely did not converge -- check logs)\n  signal=concentrated: GR_RHS not in results (did not converge)\n    All: OLS: 0.97667\n  signal=distributed: GR_RHS not in results (did not converge)\n    All: OLS: 0.11318"
+  ]
+}

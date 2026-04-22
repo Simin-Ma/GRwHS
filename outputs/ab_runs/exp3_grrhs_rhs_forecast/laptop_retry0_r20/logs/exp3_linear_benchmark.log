@@ -1,0 +1,2 @@
+2026-04-19 16:17:11,443 | INFO | Exp3: 2 settings x 20 repeats = 40 tasks, methods=['GR_RHS', 'RHS'], enforce=True, retry_limit=0
+2026-04-19 16:18:57,238 | INFO | Exp3 done: 80 rows, 2 settings, 2 converged rows used for metrics

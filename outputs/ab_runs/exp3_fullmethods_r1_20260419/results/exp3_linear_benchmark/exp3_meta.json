@@ -1,0 +1,39 @@
+{
+  "profile": "full",
+  "signals": [
+    "concentrated",
+    "distributed",
+    "boundary"
+  ],
+  "rho_within_values": [
+    0.3,
+    0.8
+  ],
+  "rho_between": 0.1,
+  "snr_values": [
+    0.5,
+    2.0
+  ],
+  "group_sizes": [
+    5,
+    5,
+    5,
+    5,
+    5
+  ],
+  "n_train": 100,
+  "n_test": 30,
+  "methods": [
+    "GR_RHS",
+    "GHS_plus",
+    "GIGG_MMLE",
+    "RHS",
+    "LASSO_CV",
+    "OLS"
+  ],
+  "n_settings": 12,
+  "repeats": 1,
+  "enforce_bayes_convergence": true,
+  "max_convergence_retries": 1,
+  "until_bayes_converged": false
+}

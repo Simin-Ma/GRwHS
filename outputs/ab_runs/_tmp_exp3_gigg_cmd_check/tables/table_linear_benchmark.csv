@@ -1,0 +1,1 @@
+group_config,signal,design_type,rho_within,rho_between,target_snr,method,mse_null,mse_signal,mse_overall,lpd_test,coverage_95,avg_ci_length,kappa_null_mean,kappa_signal_mean,n_reps

@@ -1,0 +1,25 @@
+{
+  "exp_key": "exp3",
+  "timestamp": "20260420_173746",
+  "run_dir": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746",
+  "result_paths": {
+    "raw": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\raw_results.csv",
+    "summary": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\summary.csv",
+    "table": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\tables\\table_linear_benchmark.csv",
+    "meta": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\exp3_meta.json",
+    "fig3a_mse_by_signal": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\figures\\fig3a_mse_by_signal.png",
+    "fig3b_lpd_by_signal": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\figures\\fig3b_lpd_by_signal.png",
+    "fig3c_null_signal_scatter": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\figures\\fig3c_null_signal_scatter.png"
+  },
+  "run_summary_table": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746\\run_summary_table.csv",
+  "run_summary_md": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746\\run_summary.md",
+  "run_analysis_json": "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746\\run_analysis.json",
+  "archived_artifacts": [
+    "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746\\artifacts\\figures\\fig3a_mse_by_signal.png",
+    "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746\\artifacts\\figures\\fig3b_lpd_by_signal.png",
+    "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746\\artifacts\\results\\exp3_linear_benchmark\\exp3_meta.json",
+    "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746\\artifacts\\results\\exp3_linear_benchmark\\raw_results.csv",
+    "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746\\artifacts\\results\\exp3_linear_benchmark\\summary.csv",
+    "ab_runs\\exp3_core30_lasso_r1_20260420_173742\\results\\exp3_linear_benchmark\\runs\\20260420_173746\\artifacts\\tables\\table_linear_benchmark.csv"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "exp_key": "exp3a",
+  "timestamp": "20260421_192524",
+  "run_dir": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524",
+  "result_paths": {
+    "raw": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\raw_results.csv",
+    "summary": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\summary.csv",
+    "table": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\tables\\exp3a_main_benchmark\\table_linear_benchmark.csv",
+    "meta": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\exp3_meta.json",
+    "fig3a_mse_by_signal": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\figures\\exp3a_main_benchmark\\fig3a_mse_by_signal.png",
+    "fig3b_lpd_by_signal": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\figures\\exp3a_main_benchmark\\fig3b_lpd_by_signal.png",
+    "fig3c_null_signal_scatter": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\figures\\exp3a_main_benchmark\\fig3c_null_signal_scatter.png"
+  },
+  "run_summary_table": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524\\run_summary_table.csv",
+  "run_summary_md": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524\\run_summary.md",
+  "run_analysis_json": "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524\\run_analysis.json",
+  "archived_artifacts": [
+    "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524\\artifacts\\figures\\exp3a_main_benchmark\\fig3a_mse_by_signal.png",
+    "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524\\artifacts\\figures\\exp3a_main_benchmark\\fig3b_lpd_by_signal.png",
+    "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524\\artifacts\\results\\exp3a_main_benchmark\\exp3_meta.json",
+    "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524\\artifacts\\results\\exp3a_main_benchmark\\raw_results.csv",
+    "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524\\artifacts\\results\\exp3a_main_benchmark\\summary.csv",
+    "ab_runs\\exp3ab_dirs_smoke_20260421_192521\\results\\exp3a_main_benchmark\\runs\\20260421_192524\\artifacts\\tables\\exp3a_main_benchmark\\table_linear_benchmark.csv"
+  ]
+}

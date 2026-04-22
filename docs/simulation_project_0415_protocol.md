@@ -1,4 +1,4 @@
-﻿# Simulation Project Protocol (Current)
+# Simulation Project Protocol (Current)
 
 This protocol applies to the unified pipeline in:
 
@@ -31,19 +31,21 @@ The active code path includes 5 experiments (`exp1`-`exp5`).
 
 ```bash
 python -m simulation_project.src.run_experiment --help
-python -m simulation_project.src.run_experiment --experiment all --save-dir simulation_project --n-jobs 2
-python -m simulation_project.src.run_experiment --experiment 3a --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment 3b --save-dir simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
-python -m simulation_project.src.run_experiment --experiment analysis --save-dir simulation_project
+python -m simulation_project.src.run_experiment --experiment all --save-dir outputs/simulation_project --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3a --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment 3b --save-dir outputs/simulation_project --profile laptop --repeats 5 --n-jobs 2 --max-convergence-retries 1 --sampler nuts
+python -m simulation_project.src.run_experiment --experiment analysis --save-dir outputs/simulation_project
 ```
 
 ## Output Layout
 
-- `simulation_project/results/`
-- `simulation_project/figures/`
-- `simulation_project/tables/`
-- `simulation_project/logs/`
+- `outputs/simulation_project/results/`
+- `outputs/simulation_project/figures/`
+- `outputs/simulation_project/tables/`
+- `outputs/simulation_project/logs/`
 
 ## Repository Status
 
 Legacy `grrhs + sweep/scene` stacks are removed from the active repository structure.
+
+

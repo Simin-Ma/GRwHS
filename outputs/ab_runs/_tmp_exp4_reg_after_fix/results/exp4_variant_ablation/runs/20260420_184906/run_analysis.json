@@ -1,0 +1,17 @@
+{
+  "metrics": {
+    "per_p0": {
+      "5": {
+        "mse_mean": {
+          "calibrated": 0.0005956546032493903
+        },
+        "tau_ratio_mean": {
+          "calibrated": 17.337285507358615
+        }
+      }
+    }
+  },
+  "findings": [
+    "  p0 = true number of active groups\n  p0=5: calibrated MSE=0.00060  oracle MSE=nan  tau_post/tau_oracle=17.337"
+  ]
+}

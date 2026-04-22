@@ -1,0 +1,2 @@
+2026-04-20 19:40:21,900 | INFO | Exp3[core30]: 30 settings x 1 repeats x 3 methods = 90 tasks (group_configs=['G10x5', 'CL', 'CS'], signals=['concentrated', 'distributed', 'boundary'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['RHS', 'LASSO_CV', 'OLS'], bayes_min_chains=2, enforce=True, retry_limit=1
+2026-04-20 19:42:20,813 | INFO | Exp3 done: 90 rows, 30 settings, 88 converged rows used for metrics

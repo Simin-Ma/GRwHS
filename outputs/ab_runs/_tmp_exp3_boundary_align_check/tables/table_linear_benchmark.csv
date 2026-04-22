@@ -1,0 +1,2 @@
+group_config,signal,design_type,rho_within,rho_between,target_snr,method,mse_null,mse_signal,mse_overall,lpd_test,coverage_95,avg_ci_length,kappa_null_mean,kappa_signal_mean,n_reps
+G10x5,boundary,correlated,0.3,0.1,0.5,OLS,0.03774909504477615,0.015834194827136504,0.028983134957720296,-3.6363386936661684,,,,,1

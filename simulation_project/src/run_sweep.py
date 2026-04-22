@@ -180,7 +180,7 @@ def run_sweep(
     if overrides:
         common.update(dict(overrides))
 
-    base_save_dir = str(save_dir or common.get("save_dir", "simulation_project"))
+    base_save_dir = str(save_dir or common.get("save_dir", "outputs/simulation_project"))
     sweep_root = ensure_dir(Path(base_save_dir) / "sweeps" / str(sweep_name))
     session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     session_dir = ensure_dir(sweep_root / session_id)
@@ -342,4 +342,5 @@ def _cli() -> None:
 
 if __name__ == "__main__":
     _cli()
+
 

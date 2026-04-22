@@ -1,0 +1,25 @@
+{
+  "exp_key": "exp2",
+  "timestamp": "20260420_194730",
+  "run_dir": "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730",
+  "result_paths": {
+    "raw": "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\raw_results.csv",
+    "summary": "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\summary.csv",
+    "table": "ab_runs\\guard_audit_exp2_smoke\\tables\\table_group_separation.csv",
+    "kappa_realizations": "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\kappa_realizations.csv",
+    "meta": "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\exp2_meta.json",
+    "fig2a_method_comparison": "ab_runs\\guard_audit_exp2_smoke\\figures\\fig2a_method_comparison.png",
+    "fig2b_kappa_by_group": "ab_runs\\guard_audit_exp2_smoke\\figures\\fig2b_kappa_by_group.png"
+  },
+  "run_summary_table": "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730\\run_summary_table.csv",
+  "run_summary_md": "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730\\run_summary.md",
+  "run_analysis_json": "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730\\run_analysis.json",
+  "archived_artifacts": [
+    "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730\\artifacts\\figures\\fig2a_method_comparison.png",
+    "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730\\artifacts\\results\\exp2_group_separation\\exp2_meta.json",
+    "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730\\artifacts\\results\\exp2_group_separation\\kappa_realizations.csv",
+    "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730\\artifacts\\results\\exp2_group_separation\\raw_results.csv",
+    "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730\\artifacts\\results\\exp2_group_separation\\summary.csv",
+    "ab_runs\\guard_audit_exp2_smoke\\results\\exp2_group_separation\\runs\\20260420_194730\\artifacts\\tables\\table_group_separation.csv"
+  ]
+}
