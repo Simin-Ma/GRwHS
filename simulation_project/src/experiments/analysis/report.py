@@ -40,6 +40,13 @@ def _float(x: Any) -> float:
         return float("nan")
 
 
+def _bool(x: Any) -> bool:
+    if isinstance(x, bool):
+        return x
+    s = str(x).strip().lower()
+    return s in {"1", "true", "t", "yes", "y"}
+
+
 def _pass_flag(ok: bool) -> str:
     return "PASS" if ok else "FAIL"
 
@@ -49,6 +56,55 @@ def _safe_print(text: str) -> None:
         print(text)
     except UnicodeEncodeError:
         print(text.encode("ascii", errors="replace").decode("ascii"))
+
+
+def _quantile(v: list[float], q: float) -> float:
+    arr = np.asarray([float(x) for x in v if np.isfinite(float(x))], dtype=float)
+    if arr.size == 0:
+        return float("nan")
+    return float(np.quantile(arr, float(q)))
+
+
+def _median(v: list[float]) -> float:
+    arr = np.asarray([float(x) for x in v if np.isfinite(float(x))], dtype=float)
+    if arr.size == 0:
+        return float("nan")
+    return float(np.median(arr))
+
+
+def _compute_diag_rows(rows: list[dict], *, exp_key: str, method_col: str, bayes_methods: set[str] | None = None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not rows:
+        return out
+    methods = sorted({str(r.get(method_col, "")).strip() for r in rows if str(r.get(method_col, "")).strip()})
+    for m in methods:
+        if bayes_methods is not None and m not in bayes_methods:
+            continue
+        sub = [r for r in rows if str(r.get(method_col, "")).strip() == m]
+        n_total = len(sub)
+        conv_ok = [
+            r for r in sub
+            if _bool(r.get("converged", False)) and str(r.get("status", "")).strip().lower() == "ok"
+        ]
+        rt = [_float(r.get("runtime_seconds", "nan")) for r in sub]
+        ess = [_float(r.get("bulk_ess_min", "nan")) for r in sub]
+        rh = [_float(r.get("rhat_max", "nan")) for r in sub]
+        div = [_float(r.get("divergence_ratio", "nan")) for r in sub]
+        out.append(
+            {
+                "experiment": str(exp_key),
+                "method": str(m),
+                "n_total": int(n_total),
+                "n_converged_ok": int(len(conv_ok)),
+                "convergence_rate": float(len(conv_ok) / max(n_total, 1)),
+                "runtime_seconds_median": _median(rt),
+                "runtime_seconds_p95": _quantile(rt, 0.95),
+                "bulk_ess_min_median": _median(ess),
+                "rhat_max_p95": _quantile(rh, 0.95),
+                "divergence_ratio_mean": float(np.nanmean(np.asarray(div, dtype=float))) if len(div) else float("nan"),
+            }
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +486,7 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
 
     sep   = "=" * 68
     sep2  = "-" * 60
-    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5", sep]
+    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5(+Exp3c)", sep]
 
     all_metrics: dict[str, Any] = {}
     exp_configs = [
@@ -442,6 +498,8 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
          analyze_exp3, res / "exp3a_main_benchmark"),
         ("exp3b", "Exp3b: Boundary Stress",
          analyze_exp3, res / "exp3b_boundary_stress"),
+        ("exp3c", "Exp3c: Highdim Stress",
+         analyze_exp3, res / "exp3c_highdim_stress"),
         ("exp4", "Exp4: Variant Ablation",
          analyze_exp4, res / "exp4_variant_ablation"),
         ("exp5", "Exp5: Prior Sensitivity",
@@ -460,6 +518,53 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
         for finding in result.get("findings", []):
             report_lines.append(finding)
 
+    # Strict Bayesian convergence gate + diagnostics table.
+    bayes_method_set = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
+    gate_specs = [
+        ("exp2", res / "exp2_group_separation" / "raw_results.csv", "method", {"GR_RHS", "RHS"}),
+        ("exp3a", res / "exp3a_main_benchmark" / "raw_results.csv", "method", bayes_method_set),
+        ("exp3b", res / "exp3b_boundary_stress" / "raw_results.csv", "method", bayes_method_set),
+        ("exp3c", res / "exp3c_highdim_stress" / "raw_results.csv", "method", bayes_method_set),
+        ("exp4", res / "exp4_variant_ablation" / "raw_results.csv", "method_type", {"GR_RHS", "RHS"}),
+        ("exp5", res / "exp5_prior_sensitivity" / "raw_results.csv", "", None),
+    ]
+    gate_ok = True
+    gate_lines: list[str] = []
+    diag_rows: list[dict[str, Any]] = []
+    for exp_name, path, method_col, include_methods in gate_specs:
+        if not path.exists():
+            gate_ok = False
+            gate_lines.append(f"  {exp_name}: missing raw_results.csv")
+            continue
+        rows = _load_csv(path)
+        if not rows:
+            gate_ok = False
+            gate_lines.append(f"  {exp_name}: empty raw_results.csv")
+            continue
+        if method_col:
+            target = [r for r in rows if str(r.get(method_col, "")).strip() in set(include_methods or set())]
+            diag_rows.extend(_compute_diag_rows(rows, exp_key=exp_name, method_col=method_col, bayes_methods=set(include_methods or set())))
+        else:
+            target = list(rows)
+            diag_rows.extend(_compute_diag_rows(rows, exp_key=exp_name, method_col="prior_id", bayes_methods=None))
+        n_total = len(target)
+        n_ok = sum(
+            1 for r in target
+            if _bool(r.get("converged", False)) and str(r.get("status", "")).strip().lower() == "ok"
+        )
+        pass_flag = n_ok == n_total and n_total > 0
+        gate_ok = gate_ok and pass_flag
+        gate_lines.append(f"  {exp_name}: {n_ok}/{n_total} converged&ok  [{'PASS' if pass_flag else 'FAIL'}]")
+
+    report_lines.append("\nStrict Convergence Gate")
+    report_lines.append(sep2)
+    report_lines.append(f"  Overall: {'PASS' if gate_ok else 'FAIL'}")
+    report_lines.extend(gate_lines)
+    all_metrics["strict_convergence_gate"] = {
+        "overall_pass": bool(gate_ok),
+        "details": gate_lines,
+    }
+
     report_lines.append(f"\n{sep}")
     report_lines.append("END OF ANALYSIS")
     report_lines.append(sep)
@@ -470,6 +575,26 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
     out_dir = res
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "analysis_report.txt").write_text(report_text, encoding="utf-8")
+    # Diagnostics side-table for rebuttal support.
+    import csv
+    diag_fields = [
+        "experiment",
+        "method",
+        "n_total",
+        "n_converged_ok",
+        "convergence_rate",
+        "runtime_seconds_median",
+        "runtime_seconds_p95",
+        "bulk_ess_min_median",
+        "rhat_max_p95",
+        "divergence_ratio_mean",
+    ]
+    with open(out_dir / "diagnostics_runtime_table.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=diag_fields)
+        writer.writeheader()
+        for row in diag_rows:
+            writer.writerow({k: row.get(k) for k in diag_fields})
+    all_metrics["diagnostics_runtime_table"] = diag_rows
     with open(out_dir / "analysis_report.json", "w") as f:
         json.dump(all_metrics, f, indent=2)
 

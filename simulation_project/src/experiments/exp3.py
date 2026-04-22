@@ -392,18 +392,14 @@ def run_exp3_linear_benchmark(
     *,
     signal_types: Sequence[str] | None = None,
     boundary_xi_ratio_list: Sequence[float] | None = None,
-    rho_within_values: Sequence[float] | None = None,
-    snr_values: Sequence[float] | None = None,
-    rho_between: float = 0.1,
-    exp3_design: str = "core30",
     env_points: Sequence[dict[str, Any]] | None = None,
     bayes_min_chains: int | None = None,
     group_configs: list[dict[str, Any]] | None = None,
-    profile: str = "full",
     methods: Sequence[str] | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
+    n_train: int = 100,
     n_test: int = 30,
     sampler_backend: str = "nuts",
     grrhs_extra_kwargs: dict | None = None,
@@ -412,19 +408,7 @@ def run_exp3_linear_benchmark(
     exp_key: str = "exp3",
 ) -> Dict[str, str]:
     """
-    Exp3 benchmark with two design modes:
-
-      core30 (default):
-        compact, theory-aligned design with rw>rb constraint and no SNR axis.
-        Under current defaults this yields 6 settings per group config
-        (2 concentrated + 2 distributed + 2 boundary) = 18 total settings
-        across [G10x5, CL, CS].
-
-      legacy_factorial:
-        factor design without SNR axis:
-          signal_structure x group_config x rho_within x rho_between
-        with automatic filtering of combinations that violate rw>rb.
-        target_snr is fixed at 1.0 in this mode.
+    Exp3 benchmark (single-default design; no laptop/full split).
 
     Signal types (default ["concentrated", "distributed", "boundary"]):
       concentrated: all nonzero beta in G0 and G1, G2/G3/G4 are null.
@@ -435,7 +419,7 @@ def run_exp3_linear_benchmark(
 
     bayes_min_chains:
       Minimum number of chains for Bayesian methods in Exp3.
-      Default: 2 for laptop profile, 4 for full profile.
+      Default: 4.
 
     Methods:
       GR_RHS, GHS_plus, GIGG_MMLE, RHS, LASSO_CV, OLS.
@@ -455,9 +439,8 @@ def run_exp3_linear_benchmark(
     tab_dir = ensure_dir(base / "tables" / out_name)
     log = setup_logger(str(exp_key_name), base / "logs" / f"{out_name}.log")
 
-    profile_name = _normalize_compute_profile(profile)
-    sampler = _sampler_for_profile(profile_name)
-    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
+    sampler = _sampler_for_standard()
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     _exp3_methods = ["GR_RHS", "GHS_plus", "GIGG_MMLE", "RHS", "LASSO_CV", "OLS"]
     _exp3_methods_set = set(_exp3_methods)
@@ -467,16 +450,12 @@ def run_exp3_linear_benchmark(
     bayes_methods_use = [m for m in methods_use if _is_bayesian_method(m)]
     classical_methods_use = [m for m in methods_use if not _is_bayesian_method(m)]
     gigg_mode_name = _normalize_exp3_gigg_mode(gigg_mode)
-    gigg_cfg = _exp3_gigg_config_for_mode(_gigg_config_for_profile(profile_name), gigg_mode=gigg_mode_name)
+    gigg_cfg = _exp3_gigg_config_for_mode(_gigg_config_default(), gigg_mode=gigg_mode_name)
     retry_limit = _resolve_convergence_retry_limit(
-        profile_name,
         max_convergence_retries,
         until_bayes_converged=bool(until_bayes_converged),
     )
-
-    design_mode = str(exp3_design).strip().lower()
-    if design_mode not in {"core30", "legacy_factorial"}:
-        raise ValueError(f"unknown exp3_design: {exp3_design!r}. Use 'core30' or 'legacy_factorial'.")
+    design_mode = "standard"
 
     signals = list(signal_types or ["concentrated", "distributed", "boundary"])
     gc_list: list[dict[str, Any]] = list(group_configs) if group_configs is not None else list(_DEFAULT_EXP3_GROUP_CONFIGS)
@@ -498,59 +477,42 @@ def run_exp3_linear_benchmark(
     sid = 0
     env_points_used: list[dict[str, Any]] = []
 
-    if design_mode == "core30":
-        points_raw = list(env_points) if env_points is not None else list(_DEFAULT_EXP3_ENV_POINTS_CORE30)
-        points, dropped_points = _exp3_filter_env_points_rw_gt_rb(points_raw)
-        if dropped_points:
-            log.warning(
-                "Exp3: dropped %d env point(s) with rw<=rb: %s",
-                len(dropped_points),
-                [
-                    (str(ep.get("env_id", "?")), float(ep.get("rho_within", float("nan"))), float(ep.get("rho_between", float("nan"))))
-                    for ep in dropped_points
-                ],
-            )
-        if not points:
-            raise ValueError("No valid Exp3 env points remain after enforcing rw>rb.")
-        for ep in points:
-            env_points_used.append(
-                {
-                    "env_id": str(ep["env_id"]),
-                    "setting_block": str(ep.get("setting_block", "custom")),
-                    "rho_within": float(ep["rho_within"]),
-                    "rho_between": float(ep["rho_between"]),
-                    "target_snr": float(ep["target_snr"]),
-                    "signals": [str(s) for s in ep.get("signals", signals)],
-                }
-            )
-        for gc in gc_list:
-            for ep in env_points_used:
-                sig_set = set(ep.get("signals", signals))
-                for signal in signals:
-                    if signal not in sig_set:
-                        continue
-                    rho = float(ep["rho_within"])
-                    rhob = float(ep["rho_between"])
-                    snr = float(ep["target_snr"])
-                    design = "orthonormal" if rho == 0.0 and rhob == 0.0 else "correlated"
-                    if signal == "boundary":
-                        for xi_ratio_v in boundary_xi_ratios:
-                            sid += 1
-                            settings.append(
-                                (
-                                    sid,
-                                    signal,
-                                    gc,
-                                    str(ep["setting_block"]),
-                                    str(ep["env_id"]),
-                                    design,
-                                    rho,
-                                    rhob,
-                                    snr,
-                                    float(xi_ratio_v),
-                                )
-                            )
-                    else:
+    points_raw = list(env_points) if env_points is not None else _default_exp3_env_points()
+    points, dropped_points = _exp3_filter_env_points_rw_gt_rb(points_raw)
+    if dropped_points:
+        log.warning(
+            "Exp3: dropped %d env point(s) with rw<=rb: %s",
+            len(dropped_points),
+            [
+                (str(ep.get("env_id", "?")), float(ep.get("rho_within", float("nan"))), float(ep.get("rho_between", float("nan"))))
+                for ep in dropped_points
+            ],
+        )
+    if not points:
+        raise ValueError("No valid Exp3 env points remain after enforcing rw>rb.")
+    for ep in points:
+        env_points_used.append(
+            {
+                "env_id": str(ep["env_id"]),
+                "setting_block": str(ep.get("setting_block", "custom")),
+                "rho_within": float(ep["rho_within"]),
+                "rho_between": float(ep["rho_between"]),
+                "target_snr": float(ep["target_snr"]),
+                "signals": [str(s) for s in ep.get("signals", signals)],
+            }
+        )
+    for gc in gc_list:
+        for ep in env_points_used:
+            sig_set = set(ep.get("signals", signals))
+            for signal in signals:
+                if signal not in sig_set:
+                    continue
+                rho = float(ep["rho_within"])
+                rhob = float(ep["rho_between"])
+                snr = float(ep["target_snr"])
+                design = "orthonormal" if rho == 0.0 and rhob == 0.0 else "correlated"
+                if signal == "boundary":
+                    for xi_ratio_v in boundary_xi_ratios:
                         sid += 1
                         settings.append(
                             (
@@ -563,75 +525,25 @@ def run_exp3_linear_benchmark(
                                 rho,
                                 rhob,
                                 snr,
-                                float(_BOUNDARY_XI_RATIO),
+                                float(xi_ratio_v),
                             )
                         )
-    else:
-        rho_values = list(rho_within_values if rho_within_values is not None else [0.3, 0.8])
-        if snr_values is not None:
-            log.warning("Exp3 legacy_factorial ignores snr_values (SNR axis removed); using fixed target_snr=1.0.")
-        snr_list = [1.0]
-        rhob = float(rho_between)
-        rho_values_valid = [float(rho) for rho in rho_values if float(rho) > rhob]
-        rho_values_dropped = [float(rho) for rho in rho_values if float(rho) <= rhob]
-        if rho_values_dropped:
-            log.warning(
-                "Exp3 legacy_factorial: dropped rho_within values that violate rw>rb (rb=%.3f): %s",
-                rhob,
-                rho_values_dropped,
-            )
-        if not rho_values_valid:
-            raise ValueError(f"No valid rho_within values remain after enforcing rw>rb with rho_between={rhob}.")
-        env_points_used = [
-            {
-                "env_id": f"LEGACY_RW{float(rho):.1f}_SNR{float(snr):.1f}",
-                "setting_block": "legacy_factorial",
-                "rho_within": float(rho),
-                "rho_between": rhob,
-                "target_snr": float(snr),
-                "signals": list(signals),
-            }
-            for rho in rho_values_valid
-            for snr in snr_list
-        ]
-        for gc in gc_list:
-            for signal in signals:
-                for rho in rho_values_valid:
-                    for snr in snr_list:
-                        design = "orthonormal" if float(rho) == 0.0 and rhob == 0.0 else "correlated"
-                        if signal == "boundary":
-                            for xi_ratio_v in boundary_xi_ratios:
-                                sid += 1
-                                settings.append(
-                                    (
-                                        sid,
-                                        signal,
-                                        gc,
-                                        "legacy_factorial",
-                                        f"LEGACY_RW{float(rho):.1f}_SNR{float(snr):.1f}",
-                                        design,
-                                        float(rho),
-                                        rhob,
-                                        float(snr),
-                                        float(xi_ratio_v),
-                                    )
-                                )
-                        else:
-                            sid += 1
-                            settings.append(
-                                (
-                                    sid,
-                                    signal,
-                                    gc,
-                                    "legacy_factorial",
-                                    f"LEGACY_RW{float(rho):.1f}_SNR{float(snr):.1f}",
-                                    design,
-                                    float(rho),
-                                    rhob,
-                                    float(snr),
-                                    float(_BOUNDARY_XI_RATIO),
-                                )
-                            )
+                else:
+                    sid += 1
+                    settings.append(
+                        (
+                            sid,
+                            signal,
+                            gc,
+                            str(ep["setting_block"]),
+                            str(ep["env_id"]),
+                            design,
+                            rho,
+                            rhob,
+                            snr,
+                            float(_BOUNDARY_XI_RATIO),
+                        )
+                    )
 
     grrhs_kw: dict = {"backend": str(sampler_backend), "tau_target": "groups"}
     if grrhs_extra_kwargs:
@@ -653,6 +565,7 @@ def run_exp3_linear_benchmark(
                 "boundary_xi_ratio": float(bxi_v),
                 "replicate_id": int(r),
                 "seed_base": int(seed),
+                "n_train": int(n_train),
                 "n_test": int(n_test),
                 "sampler": sampler,
                 "gigg_config": dict(gigg_cfg),
@@ -714,9 +627,7 @@ def run_exp3_linear_benchmark(
 
     raw = pd.DataFrame(rows)
 
-    ok_raw = raw.loc[raw["status"] == "ok"].copy()
-    conv_raw = ok_raw.loc[ok_raw["converged"].fillna(False).astype(bool)].copy()
-    group_keys = [
+    base_keys = [
         "gigg_mode",
         "group_config",
         "signal",
@@ -727,6 +638,8 @@ def run_exp3_linear_benchmark(
         "rho_between",
         "target_snr",
         "boundary_xi_ratio",
+    ]
+    group_keys = base_keys + [
         "method",
     ]
 
@@ -736,7 +649,17 @@ def run_exp3_linear_benchmark(
         n_reps_converged=("converged", lambda s: int(s.fillna(False).astype(bool).sum())),
     )
 
-    metric_df = conv_raw.groupby(group_keys, as_index=False).agg(
+    paired_raw, paired_stats = _paired_converged_subset(
+        raw,
+        group_cols=base_keys,
+        method_col="method",
+        replicate_col="replicate_id",
+        converged_col="converged",
+        required_cols=["mse_null", "mse_signal", "mse_overall", "lpd_test"],
+        method_levels=methods_use,
+    )
+
+    metric_df = paired_raw.groupby(group_keys, as_index=False).agg(
         mse_null=("mse_null", "mean"),
         mse_signal=("mse_signal", "mean"),
         mse_overall=("mse_overall", "mean"),
@@ -755,21 +678,79 @@ def run_exp3_linear_benchmark(
         bridge_ratio_null_mean=("bridge_ratio_null_mean", "mean"),
         bridge_ratio_signal_mean=("bridge_ratio_signal_mean", "mean"),
     )
+    if "lpd_test_ppd" in paired_raw.columns:
+        metric_df = metric_df.merge(
+            paired_raw.groupby(group_keys, as_index=False).agg(lpd_test_ppd=("lpd_test_ppd", "mean")),
+            on=group_keys,
+            how="left",
+        )
+    if "lpd_test_plugin" in paired_raw.columns:
+        metric_df = metric_df.merge(
+            paired_raw.groupby(group_keys, as_index=False).agg(lpd_test_plugin=("lpd_test_plugin", "mean")),
+            on=group_keys,
+            how="left",
+        )
 
     agg_df = counts_df.merge(metric_df, on=group_keys, how="left")
-    agg_df["n_reps"] = agg_df["n_reps_converged"]
+    pair_counts = paired_raw.groupby(group_keys, as_index=False).agg(n_reps_paired=("replicate_id", "nunique"))
+    agg_df = agg_df.merge(pair_counts, on=group_keys, how="left")
+    agg_df["n_reps"] = agg_df["n_reps_paired"].fillna(0).astype(int)
+
+    delta_rows: list[dict[str, Any]] = []
+    baseline_method = "RHS"
+    metrics_for_delta = ["mse_null", "mse_signal", "mse_overall", "lpd_test"]
+    for setting_vals, sub in paired_raw.groupby(base_keys, dropna=False):
+        wide_setting = sub.pivot_table(index="replicate_id", columns="method", values=metrics_for_delta, aggfunc="mean")
+        if baseline_method not in wide_setting.columns.get_level_values(1):
+            continue
+        for metric in metrics_for_delta:
+            if metric not in wide_setting.columns.get_level_values(0):
+                continue
+            wide = wide_setting[metric]
+            if baseline_method not in wide.columns:
+                continue
+            base_vec = wide[baseline_method]
+            for m in [c for c in wide.columns if str(c) != baseline_method]:
+                diff = (wide[m] - base_vec).dropna()
+                n_eff = int(diff.shape[0])
+                if n_eff == 0:
+                    continue
+                mean_v = float(diff.mean())
+                sd_v = float(diff.std(ddof=1)) if n_eff > 1 else float("nan")
+                se_v = float(sd_v / np.sqrt(n_eff)) if n_eff > 1 else float("nan")
+                ci_lo = float(mean_v - 1.96 * se_v) if np.isfinite(se_v) else float("nan")
+                ci_hi = float(mean_v + 1.96 * se_v) if np.isfinite(se_v) else float("nan")
+                row = {
+                    "method": str(m),
+                    "baseline_method": baseline_method,
+                    "metric": metric,
+                    "mean_diff": mean_v,
+                    "std_diff": sd_v,
+                    "se_diff": se_v,
+                    "ci95_lo": ci_lo,
+                    "ci95_hi": ci_hi,
+                    "n_effective_pairs": n_eff,
+                }
+                for k, v in zip(base_keys, setting_vals if isinstance(setting_vals, tuple) else (setting_vals,)):
+                    row[k] = v
+                delta_rows.append(row)
+    delta_df = pd.DataFrame(delta_rows)
 
     save_dataframe(raw, out_dir / "raw_results.csv")
     _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(agg_df, out_dir / "summary.csv")
     _record_produced_paths(produced, out_dir / "summary.csv")
+    save_dataframe(agg_df, out_dir / "summary_paired.csv")
+    _record_produced_paths(produced, out_dir / "summary_paired.csv")
+    save_dataframe(delta_df, out_dir / "summary_paired_deltas.csv")
+    _record_produced_paths(produced, out_dir / "summary_paired_deltas.csv")
     table_df = metric_df.merge(counts_df[group_keys + ["n_reps_converged"]], on=group_keys, how="left")
     table_df = table_df.rename(columns={"n_reps_converged": "n_reps"})
     save_dataframe(table_df, tab_dir / "table_linear_benchmark.csv")
     _record_produced_paths(produced, tab_dir / "table_linear_benchmark.csv")
     save_json({
         "exp3_design": design_mode,
-        "profile": profile_name,
+        "profile": "standard",
         "gigg_mode": str(gigg_mode_name),
         "group_configs": [{"name": gc["name"], "group_sizes": gc["group_sizes"], "active_groups": gc["active_groups"]} for gc in gc_list],
         "signals": signals,
@@ -781,7 +762,7 @@ def run_exp3_linear_benchmark(
             "sigma2_boundary": float(_SIGMA2_BOUNDARY),
             "rho_profile_formula": "rho_within / sqrt(sigma2_boundary)",
         },
-        "n_train": 100,
+        "n_train": int(n_train),
         "n_test": int(n_test),
         "methods": methods_use,
         "bayes_min_chains": int(bayes_min_chains_use),
@@ -790,6 +771,8 @@ def run_exp3_linear_benchmark(
         "enforce_bayes_convergence": bool(enforce_bayes_convergence),
         "max_convergence_retries": int(retry_limit),
         "until_bayes_converged": bool(until_bayes_converged),
+        "paired_stats": paired_stats.to_dict(orient="records"),
+        "pairing_note": "summary.csv uses paired-converged subset",
     }, out_dir / "exp3_meta.json")
     _record_produced_paths(produced, out_dir / "exp3_meta.json")
 
@@ -798,9 +781,9 @@ def run_exp3_linear_benchmark(
         if not table_df.empty:
             plot_exp3_benchmark(table_df, out_dir=fig_dir)
             _record_produced_paths(produced, fig_dir / "fig3a_mse_by_signal.png", fig_dir / "fig3b_lpd_by_signal.png", fig_dir / "fig3c_null_signal_scatter.png")
-            if "boundary_xi_ratio" in conv_raw.columns:
+            if "boundary_xi_ratio" in paired_raw.columns:
                 plot_exp3_boundary_phase_transition(
-                    conv_raw,
+                    paired_raw,
                     out_path=fig_dir / "fig3d_boundary_phase_transition.png",
                     u0=float(_BOUNDARY_U0),
                 )
@@ -811,14 +794,16 @@ def run_exp3_linear_benchmark(
         log.warning("Plot exp3 failed: %s", exc)
 
     log.info(
-        "Exp3 done: %d rows, %d settings, %d converged rows used for metrics",
+        "Exp3 done: %d rows, %d settings, %d paired rows used for metrics",
         len(rows),
         len(settings),
-        int(conv_raw.shape[0]),
+        int(paired_raw.shape[0]),
     )
     result_paths = {
         "raw": str(out_dir / "raw_results.csv"),
         "summary": str(out_dir / "summary.csv"),
+        "summary_paired": str(out_dir / "summary_paired.csv"),
+        "summary_paired_deltas": str(out_dir / "summary_paired_deltas.csv"),
         "table": str(tab_dir / "table_linear_benchmark.csv"),
         "meta": str(out_dir / "exp3_meta.json"),
         "fig3a_mse_by_signal": str(fig_dir / "fig3a_mse_by_signal.png"),
@@ -875,6 +860,46 @@ def run_exp3b_boundary_stress(
         boundary_xi_ratio_list=boundary_grid,
         result_dir_name="exp3b_boundary_stress",
         exp_key="exp3b",
+        **kwargs,
+    )
+
+
+def run_exp3c_highdim_stress(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 30,
+    save_dir: str = "outputs/simulation_project",
+    **kwargs,
+) -> Dict[str, str]:
+    """Exp3c: high-dimensional random-coefficient stress test (n=200, p=500)."""
+    group_configs = [
+        {"name": "HD10x50", "group_sizes": [50] * 10, "active_groups": [0, 1]},
+    ]
+    env_points = []
+    for rw in [0.3, 0.6]:
+        for snr in [0.2, 1.0, 5.0]:
+            env_points.append(
+                {
+                    "env_id": f"HD_RW{int(round(rw*10)):02d}_SNR{int(round(snr*10)):02d}",
+                    "setting_block": "highdim_axis",
+                    "rho_within": float(rw),
+                    "rho_between": 0.1,
+                    "target_snr": float(snr),
+                    "signals": ["half_dense", "dense"],
+                }
+            )
+    return run_exp3_linear_benchmark(
+        n_jobs=n_jobs,
+        seed=seed,
+        repeats=repeats,
+        save_dir=save_dir,
+        signal_types=["half_dense", "dense"],
+        group_configs=group_configs,
+        env_points=env_points,
+        n_train=200,
+        n_test=100,
+        result_dir_name="exp3c_highdim_stress",
+        exp_key="exp3c",
         **kwargs,
     )
 

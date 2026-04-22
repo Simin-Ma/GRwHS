@@ -10,7 +10,6 @@ sweeps:
     experiment: all
     description: Single unified sweep that runs Exp1-Exp5 end-to-end.
     fixed:
-      profile: laptop
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: gibbs

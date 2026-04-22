@@ -8,6 +8,7 @@ from simulation_project.src.experiments import (
     run_exp3_linear_benchmark,
     run_exp3a_main_benchmark,
     run_exp3b_boundary_stress,
+    run_exp3c_highdim_stress,
     run_exp4_variant_ablation,
     run_exp5_prior_sensitivity,
 )
@@ -24,6 +25,7 @@ from simulation_project.src.utils import SamplerConfig
 def test_normalize_sweep_experiment_aliases() -> None:
     assert normalize_sweep_experiment("exp1_to_exp5") == "all"
     assert normalize_sweep_experiment("EXP3B") == "exp3b"
+    assert normalize_sweep_experiment("exp3c") == "exp3c"
     assert normalize_sweep_experiment("4") == "exp4"
 
 
@@ -78,6 +80,7 @@ def test_new_refactor_modules_importable() -> None:
     assert run_exp3_linear_benchmark is not None
     assert run_exp3a_main_benchmark is not None
     assert run_exp3b_boundary_stress is not None
+    assert run_exp3c_highdim_stress is not None
     assert run_exp4_variant_ablation is not None
     assert run_exp5_prior_sensitivity is not None
     assert run_all_experiments is not None
@@ -89,6 +92,7 @@ def test_experiments_layer_importable() -> None:
     assert run_exp3_linear_benchmark is not None
     assert run_exp3a_main_benchmark is not None
     assert run_exp3b_boundary_stress is not None
+    assert run_exp3c_highdim_stress is not None
     assert run_exp4_variant_ablation is not None
     assert run_exp5_prior_sensitivity is not None
 
@@ -102,7 +106,6 @@ def test_architecture_models_and_registry() -> None:
         n_jobs=2,
         seed=123,
         save_dir="simulation_project",
-        profile="full",
         enforce_bayes_convergence=True,
         max_convergence_retries=2,
         until_bayes_converged=True,

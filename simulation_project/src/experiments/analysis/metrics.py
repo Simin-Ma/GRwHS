@@ -83,3 +83,31 @@ def compute_test_lpd(
     resid = yt - Xt @ b
     return float(-0.5 * np.log(2.0 * np.pi * s2) - 0.5 * float(np.mean(resid ** 2)) / s2)
 
+
+def compute_test_lpd_ppd(
+    beta_draws: Optional[np.ndarray],
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    *,
+    sigma2_hat: float,
+) -> float:
+    """Posterior predictive log density using beta draws and fixed sigma2 plug-in."""
+    if beta_draws is None:
+        return float("nan")
+    draws = flatten_draws(beta_draws, scalar=False)
+    if draws is None:
+        return float("nan")
+    bdraw = np.asarray(draws, dtype=float)
+    if bdraw.ndim == 1:
+        bdraw = bdraw.reshape(1, -1)
+    Xt = np.asarray(X_test, dtype=float)
+    yt = np.asarray(y_test, dtype=float).reshape(-1)
+    if Xt.ndim != 2 or yt.ndim != 1 or Xt.shape[0] != yt.shape[0]:
+        return float("nan")
+    s2 = max(float(sigma2_hat), 1e-8)
+    mu = Xt @ bdraw.T  # (n_test, n_draws)
+    loglik = -0.5 * np.log(2.0 * np.pi * s2) - 0.5 * ((yt[:, None] - mu) ** 2) / s2
+    m = np.max(loglik, axis=1, keepdims=True)
+    lme = (m + np.log(np.mean(np.exp(loglik - m), axis=1, keepdims=True))).reshape(-1)
+    return float(np.mean(lme))
+

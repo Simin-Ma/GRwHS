@@ -17,7 +17,7 @@ def _evaluate_row(
     y_test: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Compute MSE, CI coverage, and (optionally) held-out log predictive density."""
-    from .analysis.metrics import ci_length_and_coverage, compute_test_lpd, mse_null_signal_overall
+    from .analysis.metrics import ci_length_and_coverage, compute_test_lpd, compute_test_lpd_ppd, mse_null_signal_overall
 
     nan = float("nan")
     if result.beta_mean is None:
@@ -28,13 +28,18 @@ def _evaluate_row(
             "avg_ci_length": nan,
             "coverage_95": nan,
             "lpd_test": nan,
+            "lpd_test_ppd": nan,
+            "lpd_test_plugin": nan,
         }
     m = mse_null_signal_overall(result.beta_mean, beta0)
     ci_len, cov = ci_length_and_coverage(beta0, result.beta_draws)
-    lpd = nan
+    lpd_plugin = nan
+    lpd_ppd = nan
     if X_train is not None and y_train is not None and X_test is not None and y_test is not None:
         train_resid2 = float(np.mean((np.asarray(y_train) - np.asarray(X_train) @ result.beta_mean) ** 2))
-        lpd = compute_test_lpd(result.beta_mean, X_test, y_test, sigma2_hat=train_resid2)
+        lpd_plugin = compute_test_lpd(result.beta_mean, X_test, y_test, sigma2_hat=train_resid2)
+        lpd_ppd = compute_test_lpd_ppd(result.beta_draws, X_test, y_test, sigma2_hat=train_resid2)
+    lpd = lpd_ppd if np.isfinite(lpd_ppd) else lpd_plugin
     return {
         "mse_null": m["mse_null"],
         "mse_signal": m["mse_signal"],
@@ -42,6 +47,8 @@ def _evaluate_row(
         "avg_ci_length": ci_len,
         "coverage_95": cov,
         "lpd_test": lpd,
+        "lpd_test_ppd": lpd_ppd,
+        "lpd_test_plugin": lpd_plugin,
     }
 
 

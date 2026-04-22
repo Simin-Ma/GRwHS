@@ -19,6 +19,7 @@ from .experiments import (
     run_exp3_linear_benchmark,
     run_exp3a_main_benchmark,
     run_exp3b_boundary_stress,
+    run_exp3c_highdim_stress,
     run_exp4_variant_ablation,
     run_exp5_prior_sensitivity,
 )
@@ -35,6 +36,7 @@ _RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {
     "exp3": run_exp3_linear_benchmark,
     "exp3a": run_exp3a_main_benchmark,
     "exp3b": run_exp3b_boundary_stress,
+    "exp3c": run_exp3c_highdim_stress,
     "exp4": run_exp4_variant_ablation,
     "exp5": run_exp5_prior_sensitivity,
 }
