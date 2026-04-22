@@ -1,18 +1,27 @@
 from __future__ import annotations
 
-from simulation_project.src.app.experiments import (
-    run_exp1_kappa_profile_regimes as app_run_exp1_kappa_profile_regimes,
-    run_exp2_group_separation as app_run_exp2_group_separation,
-    run_exp3_linear_benchmark as app_run_exp3_linear_benchmark,
-    run_exp3a_main_benchmark as app_run_exp3a_main_benchmark,
-    run_exp3b_boundary_stress as app_run_exp3b_boundary_stress,
-    run_exp4_variant_ablation as app_run_exp4_variant_ablation,
-    run_exp5_prior_sensitivity as app_run_exp5_prior_sensitivity,
+from simulation_project.src.application.experiments import (
+    run_exp1_kappa_profile_regimes as application_run_exp1_kappa_profile_regimes,
+    run_exp2_group_separation as application_run_exp2_group_separation,
+    run_exp3_linear_benchmark as application_run_exp3_linear_benchmark,
+    run_exp3a_main_benchmark as application_run_exp3a_main_benchmark,
+    run_exp3b_boundary_stress as application_run_exp3b_boundary_stress,
+    run_exp4_variant_ablation as application_run_exp4_variant_ablation,
+    run_exp5_prior_sensitivity as application_run_exp5_prior_sensitivity,
 )
-from simulation_project.src.app.orchestration import run_all_experiments
-from simulation_project.src.app.services import MethodRegistry, build_default_method_registry
+from simulation_project.src.app.experiments import (
+    run_exp1_kappa_profile_regimes as legacy_run_exp1_kappa_profile_regimes,
+    run_exp2_group_separation as legacy_run_exp2_group_separation,
+    run_exp3_linear_benchmark as legacy_run_exp3_linear_benchmark,
+    run_exp3a_main_benchmark as legacy_run_exp3a_main_benchmark,
+    run_exp3b_boundary_stress as legacy_run_exp3b_boundary_stress,
+    run_exp4_variant_ablation as legacy_run_exp4_variant_ablation,
+    run_exp5_prior_sensitivity as legacy_run_exp5_prior_sensitivity,
+)
+from simulation_project.src.application.orchestration import run_all_experiments
 from simulation_project.src.domain.config.models import RunCommonConfig
 from simulation_project.src.domain.results.models import RunManifest
+from simulation_project.src.entrypoints.cli.run_experiment_cli import main as entrypoint_main
 from simulation_project.src.experiment_aliases import cli_choice_to_key, normalize_sweep_experiment
 from simulation_project.src.experiment_exp1 import run_exp1_kappa_profile_regimes
 from simulation_project.src.experiment_exp2 import run_exp2_group_separation
@@ -22,6 +31,8 @@ from simulation_project.src.experiment_exp5 import run_exp5_prior_sensitivity
 from simulation_project.src.experiment_eval import _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
 from simulation_project.src.experiment_fitting import _fit_all_methods, _fit_with_convergence_retry
 from simulation_project.src.fit_helpers import as_int_groups, fit_error_result, scaled_iteration_budget
+from simulation_project.src.infrastructure import MethodRegistry, build_default_method_registry
+from simulation_project.src.interfaces.cli.run_experiment_cli import main as legacy_entrypoint_main
 from simulation_project.src.utils import SamplerConfig
 
 
@@ -87,14 +98,29 @@ def test_new_refactor_modules_importable() -> None:
     assert run_all_experiments is not None
 
 
-def test_app_layer_experiments_importable() -> None:
-    assert app_run_exp1_kappa_profile_regimes is not None
-    assert app_run_exp2_group_separation is not None
-    assert app_run_exp3_linear_benchmark is not None
-    assert app_run_exp3a_main_benchmark is not None
-    assert app_run_exp3b_boundary_stress is not None
-    assert app_run_exp4_variant_ablation is not None
-    assert app_run_exp5_prior_sensitivity is not None
+def test_application_layer_experiments_importable() -> None:
+    assert application_run_exp1_kappa_profile_regimes is not None
+    assert application_run_exp2_group_separation is not None
+    assert application_run_exp3_linear_benchmark is not None
+    assert application_run_exp3a_main_benchmark is not None
+    assert application_run_exp3b_boundary_stress is not None
+    assert application_run_exp4_variant_ablation is not None
+    assert application_run_exp5_prior_sensitivity is not None
+
+
+def test_legacy_app_paths_still_importable() -> None:
+    assert legacy_run_exp1_kappa_profile_regimes is not None
+    assert legacy_run_exp2_group_separation is not None
+    assert legacy_run_exp3_linear_benchmark is not None
+    assert legacy_run_exp3a_main_benchmark is not None
+    assert legacy_run_exp3b_boundary_stress is not None
+    assert legacy_run_exp4_variant_ablation is not None
+    assert legacy_run_exp5_prior_sensitivity is not None
+
+
+def test_entrypoint_and_legacy_entrypoint_importable() -> None:
+    assert entrypoint_main is not None
+    assert legacy_entrypoint_main is not None
 
 
 def test_architecture_models_and_registry() -> None:

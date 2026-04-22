@@ -13,7 +13,7 @@ from typing import Any, Callable, Mapping
 
 import yaml
 
-from .app.experiments import (
+from .application.experiments import (
     run_exp1_kappa_profile_regimes,
     run_exp2_group_separation,
     run_exp3_linear_benchmark,
@@ -22,7 +22,7 @@ from .app.experiments import (
     run_exp4_variant_ablation,
     run_exp5_prior_sensitivity,
 )
-from .app.orchestration import run_all_experiments
+from .application.orchestration import run_all_experiments
 from .experiment_aliases import normalize_sweep_experiment
 from .utils import ensure_dir, save_json
 
@@ -342,3 +342,4 @@ def _cli() -> None:
 
 if __name__ == "__main__":
     _cli()
+

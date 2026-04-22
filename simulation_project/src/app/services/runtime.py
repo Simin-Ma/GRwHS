@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...experiment_runtime import (
+from ...infrastructure.runtime import (
     COMPUTE_PROFILES,
     EXP3_GIGG_MODES,
     LAPTOP_METHODS,

@@ -1,1 +1,1 @@
-"""External interfaces (CLI/adapters)."""
+"""Backward-compatible alias for the `entrypoints` package."""
