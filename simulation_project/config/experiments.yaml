@@ -30,7 +30,7 @@ exp3b_boundary_stress:
   repeats_laptop: 30
   description: >
     Exp3b — boundary-only stress benchmark.
-    signal_types: boundary (calibrated at 1.2*xi_crit).
+    signal_types: boundary with xi/xi_crit scan [0.5, 0.8, 1.0, 1.1, 1.2, 1.5, 2.0].
     core30 env: E0 (rw=0.3, rb=0.1), RW_PLUS (rw=0.8, rb=0.1), with rw > rb enforced.
     No SNR axis in core30 (target_snr fixed to 1.0).
     Methods: GR_RHS, RHS, GIGG_MMLE, GIGG_b_small, GIGG_GHS, GIGG_b_large, GHS_plus, OLS, LASSO_CV.

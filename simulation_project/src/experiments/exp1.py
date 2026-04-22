@@ -14,7 +14,13 @@ from .dgp.normal_means import (
 )
 from .fitting import _fit_with_convergence_retry
 from .reporting import _finalize_experiment_run, _record_produced_paths
-from .runtime import _normalize_compute_profile, _parallel_rows, _sampler_for_profile, xi_crit_u0_rho
+from .runtime import (
+    _normalize_compute_profile,
+    _parallel_rows,
+    _sampler_for_profile,
+    kappa_star_xi_ratio_u0_rho,
+    xi_crit_u0_rho,
+)
 from ..utils import (
     MASTER_SEED,
     ensure_dir,
@@ -95,7 +101,10 @@ def _exp1_phase_setting_worker(task: tuple) -> list[dict[str, Any]]:
     sid, pg, xid, xi, repeats, seed, tau, sigma2, u0, alpha_kappa, beta_kappa = task
     rows = []
     mu_g = float(xi) * int(pg)
-    xi_c = xi_crit_u0_rho(u0=float(u0), rho=float(tau) / math.sqrt(max(float(sigma2), 1e-12)))
+    rho_profile = float(tau) / math.sqrt(max(float(sigma2), 1e-12))
+    xi_c = xi_crit_u0_rho(u0=float(u0), rho=rho_profile)
+    xi_ratio = float(xi) / max(xi_c, 1e-12)
+    kappa_star = kappa_star_xi_ratio_u0_rho(xi_ratio=xi_ratio, u0=float(u0), rho=rho_profile)
     for r in range(1, int(repeats) + 1):
         s = experiment_seed(1, int(sid) * 100 + int(xid), r, master_seed=seed)
         y, _ = generate_signal_group_distributed(pg=int(pg), mu_g=float(mu_g), sigma2=float(sigma2), seed=s)
@@ -109,7 +118,9 @@ def _exp1_phase_setting_worker(task: tuple) -> list[dict[str, Any]]:
             "tau": float(tau),
             "xi": float(xi),
             "xi_crit": float(xi_c),
-            "xi_ratio": float(xi) / max(xi_c, 1e-12),
+            "xi_ratio": xi_ratio,
+            "rho_profile": rho_profile,
+            "kappa_star_theory": float(kappa_star) if np.isfinite(kappa_star) else float("nan"),
             "u0": float(u0),
             "alpha_kappa": float(alpha_kappa),
             "beta_kappa": float(beta_kappa),
@@ -122,7 +133,10 @@ def _exp1_phase_setting_worker(task: tuple) -> list[dict[str, Any]]:
 def _exp1_phase_worker(task: tuple) -> dict[str, Any]:
     sid, pg, xid, xi, r, seed, tau, sigma2, u0, alpha_kappa, beta_kappa = task
     mu_g = float(xi) * int(pg)
-    xi_c = xi_crit_u0_rho(u0=float(u0), rho=float(tau) / math.sqrt(max(float(sigma2), 1e-12)))
+    rho_profile = float(tau) / math.sqrt(max(float(sigma2), 1e-12))
+    xi_c = xi_crit_u0_rho(u0=float(u0), rho=rho_profile)
+    xi_ratio = float(xi) / max(xi_c, 1e-12)
+    kappa_star = kappa_star_xi_ratio_u0_rho(xi_ratio=xi_ratio, u0=float(u0), rho=rho_profile)
     s = experiment_seed(1, int(sid) * 100 + int(xid), r, master_seed=seed)
     y, _ = generate_signal_group_distributed(pg=int(pg), mu_g=float(mu_g), sigma2=float(sigma2), seed=s)
     grid = kappa_posterior_grid(y, tau=float(tau), sigma2=float(sigma2), alpha_kappa=alpha_kappa, beta_kappa=beta_kappa)
@@ -135,7 +149,9 @@ def _exp1_phase_worker(task: tuple) -> dict[str, Any]:
         "tau": float(tau),
         "xi": float(xi),
         "xi_crit": float(xi_c),
-        "xi_ratio": float(xi) / max(xi_c, 1e-12),
+        "xi_ratio": xi_ratio,
+        "rho_profile": rho_profile,
+        "kappa_star_theory": float(kappa_star) if np.isfinite(kappa_star) else float("nan"),
         "u0": float(u0),
         "alpha_kappa": float(alpha_kappa),
         "beta_kappa": float(beta_kappa),
@@ -282,7 +298,7 @@ def run_exp1_kappa_profile_regimes(
       Sweeps xi/xi_crit across [0.3, 2.0]; P(kappa_g > u0 | Y) -> 1 iff xi > xi_crit.
       xi_crit = u0 * rho^2 / (2*(u0 + (1-u0)*rho^2)), eq. 104 of 0415 paper.
     """
-    from .analysis.plotting import plot_exp1, plot_exp1_phase
+    from .analysis.plotting import plot_exp1, plot_exp1_phase, plot_exp1_phase_kappa_overlay
     produced: set[Path] = set()
 
     base = Path(save_dir)
@@ -379,11 +395,15 @@ def run_exp1_kappa_profile_regimes(
     for tau_v, pg_v, xi_r in keys_seen:
         sub = [r for r in phase_rows if float(r["tau"]) == tau_v and int(r["p_g"]) == pg_v and abs(float(r["xi_ratio"]) - xi_r) < 1e-8]
         probs = np.array([float(r["post_prob_kappa_gt_u0"]) for r in sub])
+        post_kappa = np.array([float(r["post_mean_kappa"]) for r in sub], dtype=float)
+        kappa_star = np.array([float(r.get("kappa_star_theory", float("nan"))) for r in sub], dtype=float)
         phase_agg.append({
             "tau": tau_v, "p_g": pg_v, "xi_ratio": xi_r,
             "xi_crit": float(sub[0]["xi_crit"]),
             "xi": float(sub[0]["xi"]),
             "mean_prob_kappa_gt_u0": float(np.mean(probs)),
+            "mean_post_mean_kappa": float(np.mean(post_kappa[np.isfinite(post_kappa)])) if np.any(np.isfinite(post_kappa)) else float("nan"),
+            "mean_kappa_star_theory": float(np.mean(kappa_star[np.isfinite(kappa_star)])) if np.any(np.isfinite(kappa_star)) else float("nan"),
             "n_replicates": len(probs),
         })
 
@@ -446,6 +466,11 @@ def run_exp1_kappa_profile_regimes(
         _record_produced_paths(produced, fig_dir / "fig1b_phase_diagram.png")
     except Exception as exc:
         log.warning("Plot exp1B failed: %s", exc)
+    try:
+        plot_exp1_phase_kappa_overlay(pd.DataFrame(phase_agg), out_path=fig_dir / "fig1c_kappa_phase_overlay.png")
+        _record_produced_paths(produced, fig_dir / "fig1c_kappa_phase_overlay.png")
+    except Exception as exc:
+        log.warning("Plot exp1C (kappa overlay) failed: %s", exc)
 
     log.info("Exp1 done: %d null rows, %d phase rows", len(null_rows), len(phase_rows))
     result_paths = {
@@ -455,6 +480,7 @@ def run_exp1_kappa_profile_regimes(
         "null_slope_check": str(out_dir / "null_slope_check.json"),
         "fig1a_null_contraction": str(fig_dir / "fig1a_null_contraction.png"),
         "fig1b_phase_diagram": str(fig_dir / "fig1b_phase_diagram.png"),
+        "fig1c_kappa_phase_overlay": str(fig_dir / "fig1c_kappa_phase_overlay.png"),
     }
     if full_agg:
         result_paths["null_summary_full"] = str(out_dir / "summary_null_full.csv")

@@ -5,7 +5,7 @@ from typing import Any, Dict, Sequence
 
 import numpy as np
 
-from .evaluation import _kappa_group_means
+from .evaluation import _bridge_ratio_diagnostics, _kappa_group_means
 from .fitting import _fit_with_convergence_retry
 from .reporting import _finalize_experiment_run, _record_produced_paths
 from .runtime import (
@@ -130,6 +130,13 @@ def _exp5_worker(
                 "kappa_signal_mean": kappa_signal_mean,
                 "kappa_null_prob_gt_0_1": kappa_null_prob_gt_0_1,
                 **_result_diag_fields(res),
+                **_bridge_ratio_diagnostics(
+                    res,
+                    groups=ds["groups"],
+                    X=ds["X"],
+                    y=ds["y"],
+                    signal_group_mask=(labels == 1),
+                ),
             }
         )
     return rows
@@ -212,7 +219,9 @@ def run_exp5_prior_sensitivity(
     )
 
     save_dataframe(raw, out_dir / "raw_results.csv")
+    _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(summary, out_dir / "summary.csv")
+    _record_produced_paths(produced, out_dir / "summary.csv")
     save_dataframe(summary, tab_dir / "table_prior_sensitivity.csv")
     _record_produced_paths(produced, tab_dir / "table_prior_sensitivity.csv")
     save_json({"profile": profile_name, "prior_grid": [list(p) for p in priors], "scenarios": [[s, g, m] for s, g, m in scenarios], "bayes_min_chains": int(bayes_min_chains_use)}, out_dir / "exp5_meta.json")

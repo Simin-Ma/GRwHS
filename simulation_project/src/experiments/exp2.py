@@ -6,7 +6,7 @@ from typing import Any, Dict, Sequence
 
 import numpy as np
 
-from .evaluation import _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
+from .evaluation import _bridge_ratio_diagnostics, _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
 from .fitting import _fit_all_methods
 from .reporting import _finalize_experiment_run, _paired_converged_subset, _record_produced_paths
 from .runtime import (
@@ -69,6 +69,13 @@ def _exp2_worker(
     for method, res in fits.items():
         is_valid = bool(res.beta_mean is not None)
         metrics = _evaluate_row(res, ds["beta0"], X_train=ds["X"], y_train=ds["y"], X_test=X_test, y_test=y_test)
+        bridge_diag = _bridge_ratio_diagnostics(
+            res,
+            groups=ds["groups"],
+            X=ds["X"],
+            y=ds["y"],
+            signal_group_mask=(labels == 1),
+        )
         null_mse_group = float("nan")
         sig_mse_group  = float("nan")
         auroc          = float("nan")
@@ -84,6 +91,7 @@ def _exp2_worker(
             "null_group_mse": null_mse_group, "signal_group_mse": sig_mse_group,
             "group_auroc": auroc,
             **_result_diag_fields(res),
+            **bridge_diag,
             **metrics,
         })
         if method == "GR_RHS" and res.beta_mean is not None:

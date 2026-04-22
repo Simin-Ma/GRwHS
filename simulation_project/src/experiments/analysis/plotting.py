@@ -10,6 +10,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from ..runtime import kappa_star_xi_ratio_u0_rho
+
 # ---------------------------------------------------------------------------
 # Unified method color scheme (consistent across all exp1-5 figures)
 # ---------------------------------------------------------------------------
@@ -237,6 +239,63 @@ def plot_exp1_phase(df: Any, out_path: Path) -> None:
     ax.set_title("Phase diagram: signal retention  (Cor. 3.33)\nShaded band = variation across �� values; curves should overlap when normalized", fontsize=9)
     ax.set_ylim(-0.04, 1.08)
     ax.legend(fontsize=8, ncol=2, loc="upper left")
+    _save(fig, out_path)
+
+
+def plot_exp1_phase_kappa_overlay(df: Any, out_path: Path) -> None:
+    """
+    Exp1 Panel C: E[kappa_g | Y] vs xi/xi_crit with Cor 3.18 kappa*(xi) overlay.
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows)
+    req = {"p_g", "xi_ratio", "mean_post_mean_kappa", "mean_kappa_star_theory"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    pg_vals = sorted(frame["p_g"].unique())
+    cmap = plt.cm.get_cmap("viridis", len(pg_vals) + 1)
+
+    fig, ax = plt.subplots(figsize=(7.8, 4.8))
+    for j, pg in enumerate(pg_vals):
+        sub = frame[frame["p_g"] == pg]
+        agg = sub.groupby("xi_ratio")["mean_post_mean_kappa"].agg(["mean", "min", "max"]).reset_index()
+        agg = agg.sort_values("xi_ratio")
+        color = cmap(j)
+        ax.plot(
+            agg["xi_ratio"],
+            agg["mean"],
+            "o-",
+            color=color,
+            lw=1.8,
+            ms=5,
+            label=f"Empirical E[kappa], p_g={int(pg)}",
+            zorder=3,
+        )
+        if not (agg["min"] == agg["max"]).all():
+            ax.fill_between(agg["xi_ratio"], agg["min"], agg["max"], alpha=0.10, color=color)
+
+    theo = frame.groupby("xi_ratio")["mean_kappa_star_theory"].mean().reset_index().sort_values("xi_ratio")
+    theo_vals = np.clip(theo["mean_kappa_star_theory"].to_numpy(dtype=float), 0.0, 1.0)
+    ax.plot(
+        theo["xi_ratio"],
+        theo_vals,
+        "--",
+        color="black",
+        lw=2.0,
+        label="Theory kappa*(xi) (Cor 3.18)",
+        zorder=4,
+    )
+    ax.axvline(1.0, color="gray", linestyle=":", lw=1.2)
+    ax.set_xlabel("xi / xi_crit", fontsize=10)
+    ax.set_ylabel("E[kappa_g | Y]", fontsize=10)
+    ax.set_title("Exp1 phase overlay: empirical E[kappa] vs theory kappa*(xi)", fontsize=9)
+    ax.set_ylim(-0.03, 1.05)
+    ax.legend(fontsize=7, ncol=2, loc="upper left")
     _save(fig, out_path)
 
 
@@ -508,6 +567,71 @@ def plot_exp3_benchmark(df: Any, out_dir: Path) -> None:
         ax_c.set_title("Null vs signal MSE trade-off  (averaged over rho, snr, signal)\nBottom-left = best on both axes", fontsize=9)
         ax_c.legend(fontsize=7, loc="upper right")
         _save(fig_c, out_dir / "fig3c_null_signal_scatter.png")
+
+
+def plot_exp3_boundary_phase_transition(df: Any, out_path: Path, *, u0: float = 0.5) -> None:
+    """
+    Exp3b phase-scan plot:
+      y = P(kappa_g > u0 | Y) over xi/xi_crit, with Cor 3.18 kappa*(xi) overlay.
+    """
+    frame = _as_frame(df)
+    if frame.empty:
+        return
+    req = {"signal", "method", "boundary_xi_ratio", "boundary_rho_profile", "kappa_signal_prob_gt_u0"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    from ...utils import method_display_name
+
+    work = frame.copy()
+    work = work.loc[work["signal"].astype(str) == "boundary"].copy()
+    work = work.loc[np.isfinite(work["boundary_xi_ratio"]) & np.isfinite(work["boundary_rho_profile"])].copy()
+    work = work.loc[np.isfinite(work["kappa_signal_prob_gt_u0"])].copy()
+    if work.empty:
+        return
+
+    rho_vals = sorted(float(v) for v in work["boundary_rho_profile"].unique())
+    n_panels = max(1, len(rho_vals))
+    fig, axes = plt.subplots(1, n_panels, figsize=(6.2 * n_panels, 4.8), squeeze=False)
+    methods = _sort_methods(work["method"].unique())
+
+    for i, rho in enumerate(rho_vals):
+        ax = axes[0][i]
+        sub = work.loc[np.isclose(work["boundary_rho_profile"].astype(float), float(rho))]
+        if sub.empty:
+            ax.set_visible(False)
+            continue
+
+        xi_vals = sorted(float(v) for v in sub["boundary_xi_ratio"].unique())
+        for m in methods:
+            msub = sub.loc[sub["method"].astype(str) == str(m)]
+            if msub.empty:
+                continue
+            agg = msub.groupby("boundary_xi_ratio")["kappa_signal_prob_gt_u0"].agg(["mean", "min", "max"]).reset_index()
+            agg = agg.sort_values("boundary_xi_ratio")
+            xs = agg["boundary_xi_ratio"].to_numpy(dtype=float)
+            ys = agg["mean"].to_numpy(dtype=float)
+            ax.plot(xs, ys, "o-", color=_method_color(str(m)), lw=1.8, ms=5, label=method_display_name(str(m)), zorder=3)
+            if not (agg["min"] == agg["max"]).all():
+                ax.fill_between(xs, agg["min"], agg["max"], alpha=0.10, color=_method_color(str(m)))
+
+        xs_theory = np.asarray(xi_vals, dtype=float)
+        ys_theory = np.asarray(
+            [kappa_star_xi_ratio_u0_rho(xi_ratio=float(x), u0=float(u0), rho=float(rho)) for x in xs_theory],
+            dtype=float,
+        )
+        ys_theory = np.clip(ys_theory, 0.0, 1.0)
+        ax.plot(xs_theory, ys_theory, "--", color="black", lw=2.0, label="Theory kappa*(xi)", zorder=4)
+        ax.axvline(1.0, color="gray", lw=1.2, ls=":")
+        ax.set_xlabel("xi / xi_crit", fontsize=10)
+        ax.set_ylabel(f"P(kappa_g > {float(u0):.2f} | Y)", fontsize=10)
+        ax.set_title(f"Boundary phase scan (rho={float(rho):.2f})", fontsize=9)
+        ax.set_ylim(-0.03, 1.05)
+        ax.grid(axis="y", alpha=0.25)
+        ax.legend(fontsize=8, loc="lower right")
+
+    fig.suptitle("Exp3b: phase transition across xi/xi_crit", fontsize=11, y=1.01)
+    _save(fig, Path(out_path))
 
 
 def plot_exp4_ablation(df: Any, out_dir: Path) -> None:

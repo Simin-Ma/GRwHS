@@ -6,7 +6,7 @@ from typing import Any, Dict, Sequence
 
 import numpy as np
 
-from .evaluation import _kappa_group_means
+from .evaluation import _bridge_ratio_diagnostics, _kappa_group_means
 from .fitting import _fit_with_convergence_retry
 from .reporting import _finalize_experiment_run, _record_produced_paths, _stable_name_seed
 from .runtime import (
@@ -143,6 +143,13 @@ def _exp4_worker(
                 "kappa_null_mean": kappa_null_mean,
                 "kappa_signal_mean": kappa_signal_mean,
                 **_result_diag_fields(res),
+                **_bridge_ratio_diagnostics(
+                    res,
+                    groups=groups,
+                    X=X,
+                    y=y,
+                    signal_group_mask=group_has_signal,
+                ),
                 **mse_metrics,
             }
         )
@@ -267,6 +274,7 @@ def run_exp4_variant_ablation(
     summary["mse_delta_rhs_oracle_pct"] = (summary["mse_rel_rhs_oracle"] - 1.0) * 100.0
 
     save_dataframe(raw, out_dir / "raw_results.csv")
+    _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(summary, out_dir / "summary.csv")
     _record_produced_paths(produced, out_dir / "summary.csv")
     save_dataframe(summary, tab_dir / "table_variant_ablation.csv")

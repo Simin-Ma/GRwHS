@@ -415,3 +415,21 @@ def xi_crit_u0_rho(u0: float, rho: float) -> float:
     return 0.5 * theta_u0_rho(u0=u0, rho=rho)
 
 
+def kappa_star_xi_rho(xi: float, rho: float) -> float:
+    """
+    Corollary 3.18 phase-point map:
+      kappa*(xi) = 2*xi*rho^2 / (rho^2 - 2*xi*(1-rho^2))
+    """
+    xi_v = float(xi)
+    rho2 = float(rho) ** 2
+    den = rho2 - 2.0 * xi_v * (1.0 - rho2)
+    if den <= 0.0:
+        return float("nan")
+    return float((2.0 * xi_v * rho2) / den)
+
+
+def kappa_star_xi_ratio_u0_rho(xi_ratio: float, u0: float, rho: float) -> float:
+    xi = float(xi_ratio) * xi_crit_u0_rho(u0=float(u0), rho=float(rho))
+    return kappa_star_xi_rho(xi=xi, rho=float(rho))
+
+

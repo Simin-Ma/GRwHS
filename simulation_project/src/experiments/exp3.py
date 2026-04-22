@@ -6,7 +6,7 @@ from typing import Any, Dict, Sequence
 
 import numpy as np
 
-from .evaluation import _evaluate_row, _kappa_group_means
+from .evaluation import _bridge_ratio_diagnostics, _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
 from .fitting import _fit_all_methods
 from .reporting import _finalize_experiment_run, _record_produced_paths
 from .runtime import (
@@ -179,6 +179,7 @@ def _exp3_worker(
         rho_within = float(task["rho_within"])
         rho_between = float(task["rho_between"])
         target_snr = float(task["target_snr"])
+        boundary_xi_ratio = float(task.get("boundary_xi_ratio", _BOUNDARY_XI_RATIO))
         r = int(task["replicate_id"])
         seed_base = int(task["seed_base"])
         n_test = int(task["n_test"])
@@ -197,7 +198,11 @@ def _exp3_worker(
         max_retries = int(task["max_convergence_retries"])
         grrhs_kwargs = dict(task["grrhs_kwargs"])
     else:
-        sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
+        if len(task) == 19:
+            sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
+            boundary_xi_ratio = float(_BOUNDARY_XI_RATIO)
+        else:
+            sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
         methods = [str(m) for m in methods]
         gigg_mode = "stable"
     group_cfg_name: str = str(group_cfg["name"])
@@ -238,7 +243,7 @@ def _exp3_worker(
     boundary_xi = float("nan")
     if signal == "boundary":
         boundary_xi_crit = xi_crit_u0_rho(u0=float(_BOUNDARY_U0), rho=boundary_rho_profile)
-        boundary_xi = float(_BOUNDARY_XI_RATIO) * boundary_xi_crit
+        boundary_xi = float(boundary_xi_ratio) * boundary_xi_crit
 
     beta0 = _build_benchmark_beta(
         signal,
@@ -246,7 +251,7 @@ def _exp3_worker(
         active_groups=active_groups,
         sigma2=sigma2_boundary if signal == "boundary" else 1.0,
         boundary_u0=float(_BOUNDARY_U0),
-        boundary_xi_ratio=float(_BOUNDARY_XI_RATIO),
+        boundary_xi_ratio=float(boundary_xi_ratio),
         boundary_rho_profile=boundary_rho_profile if signal == "boundary" else None,
     )
     p = int(sum(group_sizes))
@@ -290,6 +295,7 @@ def _exp3_worker(
     n_groups = len(group_sizes)
     active_group_set = set(active_groups)
     null_groups = [g for g in range(n_groups) if g not in active_group_set]
+    signal_group_mask = np.asarray([g in active_group_set for g in range(n_groups)], dtype=bool)
 
     fits = _fit_all_methods(
         X_train, y_train, groups,
@@ -305,14 +311,28 @@ def _exp3_worker(
     out_rows: list[dict[str, Any]] = []
     for method, res in fits.items():
         metrics = _evaluate_row(res, beta0, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test)
+        bridge_diag = _bridge_ratio_diagnostics(
+            res,
+            groups=groups,
+            X=X_train,
+            y=y_train,
+            signal_group_mask=signal_group_mask,
+        )
         kappa_null_mean = float("nan")
         kappa_signal_mean = float("nan")
+        kappa_null_prob_gt_u0 = float("nan")
+        kappa_signal_prob_gt_u0 = float("nan")
         if method == "GR_RHS" and res.beta_mean is not None:
             km = _kappa_group_means(res, n_groups)
+            kp = _kappa_group_prob_gt(res, n_groups, threshold=float(_BOUNDARY_U0))
             _sig_vals = [km[g] for g in active_groups if not np.isnan(km[g])]
             _null_vals = [km[g] for g in null_groups if not np.isnan(km[g])]
+            _sig_probs = [kp[g] for g in active_groups if not np.isnan(kp[g])]
+            _null_probs = [kp[g] for g in null_groups if not np.isnan(kp[g])]
             kappa_signal_mean = float(np.mean(_sig_vals)) if _sig_vals else float("nan")
             kappa_null_mean = float(np.mean(_null_vals)) if _null_vals else float("nan")
+            kappa_signal_prob_gt_u0 = float(np.mean(_sig_probs)) if _sig_probs else float("nan")
+            kappa_null_prob_gt_u0 = float(np.mean(_null_probs)) if _null_probs else float("nan")
         out_rows.append({
             "setting_id": int(sid),
             "gigg_mode": str(gigg_mode_name),
@@ -326,7 +346,7 @@ def _exp3_worker(
             "target_snr": float(target_snr),
             "sigma2": float(sigma2),
             "boundary_u0": float(_BOUNDARY_U0) if signal == "boundary" else float("nan"),
-            "boundary_xi_ratio": float(_BOUNDARY_XI_RATIO) if signal == "boundary" else float("nan"),
+            "boundary_xi_ratio": float(boundary_xi_ratio) if signal == "boundary" else float(_BOUNDARY_XI_RATIO),
             "boundary_rho_profile": boundary_rho_profile if signal == "boundary" else float("nan"),
             "boundary_xi_crit": boundary_xi_crit,
             "boundary_xi": boundary_xi,
@@ -337,7 +357,10 @@ def _exp3_worker(
             "fit_attempts": _attempts_used(res),
             "kappa_null_mean": kappa_null_mean,
             "kappa_signal_mean": kappa_signal_mean,
+            "kappa_null_prob_gt_u0": kappa_null_prob_gt_u0,
+            "kappa_signal_prob_gt_u0": kappa_signal_prob_gt_u0,
             **_result_diag_fields(res),
+            **bridge_diag,
             **metrics,
         })
     return out_rows
@@ -350,6 +373,7 @@ def run_exp3_linear_benchmark(
     save_dir: str = "outputs/simulation_project",
     *,
     signal_types: Sequence[str] | None = None,
+    boundary_xi_ratio_list: Sequence[float] | None = None,
     rho_within_values: Sequence[float] | None = None,
     snr_values: Sequence[float] | None = None,
     rho_between: float = 0.1,
@@ -389,6 +413,7 @@ def run_exp3_linear_benchmark(
       distributed: one nonzero beta in each of G0 and G1.
       boundary: signal set to xi_ratio * xi_crit(u0=0.5, rho_profile),
                 with rho_profile = rho_within / sqrt(sigma2_boundary).
+                xi_ratio values come from boundary_xi_ratio_list (default [1.2]).
 
     bayes_min_chains:
       Minimum number of chains for Bayesian methods in Exp3.
@@ -438,9 +463,20 @@ def run_exp3_linear_benchmark(
     signals = list(signal_types or ["concentrated", "distributed", "boundary"])
     gc_list: list[dict[str, Any]] = list(group_configs) if group_configs is not None else list(_DEFAULT_EXP3_GROUP_CONFIGS)
 
+    boundary_xi_ratios = sorted(
+        {
+            float(v)
+            for v in (boundary_xi_ratio_list or [_BOUNDARY_XI_RATIO])
+            if np.isfinite(float(v)) and float(v) > 0.0
+        }
+    )
+    if not boundary_xi_ratios:
+        raise ValueError("boundary_xi_ratio_list must contain at least one positive finite value.")
+
     # settings:
-    #   sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr
-    settings: list[tuple[int, str, dict, str, str, str, float, float, float]] = []
+    #   sid, signal, group_cfg, setting_block, env_id, design_type, rho_within,
+    #   rho_between, target_snr, boundary_xi_ratio
+    settings: list[tuple[int, str, dict, str, str, str, float, float, float, float]] = []
     sid = 0
     env_points_used: list[dict[str, Any]] = []
 
@@ -475,12 +511,43 @@ def run_exp3_linear_benchmark(
                 for signal in signals:
                     if signal not in sig_set:
                         continue
-                    sid += 1
                     rho = float(ep["rho_within"])
                     rhob = float(ep["rho_between"])
                     snr = float(ep["target_snr"])
                     design = "orthonormal" if rho == 0.0 and rhob == 0.0 else "correlated"
-                    settings.append((sid, signal, gc, str(ep["setting_block"]), str(ep["env_id"]), design, rho, rhob, snr))
+                    if signal == "boundary":
+                        for xi_ratio_v in boundary_xi_ratios:
+                            sid += 1
+                            settings.append(
+                                (
+                                    sid,
+                                    signal,
+                                    gc,
+                                    str(ep["setting_block"]),
+                                    str(ep["env_id"]),
+                                    design,
+                                    rho,
+                                    rhob,
+                                    snr,
+                                    float(xi_ratio_v),
+                                )
+                            )
+                    else:
+                        sid += 1
+                        settings.append(
+                            (
+                                sid,
+                                signal,
+                                gc,
+                                str(ep["setting_block"]),
+                                str(ep["env_id"]),
+                                design,
+                                rho,
+                                rhob,
+                                snr,
+                                float(_BOUNDARY_XI_RATIO),
+                            )
+                        )
     else:
         rho_values = list(rho_within_values if rho_within_values is not None else [0.3, 0.8])
         if snr_values is not None:
@@ -513,28 +580,47 @@ def run_exp3_linear_benchmark(
             for signal in signals:
                 for rho in rho_values_valid:
                     for snr in snr_list:
-                        sid += 1
                         design = "orthonormal" if float(rho) == 0.0 and rhob == 0.0 else "correlated"
-                        settings.append(
-                            (
-                                sid,
-                                signal,
-                                gc,
-                                "legacy_factorial",
-                                f"LEGACY_RW{float(rho):.1f}_SNR{float(snr):.1f}",
-                                design,
-                                float(rho),
-                                rhob,
-                                float(snr),
+                        if signal == "boundary":
+                            for xi_ratio_v in boundary_xi_ratios:
+                                sid += 1
+                                settings.append(
+                                    (
+                                        sid,
+                                        signal,
+                                        gc,
+                                        "legacy_factorial",
+                                        f"LEGACY_RW{float(rho):.1f}_SNR{float(snr):.1f}",
+                                        design,
+                                        float(rho),
+                                        rhob,
+                                        float(snr),
+                                        float(xi_ratio_v),
+                                    )
+                                )
+                        else:
+                            sid += 1
+                            settings.append(
+                                (
+                                    sid,
+                                    signal,
+                                    gc,
+                                    "legacy_factorial",
+                                    f"LEGACY_RW{float(rho):.1f}_SNR{float(snr):.1f}",
+                                    design,
+                                    float(rho),
+                                    rhob,
+                                    float(snr),
+                                    float(_BOUNDARY_XI_RATIO),
+                                )
                             )
-                        )
 
     grrhs_kw: dict = {"backend": str(sampler_backend), "tau_target": "groups"}
     if grrhs_extra_kwargs:
         grrhs_kw.update(grrhs_extra_kwargs)
     bayes_tasks: list[dict[str, Any]] = []
     classical_tasks: list[dict[str, Any]] = []
-    for (sid_v, signal_v, gc_v, block_v, env_v, dt_v, rho_v, rhob_v, snr_v) in settings:
+    for (sid_v, signal_v, gc_v, block_v, env_v, dt_v, rho_v, rhob_v, snr_v, bxi_v) in settings:
         for r in range(1, int(repeats) + 1):
             base_task = {
                 "setting_id": int(sid_v),
@@ -546,6 +632,7 @@ def run_exp3_linear_benchmark(
                 "rho_within": float(rho_v),
                 "rho_between": float(rhob_v),
                 "target_snr": float(snr_v),
+                "boundary_xi_ratio": float(bxi_v),
                 "replicate_id": int(r),
                 "seed_base": int(seed),
                 "n_test": int(n_test),
@@ -572,12 +659,14 @@ def run_exp3_linear_benchmark(
     log.info(
         "Exp3[%s]: %d settings x %d repeats = %d data batches; %d methods => %d method-evals; "
         "scheduled tasks: bayes=%d, classical=%d "
-        "(group_configs=%s, signals=%s, env_points=%s), methods=%s, bayes_min_chains=%d, enforce=%s, retry_limit=%d, gigg_mode=%s",
+        "(group_configs=%s, signals=%s, env_points=%s, boundary_xi_ratio_grid=%s), "
+        "methods=%s, bayes_min_chains=%d, enforce=%s, retry_limit=%d, gigg_mode=%s",
         design_mode,
         len(settings), repeats, n_data_batches, len(methods_use), n_method_evals,
         len(bayes_tasks), len(classical_tasks),
         [gc["name"] for gc in gc_list], signals,
         [ep["env_id"] for ep in env_points_used],
+        boundary_xi_ratios,
         methods_use, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit), str(gigg_mode_name),
     )
 
@@ -609,7 +698,19 @@ def run_exp3_linear_benchmark(
 
     ok_raw = raw.loc[raw["status"] == "ok"].copy()
     conv_raw = ok_raw.loc[ok_raw["converged"].fillna(False).astype(bool)].copy()
-    group_keys = ["gigg_mode", "group_config", "signal", "setting_block", "env_id", "design_type", "rho_within", "rho_between", "target_snr", "method"]
+    group_keys = [
+        "gigg_mode",
+        "group_config",
+        "signal",
+        "setting_block",
+        "env_id",
+        "design_type",
+        "rho_within",
+        "rho_between",
+        "target_snr",
+        "boundary_xi_ratio",
+        "method",
+    ]
 
     counts_df = raw.groupby(group_keys, as_index=False).agg(
         n_reps_total=("replicate_id", "count"),
@@ -626,6 +727,15 @@ def run_exp3_linear_benchmark(
         avg_ci_length=("avg_ci_length", "mean"),
         kappa_null_mean=("kappa_null_mean", "mean"),
         kappa_signal_mean=("kappa_signal_mean", "mean"),
+        kappa_null_prob_gt_u0=("kappa_null_prob_gt_u0", "mean"),
+        kappa_signal_prob_gt_u0=("kappa_signal_prob_gt_u0", "mean"),
+        bridge_ratio_mean=("bridge_ratio_mean", "mean"),
+        bridge_ratio_min=("bridge_ratio_min", "mean"),
+        bridge_ratio_max=("bridge_ratio_max", "mean"),
+        bridge_ratio_p95=("bridge_ratio_p95", "mean"),
+        bridge_ratio_violations=("bridge_ratio_violations", "mean"),
+        bridge_ratio_null_mean=("bridge_ratio_null_mean", "mean"),
+        bridge_ratio_signal_mean=("bridge_ratio_signal_mean", "mean"),
     )
 
     agg_df = counts_df.merge(metric_df, on=group_keys, how="left")
@@ -648,7 +758,8 @@ def run_exp3_linear_benchmark(
         "env_points": env_points_used,
         "boundary_calibration": {
             "u0": float(_BOUNDARY_U0),
-            "xi_ratio": float(_BOUNDARY_XI_RATIO),
+            "xi_ratio_default": float(_BOUNDARY_XI_RATIO),
+            "xi_ratio_grid": [float(v) for v in boundary_xi_ratios],
             "sigma2_boundary": float(_SIGMA2_BOUNDARY),
             "rho_profile_formula": "rho_within / sqrt(sigma2_boundary)",
         },
@@ -665,10 +776,17 @@ def run_exp3_linear_benchmark(
     _record_produced_paths(produced, out_dir / "exp3_meta.json")
 
     try:
-        from .analysis.plotting import plot_exp3_benchmark
+        from .analysis.plotting import plot_exp3_benchmark, plot_exp3_boundary_phase_transition
         if not table_df.empty:
             plot_exp3_benchmark(table_df, out_dir=fig_dir)
             _record_produced_paths(produced, fig_dir / "fig3a_mse_by_signal.png", fig_dir / "fig3b_lpd_by_signal.png", fig_dir / "fig3c_null_signal_scatter.png")
+            if "boundary_xi_ratio" in conv_raw.columns:
+                plot_exp3_boundary_phase_transition(
+                    conv_raw,
+                    out_path=fig_dir / "fig3d_boundary_phase_transition.png",
+                    u0=float(_BOUNDARY_U0),
+                )
+                _record_produced_paths(produced, fig_dir / "fig3d_boundary_phase_transition.png")
         else:
             log.warning("Plot exp3 skipped: no converged rows available.")
     except Exception as exc:
@@ -689,6 +807,8 @@ def run_exp3_linear_benchmark(
         "fig3b_lpd_by_signal": str(fig_dir / "fig3b_lpd_by_signal.png"),
         "fig3c_null_signal_scatter": str(fig_dir / "fig3c_null_signal_scatter.png"),
     }
+    if (fig_dir / "fig3d_boundary_phase_transition.png").exists():
+        result_paths["fig3d_boundary_phase_transition"] = str(fig_dir / "fig3d_boundary_phase_transition.png")
     return _finalize_experiment_run(
         exp_key=str(exp_key_name),
         save_dir=save_dir,
@@ -723,15 +843,18 @@ def run_exp3b_boundary_stress(
     seed: int = MASTER_SEED,
     repeats: int = 20,
     save_dir: str = "outputs/simulation_project",
+    boundary_xi_ratio_list: Sequence[float] | None = None,
     **kwargs,
 ) -> Dict[str, str]:
     """Exp3b: boundary-only stress benchmark."""
+    boundary_grid = list(boundary_xi_ratio_list or [0.5, 0.8, 1.0, 1.1, 1.2, 1.5, 2.0])
     return run_exp3_linear_benchmark(
         n_jobs=n_jobs,
         seed=seed,
         repeats=repeats,
         save_dir=save_dir,
         signal_types=["boundary"],
+        boundary_xi_ratio_list=boundary_grid,
         result_dir_name="exp3b_boundary_stress",
         exp_key="exp3b",
         **kwargs,
