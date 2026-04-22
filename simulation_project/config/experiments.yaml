@@ -1,55 +1,53 @@
-﻿exp1_kappa_profile_regimes:
-  repeats_full: 500
-  repeats_laptop: 200
+exp1_kappa_profile_regimes:
+  repeats_default: 500
   description: >
-    Exp1 — kappa_g profile regimes (Theorems 3.22, 3.32, Corollary 3.33).
-    Panel A: null contraction E[kappa_g|Y] = O(p_g^{-1/2}) log-log slope check.
-    Panel B: phase diagram P(kappa_g > u0 | Y) vs xi/xi_crit sweep.
+    Exp1 - kappa_g profile regimes (Theorems 3.22, 3.32, Corollary 3.33).
+    Panel A: null contraction slope check E[kappa_g|Y]=O(p_g^{-1/2}).
+    Panel B: phase curve P(kappa_g>u0|Y) versus xi/xi_crit.
 
 exp2_group_separation:
-  repeats_full: 100
-  repeats_laptop: 30
+  repeats_default: 100
   description: >
-    Exp2 — full-model group separation (Theorem 3.34).
-    6-group gradient DGP calibrated at xi_crit(u0=0.5, rho_ref=0.1).
-    Validates GR-RHS null shrinkage, signal retention, group AUROC, MLPD.
+    Exp2 - 6-group gradient separation (Theorem 3.34).
+    group_sizes=[30,20,15,10,5,5], rho_ref=0.1,
+    xi_ratios=[0.0,0.5,1.0,2.0,4.0,8.0], methods=[GR_RHS,RHS].
+    Main summary uses paired-converged-and-ok subset.
 
 exp3a_main_benchmark:
-  repeats_full: 100
-  repeats_laptop: 30
+  repeats_default: 100
   description: >
-    Exp3a — linear regression main benchmark.
-    signal_types: concentrated, distributed.
-    core30 env: E0 (rw=0.3, rb=0.1), RW_PLUS (rw=0.8, rb=0.1), with rw > rb enforced.
-    No SNR axis in core30 (target_snr fixed to 1.0).
-    Methods: GR_RHS, RHS, GIGG_MMLE, GIGG_b_small, GIGG_GHS, GIGG_b_large, GHS_plus, OLS, LASSO_CV.
-    Metrics: mse_null, mse_signal, mse_overall, lpd_test (MLPD), coverage_95.
+    Exp3a - main benchmark (concentrated/distributed signals).
+    Axes: rho_within=[0.3,0.6,0.8], rho_between=0.1, SNR=[0.2,1.0,5.0], rw>rb.
+    Methods=[GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV].
+    Main summary uses paired-converged-and-ok subset.
 
 exp3b_boundary_stress:
-  repeats_full: 100
-  repeats_laptop: 30
+  repeats_default: 100
   description: >
-    Exp3b — boundary-only stress benchmark.
-    signal_types: boundary with xi/xi_crit scan [0.5, 0.8, 1.0, 1.1, 1.2, 1.5, 2.0].
-    core30 env: E0 (rw=0.3, rb=0.1), RW_PLUS (rw=0.8, rb=0.1), with rw > rb enforced.
-    No SNR axis in core30 (target_snr fixed to 1.0).
-    Methods: GR_RHS, RHS, GIGG_MMLE, GIGG_b_small, GIGG_GHS, GIGG_b_large, GHS_plus, OLS, LASSO_CV.
-    Metrics: mse_null, mse_signal, mse_overall, lpd_test (MLPD), coverage_95.
+    Exp3b - boundary stress (boundary signal with xi/xi_crit grid).
+    Axes: rho_within=[0.3,0.6,0.8], rho_between=0.1, SNR=[0.2,1.0,5.0], rw>rb.
+    Methods=[GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV].
+    Main summary uses paired-converged-and-ok subset.
+
+exp3c_highdim_stress:
+  repeats_default: 30
+  description: >
+    Exp3c - high-dimensional random-coefficient stress.
+    n=200, p=500 (group_sizes=[50]*10), signals=[half_dense,dense].
+    Axes: rho_within=[0.3,0.6,0.8], rho_between=0.1, SNR=[0.2,1.0,5.0], rw>rb.
+    Methods=[GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV].
+    Main summary uses paired-converged-and-ok subset.
 
 exp4_variant_ablation:
-  repeats_full: 30
-  repeats_laptop: 15
+  repeats_default: 30
   description: >
-    Exp4 — GR-RHS variant ablation: tau calibration study.
-    Variants: oracle tau0, auto-calibrated, over-permissive (10x), RHS baseline.
-    DGP matches Exp3 scale: 5 groups x 10 vars (p=50), n=100, p0 in {5, 15, 30}.
-    Validates that the 0415 tau0 calibration formula recovers oracle-level MSE.
+    Exp4 - GR-RHS variant ablation with oracle reference.
+    p0_list=[5,15,30], include_oracle=true, Exp4 default sampler=gibbs.
+    Summary uses converged-and-ok rows only.
 
 exp5_prior_sensitivity:
-  repeats_full: 20
-  repeats_laptop: 10
+  repeats_default: 20
   description: >
-    Exp5 — Beta prior sensitivity for kappa_g: (alpha_kappa, beta_kappa) grid.
-    5 priors tested on the same DGP replicate (paired evaluation).
-    DGP aligned with Exp3 scale (n=100, p=50): S1=G10x5 ([10]x5), S2=CL ([30,10,5,3,2]).
-    Shows practical robustness of GR-RHS to reasonable prior choices.
+    Exp5 - prior sensitivity with paired design across priors.
+    Reports paired deltas and 95% intervals relative to default prior (0.5,1.0).
+    Main summary uses paired-converged-and-ok subset.

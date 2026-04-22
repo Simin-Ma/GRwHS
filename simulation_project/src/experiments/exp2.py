@@ -151,7 +151,7 @@ def run_exp2_group_separation(
     sampler = _sampler_for_standard()
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
-    # Only GR_RHS and RHS; ignore any wider method list from profile resolver
+    # Only GR_RHS and RHS are part of Exp2's default protocol.
     methods_use = [m for m in (methods or ["GR_RHS", "RHS"]) if m in ("GR_RHS", "RHS")]
     if not methods_use:
         methods_use = ["GR_RHS", "RHS"]
