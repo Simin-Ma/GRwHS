@@ -183,25 +183,33 @@ def _exp3_worker(
         seed_base = int(task["seed_base"])
         n_test = int(task["n_test"])
         sampler = task["sampler"]
-        method_name = str(task["method"])
+        methods_raw = task.get("methods", None)
+        if methods_raw is None:
+            methods = [str(task["method"])]
+        else:
+            methods = [str(m) for m in methods_raw]
+        if not methods:
+            raise ValueError("Exp3 task must include at least one method.")
         gigg_config = dict(task["gigg_config"])
         gigg_mode = str(task.get("gigg_mode", "stable"))
         bayes_min_chains = task.get("bayes_min_chains")
         enforce_conv = bool(task["enforce_bayes_convergence"])
         max_retries = int(task["max_convergence_retries"])
         grrhs_kwargs = dict(task["grrhs_kwargs"])
-        methods = [method_name]
     else:
         sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
+        methods = [str(m) for m in methods]
         gigg_mode = "stable"
+    group_cfg_name: str = str(group_cfg["name"])
+    methods_upper = {m.upper() for m in methods}
     gigg_config = dict(gigg_config)
     gigg_mode_name = _normalize_exp3_gigg_mode(gigg_mode)
-    if str(method_name if isinstance(task, dict) else (methods[0] if methods else "")).upper() == "GIGG_MMLE":
+    if "GIGG_MMLE" in methods_upper:
         if gigg_mode_name == "paper_ref":
             gigg_config["extra_retry"] = 0
             gigg_config.pop("retry_cap", None)
         else:
-            hard_setting = (group_cfg_name := str(group_cfg["name"])) in {"CL", "G10x5"} and signal in {"concentrated", "distributed"}
+            hard_setting = group_cfg_name in {"CL", "G10x5"} and signal in {"concentrated", "distributed"}
             if hard_setting:
                 gigg_config["extra_retry"] = max(1, int(gigg_config.get("extra_retry", 0)))
                 # Keep rescue behavior efficient while preserving robustness.
@@ -222,7 +230,6 @@ def _exp3_worker(
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
     active_groups: list[int] = list(group_cfg["active_groups"])
-    group_cfg_name: str = str(group_cfg["name"])
     n_train = 100
 
     sigma2_boundary = float(_SIGMA2_BOUNDARY)
@@ -281,6 +288,8 @@ def _exp3_worker(
         )
     )
     n_groups = len(group_sizes)
+    active_group_set = set(active_groups)
+    null_groups = [g for g in range(n_groups) if g not in active_group_set]
 
     fits = _fit_all_methods(
         X_train, y_train, groups,
@@ -300,7 +309,6 @@ def _exp3_worker(
         kappa_signal_mean = float("nan")
         if method == "GR_RHS" and res.beta_mean is not None:
             km = _kappa_group_means(res, n_groups)
-            null_groups = [g for g in range(n_groups) if g not in set(active_groups)]
             _sig_vals = [km[g] for g in active_groups if not np.isnan(km[g])]
             _null_vals = [km[g] for g in null_groups if not np.isnan(km[g])]
             kappa_signal_mean = float(np.mean(_sig_vals)) if _sig_vals else float("nan")
@@ -409,9 +417,12 @@ def run_exp3_linear_benchmark(
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     _exp3_methods = ["GR_RHS", "GHS_plus", "GIGG_MMLE", "RHS", "LASSO_CV", "OLS"]
-    methods_use = [m for m in (methods or _exp3_methods) if m in set(_exp3_methods)]
+    _exp3_methods_set = set(_exp3_methods)
+    methods_use = [m for m in (methods or _exp3_methods) if m in _exp3_methods_set]
     if not methods_use:
         methods_use = list(_exp3_methods)
+    bayes_methods_use = [m for m in methods_use if _is_bayesian_method(m)]
+    classical_methods_use = [m for m in methods_use if not _is_bayesian_method(m)]
     gigg_mode_name = _normalize_exp3_gigg_mode(gigg_mode)
     gigg_cfg = _exp3_gigg_config_for_mode(_gigg_config_for_profile(profile_name), gigg_mode=gigg_mode_name)
     retry_limit = _resolve_convergence_retry_limit(
@@ -521,52 +532,54 @@ def run_exp3_linear_benchmark(
     grrhs_kw: dict = {"backend": str(sampler_backend), "tau_target": "groups"}
     if grrhs_extra_kwargs:
         grrhs_kw.update(grrhs_extra_kwargs)
-    tasks: list[dict[str, Any]] = []
+    bayes_tasks: list[dict[str, Any]] = []
+    classical_tasks: list[dict[str, Any]] = []
     for (sid_v, signal_v, gc_v, block_v, env_v, dt_v, rho_v, rhob_v, snr_v) in settings:
         for r in range(1, int(repeats) + 1):
-            for method in methods_use:
-                tasks.append(
-                    {
-                        "setting_id": int(sid_v),
-                        "signal": str(signal_v),
-                        "group_cfg": dict(gc_v),
-                        "setting_block": str(block_v),
-                        "env_id": str(env_v),
-                        "design_type": str(dt_v),
-                        "rho_within": float(rho_v),
-                        "rho_between": float(rhob_v),
-                        "target_snr": float(snr_v),
-                        "replicate_id": int(r),
-                        "seed_base": int(seed),
-                        "n_test": int(n_test),
-                        "sampler": sampler,
-                        "method": str(method),
-                        "gigg_config": dict(gigg_cfg),
-                        "gigg_mode": str(gigg_mode_name),
-                        "bayes_min_chains": int(bayes_min_chains_use),
-                        "enforce_bayes_convergence": bool(enforce_bayes_convergence),
-                        "max_convergence_retries": int(retry_limit),
-                        "grrhs_kwargs": dict(grrhs_kw),
-                    }
-                )
+            base_task = {
+                "setting_id": int(sid_v),
+                "signal": str(signal_v),
+                "group_cfg": dict(gc_v),
+                "setting_block": str(block_v),
+                "env_id": str(env_v),
+                "design_type": str(dt_v),
+                "rho_within": float(rho_v),
+                "rho_between": float(rhob_v),
+                "target_snr": float(snr_v),
+                "replicate_id": int(r),
+                "seed_base": int(seed),
+                "n_test": int(n_test),
+                "sampler": sampler,
+                "gigg_config": dict(gigg_cfg),
+                "gigg_mode": str(gigg_mode_name),
+                "bayes_min_chains": int(bayes_min_chains_use),
+                "enforce_bayes_convergence": bool(enforce_bayes_convergence),
+                "max_convergence_retries": int(retry_limit),
+                "grrhs_kwargs": dict(grrhs_kw),
+            }
+            if bayes_methods_use:
+                bayes_task = dict(base_task)
+                bayes_task["methods"] = list(bayes_methods_use)
+                bayes_tasks.append(bayes_task)
+            if classical_methods_use:
+                classical_task = dict(base_task)
+                classical_task["methods"] = list(classical_methods_use)
+                classical_tasks.append(classical_task)
+
+    n_data_batches = len(settings) * int(repeats)
+    n_method_evals = n_data_batches * len(methods_use)
 
     log.info(
-        "Exp3[%s]: %d settings x %d repeats x %d methods = %d tasks "
+        "Exp3[%s]: %d settings x %d repeats = %d data batches; %d methods => %d method-evals; "
+        "scheduled tasks: bayes=%d, classical=%d "
         "(group_configs=%s, signals=%s, env_points=%s), methods=%s, bayes_min_chains=%d, enforce=%s, retry_limit=%d, gigg_mode=%s",
         design_mode,
-        len(settings), repeats, len(methods_use), len(tasks),
+        len(settings), repeats, n_data_batches, len(methods_use), n_method_evals,
+        len(bayes_tasks), len(classical_tasks),
         [gc["name"] for gc in gc_list], signals,
         [ep["env_id"] for ep in env_points_used],
         methods_use, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit), str(gigg_mode_name),
     )
-    bayes_tasks: list[dict[str, Any]] = []
-    classical_tasks: list[dict[str, Any]] = []
-    for t in tasks:
-        method_name = str(t.get("method", ""))
-        if _is_bayesian_method(method_name):
-            bayes_tasks.append(t)
-        else:
-            classical_tasks.append(t)
 
     chunks_bayes: list[Any] = []
     chunks_classic: list[Any] = []

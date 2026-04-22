@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,13 +106,11 @@ def block_correlation(group_sizes: Sequence[int], rho_within: float, rho_between
     groups = canonical_groups(group_sizes)
     p = int(sum(group_sizes))
     corr = np.full((p, p), float(rho_between), dtype=float)
-    np.fill_diagonal(corr, 1.0)
+    rho_w = float(rho_within)
     for g in groups:
         idx = np.asarray(g, dtype=int)
-        for i in idx:
-            for j in idx:
-                if i != j:
-                    corr[i, j] = float(rho_within)
+        corr[np.ix_(idx, idx)] = rho_w
+    np.fill_diagonal(corr, 1.0)
     return nearest_positive_definite(corr)
 
 
@@ -272,6 +271,10 @@ def load_pandas():
     calls during import (pandas.compat._constants). We temporarily replace
     platform.machine() with a lightweight env-var based implementation.
     """
+    cached = sys.modules.get("pandas")
+    if cached is not None:
+        return cached
+
     import importlib
     import platform
 
