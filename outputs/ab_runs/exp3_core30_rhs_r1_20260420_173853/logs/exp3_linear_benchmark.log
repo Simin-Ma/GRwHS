@@ -1,2 +1,0 @@
-2026-04-20 17:38:53,840 | INFO | Exp3[core30]: 30 settings x 1 repeats x 1 methods = 30 tasks (group_configs=['G10x5', 'CL', 'CS'], signals=['concentrated', 'distributed', 'boundary'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['RHS'], enforce=True, retry_limit=0
-2026-04-20 17:39:05,330 | INFO | Exp3 done: 30 rows, 30 settings, 1 converged rows used for metrics

@@ -1,1 +1,0 @@
-2026-04-19 18:10:25,648 | INFO | Exp3: 12 settings x 20 repeats = 240 tasks (signals=['concentrated', 'distributed', 'boundary'], rho_within=[0.3, 0.8], snr=[0.5, 2.0], rho_between=0.10), methods=['GR_RHS', 'GHS_plus', 'GIGG_MMLE', 'RHS', 'LASSO_CV', 'OLS'], enforce=True, retry_limit=1

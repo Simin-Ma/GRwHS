@@ -1,5 +1,0 @@
-gigg_mode,group_config,signal,setting_block,env_id,design_type,rho_within,rho_between,target_snr,method,n_reps_total,n_reps_ok,n_reps_converged,mse_null,mse_signal,mse_overall,lpd_test,coverage_95,avg_ci_length,kappa_null_mean,kappa_signal_mean,n_reps
-paper_ref,CL,concentrated,anchor,E0,correlated,0.3,0.1,1.0,GIGG_MMLE,1,1,0,,,,,,,,,0
-paper_ref,CL,concentrated,rb_axis,RB_PLUS,correlated,0.3,0.3,1.0,GIGG_MMLE,1,1,0,,,,,,,,,0
-paper_ref,CL,concentrated,rw_axis,RW_PLUS,correlated,0.8,0.1,1.0,GIGG_MMLE,1,1,0,,,,,,,,,0
-paper_ref,CL,concentrated,snr_axis,SNR_PLUS,correlated,0.3,0.1,2.0,GIGG_MMLE,1,1,0,,,,,,,,,0

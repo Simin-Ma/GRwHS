@@ -1,1 +1,0 @@
-2026-04-20 17:12:29,637 | INFO | Exp3[core30]: 30 settings x 2 repeats x 6 methods = 360 tasks (group_configs=['G10x5', 'CL', 'CS'], signals=['concentrated', 'distributed', 'boundary'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['GR_RHS', 'RHS', 'GIGG_MMLE', 'GHS_plus', 'LASSO_CV', 'OLS'], enforce=True, retry_limit=0

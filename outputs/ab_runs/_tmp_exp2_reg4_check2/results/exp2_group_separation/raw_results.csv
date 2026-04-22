@@ -1,2 +1,0 @@
-replicate_id,method,status,converged,fit_attempts,null_group_mse,signal_group_mse,group_auroc,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error,mse_null,mse_signal,mse_overall,avg_ci_length,coverage_95,lpd_test
-1,RHS,error,False,1,,,,13.178856700000324,,63.23218635914273,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,,,,

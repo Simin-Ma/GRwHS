@@ -1,4 +1,0 @@
-p0_true,p,n,replicate_id,variant,method_type,status,converged,fit_attempts,tau0_oracle,tau_post_mean,tau_ratio_to_oracle,kappa_null_mean,kappa_signal_mean,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error,mse_overall,mse_signal,mse_null
-5,50,100,1,calibrated,GR_RHS,ok,True,1,0.01111111111111111,0.1926365056373179,17.337285507358615,0.27388477542119344,0.780267703667283,12.912297000002582,1.010388970375061,168.59211304358638,0.002,,0.0005956546032493903,0.003777059967888322,0.0002421651182895089
-5,50,100,1,fixed_10x,GR_RHS,error,False,1,0.01111111111111111,,,,,6.4129959999991115,1.2232913970947266,2.649493401576832,0.0,ConvergenceError: GR_RHS did not converge after 1 attempt(s),,,
-5,50,100,1,RHS_oracle,RHS,error,False,1,0.01111111111111111,,,,,8.895144600002823,1.0453947819607243,178.63953377011083,0.0,ConvergenceError: RHS did not converge after 1 attempt(s),,,

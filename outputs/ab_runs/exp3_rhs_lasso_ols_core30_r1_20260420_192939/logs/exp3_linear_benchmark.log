@@ -1,9 +1,0 @@
-2026-04-20 19:29:39,477 | INFO | Exp3[core30]: 30 settings x 1 repeats x 3 methods = 90 tasks (group_configs=['G10x5', 'CL', 'CS'], signals=['concentrated', 'distributed', 'boundary'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['RHS', 'LASSO_CV', 'OLS'], bayes_min_chains=2, enforce=True, retry_limit=1
-2026-04-20 19:29:39,772 | INFO | Exp3[core30]: 30 settings x 1 repeats x 3 methods = 90 tasks (group_configs=['G10x5', 'CL', 'CS'], signals=['concentrated', 'distributed', 'boundary'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['RHS', 'LASSO_CV', 'OLS'], bayes_min_chains=2, enforce=True, retry_limit=1
-2026-04-20 19:29:39,774 | INFO | Exp3[core30]: 30 settings x 1 repeats x 3 methods = 90 tasks (group_configs=['G10x5', 'CL', 'CS'], signals=['concentrated', 'distributed', 'boundary'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['RHS', 'LASSO_CV', 'OLS'], bayes_min_chains=2, enforce=True, retry_limit=1
-2026-04-20 19:29:39,809 | INFO | Exp3[core30]: 30 settings x 1 repeats x 3 methods = 90 tasks (group_configs=['G10x5', 'CL', 'CS'], signals=['concentrated', 'distributed', 'boundary'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['RHS', 'LASSO_CV', 'OLS'], bayes_min_chains=2, enforce=True, retry_limit=1
-2026-04-20 19:35:45,273 | INFO | Exp3 done: 90 rows, 30 settings, 88 converged rows used for metrics
-2026-04-20 19:35:47,080 | INFO | Exp3 done: 90 rows, 30 settings, 88 converged rows used for metrics
-2026-04-20 19:35:49,036 | INFO | Exp3 done: 90 rows, 30 settings, 88 converged rows used for metrics
-2026-04-20 19:35:51,365 | INFO | Exp3 done: 90 rows, 30 settings, 88 converged rows used for metrics
-2026-04-20 19:37:51,029 | INFO | Exp3 done: 90 rows, 30 settings, 88 converged rows used for metrics

@@ -1,2 +1,0 @@
-signal,design_type,rho_within,method,mse_null,mse_signal,mse_overall,lpd_test,coverage_95,avg_ci_length,kappa_null_mean,kappa_signal_mean,n_reps
-concentrated,orthonormal,0.0,GHS_plus,0.001703507358454678,0.013805678035081875,0.0065443756291055566,-1.3419746165621471,1.0,0.34984509768230465,,,1

@@ -1,2 +1,0 @@
-method,null_group_mse,null_group_mse_std,signal_group_mse,signal_group_mse_std,mse_overall,group_auroc,group_auroc_std,lpd_test,lpd_test_std,n_effective
-RHS,0.10808573472524638,,0.11539930987046797,,0.0060571155244886704,1.0,,-1.4384586125185665,,1

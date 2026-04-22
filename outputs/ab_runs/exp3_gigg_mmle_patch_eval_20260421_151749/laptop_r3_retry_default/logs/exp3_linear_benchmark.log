@@ -1,2 +1,0 @@
-2026-04-21 15:17:50,010 | INFO | Exp3[core30]: 30 settings x 3 repeats x 1 methods = 90 tasks (group_configs=['G10x5', 'CL', 'CS'], signals=['concentrated', 'distributed', 'boundary'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['GIGG_MMLE'], bayes_min_chains=2, enforce=True, retry_limit=1
-2026-04-21 15:33:58,012 | INFO | Exp3 done: 90 rows, 30 settings, 63 converged rows used for metrics

@@ -1,2 +1,0 @@
-2026-04-19 17:06:13,148 | INFO | Exp3: 1 settings x 1 repeats = 1 tasks, methods=['GHS_plus'], enforce=True, retry_limit=0
-2026-04-19 17:06:19,083 | INFO | Exp3 done: 1 rows, 1 settings, 1 converged rows used for metrics

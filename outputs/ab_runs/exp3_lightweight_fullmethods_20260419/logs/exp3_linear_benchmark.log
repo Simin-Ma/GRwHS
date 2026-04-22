@@ -1,2 +1,0 @@
-2026-04-19 17:57:22,733 | INFO | Exp3: 2 settings x 20 repeats = 40 tasks (signals=['concentrated', 'distributed'], rho_within=[0.0], snr=[2.0], rho_between=0.00), methods=['GR_RHS', 'GHS_plus', 'GIGG_MMLE', 'RHS', 'LASSO_CV', 'OLS'], enforce=True, retry_limit=1
-2026-04-19 18:01:08,571 | INFO | Exp3 done: 240 rows, 2 settings, 229 converged rows used for metrics

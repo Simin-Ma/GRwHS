@@ -1,3 +1,0 @@
-2026-04-21 17:06:23,090 | INFO | Exp3[core30]: 4 settings x 1 repeats x 1 methods = 4 tasks (group_configs=['CL'], signals=['concentrated'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['GIGG_MMLE'], bayes_min_chains=2, enforce=False, retry_limit=0, gigg_mode=stable
-2026-04-21 17:06:39,568 | WARNING | Plot exp3 skipped: no converged rows available.
-2026-04-21 17:06:39,568 | INFO | Exp3 done: 4 rows, 4 settings, 0 converged rows used for metrics

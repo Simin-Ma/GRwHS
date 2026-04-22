@@ -1,2 +1,0 @@
-2026-04-21 17:12:26,217 | INFO | Exp3[core30]: 16 settings x 3 repeats x 1 methods = 48 tasks (group_configs=['G10x5', 'CL'], signals=['concentrated', 'distributed'], env_points=['E0', 'RW_PLUS', 'RB_PLUS', 'SNR_PLUS']), methods=['GIGG_MMLE'], bayes_min_chains=2, enforce=True, retry_limit=1, gigg_mode=paper_ref
-2026-04-21 17:15:47,702 | INFO | Exp3 done: 48 rows, 16 settings, 5 converged rows used for metrics

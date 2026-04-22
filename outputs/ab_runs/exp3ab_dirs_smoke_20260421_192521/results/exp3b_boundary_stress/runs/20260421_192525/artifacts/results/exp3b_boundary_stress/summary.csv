@@ -1,7 +1,0 @@
-gigg_mode,group_config,signal,setting_block,env_id,design_type,rho_within,rho_between,target_snr,method,n_reps_total,n_reps_ok,n_reps_converged,mse_null,mse_signal,mse_overall,lpd_test,coverage_95,avg_ci_length,kappa_null_mean,kappa_signal_mean,n_reps
-stable,CL,boundary,anchor,E0,correlated,0.3,0.1,1.0,OLS,1,1,1,0.027071080107430655,0.0322236805506261,0.031193160461987012,-1.9192593564763025,,,,,1
-stable,CL,boundary,rw_axis,RW_PLUS,correlated,0.8,0.1,1.0,OLS,1,1,1,0.09471853164012353,0.10409849893885863,0.1022225054791116,-2.0782306880827495,,,,,1
-stable,CS,boundary,anchor,E0,correlated,0.3,0.1,1.0,OLS,1,1,1,0.025438556908040713,0.021112560988384647,0.025005957316075106,-1.8486995751257225,,,,,1
-stable,CS,boundary,rw_axis,RW_PLUS,correlated,0.8,0.1,1.0,OLS,1,1,1,0.07288209014511644,0.043526775201435074,0.06994655865074831,-2.899665193035635,,,,,1
-stable,G10x5,boundary,anchor,E0,correlated,0.3,0.1,1.0,OLS,1,1,1,0.02260700590449848,0.020633065154754375,0.021817429604600834,-3.1707559437143535,,,,,1
-stable,G10x5,boundary,rw_axis,RW_PLUS,correlated,0.8,0.1,1.0,OLS,1,1,1,0.09897710102266366,0.08097429697421546,0.09177597940328437,-2.221030173620062,,,,,1
