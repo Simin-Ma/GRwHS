@@ -104,9 +104,7 @@ Simulation methods now use in-tree runtime modules under:
 - `simulation_project/src/core/inference/`
 - `simulation_project/src/core/diagnostics/`
 - `simulation_project/src/core/utils/`
-- `simulation_project/src/application/experiments/` (Exp1-Exp5 implementations)
-- `simulation_project/src/infrastructure/` (fitting/evaluation/runtime/reporting/method registry)
-- `simulation_project/src/domain/` (typed config/result schemas)
-- `simulation_project/src/entrypoints/cli/` (CLI entrypoint)
+- `simulation_project/src/experiments/` (Exp1-Exp5 implementations + orchestration/runtime/fitting/evaluation/reporting/schemas)
+- `simulation_project/src/cli/` (CLI entrypoint)
 
 No external `grrhs` package directory is required.

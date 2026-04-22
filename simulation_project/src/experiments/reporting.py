@@ -8,7 +8,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..domain.results.models import RunManifest
+from .schemas import RunManifest
 from ..utils import ensure_dir, load_pandas
 
 def _timestamp_tag() -> str:
@@ -395,5 +395,6 @@ def _paired_converged_subset(
     stats["methods_required"] = int(len(methods_target))
     stats["methods_list"] = "|".join(methods_target)
     return paired, stats
+
 
 

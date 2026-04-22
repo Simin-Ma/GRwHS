@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 # Backward-compatible facade: keep historical import path stable while
-# delegating implementation to layered application modules.
-from .application.experiments import (
+# delegating implementation to experiment modules.
+from .experiments import (
     run_exp1_kappa_profile_regimes,
     run_exp2_group_separation,
     run_exp3_linear_benchmark,
@@ -11,7 +11,7 @@ from .application.experiments import (
     run_exp4_variant_ablation,
     run_exp5_prior_sensitivity,
 )
-from .application.orchestration import _cli, run_all_experiments
+from .experiments.orchestration import _cli, run_all_experiments
 
 __all__ = [
     "run_exp1_kappa_profile_regimes",

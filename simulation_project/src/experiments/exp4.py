@@ -6,10 +6,10 @@ from typing import Any, Dict, Sequence
 
 import numpy as np
 
-from ...infrastructure.evaluation import _kappa_group_means
-from ...infrastructure.fitting import _fit_with_convergence_retry
-from ...infrastructure.reporting import _finalize_experiment_run, _record_produced_paths, _stable_name_seed
-from ...infrastructure.runtime import (
+from .evaluation import _kappa_group_means
+from .fitting import _fit_with_convergence_retry
+from .reporting import _finalize_experiment_run, _record_produced_paths, _stable_name_seed
+from .runtime import (
     _BAYESIAN_DEFAULT_CHAINS,
     _EXP4_DEFAULT_MAX_CONV_RETRIES,
     _attempts_used,
@@ -20,7 +20,7 @@ from ...infrastructure.runtime import (
     _result_diag_fields,
     _sampler_for_profile,
 )
-from ...utils import (
+from ..utils import (
     MASTER_SEED,
     SamplerConfig,
     ensure_dir,
@@ -36,9 +36,9 @@ from ...utils import (
 def _exp4_worker(
     task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], int, bool, int, int, str]
 ) -> list[dict[str, Any]]:
-    from ...fit_gr_rhs import fit_gr_rhs
-    from ...fit_rhs import fit_rhs
-    from ...utils import canonical_groups, sample_correlated_design
+    from ..fit_gr_rhs import fit_gr_rhs
+    from ..fit_rhs import fit_rhs
+    from ..utils import canonical_groups, sample_correlated_design
 
     p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, enforce_conv, max_retries, n, backend = task
     p = int(sum(group_sizes))
@@ -108,7 +108,7 @@ def _exp4_worker(
                 enforce_bayes_convergence=bool(enforce_conv),
             )
         is_valid = bool(res.beta_mean is not None)
-        from ...metrics import mse_null_signal_overall
+        from ..metrics import mse_null_signal_overall
 
         mse_metrics: dict[str, float] = {"mse_null": float("nan"), "mse_signal": float("nan"), "mse_overall": float("nan")}
         tau_post_mean = float("nan")
@@ -286,7 +286,7 @@ def run_exp4_variant_ablation(
     _record_produced_paths(produced, out_dir / "exp4_meta.json")
 
     try:
-        from ...plotting import plot_exp4_ablation
+        from ..plotting import plot_exp4_ablation
 
         plot_exp4_ablation(summary, out_dir=base / "figures")
         _record_produced_paths(produced, base / "figures" / "fig4a_tau_scatter.png", base / "figures" / "fig4b_mse_normalized.png")
@@ -309,4 +309,5 @@ def run_exp4_variant_ablation(
         produced_paths=produced,
         result_paths=result_paths,
     )
+
 

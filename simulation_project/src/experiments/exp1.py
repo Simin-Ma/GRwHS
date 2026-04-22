@@ -6,15 +6,15 @@ from typing import Any, Dict, Sequence
 
 import numpy as np
 
-from ...dgp_normal_means import (
+from ..dgp_normal_means import (
     generate_null_group,
     generate_signal_group_distributed,
     kappa_posterior_grid,
     posterior_summary_from_grid,
 )
-from ...infrastructure.reporting import _finalize_experiment_run, _record_produced_paths
-from ...infrastructure.runtime import _parallel_rows, xi_crit_u0_rho
-from ...utils import (
+from .reporting import _finalize_experiment_run, _record_produced_paths
+from .runtime import _parallel_rows, xi_crit_u0_rho
+from ..utils import (
     MASTER_SEED,
     ensure_dir,
     experiment_seed,
@@ -175,7 +175,7 @@ def run_exp1_kappa_profile_regimes(
       Sweeps xi/xi_crit across [0.3, 2.0]; P(kappa_g > u0 | Y) -> 1 iff xi > xi_crit.
       xi_crit = u0 * rho^2 / (2*(u0 + (1-u0)*rho^2)), eq. 104 of 0415 paper.
     """
-    from ...plotting import plot_exp1, plot_exp1_phase
+    from ..plotting import plot_exp1, plot_exp1_phase
     produced: set[Path] = set()
 
     base = Path(save_dir)
@@ -295,4 +295,5 @@ def run_exp1_kappa_profile_regimes(
         produced_paths=produced,
         result_paths=result_paths,
     )
+
 

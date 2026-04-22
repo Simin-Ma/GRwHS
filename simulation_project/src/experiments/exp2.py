@@ -6,10 +6,10 @@ from typing import Any, Dict, Sequence
 
 import numpy as np
 
-from ...infrastructure.evaluation import _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
-from ...infrastructure.fitting import _fit_all_methods
-from ...infrastructure.reporting import _finalize_experiment_run, _paired_converged_subset, _record_produced_paths
-from ...infrastructure.runtime import (
+from .evaluation import _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
+from .fitting import _fit_all_methods
+from .reporting import _finalize_experiment_run, _paired_converged_subset, _record_produced_paths
+from .runtime import (
     _BAYESIAN_DEFAULT_CHAINS,
     _attempts_used,
     _gigg_config_for_profile,
@@ -20,7 +20,7 @@ from ...infrastructure.runtime import (
     _sampler_for_profile,
     xi_crit_u0_rho,
 )
-from ...utils import (
+from ..utils import (
     MASTER_SEED,
     SamplerConfig,
     ensure_dir,
@@ -34,9 +34,9 @@ from ...utils import (
 def _exp2_worker(
     task: tuple[int, int, list[int], list[float], list[float], SamplerConfig, list[str], dict[str, Any], int, bool, int, int, dict]
 ) -> tuple[list[dict], list[dict]]:
-    from ...dgp_grouped_linear import generate_heterogeneity_dataset
-    from ...metrics import group_auroc, group_l2_error, group_l2_score
-    from ...utils import sample_correlated_design
+    from ..dgp_grouped_linear import generate_heterogeneity_dataset
+    from ..metrics import group_auroc, group_l2_error, group_l2_score
+    from ..utils import sample_correlated_design
 
     r, seed, group_sizes, mu, xi_ratios, sampler, methods, gigg_config, bayes_min_chains, enforce_convergence, max_retries, n_test, grrhs_kwargs = task
     labels = (np.asarray(mu) > 0.0).astype(int)
@@ -254,7 +254,7 @@ def run_exp2_group_separation(
     _record_produced_paths(produced, out_dir / "exp2_meta.json")
 
     try:
-        from ...plotting import plot_exp2_separation
+        from ..plotting import plot_exp2_separation
         plot_exp2_separation(summary_df, kappa_df, out_dir=fig_dir)
         _record_produced_paths(produced, fig_dir / "fig2a_method_comparison.png", fig_dir / "fig2b_kappa_by_group.png")
     except Exception as exc:
@@ -281,4 +281,5 @@ def run_exp2_group_separation(
         produced_paths=produced,
         result_paths=result_paths,
     )
+
 
