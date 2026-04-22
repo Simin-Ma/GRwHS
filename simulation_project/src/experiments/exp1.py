@@ -12,8 +12,9 @@ from .dgp.normal_means import (
     kappa_posterior_grid,
     posterior_summary_from_grid,
 )
+from .fitting import _fit_with_convergence_retry
 from .reporting import _finalize_experiment_run, _record_produced_paths
-from .runtime import _parallel_rows, xi_crit_u0_rho
+from .runtime import _normalize_compute_profile, _parallel_rows, _sampler_for_profile, xi_crit_u0_rho
 from ..utils import (
     MASTER_SEED,
     ensure_dir,
@@ -143,6 +144,103 @@ def _exp1_phase_worker(task: tuple) -> dict[str, Any]:
     }
 
 
+def _summarize_null_panel(null_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], float, tuple[float, float]]:
+    null_agg: list[dict[str, Any]] = []
+    pg_vals_seen = sorted({int(r["p_g"]) for r in null_rows})
+    for pg in pg_vals_seen:
+        sub = [r for r in null_rows if int(r["p_g"]) == pg]
+        means = np.asarray([float(r.get("post_mean_kappa", float("nan"))) for r in sub], dtype=float)
+        tails = np.asarray([float(r.get("tail_prob_kappa_gt_eps", float("nan"))) for r in sub], dtype=float)
+        means = means[np.isfinite(means)]
+        null_agg.append(
+            {
+                "p_g": int(pg),
+                "median_post_mean_kappa": float(np.median(means)) if means.size else float("nan"),
+                "mean_post_mean_kappa": float(np.mean(means)) if means.size else float("nan"),
+                "q25_post_mean_kappa": float(np.quantile(means, 0.25)) if means.size else float("nan"),
+                "q75_post_mean_kappa": float(np.quantile(means, 0.75)) if means.size else float("nan"),
+                "std_post_mean_kappa": float(np.std(means, ddof=1)) if means.size > 1 else float("nan"),
+                "mean_tail_prob_kappa_gt_eps": float(np.nanmean(tails)),
+                "n_replicates": int(len(sub)),
+            }
+        )
+
+    if not null_agg:
+        return null_agg, float("nan"), (float("nan"), float("nan"))
+    log_pg = np.log(np.asarray([r["p_g"] for r in null_agg], dtype=float))
+    log_kappa = np.log(np.maximum(np.asarray([r["median_post_mean_kappa"] for r in null_agg], dtype=float), 1e-12))
+    fit_mask = np.asarray([20 <= int(r["p_g"]) <= 500 for r in null_agg], dtype=bool)
+    fit_mask &= np.isfinite(log_pg) & np.isfinite(log_kappa)
+    if int(np.sum(fit_mask)) < 2:
+        return null_agg, float("nan"), (float("nan"), float("nan"))
+    slope, slope_ci = _linreg_slope_ci(log_pg[fit_mask], log_kappa[fit_mask])
+    return null_agg, float(slope), (float(slope_ci[0]), float(slope_ci[1]))
+
+
+def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
+    sid, pg, r, seed, alpha_kappa, beta_kappa, tail_eps, sampler, backend, retry_limit, enforce_convergence = task
+    from .methods.fit_gr_rhs import fit_gr_rhs
+
+    s = experiment_seed(1, int(sid), int(r), master_seed=int(seed) + 7_000_000)
+    y = generate_null_group(pg=int(pg), sigma2=1.0, seed=s)
+    X = np.eye(int(pg), dtype=float)
+    groups = [list(range(int(pg)))]
+
+    res = _fit_with_convergence_retry(
+        lambda st, att, _s=s, _be=str(backend), _ak=alpha_kappa, _bk=beta_kappa: fit_gr_rhs(
+            X,
+            y,
+            groups,
+            task="gaussian",
+            seed=int(_s + 31 + 100 * int(att)),
+            p0=1,
+            sampler=st,
+            alpha_kappa=float(_ak),
+            beta_kappa=float(_bk),
+            use_group_scale=True,
+            use_local_scale=True,
+            shared_kappa=False,
+            tau_target="groups",
+            backend=str(_be),
+            progress_bar=False,
+        ),
+        method="GR_RHS",
+        sampler=sampler,
+        bayes_min_chains=int(getattr(sampler, "chains", 2)),
+        max_convergence_retries=int(retry_limit),
+        enforce_bayes_convergence=bool(enforce_convergence),
+    )
+
+    post_mean = float("nan")
+    post_median = float("nan")
+    tail_prob = float("nan")
+    if res.kappa_draws is not None:
+        kd = np.asarray(res.kappa_draws, dtype=float)
+        if kd.ndim > 2:
+            kd = kd.reshape(-1, kd.shape[-1])
+        if kd.ndim == 1:
+            kd = kd.reshape(-1, 1)
+        if kd.shape[-1] >= 1:
+            kg = kd[:, 0]
+            post_mean = float(np.mean(kg))
+            post_median = float(np.median(kg))
+            tail_prob = float(np.mean(kg > float(tail_eps)))
+
+    return {
+        "panel": "null_full",
+        "p_g": int(pg),
+        "setting_id": int(sid),
+        "replicate_id": int(r),
+        "alpha_kappa": float(alpha_kappa),
+        "beta_kappa": float(beta_kappa),
+        "post_mean_kappa": post_mean,
+        "post_median_kappa": post_median,
+        "tail_prob_kappa_gt_eps": tail_prob,
+        "status": str(res.status),
+        "converged": bool(res.converged),
+    }
+
+
 def run_exp1_kappa_profile_regimes(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
@@ -162,6 +260,14 @@ def run_exp1_kappa_profile_regimes(
     # Shared prior
     alpha_kappa: float = 0.5,
     beta_kappa: float = 1.0,
+    # Optional full-model null-curve overlay (for rebuttal diagnostics)
+    include_full_null_curve: bool = False,
+    full_null_repeats: int | None = None,
+    full_null_pg_list: Sequence[int] | None = None,
+    full_null_profile: str = "laptop",
+    full_null_backend: str = "gibbs",
+    full_null_max_convergence_retries: int = 1,
+    full_null_enforce_convergence: bool = True,
 ) -> Dict[str, str]:
     """
     Exp1: kappa_g profile regimes (Theorems 3.22, 3.32, Corollary 3.33).
@@ -200,29 +306,57 @@ def run_exp1_kappa_profile_regimes(
     null_rows = _parallel_rows(null_tasks, _exp1_null_worker, n_jobs=n_jobs, prefer_process=False, progress_desc="Exp1A Null")
 
     # Summary: median E[kappa_g|Y] per p_g
-    null_agg: list[dict] = []
-    pg_vals_seen = sorted({int(r["p_g"]) for r in null_rows})
-    for pg in pg_vals_seen:
-        sub = [r for r in null_rows if int(r["p_g"]) == pg]
-        means = np.array([float(r["post_mean_kappa"]) for r in sub])
-        tails = np.array([float(r.get("tail_prob_kappa_gt_eps", float("nan"))) for r in sub])
-        null_agg.append({
-            "p_g": pg,
-            "median_post_mean_kappa": float(np.median(means)),
-            "mean_post_mean_kappa": float(np.mean(means)),
-            "q25_post_mean_kappa": float(np.quantile(means, 0.25)),
-            "q75_post_mean_kappa": float(np.quantile(means, 0.75)),
-            "std_post_mean_kappa": float(np.std(means, ddof=1)) if len(means) > 1 else float("nan"),
-            "mean_tail_prob_kappa_gt_eps": float(np.nanmean(tails)),
-            "n_replicates": len(means),
-        })
-    log_pg = np.log(np.array([r["p_g"] for r in null_agg], dtype=float))
-    log_kappa = np.log(np.maximum(np.array([r["median_post_mean_kappa"] for r in null_agg], dtype=float), 1e-12))
-    # Fit slope on the asymptotic regime p_g in [20, 500] only; p_g=10 is pre-asymptotic
-    # and p_g>=1000 approaches the numerical floor, both bias the slope estimate.
-    fit_mask = np.array([20 <= r["p_g"] <= 500 for r in null_agg])
-    slope, slope_ci = _linreg_slope_ci(log_pg[fit_mask], log_kappa[fit_mask])
+    null_agg, slope, slope_ci = _summarize_null_panel(null_rows)
     log.info("Panel A log-log slope (p_g 20-500): %.4f (95%% CI [%.4f, %.4f]), expected -0.5", slope, slope_ci[0], slope_ci[1])
+
+    full_rows: list[dict[str, Any]] = []
+    full_agg: list[dict[str, Any]] = []
+    full_slope = float("nan")
+    full_slope_ci = (float("nan"), float("nan"))
+    if bool(include_full_null_curve):
+        full_profile = _normalize_compute_profile(full_null_profile)
+        full_sampler = _sampler_for_profile(full_profile)
+        full_reps = int(full_null_repeats) if full_null_repeats is not None else int(min(20, int(repeats)))
+        full_pg = list(full_null_pg_list or [20, 50, 100, 200, 500])
+        log.info(
+            "Exp1 Panel A full overlay: pg=%s, repeats=%d, backend=%s, profile=%s",
+            full_pg,
+            full_reps,
+            str(full_null_backend),
+            full_profile,
+        )
+        full_tasks: list[tuple] = []
+        for sid, pg in enumerate(full_pg, start=10_001):
+            for r in range(1, full_reps + 1):
+                full_tasks.append(
+                    (
+                        sid,
+                        int(pg),
+                        int(r),
+                        int(seed),
+                        float(alpha_kappa),
+                        float(beta_kappa),
+                        float(tail_eps),
+                        full_sampler,
+                        str(full_null_backend),
+                        int(full_null_max_convergence_retries),
+                        bool(full_null_enforce_convergence),
+                    )
+                )
+        full_rows = _parallel_rows(
+            full_tasks,
+            _exp1_full_null_worker,
+            n_jobs=n_jobs,
+            prefer_process=False,
+            progress_desc="Exp1A Null (full overlay)",
+        )
+        full_agg, full_slope, full_slope_ci = _summarize_null_panel(full_rows)
+        log.info(
+            "Panel A full-overlay slope (p_g 20-500): %.4f (95%% CI [%.4f, %.4f])",
+            full_slope,
+            full_slope_ci[0],
+            full_slope_ci[1],
+        )
 
     # --- Panel B: phase diagram ---
     log.info("Exp1 Panel B: phase diagram, pg=%s, tau=%s, xi_mults=%s", pg_phase, tau_phase, xi_mults)
@@ -254,22 +388,55 @@ def run_exp1_kappa_profile_regimes(
 
     # --- Save ---
     pd = load_pandas()
-    all_rows = null_rows + phase_rows
+    all_rows = null_rows + phase_rows + full_rows
     save_dataframe(pd.DataFrame(all_rows), out_dir / "raw_results.csv")
     _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(pd.DataFrame(null_agg), out_dir / "summary_null.csv")
     _record_produced_paths(produced, out_dir / "summary_null.csv")
     save_dataframe(pd.DataFrame(phase_agg), out_dir / "summary_phase.csv")
     _record_produced_paths(produced, out_dir / "summary_phase.csv")
+    if full_agg:
+        save_dataframe(pd.DataFrame(full_agg), out_dir / "summary_null_full.csv")
+        _record_produced_paths(produced, out_dir / "summary_null_full.csv")
     # Statistically correct criterion: does the 95% CI for slope contain the theoretical -0.5?
     # Also require the point estimate to be in a plausible range [-0.8, -0.25] to reject degenerate fits.
     _pass_ci_contains = slope_ci[0] < -0.5 < slope_ci[1]
     _pass_estimate = -0.8 < slope < -0.25
     save_json({"slope": slope, "slope_ci": list(slope_ci), "expected_slope": -0.5, "fit_range_pg": [20, 500], "ci_contains_theory": _pass_ci_contains, "pass": bool(_pass_ci_contains and _pass_estimate)}, out_dir / "null_slope_check.json")
     _record_produced_paths(produced, out_dir / "null_slope_check.json")
+    if full_agg:
+        _full_ci_contains = full_slope_ci[0] < -0.5 < full_slope_ci[1]
+        _full_pass_est = -0.8 < full_slope < -0.25
+        save_json(
+            {
+                "slope": float(full_slope),
+                "slope_ci": [float(full_slope_ci[0]), float(full_slope_ci[1])],
+                "expected_slope": -0.5,
+                "fit_range_pg": [20, 500],
+                "ci_contains_theory": bool(_full_ci_contains),
+                "pass": bool(_full_ci_contains and _full_pass_est),
+                "backend": str(full_null_backend),
+                "profile": str(full_profile),
+                "repeats": int(full_reps),
+            },
+            out_dir / "null_slope_check_full.json",
+        )
+        _record_produced_paths(produced, out_dir / "null_slope_check_full.json")
 
     try:
-        plot_exp1(pd.DataFrame(null_agg), slope=slope, slope_ci=slope_ci, out_path=fig_dir / "fig1a_null_contraction.png")
+        plot_exp1(
+            pd.DataFrame(null_agg),
+            slope=slope,
+            slope_ci=slope_ci,
+            out_path=fig_dir / "fig1a_null_contraction.png",
+            full_df=(pd.DataFrame(full_agg) if full_agg else None),
+            full_slope=(float(full_slope) if np.isfinite(full_slope) else None),
+            full_slope_ci=(
+                (float(full_slope_ci[0]), float(full_slope_ci[1]))
+                if (np.isfinite(full_slope_ci[0]) and np.isfinite(full_slope_ci[1]))
+                else None
+            ),
+        )
         _record_produced_paths(produced, fig_dir / "fig1a_null_contraction.png")
     except Exception as exc:
         log.warning("Plot exp1A failed: %s", exc)
@@ -288,6 +455,9 @@ def run_exp1_kappa_profile_regimes(
         "fig1a_null_contraction": str(fig_dir / "fig1a_null_contraction.png"),
         "fig1b_phase_diagram": str(fig_dir / "fig1b_phase_diagram.png"),
     }
+    if full_agg:
+        result_paths["null_summary_full"] = str(out_dir / "summary_null_full.csv")
+        result_paths["null_slope_check_full"] = str(out_dir / "null_slope_check_full.json")
     return _finalize_experiment_run(
         exp_key="exp1",
         save_dir=save_dir,

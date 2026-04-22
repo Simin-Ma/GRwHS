@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 from datetime import datetime
@@ -83,20 +83,30 @@ def _as_frame(df: Any):
     return pd.DataFrame(_records(df))
 
 
-def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Path) -> None:
-    """
-    Exp1 Panel A �� null contraction.
-
-    Left:  log-log scatter of median E[kappa|Y_null] vs p_g with fitted slope and
-           reference line at slope=-0.5 (Theorem 3.22).
-    Right: P(kappa_g > eps | Y_null) vs p_g (log scale) �� shows the WHOLE
-           distribution shrinks, not just the mean.
-    """
+def plot_exp1(
+    df: Any,
+    slope: float,
+    slope_ci: tuple[float, float],
+    out_path: Path,
+    *,
+    full_df: Any | None = None,
+    full_slope: float | None = None,
+    full_slope_ci: tuple[float, float] | None = None,
+) -> None:
+    """Exp1 Panel A: profile null-contraction with optional full-model overlay."""
     rows = sorted(_records(df), key=lambda r: float(r["p_g"]))
     if not rows:
         return
     p_g = np.asarray([float(r["p_g"]) for r in rows], dtype=float)
     med = np.asarray([float(r["median_post_mean_kappa"]) for r in rows], dtype=float)
+
+    rows_full = sorted(_records(full_df), key=lambda r: float(r["p_g"])) if full_df is not None else []
+    p_full = np.asarray([float(r["p_g"]) for r in rows_full], dtype=float) if rows_full else np.asarray([], dtype=float)
+    med_full = (
+        np.asarray([float(r["median_post_mean_kappa"]) for r in rows_full], dtype=float)
+        if rows_full
+        else np.asarray([], dtype=float)
+    )
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))
 
@@ -104,37 +114,73 @@ def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Pa
     ax = axes[0]
     lx = np.log(p_g)
     ly = np.log(np.maximum(med, 1e-12))
-    # Distinguish fit range (p_g 20-500) from out-of-range points visually
     fit_mask = (p_g >= 20) & (p_g <= 500)
-    ax.plot(lx[fit_mask], ly[fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, label="fit range (p_g 20�C500)")
+    ax.plot(lx[fit_mask], ly[fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, label="Profile: fit range (20-500)")
     ax.plot(lx[~fit_mask], ly[~fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, alpha=0.35, markerfacecolor="none")
     ax.plot(lx, ly, "-", color=_METHOD_COLORS["GR_RHS"], alpha=0.4)
-    # Draw fitted line through full x-range but anchored to fit-range regression
+
     fit_lx = lx[fit_mask]
     coef = np.polyfit(fit_lx, ly[fit_mask], deg=1)
-    ax.plot(lx, coef[0] * lx + coef[1], "--", color="black", lw=1.5, label=f"fitted slope={slope:.3f}")
+    ax.plot(lx, coef[0] * lx + coef[1], "--", color="black", lw=1.5, label=f"Profile fit slope={slope:.3f}")
     ref = np.log(med[fit_mask][0]) - (-0.5) * fit_lx[0]
-    ax.plot(lx, -0.5 * lx + ref, ":", color="gray", lw=1.2, label="theory slope=?0.5")
+    ax.plot(lx, -0.5 * lx + ref, ":", color="gray", lw=1.2, label="Theory slope=-0.5")
+
+    if rows_full:
+        ok_full = np.isfinite(p_full) & np.isfinite(med_full) & (med_full > 0)
+        if np.any(ok_full):
+            lx_full = np.log(p_full[ok_full])
+            ly_full = np.log(np.maximum(med_full[ok_full], 1e-12))
+            fit_mask_full = (p_full[ok_full] >= 20) & (p_full[ok_full] <= 500)
+            ax.plot(lx_full[fit_mask_full], ly_full[fit_mask_full], "s", color=_METHOD_COLORS["RHS"], ms=6, zorder=3, label="Full: fit range (20-500)")
+            ax.plot(lx_full[~fit_mask_full], ly_full[~fit_mask_full], "s", color=_METHOD_COLORS["RHS"], ms=6, zorder=3, alpha=0.35, markerfacecolor="none")
+            ax.plot(lx_full, ly_full, "-", color=_METHOD_COLORS["RHS"], alpha=0.45)
+            if int(np.sum(fit_mask_full)) >= 2:
+                coef_full = np.polyfit(lx_full[fit_mask_full], ly_full[fit_mask_full], deg=1)
+                slope_full_show = float(full_slope) if full_slope is not None else float(coef_full[0])
+                ax.plot(
+                    lx_full,
+                    coef_full[0] * lx_full + coef_full[1],
+                    "--",
+                    color=_METHOD_COLORS["RHS"],
+                    lw=1.5,
+                    label=f"Full fit slope={slope_full_show:.3f}",
+                )
+
     ax.set_xlabel("log p_g", fontsize=10)
-    ax.set_ylabel("log E[��_g | Y_null]  (median)", fontsize=10)
+    ax.set_ylabel("log E[kappa_g | Y_null] (median)", fontsize=10)
     ci_str = f"[{slope_ci[0]:.3f}, {slope_ci[1]:.3f}]"
-    ax.set_title(f"Null contraction (Thm 3.22)\nslope={slope:.3f}  95% CI {ci_str}", fontsize=9)
+    title = f"Null contraction (Thm 3.22)\nProfile slope={slope:.3f} 95% CI {ci_str}"
+    if full_slope is not None and full_slope_ci is not None:
+        title += f"\nFull slope={float(full_slope):.3f} 95% CI [{float(full_slope_ci[0]):.3f}, {float(full_slope_ci[1]):.3f}]"
+    ax.set_title(title, fontsize=9)
     ax.legend(fontsize=8)
 
     # --- Right: tail probability P(kappa > eps) vs p_g ---
     ax = axes[1]
     tail = np.asarray([float(r.get("mean_tail_prob_kappa_gt_eps", float("nan"))) for r in rows], dtype=float)
     if np.any(np.isfinite(tail)):
-        ax.plot(p_g, tail, "o-", color=_METHOD_COLORS["GR_RHS"], ms=6, label="P(�� > �� | Y_null)")
+        ax.plot(p_g, tail, "o-", color=_METHOD_COLORS["GR_RHS"], ms=6, label="Profile P(kappa>eps)")
+        if rows_full:
+            tail_full = np.asarray([float(r.get("mean_tail_prob_kappa_gt_eps", float("nan"))) for r in rows_full], dtype=float)
+            ok_tail = np.isfinite(p_full) & np.isfinite(tail_full)
+            if np.any(ok_tail):
+                ax.plot(
+                    p_full[ok_tail],
+                    tail_full[ok_tail],
+                    "s--",
+                    color=_METHOD_COLORS["RHS"],
+                    ms=5,
+                    lw=1.2,
+                    label="Full P(kappa>eps)",
+                )
         ax.set_xscale("log")
-        ax.set_xlabel("p_g  (log scale)", fontsize=10)
-        ax.set_ylabel("Mean P(��_g > �� | Y_null)", fontsize=10)
-        ax.set_title("Tail suppression as p_g grows\n(�� from tail_eps setting)", fontsize=9)
+        ax.set_xlabel("p_g (log scale)", fontsize=10)
+        ax.set_ylabel("Mean P(kappa_g > eps | Y_null)", fontsize=10)
+        ax.set_title("Tail suppression as p_g grows", fontsize=9)
         ax.axhline(0.0, color="gray", lw=0.8, ls=":")
         ax.set_ylim(-0.02, max(0.5, float(np.nanmax(tail)) * 1.15))
         ax.legend(fontsize=8)
     else:
-        # Fallback: IQR band (old behavior)
         q25 = np.asarray([float(r.get("q25_post_mean_kappa", float("nan"))) for r in rows], dtype=float)
         q75 = np.asarray([float(r.get("q75_post_mean_kappa", float("nan"))) for r in rows], dtype=float)
         ax.plot(p_g, med, "o-", color=_METHOD_COLORS["GR_RHS"], label="median")
@@ -143,7 +189,7 @@ def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Pa
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlabel("p_g", fontsize=10)
-        ax.set_ylabel("E[��_g | Y_null]", fontsize=10)
+        ax.set_ylabel("E[kappa_g | Y_null]", fontsize=10)
         ax.legend(fontsize=8)
 
     _save(fig, out_path)
