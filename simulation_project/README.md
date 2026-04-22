@@ -108,6 +108,5 @@ Simulation methods now use in-tree runtime modules under:
 - `simulation_project/src/infrastructure/` (fitting/evaluation/runtime/reporting/method registry)
 - `simulation_project/src/domain/` (typed config/result schemas)
 - `simulation_project/src/entrypoints/cli/` (CLI entrypoint)
-- `simulation_project/src/app/` and `simulation_project/src/interfaces/` (backward-compatible aliases)
 
 No external `grrhs` package directory is required.
