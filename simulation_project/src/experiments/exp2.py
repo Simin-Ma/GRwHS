@@ -12,12 +12,11 @@ from .reporting import _finalize_experiment_run, _paired_converged_subset, _reco
 from .runtime import (
     _BAYESIAN_DEFAULT_CHAINS,
     _attempts_used,
-    _gigg_config_for_profile,
-    _normalize_compute_profile,
+    _gigg_config_default,
     _parallel_rows,
     _resolve_convergence_retry_limit,
     _result_diag_fields,
-    _sampler_for_profile,
+    _sampler_for_standard,
     xi_crit_u0_rho,
 )
 from ..utils import (
@@ -115,31 +114,23 @@ def run_exp2_group_separation(
     repeats: int = 30,
     save_dir: str = "outputs/simulation_project",
     *,
-    profile: str = "full",
     bayes_min_chains: int | None = None,
     methods: Sequence[str] | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    rho_ref: float = 0.5,
+    rho_ref: float = 0.1,
     n_test: int = 50,
     sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
-    Exp2: Toy-example group separation (Theorem 3.34).
+    Exp2: Toy-example group separation (Theorem 3.34), single-default protocol.
 
-    4-group design calibrated at xi_crit(u0=0.5, rho=rho_ref=0.5):
-      xi_crit ~= 0.1  (20x stronger signals than the old rho_ref=0.1 design)
+    6-group gradient design calibrated at xi_crit(u0=0.5, rho=rho_ref=0.1):
+      group_sizes = [30, 20, 15, 10, 5, 5]
+      xi_ratios   = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0]
 
-      G0 (null):           p_g=30, xi_ratio=0.0  mu=0       beta_j=0.00
-      G1 (below thresh):   p_g=20, xi_ratio=1.0  mu=2.0     beta_j=0.10
-      G2 (above thresh):   p_g=15, xi_ratio=4.0  mu=6.0     beta_j=0.40
-      G3 (strong signal):  p_g=10, xi_ratio=8.0  mu=8.0     beta_j=0.80
-
-    Smaller group sizes for G2/G3 increase per-coefficient SNR so that the
-    full-model kappa values approach the profile-specialization theory.
-
-    Methods: GR_RHS vs RHS only.
+    Methods: GR_RHS vs RHS only; summary uses paired-converged subset.
 
     Key claims:
       - kappa_G0 ~ 0  (null contraction, Thm 3.22)
@@ -157,22 +148,21 @@ def run_exp2_group_separation(
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp2", base / "logs" / "exp2_group_separation.log")
 
-    profile_name = _normalize_compute_profile(profile)
-    sampler = _sampler_for_profile(profile_name)
-    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
+    sampler = _sampler_for_standard()
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     # Only GR_RHS and RHS; ignore any wider method list from profile resolver
     methods_use = [m for m in (methods or ["GR_RHS", "RHS"]) if m in ("GR_RHS", "RHS")]
     if not methods_use:
         methods_use = ["GR_RHS", "RHS"]
-    gigg_cfg = _gigg_config_for_profile(profile_name)
-    retry_limit = _resolve_convergence_retry_limit(profile_name, max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
+    gigg_cfg = _gigg_config_default()
+    retry_limit = _resolve_convergence_retry_limit(max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
 
     sigma2 = 1.0
     xi_c = xi_crit_u0_rho(u0=0.5, rho=float(rho_ref) / math.sqrt(sigma2))
 
-    group_sizes = [30, 20, 15, 10]
-    xi_ratios   = [0.0, 1.0, 4.0, 8.0]
+    group_sizes = [30, 20, 15, 10, 5, 5]
+    xi_ratios   = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0]
     mu = [xi_ratios[i] * xi_c * group_sizes[i] for i in range(len(group_sizes))]
 
     log.info("Exp2 toy: rho_ref=%.2f, xi_crit=%.4f, xi_ratios=%s, mu=%s",
@@ -222,7 +212,7 @@ def run_exp2_group_separation(
         required_cols=["null_group_mse", "signal_group_mse", "group_auroc", "mse_overall"],
         method_levels=methods_use,
     )
-    summary_df = raw.loc[raw["converged"]].groupby("method", as_index=False).agg(
+    summary_df = paired_raw.groupby("method", as_index=False).agg(
         null_group_mse=("null_group_mse", "mean"),
         null_group_mse_std=("null_group_mse", "std"),
         signal_group_mse=("signal_group_mse", "mean"),
@@ -234,6 +224,48 @@ def run_exp2_group_separation(
         lpd_test_std=("lpd_test", "std"),
         n_effective=("converged", "sum"),
     )
+    if "lpd_test_ppd" in paired_raw.columns:
+        lpd_ppd = paired_raw.groupby("method", as_index=False).agg(
+            lpd_test_ppd=("lpd_test_ppd", "mean"),
+            lpd_test_ppd_std=("lpd_test_ppd", "std"),
+        )
+        summary_df = summary_df.merge(lpd_ppd, on="method", how="left")
+    if "lpd_test_plugin" in paired_raw.columns:
+        lpd_plugin = paired_raw.groupby("method", as_index=False).agg(
+            lpd_test_plugin=("lpd_test_plugin", "mean"),
+            lpd_test_plugin_std=("lpd_test_plugin", "std"),
+        )
+        summary_df = summary_df.merge(lpd_plugin, on="method", how="left")
+
+    paired_delta_rows: list[dict[str, Any]] = []
+    for metric in ["null_group_mse", "signal_group_mse", "mse_overall", "group_auroc", "lpd_test"]:
+        if metric not in paired_raw.columns:
+            continue
+        wide = paired_raw.pivot_table(index="replicate_id", columns="method", values=metric, aggfunc="mean")
+        if "GR_RHS" not in wide.columns or "RHS" not in wide.columns:
+            continue
+        diff = (wide["GR_RHS"] - wide["RHS"]).dropna()
+        n_eff = int(diff.shape[0])
+        if n_eff == 0:
+            continue
+        mean_v = float(diff.mean())
+        sd_v = float(diff.std(ddof=1)) if n_eff > 1 else float("nan")
+        se_v = float(sd_v / np.sqrt(n_eff)) if n_eff > 1 else float("nan")
+        ci_lo = float(mean_v - 1.96 * se_v) if np.isfinite(se_v) else float("nan")
+        ci_hi = float(mean_v + 1.96 * se_v) if np.isfinite(se_v) else float("nan")
+        paired_delta_rows.append(
+            {
+                "metric": metric,
+                "contrast": "GR_RHS - RHS",
+                "mean_diff": mean_v,
+                "std_diff": sd_v,
+                "se_diff": se_v,
+                "ci95_lo": ci_lo,
+                "ci95_hi": ci_hi,
+                "n_effective_pairs": n_eff,
+            }
+        )
+    paired_delta_df = pd.DataFrame(paired_delta_rows)
     # kappa summary by group (GR_RHS)
     if not kappa_df.empty:
         kappa_summary = kappa_df.groupby(["group_id", "signal_label"], as_index=False).agg(
@@ -249,6 +281,10 @@ def run_exp2_group_separation(
     _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(summary_df, out_dir / "summary.csv")
     _record_produced_paths(produced, out_dir / "summary.csv")
+    save_dataframe(summary_df, out_dir / "summary_paired.csv")
+    _record_produced_paths(produced, out_dir / "summary_paired.csv")
+    save_dataframe(paired_delta_df, out_dir / "paired_deltas.csv")
+    _record_produced_paths(produced, out_dir / "paired_deltas.csv")
     save_dataframe(kappa_df, out_dir / "kappa_realizations.csv")
     _record_produced_paths(produced, out_dir / "kappa_realizations.csv")
     if not kappa_summary.empty:
@@ -260,6 +296,14 @@ def run_exp2_group_separation(
     _record_produced_paths(produced, tab_dir / "table_group_separation.csv")
     save_json({"rho_ref": float(rho_ref), "xi_crit": float(xi_c), "xi_ratios": xi_ratios, "mu": [round(v, 4) for v in mu], "group_sizes": group_sizes, "methods": methods_use, "bayes_min_chains": int(bayes_min_chains_use)}, out_dir / "exp2_meta.json")
     _record_produced_paths(produced, out_dir / "exp2_meta.json")
+    save_json(
+        {
+            "paired_stats": paired_stats.to_dict(orient="records"),
+            "pairing_note": "summary.csv is computed from paired-converged subset only",
+        },
+        out_dir / "paired_stats.json",
+    )
+    _record_produced_paths(produced, out_dir / "paired_stats.json")
 
     try:
         from .analysis.plotting import plot_exp2_separation
@@ -272,6 +316,8 @@ def run_exp2_group_separation(
     result_paths = {
         "raw": str(out_dir / "raw_results.csv"),
         "summary": str(out_dir / "summary.csv"),
+        "summary_paired": str(out_dir / "summary_paired.csv"),
+        "paired_deltas": str(out_dir / "paired_deltas.csv"),
         "table": str(tab_dir / "table_group_separation.csv"),
         "kappa_realizations": str(out_dir / "kappa_realizations.csv"),
         "meta": str(out_dir / "exp2_meta.json"),

@@ -13,12 +13,11 @@ from .runtime import (
     _BAYESIAN_DEFAULT_CHAINS,
     _EXP4_DEFAULT_MAX_CONV_RETRIES,
     _attempts_used,
-    _normalize_compute_profile,
     _parallel_rows,
     _resolve_convergence_retry_limit,
     _resolve_sampler_backend_for_experiment,
     _result_diag_fields,
-    _sampler_for_profile,
+    _sampler_for_standard,
 )
 from ..utils import (
     MASTER_SEED,
@@ -163,8 +162,7 @@ def run_exp4_variant_ablation(
     save_dir: str = "outputs/simulation_project",
     *,
     p0_list: Sequence[int] | None = None,
-    include_oracle: bool = False,
-    profile: str = "full",
+    include_oracle: bool = True,
     bayes_min_chains: int | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
@@ -186,7 +184,7 @@ def run_exp4_variant_ablation(
 
     Note: p0 here denotes active coefficients (sparsity in coefficients).
     DGP matches Exp3 scale: p=50 (5 groups of 10), n=100.
-    Default: p0 in {5, 30}, convergence retries=3, sampler backend=gibbs.
+    Default: p0 in {5, 15, 30}, include_oracle=True, retries=3, sampler=gibbs.
     """
     pd = load_pandas()
     produced: set[Path] = set()
@@ -196,12 +194,10 @@ def run_exp4_variant_ablation(
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp4", base / "logs" / "exp4_variant_ablation.log")
 
-    profile_name = _normalize_compute_profile(profile)
-    sampler = _sampler_for_profile(profile_name)
-    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
+    sampler = _sampler_for_standard()
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     retry_limit = _resolve_convergence_retry_limit(
-        profile_name,
         _EXP4_DEFAULT_MAX_CONV_RETRIES if max_convergence_retries is None else max_convergence_retries,
         until_bayes_converged=bool(until_bayes_converged),
     )
@@ -210,7 +206,7 @@ def run_exp4_variant_ablation(
     group_sizes = [10, 10, 10, 10, 10]
     p = int(sum(group_sizes))
     n = 100
-    p0_vals = list(p0_list or [5, 30])
+    p0_vals = list(p0_list or [5, 15, 30])
 
     def _variants_for_p0(p0_true: int) -> dict[str, dict]:
         tau0_oracle = rhs_style_tau0(n=n, p=p, p0=p0_true)
@@ -281,7 +277,7 @@ def run_exp4_variant_ablation(
     _record_produced_paths(produced, tab_dir / "table_variant_ablation.csv")
     save_json(
         {
-            "profile": profile_name,
+            "profile": "standard",
             "p0_vals": p0_vals,
             "group_sizes": group_sizes,
             "n": n,

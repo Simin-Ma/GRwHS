@@ -43,7 +43,7 @@ def _fit_all_methods(
     grrhs_p0 = int(p0)
     if tau_target_use == "groups" and (p0_groups is not None):
         grrhs_p0 = int(p0_groups)
-    methods_use = _resolve_method_list(methods, profile="full") if methods is not None else list(METHODS)
+    methods_use = _resolve_method_list(methods) if methods is not None else list(METHODS)
     gigg_cfg = dict(gigg_config or {})
     gigg_extra_retry_cfg = max(0, int(gigg_cfg.pop("extra_retry", 0)))
     gigg_retry_cap_raw = gigg_cfg.pop("retry_cap", None)

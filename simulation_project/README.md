@@ -84,6 +84,18 @@ Run analysis only:
 python -m simulation_project.src.run_experiment --experiment analysis
 ```
 
+Laptop fixed protocol (2-3 hour target, smoke/main/acceptance):
+
+```bash
+python scripts/run_laptop_best_2h.py --mode smoke
+python scripts/run_laptop_best_2h.py --mode main
+python scripts/run_laptop_best_2h.py --mode acceptance
+```
+
+Acceptance defaults to strict Bayesian convergence (Exp2-Exp5 must all be converged).
+Use `--allow-partial-convergence` only for diagnostic runs, not final conclusions.
+If needed, increase retries with `--nuts-max-convergence-retries` and `--exp4-max-convergence-retries`.
+
 Laptop profile:
 
 ```bash

@@ -21,6 +21,9 @@ SWEEP_EXPERIMENT_ALIASES: dict[str, str] = {
     "exp3a_main_benchmark": "exp3a",
     "exp3b": "exp3b",
     "exp3b_boundary_stress": "exp3b",
+    "3c": "exp3c",
+    "exp3c": "exp3c",
+    "exp3c_highdim_stress": "exp3c",
     "4": "exp4",
     "exp4": "exp4",
     "exp4_variant_ablation": "exp4",
@@ -29,7 +32,7 @@ SWEEP_EXPERIMENT_ALIASES: dict[str, str] = {
     "exp5_prior_sensitivity": "exp5",
 }
 
-CLI_EXPERIMENT_CHOICES: tuple[str, ...] = ("all", "1", "2", "3", "3a", "3b", "4", "5", "analysis")
+CLI_EXPERIMENT_CHOICES: tuple[str, ...] = ("all", "1", "2", "3", "3a", "3b", "3c", "4", "5", "analysis")
 
 CLI_CHOICE_TO_KEY: dict[str, str] = {
     "all": "all",
@@ -38,6 +41,7 @@ CLI_CHOICE_TO_KEY: dict[str, str] = {
     "3": "exp3",
     "3a": "exp3a",
     "3b": "exp3b",
+    "3c": "exp3c",
     "4": "exp4",
     "5": "exp5",
     "analysis": "analysis",

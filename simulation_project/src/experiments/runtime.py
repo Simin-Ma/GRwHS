@@ -12,8 +12,6 @@ from ..utils import FitResult, SamplerConfig
 # Method lists
 # ---------------------------------------------------------------------------
 METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus", "OLS", "LASSO_CV"]
-LAPTOP_METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GHS_plus", "OLS", "LASSO_CV"]
-COMPUTE_PROFILES = ("full", "laptop")
 EXP3_GIGG_MODES = ("paper_ref", "stable")
 
 _BAYESIAN_METHODS = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
@@ -29,16 +27,16 @@ _GHS_PLUS_DEFAULT_RHAT_THRESHOLD = 1.01
 _GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
 _EXP4_DEFAULT_BACKEND = "gibbs"
 _EXP4_DEFAULT_MAX_CONV_RETRIES = 3
+_DEFAULT_REPEATS = {"exp1": 500, "exp2": 100, "exp3": 100, "exp3c": 30, "exp4": 30, "exp5": 20}
 
 # ---------------------------------------------------------------------------
-# Compute-profile helpers
+# Runtime-default helpers
 # ---------------------------------------------------------------------------
 
 def _normalize_compute_profile(profile: str) -> str:
-    p = str(profile).strip().lower()
-    if p not in COMPUTE_PROFILES:
-        raise ValueError(f"unknown compute profile: {profile!r}; expected one of {COMPUTE_PROFILES}")
-    return p
+    # Profile split removed; keep a no-op normalizer for internal call sites.
+    _ = str(profile).strip().lower()
+    return "standard"
 
 
 def _normalize_exp3_gigg_mode(gigg_mode: str) -> str:
@@ -67,10 +65,9 @@ def _exp3_gigg_config_for_mode(base_cfg: dict[str, Any], *, gigg_mode: str) -> d
     return out
 
 
-def _resolve_method_list(methods: Sequence[str] | None, *, profile: str) -> list[str]:
+def _resolve_method_list(methods: Sequence[str] | None) -> list[str]:
     if methods is None:
-        base = METHODS if _normalize_compute_profile(profile) == "full" else LAPTOP_METHODS
-        return list(base)
+        return list(METHODS)
     requested = [str(m).strip() for m in methods]
     unknown = sorted(set(requested) - set(METHODS))
     if unknown:
@@ -78,75 +75,49 @@ def _resolve_method_list(methods: Sequence[str] | None, *, profile: str) -> list
     return [m for m in METHODS if m in set(requested)]
 
 
+def _sampler_for_standard(*, experiment: str = "") -> SamplerConfig:
+    _ = str(experiment)
+    return SamplerConfig()
+
+
 def _sampler_for_profile(profile: str, *, experiment: str = "") -> SamplerConfig:
-    p = _normalize_compute_profile(profile)
-    if p == "full":
-        return SamplerConfig()
-    return SamplerConfig(
-        chains=1,
-        warmup=250,
-        post_warmup_draws=250,
-        adapt_delta=0.92,
-        max_treedepth=10,
-        strict_adapt_delta=0.97,
-        strict_max_treedepth=12,
-        max_divergence_ratio=0.01,
-        rhat_threshold=1.03,
-        ess_threshold=120.0,
-    )
+    # Profile split removed; keep compatibility for internal module imports.
+    _ = _normalize_compute_profile(profile)
+    return _sampler_for_standard(experiment=experiment)
 
 
-def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
-    p = _normalize_compute_profile(profile)
-    if p == "full":
-        # Boss et al. (2024) Section 5.2: 10 000 burn-in + 10 000 posterior draws.
-        # floor=cap=10000 pins both burnin and draws to exactly 10k regardless of
-        # the HMC sampler budget, matching the published computational baseline.
-        # no_retry=True: if 10k+10k is not enough, report non-convergence rather
-        # than inflating the budget beyond what the paper used.
-        return {"iter_mult": 4, "iter_floor": 10000, "iter_cap": 10000, "btrick": False, "mmle_burnin_only": True, "no_retry": True}
-    # Laptop profile: keep GIGG light by default; difficult settings get extra retry.
-    # This avoids slowing the full grid while still rescuing problematic CL/G10x5 cases.
+def _gigg_config_default() -> dict[str, Any]:
+    # Single default follows the published GIGG budget.
     return {
-        "iter_mult": 2,
-        "iter_floor": 600,
-        "iter_cap": 1800,
+        "iter_mult": 4,
+        "iter_floor": 10000,
+        "iter_cap": 10000,
         "btrick": False,
         "mmle_burnin_only": True,
-        "randomize_group_order": False,
-        "extra_beta_refresh_prob": 0.0,
-        "progress_bar": False,
-        "extra_retry": 0,
+        "no_retry": True,
     }
 
 
-def _sampler_for_exp5(base: SamplerConfig, *, profile: str) -> SamplerConfig:
-    # DGP aligned with Exp3 (n=100, p=50); standard Exp3-level sampler budget suffices.
-    p = _normalize_compute_profile(profile)
-    if p == "full":
-        return SamplerConfig(
-            chains=max(4, int(base.chains)),
-            warmup=max(800, int(base.warmup)),
-            post_warmup_draws=max(800, int(base.post_warmup_draws)),
-            adapt_delta=max(0.95, float(base.adapt_delta)),
-            max_treedepth=max(12, int(base.max_treedepth)),
-            strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
-            strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
-            max_divergence_ratio=min(0.015, float(base.max_divergence_ratio)),
-            rhat_threshold=min(1.03, float(base.rhat_threshold)),
-            ess_threshold=max(400.0, float(base.ess_threshold)),
-        )
+def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
+    # Profile split removed; keep compatibility for internal module imports.
+    _ = _normalize_compute_profile(profile)
+    return _gigg_config_default()
+
+
+def _sampler_for_exp5(base: SamplerConfig, *, profile: str | None = None) -> SamplerConfig:
+    _ = profile
+    # Unified robust budget for prior-sensitivity in the single-default protocol.
     return SamplerConfig(
         chains=max(2, int(base.chains)),
-        warmup=max(500, int(base.warmup)),
-        post_warmup_draws=max(500, int(base.post_warmup_draws)),
-        adapt_delta=max(0.93, float(base.adapt_delta)),
-        max_treedepth=max(11, int(base.max_treedepth)),
-        strict_adapt_delta=max(0.98, float(base.strict_adapt_delta)),
-        strict_max_treedepth=max(13, int(base.strict_max_treedepth)),
-        max_divergence_ratio=min(0.02, float(base.max_divergence_ratio)),
-        rhat_threshold=min(1.05, float(base.rhat_threshold)),
-        ess_threshold=max(200.0, float(base.ess_threshold)),
+        warmup=max(800, int(base.warmup)),
+        post_warmup_draws=max(800, int(base.post_warmup_draws)),
+        adapt_delta=max(0.95, float(base.adapt_delta)),
+        max_treedepth=max(12, int(base.max_treedepth)),
+        strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
+        strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
+        max_divergence_ratio=min(0.015, float(base.max_divergence_ratio)),
+        rhat_threshold=min(1.03, float(base.rhat_threshold)),
+        ess_threshold=max(400.0, float(base.ess_threshold)),
     )
 
 
@@ -184,14 +155,11 @@ def _sampler_for_bayesian_default(base: SamplerConfig, *, min_chains: int | None
     )
 
 
-def _default_repeats(exp: str, profile: str) -> int:
-    p = _normalize_compute_profile(profile)
-    full = {"exp1": 500, "exp2": 30, "exp3": 20, "exp4": 30, "exp5": 30}
-    laptop = {"exp1": 200, "exp2": 10, "exp3": 5, "exp4": 15, "exp5": 15}
-    table = full if p == "full" else laptop
-    if str(exp).lower() not in table:
+def _default_repeats(exp: str) -> int:
+    key = str(exp).lower()
+    if key not in _DEFAULT_REPEATS:
         raise ValueError(f"unknown experiment: {exp!r}")
-    return int(table[str(exp).lower()])
+    return int(_DEFAULT_REPEATS[key])
 
 # ---------------------------------------------------------------------------
 # Convergence-retry infrastructure
@@ -201,24 +169,21 @@ def _is_bayesian_method(method: str) -> bool:
     return str(method) in _BAYESIAN_METHODS
 
 
-def _default_convergence_retries(profile: str) -> int:
-    return 2 if _normalize_compute_profile(profile) == "full" else 1
+def _default_convergence_retries() -> int:
+    return 2
 
 
 def _resolve_convergence_retry_limit(
-    profile: str,
     max_convergence_retries: int | None,
     *,
     until_bayes_converged: bool,
 ) -> int:
     if max_convergence_retries is not None:
         return int(max_convergence_retries)
-    # Default retries are profile-bounded to avoid runaway wall-time.
-    # If truly unbounded-until-converged behavior is desired, pass
-    # max_convergence_retries=-1 explicitly.
+    # Single-default retry budget.
     if bool(until_bayes_converged):
-        return _default_convergence_retries(profile)
-    return _default_convergence_retries(profile)
+        return _default_convergence_retries()
+    return _default_convergence_retries()
 
 
 def _resolve_sampler_backend_for_experiment(exp: str, sampler_backend: str) -> str:

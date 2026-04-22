@@ -266,4 +266,37 @@ Figure outputs are now versioned as well:
 
 So each newly generated figure is preserved with its own timestamp.
 
+## 8. Laptop 2-3 Hour Protocol
+
+For the fixed "main-result-first" laptop protocol (smoke/main/acceptance in one place):
+
+```bash
+python scripts/run_laptop_best_2h.py --mode smoke
+python scripts/run_laptop_best_2h.py --mode main
+python scripts/run_laptop_best_2h.py --mode acceptance
+```
+
+Defaults:
+- `save_dir=outputs/simulation_project/laptop_best_2h`
+- `seed=20260415`
+- `n_jobs=2` (set `--n-jobs 1` on low-memory laptops)
+- main run order: `Exp1 -> Exp2 -> Exp3a -> Exp4 -> Exp3b -> Exp5`
+- acceptance uses strict convergence gating by default:
+  all Bayesian rows in Exp2-Exp5 must be `converged=True` and `status=ok`
+  before scientific-claim checks are considered credible.
+
+Optional (diagnostic only, not for final claims):
+
+```bash
+python scripts/run_laptop_best_2h.py --mode acceptance --allow-partial-convergence
+```
+
+Runtime fallback when exceeding 3 hours:
+- first reduce `--exp5-repeats 3 -> 2`
+- then reduce `--exp3b-repeats 3 -> 2`
+
+Convergence-first tuning (if strict convergence fails):
+- increase `--nuts-max-convergence-retries` (for Exp2/3/5)
+- increase `--exp4-max-convergence-retries` (for Exp4)
+
 

@@ -7,16 +7,15 @@ import numpy as np
 
 from .evaluation import _bridge_ratio_diagnostics, _kappa_group_means
 from .fitting import _fit_with_convergence_retry
-from .reporting import _finalize_experiment_run, _record_produced_paths
+from .reporting import _finalize_experiment_run, _paired_converged_subset, _record_produced_paths
 from .runtime import (
     _BAYESIAN_DEFAULT_CHAINS,
     _attempts_used,
-    _normalize_compute_profile,
     _parallel_rows,
     _resolve_convergence_retry_limit,
     _result_diag_fields,
     _sampler_for_exp5,
-    _sampler_for_profile,
+    _sampler_for_standard,
 )
 from ..utils import (
     MASTER_SEED,
@@ -149,7 +148,6 @@ def run_exp5_prior_sensitivity(
     save_dir: str = "outputs/simulation_project",
     *,
     prior_grid: Sequence[tuple[float, float]] | None = None,
-    profile: str = "full",
     bayes_min_chains: int | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
@@ -181,11 +179,10 @@ def run_exp5_prior_sensitivity(
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp5", base / "logs" / "exp5_prior_sensitivity.log")
 
-    profile_name = _normalize_compute_profile(profile)
-    sampler = _sampler_for_exp5(_sampler_for_profile(profile_name), profile=profile_name)
-    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else (2 if profile_name == "laptop" else int(_BAYESIAN_DEFAULT_CHAINS))
+    sampler = _sampler_for_exp5(_sampler_for_standard())
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
-    retry_limit = _resolve_convergence_retry_limit(profile_name, max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
+    retry_limit = _resolve_convergence_retry_limit(max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
     if max_convergence_retries is None and retry_limit < 0:
         # Exp5 is intentionally heavy; cap unlimited mode to a practical retry budget.
         retry_limit = 3
@@ -208,7 +205,22 @@ def run_exp5_prior_sensitivity(
         rows.extend(chunk)
 
     raw = pd.DataFrame(rows)
-    summary = raw.loc[raw["converged"]].groupby(["setting_id", "alpha_kappa", "beta_kappa"], as_index=False).agg(
+    raw["prior_key"] = raw.apply(
+        lambda r: f"{float(r['alpha_kappa']):.6g}|{float(r['beta_kappa']):.6g}",
+        axis=1,
+    )
+    prior_levels = [f"{float(a):.6g}|{float(b):.6g}" for (a, b) in priors]
+    paired_raw, paired_stats = _paired_converged_subset(
+        raw,
+        group_cols=["setting_id"],
+        method_col="prior_key",
+        replicate_col="replicate_id",
+        converged_col="converged",
+        required_cols=["mse_null", "mse_signal", "group_auroc"],
+        method_levels=prior_levels,
+    )
+
+    summary = paired_raw.groupby(["setting_id", "alpha_kappa", "beta_kappa"], as_index=False).agg(
         mse_null=("mse_null", "mean"),
         mse_signal=("mse_signal", "mean"),
         group_auroc=("group_auroc", "mean"),
@@ -218,13 +230,64 @@ def run_exp5_prior_sensitivity(
         n_effective=("converged", "sum"),
     )
 
+    default_key = "0.5|1"
+    paired_delta_rows: list[dict[str, Any]] = []
+    for sid in sorted(set(int(v) for v in paired_raw["setting_id"].tolist())):
+        sub = paired_raw.loc[paired_raw["setting_id"].astype(int) == int(sid)].copy()
+        for metric in ["mse_signal", "group_auroc"]:
+            wide = sub.pivot_table(index="replicate_id", columns="prior_key", values=metric, aggfunc="mean")
+            if default_key not in wide.columns:
+                continue
+            for pk in [c for c in wide.columns if str(c) != default_key]:
+                diff = (wide[pk] - wide[default_key]).dropna()
+                n_eff = int(diff.shape[0])
+                if n_eff == 0:
+                    continue
+                mean_v = float(diff.mean())
+                sd_v = float(diff.std(ddof=1)) if n_eff > 1 else float("nan")
+                se_v = float(sd_v / np.sqrt(n_eff)) if n_eff > 1 else float("nan")
+                ci_lo = float(mean_v - 1.96 * se_v) if np.isfinite(se_v) else float("nan")
+                ci_hi = float(mean_v + 1.96 * se_v) if np.isfinite(se_v) else float("nan")
+                a_v, b_v = [float(x) for x in str(pk).split("|")]
+                paired_delta_rows.append(
+                    {
+                        "setting_id": int(sid),
+                        "metric": metric,
+                        "prior_key": str(pk),
+                        "alpha_kappa": float(a_v),
+                        "beta_kappa": float(b_v),
+                        "contrast": "prior - default(0.5,1.0)",
+                        "mean_diff": mean_v,
+                        "std_diff": sd_v,
+                        "se_diff": se_v,
+                        "ci95_lo": ci_lo,
+                        "ci95_hi": ci_hi,
+                        "n_effective_pairs": n_eff,
+                    }
+                )
+    delta_df = pd.DataFrame(paired_delta_rows)
+
     save_dataframe(raw, out_dir / "raw_results.csv")
     _record_produced_paths(produced, out_dir / "raw_results.csv")
     save_dataframe(summary, out_dir / "summary.csv")
     _record_produced_paths(produced, out_dir / "summary.csv")
+    save_dataframe(summary, out_dir / "summary_paired.csv")
+    _record_produced_paths(produced, out_dir / "summary_paired.csv")
+    save_dataframe(delta_df, out_dir / "prior_pairwise_delta.csv")
+    _record_produced_paths(produced, out_dir / "prior_pairwise_delta.csv")
     save_dataframe(summary, tab_dir / "table_prior_sensitivity.csv")
     _record_produced_paths(produced, tab_dir / "table_prior_sensitivity.csv")
-    save_json({"profile": profile_name, "prior_grid": [list(p) for p in priors], "scenarios": [[s, g, m] for s, g, m in scenarios], "bayes_min_chains": int(bayes_min_chains_use)}, out_dir / "exp5_meta.json")
+    save_json(
+        {
+            "profile": "standard",
+            "prior_grid": [list(p) for p in priors],
+            "scenarios": [[s, g, m] for s, g, m in scenarios],
+            "bayes_min_chains": int(bayes_min_chains_use),
+            "paired_stats": paired_stats.to_dict(orient="records"),
+            "pairing_note": "summary.csv uses paired-converged subset across all priors per setting",
+        },
+        out_dir / "exp5_meta.json",
+    )
     _record_produced_paths(produced, out_dir / "exp5_meta.json")
 
     try:
@@ -239,6 +302,8 @@ def run_exp5_prior_sensitivity(
     result_paths = {
         "raw": str(out_dir / "raw_results.csv"),
         "summary": str(out_dir / "summary.csv"),
+        "summary_paired": str(out_dir / "summary_paired.csv"),
+        "prior_pairwise_delta": str(out_dir / "prior_pairwise_delta.csv"),
         "table": str(tab_dir / "table_prior_sensitivity.csv"),
         "meta": str(out_dir / "exp5_meta.json"),
         "fig5_prior_sensitivity": str(base / "figures" / "fig5_prior_sensitivity.png"),

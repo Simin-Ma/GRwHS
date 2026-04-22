@@ -8,19 +8,18 @@ import numpy as np
 
 from .evaluation import _bridge_ratio_diagnostics, _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
 from .fitting import _fit_all_methods
-from .reporting import _finalize_experiment_run, _record_produced_paths
+from .reporting import _finalize_experiment_run, _paired_converged_subset, _record_produced_paths
 from .runtime import (
     _BAYESIAN_DEFAULT_CHAINS,
     _attempts_used,
     _exp3_gigg_config_for_mode,
-    _gigg_config_for_profile,
+    _gigg_config_default,
     _is_bayesian_method,
-    _normalize_compute_profile,
     _normalize_exp3_gigg_mode,
     _parallel_rows,
     _resolve_convergence_retry_limit,
     _result_diag_fields,
-    _sampler_for_profile,
+    _sampler_for_standard,
     xi_crit_u0_rho,
 )
 from ..utils import (
@@ -39,15 +38,16 @@ from ..utils import (
 # Factor design directly testing the core GR-RHS hypothesis:
 #   "kappa_g mechanism is most beneficial when signals are group-concentrated"
 #
-# Factors (default core30 design):
-#   signal_structure: concentrated / distributed / boundary
+# Factors (default single design):
+#   signal_structure: concentrated / distributed / boundary / half_dense / dense
 #     concentrated: 2/5 groups fully active, beta_j = 1/sqrt(p_g) (dense in group)
 #     distributed:  2/5 groups with one active variable each, beta_j = 1
 #     boundary:     2/5 groups active, beta calibrated at xi_ratio * xi_crit(u0, rho_profile),
 #                   where rho_profile = rho_within / sqrt(sigma2_boundary)
+#     half_dense:   random active coefficients at 20% density
+#     dense:        random active coefficients at 60% density
 #   env points:
-#     E0        : (rw=0.3, rb=0.1, snr=1.0) [all signals]
-#     RW_PLUS   : (rw=0.8, rb=0.1, snr=1.0) [all signals]
+#     rw in {0.3, 0.6, 0.8}, rb=0.1, snr in {0.2, 1.0, 5.0}
 #
 # Prediction:
 #   concentrated + moderate/high rho: GR-RHS wins on null_group_mse
@@ -79,24 +79,21 @@ _DEFAULT_EXP3_GROUP_CONFIGS: list[dict[str, Any]] = [
     {"name": "CS",    "group_sizes": [30, 10, 5, 3, 2],     "active_groups": [3, 4]},
 ]
 
-_DEFAULT_EXP3_ENV_POINTS_CORE30: list[dict[str, Any]] = [
-    {
-        "env_id": "E0",
-        "setting_block": "anchor",
-        "rho_within": 0.3,
-        "rho_between": 0.1,
-        "target_snr": 1.0,
-        "signals": ["concentrated", "distributed", "boundary"],
-    },
-    {
-        "env_id": "RW_PLUS",
-        "setting_block": "rw_axis",
-        "rho_within": 0.8,
-        "rho_between": 0.1,
-        "target_snr": 1.0,
-        "signals": ["concentrated", "distributed", "boundary"],
-    },
-]
+def _default_exp3_env_points() -> list[dict[str, Any]]:
+    points: list[dict[str, Any]] = []
+    for rw in [0.3, 0.6, 0.8]:
+        for snr in [0.2, 1.0, 5.0]:
+            points.append(
+                {
+                    "env_id": f"RW{int(round(rw*10)):02d}_SNR{int(round(snr*10)):02d}",
+                    "setting_block": "core_axis",
+                    "rho_within": float(rw),
+                    "rho_between": 0.1,
+                    "target_snr": float(snr),
+                    "signals": ["concentrated", "distributed", "boundary", "half_dense", "dense"],
+                }
+            )
+    return points
 
 
 def _exp3_keep_env_point_rw_gt_rb(ep: dict[str, Any]) -> bool:
@@ -128,12 +125,15 @@ def _build_benchmark_beta(
     boundary_u0: float = _BOUNDARY_U0,
     boundary_xi_ratio: float = _BOUNDARY_XI_RATIO,
     boundary_rho_profile: float | None = None,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Construct beta for each benchmark signal structure.
 
     concentrated: all variables in active groups with equal weight (||beta_g||=1 per group)
     distributed:  first variable only in each active group (beta_j=1)
     boundary:     all vars in active groups, calibrated at xi_ratio * xi_crit(u0, rho_profile)
+    half_dense:   random coefficients over all p with 20% active density
+    dense:        random coefficients over all p with 60% active density
     """
     from ..utils import canonical_groups
     groups = canonical_groups(group_sizes)
@@ -158,6 +158,14 @@ def _build_benchmark_beta(
             mu_g = float(boundary_xi_ratio) * xi_c * pg
             beta_val = math.sqrt(2.0 * float(sigma2) * mu_g / pg)
             beta[idx] = beta_val
+    elif signal in {"half_dense", "dense"}:
+        rng_local = rng if rng is not None else np.random.default_rng(12345)
+        density = 0.2 if signal == "half_dense" else 0.6
+        n_active = max(1, int(round(total_p * density)))
+        active_idx = rng_local.choice(np.arange(total_p), size=n_active, replace=False)
+        mags = rng_local.uniform(0.3, 1.2, size=n_active)
+        signs = rng_local.choice([-1.0, 1.0], size=n_active)
+        beta[active_idx] = mags * signs
     else:
         raise ValueError(f"unknown signal structure: {signal!r}")
     return beta
@@ -182,6 +190,7 @@ def _exp3_worker(
         boundary_xi_ratio = float(task.get("boundary_xi_ratio", _BOUNDARY_XI_RATIO))
         r = int(task["replicate_id"])
         seed_base = int(task["seed_base"])
+        n_train = int(task.get("n_train", 100))
         n_test = int(task["n_test"])
         sampler = task["sampler"]
         methods_raw = task.get("methods", None)
@@ -201,8 +210,10 @@ def _exp3_worker(
         if len(task) == 19:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
             boundary_xi_ratio = float(_BOUNDARY_XI_RATIO)
+            n_train = 100
         else:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
+            n_train = 100
         methods = [str(m) for m in methods]
         gigg_mode = "stable"
     group_cfg_name: str = str(group_cfg["name"])
@@ -235,7 +246,6 @@ def _exp3_worker(
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
     active_groups: list[int] = list(group_cfg["active_groups"])
-    n_train = 100
 
     sigma2_boundary = float(_SIGMA2_BOUNDARY)
     boundary_rho_profile = float(rho_within) / math.sqrt(max(sigma2_boundary, 1e-12))
@@ -253,6 +263,7 @@ def _exp3_worker(
         boundary_u0=float(_BOUNDARY_U0),
         boundary_xi_ratio=float(boundary_xi_ratio),
         boundary_rho_profile=boundary_rho_profile if signal == "boundary" else None,
+        rng=np.random.default_rng(s + 101),
     )
     p = int(sum(group_sizes))
 
@@ -293,7 +304,14 @@ def _exp3_worker(
         )
     )
     n_groups = len(group_sizes)
-    active_group_set = set(active_groups)
+    if signal in {"half_dense", "dense"}:
+        active_group_set = {
+            gid for gid, g in enumerate(groups)
+            if np.any(np.abs(beta0[np.asarray(g, dtype=int)]) > 1e-12)
+        }
+        active_groups = sorted(active_group_set)
+    else:
+        active_group_set = set(active_groups)
     null_groups = [g for g in range(n_groups) if g not in active_group_set]
     signal_group_mask = np.asarray([g in active_group_set for g in range(n_groups)], dtype=bool)
 
