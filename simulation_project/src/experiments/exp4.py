@@ -247,7 +247,8 @@ def run_exp4_variant_ablation(
         rows.extend(chunk)
 
     raw = pd.DataFrame(rows)
-    summary = raw.loc[raw["converged"]].groupby(["p0_true", "variant"], as_index=False).agg(
+    valid_mask = raw["converged"].fillna(False).astype(bool) & raw["status"].astype(str).str.lower().eq("ok")
+    summary = raw.loc[valid_mask].groupby(["p0_true", "variant"], as_index=False).agg(
         mse_null=("mse_null", "mean"),
         mse_signal=("mse_signal", "mean"),
         mse_overall=("mse_overall", "mean"),
@@ -277,7 +278,6 @@ def run_exp4_variant_ablation(
     _record_produced_paths(produced, tab_dir / "table_variant_ablation.csv")
     save_json(
         {
-            "profile": "standard",
             "p0_vals": p0_vals,
             "group_sizes": group_sizes,
             "n": n,

@@ -230,8 +230,8 @@ def _exp3_worker(
                 gigg_config["extra_retry"] = max(1, int(gigg_config.get("extra_retry", 0)))
                 # Keep rescue behavior efficient while preserving robustness.
                 gigg_config["retry_cap"] = 2
-                # Full profile defaults to paper-locked no_retry; for hard Exp3 settings
-                # we allow one bounded rescue attempt to improve benchmark completeness.
+                # For hard Exp3 settings, allow one bounded rescue attempt to
+                # improve benchmark completeness while preserving robustness.
                 if bool(gigg_config.get("no_retry", False)):
                     gigg_config["no_retry"] = False
                 gigg_config["progress_bar"] = bool(gigg_config.get("progress_bar", False))
@@ -750,7 +750,6 @@ def run_exp3_linear_benchmark(
     _record_produced_paths(produced, tab_dir / "table_linear_benchmark.csv")
     save_json({
         "exp3_design": design_mode,
-        "profile": "standard",
         "gigg_mode": str(gigg_mode_name),
         "group_configs": [{"name": gc["name"], "group_sizes": gc["group_sizes"], "active_groups": gc["active_groups"]} for gc in gc_list],
         "signals": signals,
@@ -876,7 +875,7 @@ def run_exp3c_highdim_stress(
         {"name": "HD10x50", "group_sizes": [50] * 10, "active_groups": [0, 1]},
     ]
     env_points = []
-    for rw in [0.3, 0.6]:
+    for rw in [0.3, 0.6, 0.8]:
         for snr in [0.2, 1.0, 5.0]:
             env_points.append(
                 {

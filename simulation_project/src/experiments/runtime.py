@@ -33,11 +33,6 @@ _DEFAULT_REPEATS = {"exp1": 500, "exp2": 100, "exp3": 100, "exp3c": 30, "exp4": 
 # Runtime-default helpers
 # ---------------------------------------------------------------------------
 
-def _normalize_compute_profile(profile: str) -> str:
-    # Profile split removed; keep a no-op normalizer for internal call sites.
-    _ = str(profile).strip().lower()
-    return "standard"
-
 
 def _normalize_exp3_gigg_mode(gigg_mode: str) -> str:
     mode = str(gigg_mode).strip().lower()
@@ -80,12 +75,6 @@ def _sampler_for_standard(*, experiment: str = "") -> SamplerConfig:
     return SamplerConfig()
 
 
-def _sampler_for_profile(profile: str, *, experiment: str = "") -> SamplerConfig:
-    # Profile split removed; keep compatibility for internal module imports.
-    _ = _normalize_compute_profile(profile)
-    return _sampler_for_standard(experiment=experiment)
-
-
 def _gigg_config_default() -> dict[str, Any]:
     # Single default follows the published GIGG budget.
     return {
@@ -96,16 +85,7 @@ def _gigg_config_default() -> dict[str, Any]:
         "mmle_burnin_only": True,
         "no_retry": True,
     }
-
-
-def _gigg_config_for_profile(profile: str) -> dict[str, Any]:
-    # Profile split removed; keep compatibility for internal module imports.
-    _ = _normalize_compute_profile(profile)
-    return _gigg_config_default()
-
-
-def _sampler_for_exp5(base: SamplerConfig, *, profile: str | None = None) -> SamplerConfig:
-    _ = profile
+def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
     # Unified robust budget for prior-sensitivity in the single-default protocol.
     return SamplerConfig(
         chains=max(2, int(base.chains)),

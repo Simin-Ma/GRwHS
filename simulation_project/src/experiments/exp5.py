@@ -234,7 +234,7 @@ def run_exp5_prior_sensitivity(
     paired_delta_rows: list[dict[str, Any]] = []
     for sid in sorted(set(int(v) for v in paired_raw["setting_id"].tolist())):
         sub = paired_raw.loc[paired_raw["setting_id"].astype(int) == int(sid)].copy()
-        for metric in ["mse_signal", "group_auroc"]:
+        for metric in ["mse_null", "mse_signal", "group_auroc"]:
             wide = sub.pivot_table(index="replicate_id", columns="prior_key", values=metric, aggfunc="mean")
             if default_key not in wide.columns:
                 continue
@@ -279,7 +279,6 @@ def run_exp5_prior_sensitivity(
     _record_produced_paths(produced, tab_dir / "table_prior_sensitivity.csv")
     save_json(
         {
-            "profile": "standard",
             "prior_grid": [list(p) for p in priors],
             "scenarios": [[s, g, m] for s, g, m in scenarios],
             "bayes_min_chains": int(bayes_min_chains_use),

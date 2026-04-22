@@ -15,9 +15,8 @@ from .dgp.normal_means import (
 from .fitting import _fit_with_convergence_retry
 from .reporting import _finalize_experiment_run, _record_produced_paths
 from .runtime import (
-    _normalize_compute_profile,
     _parallel_rows,
-    _sampler_for_profile,
+    _sampler_for_standard,
     kappa_star_xi_ratio_u0_rho,
     xi_crit_u0_rho,
 )
@@ -281,7 +280,6 @@ def run_exp1_kappa_profile_regimes(
     include_full_null_curve: bool = False,
     full_null_repeats: int | None = None,
     full_null_pg_list: Sequence[int] | None = None,
-    full_null_profile: str = "laptop",
     full_null_backend: str = "gibbs",
     full_null_max_convergence_retries: int = 1,
     full_null_enforce_convergence: bool = True,
@@ -331,16 +329,14 @@ def run_exp1_kappa_profile_regimes(
     full_slope = float("nan")
     full_slope_ci = (float("nan"), float("nan"))
     if bool(include_full_null_curve):
-        full_profile = _normalize_compute_profile(full_null_profile)
-        full_sampler = _sampler_for_profile(full_profile)
+        full_sampler = _sampler_for_standard(experiment="exp1_full_overlay")
         full_reps = int(full_null_repeats) if full_null_repeats is not None else int(min(20, int(repeats)))
         full_pg = list(full_null_pg_list or [20, 50, 100, 200, 500])
         log.info(
-            "Exp1 Panel A full overlay: pg=%s, repeats=%d, backend=%s, profile=%s",
+            "Exp1 Panel A full overlay: pg=%s, repeats=%d, backend=%s",
             full_pg,
             full_reps,
             str(full_null_backend),
-            full_profile,
         )
         full_tasks: list[tuple] = []
         for sid, pg in enumerate(full_pg, start=10_001):
@@ -437,7 +433,6 @@ def run_exp1_kappa_profile_regimes(
                 "ci_contains_theory": bool(_full_ci_contains),
                 "pass": bool(_full_ci_contains and _full_pass_est),
                 "backend": str(full_null_backend),
-                "profile": str(full_profile),
                 "repeats": int(full_reps),
             },
             out_dir / "null_slope_check_full.json",

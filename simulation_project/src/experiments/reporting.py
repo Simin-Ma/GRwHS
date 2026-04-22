@@ -347,6 +347,8 @@ def _paired_converged_subset(
     converged_col: str,
     required_cols: Sequence[str],
     method_levels: Sequence[str] | None = None,
+    status_col: str | None = "status",
+    status_ok_values: Sequence[str] | None = ("ok",),
 ):
     pd = load_pandas()
 
@@ -365,6 +367,9 @@ def _paired_converged_subset(
         )
     work = work.loc[work[method_col].isin(methods_target)].copy()
     valid = work[converged_col].fillna(False).astype(bool)
+    if status_col is not None and str(status_col) in work.columns and status_ok_values is not None:
+        allowed = {str(v).strip().lower() for v in status_ok_values}
+        valid &= work[str(status_col)].astype(str).str.strip().str.lower().isin(allowed)
     for c in required_cols:
         valid &= work[c].notna()
     work["_pair_valid"] = valid
