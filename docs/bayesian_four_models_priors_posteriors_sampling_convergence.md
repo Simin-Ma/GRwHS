@@ -9,6 +9,17 @@ This note summarizes the Bayesian backends now used by the consolidated simulati
 - GIGG: `simulation_project/src/core/models/gigg_regression.py`
 - Grouped Horseshoe+: `simulation_project/src/core/models/baselines/grouped_horseshoe.py`
 
+GIGG is ported from the CRAN R package. The active implementation lives at
+`simulation_project/src/core/models/gigg_regression.py`, replacing all prior `grrhs`-path
+references. Pipeline wrapper: `simulation_project/src/fit_gigg.py` (returns unified
+`FitResult` objects for experiment runners).
+
+Sanity check:
+
+```python
+from simulation_project.src.core.models.gigg_regression import GIGGRegression
+```
+
 ## Diagnostics
 
 Convergence diagnostics are provided by:
