@@ -210,11 +210,14 @@ def analyze_exp1(results_dir: Path) -> dict[str, Any]:
 def analyze_exp2(results_dir: Path) -> dict[str, Any]:
     findings: list[str] = []
 
-    summary_path = results_dir / "summary.csv"
+    summary_path = results_dir / "summary_paired.csv"
+    if not summary_path.exists():
+        summary_path = results_dir / "summary.csv"
     if not summary_path.exists():
         return {"metrics": {}, "findings": ["  summary.csv not found, skipping."]}
 
     rows = _load_csv(summary_path)
+    lpd_metric = "lpd_test_ppd" if rows and ("lpd_test_ppd" in rows[0]) else "lpd_test"
 
     def _agg(metric: str, agg_fn=np.mean) -> dict[str, float]:
         out: dict[str, list] = {}
@@ -227,7 +230,7 @@ def analyze_exp2(results_dir: Path) -> dict[str, Any]:
 
     mse_by_m   = _agg("mse_overall")
     auroc_by_m = _agg("group_auroc")
-    lpd_by_m   = _agg("lpd_test")
+    lpd_by_m   = _agg(lpd_metric)
 
     mse_rank   = sorted(mse_by_m.items(), key=lambda t: t[1])
     auroc_rank = sorted(auroc_by_m.items(), key=lambda t: t[1], reverse=True)
@@ -262,7 +265,7 @@ def analyze_exp2(results_dir: Path) -> dict[str, Any]:
     findings.append(
         f"  MSE ranking (lower=better):\n{mse_table}\n"
         f"  AUROC ranking (higher=better):\n{auroc_table}\n"
-        f"  GR_RHS -- MSE: {gr_mse_str}   AUROC: {gr_auroc_str}   LPD: {gr_lpd_str}"
+        f"  GR_RHS -- MSE: {gr_mse_str}   AUROC: {gr_auroc_str}   {lpd_metric}: {gr_lpd_str}"
     )
     return {"metrics": metrics, "findings": findings}
 
@@ -275,11 +278,14 @@ def analyze_exp3(results_dir: Path) -> dict[str, Any]:
     findings: list[str] = []
     metrics: dict[str, Any] = {}
 
-    summary_path = results_dir / "summary.csv"
+    summary_path = results_dir / "summary_paired.csv"
+    if not summary_path.exists():
+        summary_path = results_dir / "summary.csv"
     if not summary_path.exists():
         return {"metrics": {}, "findings": ["  summary.csv not found, skipping."]}
 
     rows = _load_csv(summary_path)
+    lpd_metric = "lpd_test_ppd" if rows and ("lpd_test_ppd" in rows[0]) else "lpd_test"
     signals   = sorted({r.get("signal", "") for r in rows if r.get("signal")})
     all_methods = sorted({r.get("method", "") for r in rows if r.get("method")})
 
@@ -291,7 +297,7 @@ def analyze_exp3(results_dir: Path) -> dict[str, Any]:
         for r in sig_rows:
             m = r.get("method", "")
             v_mse = _float(r.get("mse_overall", "nan"))
-            v_lpd = _float(r.get("lpd_test", "nan"))
+            v_lpd = _float(r.get(lpd_metric, "nan"))
             if not math.isnan(v_mse):
                 mse_by_m.setdefault(m, []).append(v_mse)
             if not math.isnan(v_lpd):
@@ -342,7 +348,9 @@ def analyze_exp4(results_dir: Path) -> dict[str, Any]:
     findings: list[str] = []
     metrics: dict[str, Any] = {}
 
-    summary_path = results_dir / "summary.csv"
+    summary_path = results_dir / "summary_paired.csv"
+    if not summary_path.exists():
+        summary_path = results_dir / "summary.csv"
     if not summary_path.exists():
         return {"metrics": {}, "findings": ["  summary.csv not found, skipping."]}
 
