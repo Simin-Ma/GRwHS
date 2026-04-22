@@ -6,8 +6,8 @@ import numpy as np
 
 from simulation_project.src.core.models.baselines import GroupedHorseshoePlus
 
-from .fit_helpers import as_int_groups, fit_error_result, scaled_iteration_budget
-from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
+from .helpers import as_int_groups, fit_error_result, scaled_iteration_budget
+from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
 
 # GHS+ Gibbs mixes far more slowly than HMC for the group-level shrinkage
 # parameters (lambda_g). Scale Gibbs iterations by this multiplier relative
@@ -101,3 +101,4 @@ def fit_ghs_plus(
         )
     except Exception as exc:
         return fit_error_result("GHS_plus", f"{type(exc).__name__}: {exc}")
+

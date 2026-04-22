@@ -6,8 +6,8 @@ import numpy as np
 
 from simulation_project.src.core.models.gigg_regression import GIGGRegression
 
-from .fit_helpers import as_int_groups, fit_error_result, scaled_iteration_budget
-from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
+from .helpers import as_int_groups, fit_error_result, scaled_iteration_budget
+from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
 
 # Iteration counts
 # Boss et al. (2024) use 10 000 burn-in + 10 000 draws in all simulations
@@ -245,3 +245,4 @@ def fit_gigg_fixed(
         return _extract_and_diagnose(model, method_label, sampler, runtime)
     except Exception as exc:
         return fit_error_result(method_label, f"{type(exc).__name__}: {exc}")
+

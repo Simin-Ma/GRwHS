@@ -34,8 +34,8 @@ from ..utils import (
 def _exp2_worker(
     task: tuple[int, int, list[int], list[float], list[float], SamplerConfig, list[str], dict[str, Any], int, bool, int, int, dict]
 ) -> tuple[list[dict], list[dict]]:
-    from ..dgp_grouped_linear import generate_heterogeneity_dataset
-    from ..metrics import group_auroc, group_l2_error, group_l2_score
+    from .dgp.grouped_linear import generate_heterogeneity_dataset
+    from .analysis.metrics import group_auroc, group_l2_error, group_l2_score
     from ..utils import sample_correlated_design
 
     r, seed, group_sizes, mu, xi_ratios, sampler, methods, gigg_config, bayes_min_chains, enforce_convergence, max_retries, n_test, grrhs_kwargs = task
@@ -254,7 +254,7 @@ def run_exp2_group_separation(
     _record_produced_paths(produced, out_dir / "exp2_meta.json")
 
     try:
-        from ..plotting import plot_exp2_separation
+        from .analysis.plotting import plot_exp2_separation
         plot_exp2_separation(summary_df, kappa_df, out_dir=fig_dir)
         _record_produced_paths(produced, fig_dir / "fig2a_method_comparison.png", fig_dir / "fig2b_kappa_by_group.png")
     except Exception as exc:
@@ -281,5 +281,6 @@ def run_exp2_group_separation(
         produced_paths=produced,
         result_paths=result_paths,
     )
+
 
 

@@ -74,7 +74,7 @@ def run_all_experiments(
         Path(save_dir) / "results" / "run_manifest.json",
     )
     if not skip_analysis:
-        from ..analysis import run_analysis
+        from .analysis.report import run_analysis
 
         run_analysis(save_dir=save_dir)
     return out
@@ -130,7 +130,7 @@ def _cli() -> None:
     )
     reps = args.repeats
 
-    from ..analysis import analyze_exp1, analyze_exp2, analyze_exp3, analyze_exp4, analyze_exp5, _safe_print, run_analysis
+    from .analysis.report import analyze_exp1, analyze_exp2, analyze_exp3, analyze_exp4, analyze_exp5, _safe_print, run_analysis
 
     base = Path(args.save_dir)
 
@@ -227,5 +227,6 @@ def _cli() -> None:
         label = str(spec["label"])
         results_subdir = str(spec["results_subdir"])
         _print_exp_analysis(label, analyzer(base / "results" / results_subdir))
+
 
 

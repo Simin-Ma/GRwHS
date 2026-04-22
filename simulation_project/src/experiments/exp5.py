@@ -41,9 +41,9 @@ _DEFAULT_PRIOR_GRID: list[tuple[float, float]] = [
 def _exp5_worker(
     task: tuple[int, int, list[int], list[float], int, SamplerConfig, list[tuple[float, float]], int, bool, int, str]
 ) -> list[dict[str, Any]]:
-    from ..dgp_grouped_linear import generate_heterogeneity_dataset
-    from ..fit_gr_rhs import fit_gr_rhs
-    from ..metrics import group_auroc, group_l2_score
+    from .dgp.grouped_linear import generate_heterogeneity_dataset
+    from .methods.fit_gr_rhs import fit_gr_rhs
+    from .analysis.metrics import group_auroc, group_l2_score
 
     sid, r, group_sizes, mu, seed, sampler, prior_grid, bayes_min_chains, enforce_conv, max_retries, backend = task
     labels = (np.asarray(mu) > 0.0).astype(int)
@@ -93,7 +93,7 @@ def _exp5_worker(
         kappa_signal_mean = float("nan")
         kappa_null_prob_gt_0_1 = float("nan")
         if is_valid:
-            from ..metrics import group_auroc, group_l2_score, mse_null_signal_overall
+            from .analysis.metrics import group_auroc, group_l2_score, mse_null_signal_overall
 
             m = mse_null_signal_overall(res.beta_mean, ds["beta0"])
             mse_null = m["mse_null"]
@@ -219,7 +219,7 @@ def run_exp5_prior_sensitivity(
     _record_produced_paths(produced, out_dir / "exp5_meta.json")
 
     try:
-        from ..plotting import plot_exp5_prior_sensitivity
+        from .analysis.plotting import plot_exp5_prior_sensitivity
 
         plot_exp5_prior_sensitivity(summary, out_dir=base / "figures")
         _record_produced_paths(produced, base / "figures" / "fig5_prior_sensitivity.png", base / "figures" / "fig5b_kappa_separation.png")
@@ -242,5 +242,6 @@ def run_exp5_prior_sensitivity(
         produced_paths=produced,
         result_paths=result_paths,
     )
+
 
 

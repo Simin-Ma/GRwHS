@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import math
 from datetime import datetime
@@ -14,8 +14,8 @@ import numpy as np
 # Unified method color scheme (consistent across all exp1-5 figures)
 # ---------------------------------------------------------------------------
 _METHOD_COLORS: dict[str, str] = {
-    "GR_RHS":       "#1f77b4",   # blue   — the proposed method
-    "RHS":          "#ff7f0e",   # orange — individual-level baseline
+    "GR_RHS":       "#1f77b4",   # blue   �� the proposed method
+    "RHS":          "#ff7f0e",   # orange �� individual-level baseline
     "GIGG_MMLE":    "#2ca02c",   # green
     "GIGG_b_small": "#98df8a",   # light green
     "GIGG_GHS":     "#17becf",   # cyan
@@ -75,7 +75,7 @@ def _records(df: Any) -> list[dict[str, Any]]:
 
 
 def _as_frame(df: Any):
-    from .utils import load_pandas
+    from ...utils import load_pandas
     pd = load_pandas()
 
     if hasattr(df, "groupby"):
@@ -85,11 +85,11 @@ def _as_frame(df: Any):
 
 def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Path) -> None:
     """
-    Exp1 Panel A — null contraction.
+    Exp1 Panel A �� null contraction.
 
     Left:  log-log scatter of median E[kappa|Y_null] vs p_g with fitted slope and
            reference line at slope=-0.5 (Theorem 3.22).
-    Right: P(kappa_g > eps | Y_null) vs p_g (log scale) — shows the WHOLE
+    Right: P(kappa_g > eps | Y_null) vs p_g (log scale) �� shows the WHOLE
            distribution shrinks, not just the mean.
     """
     rows = sorted(_records(df), key=lambda r: float(r["p_g"]))
@@ -106,7 +106,7 @@ def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Pa
     ly = np.log(np.maximum(med, 1e-12))
     # Distinguish fit range (p_g 20-500) from out-of-range points visually
     fit_mask = (p_g >= 20) & (p_g <= 500)
-    ax.plot(lx[fit_mask], ly[fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, label="fit range (p_g 20–500)")
+    ax.plot(lx[fit_mask], ly[fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, label="fit range (p_g 20�C500)")
     ax.plot(lx[~fit_mask], ly[~fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, alpha=0.35, markerfacecolor="none")
     ax.plot(lx, ly, "-", color=_METHOD_COLORS["GR_RHS"], alpha=0.4)
     # Draw fitted line through full x-range but anchored to fit-range regression
@@ -114,9 +114,9 @@ def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Pa
     coef = np.polyfit(fit_lx, ly[fit_mask], deg=1)
     ax.plot(lx, coef[0] * lx + coef[1], "--", color="black", lw=1.5, label=f"fitted slope={slope:.3f}")
     ref = np.log(med[fit_mask][0]) - (-0.5) * fit_lx[0]
-    ax.plot(lx, -0.5 * lx + ref, ":", color="gray", lw=1.2, label="theory slope=−0.5")
+    ax.plot(lx, -0.5 * lx + ref, ":", color="gray", lw=1.2, label="theory slope=?0.5")
     ax.set_xlabel("log p_g", fontsize=10)
-    ax.set_ylabel("log E[κ_g | Y_null]  (median)", fontsize=10)
+    ax.set_ylabel("log E[��_g | Y_null]  (median)", fontsize=10)
     ci_str = f"[{slope_ci[0]:.3f}, {slope_ci[1]:.3f}]"
     ax.set_title(f"Null contraction (Thm 3.22)\nslope={slope:.3f}  95% CI {ci_str}", fontsize=9)
     ax.legend(fontsize=8)
@@ -125,11 +125,11 @@ def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Pa
     ax = axes[1]
     tail = np.asarray([float(r.get("mean_tail_prob_kappa_gt_eps", float("nan"))) for r in rows], dtype=float)
     if np.any(np.isfinite(tail)):
-        ax.plot(p_g, tail, "o-", color=_METHOD_COLORS["GR_RHS"], ms=6, label="P(κ > ε | Y_null)")
+        ax.plot(p_g, tail, "o-", color=_METHOD_COLORS["GR_RHS"], ms=6, label="P(�� > �� | Y_null)")
         ax.set_xscale("log")
         ax.set_xlabel("p_g  (log scale)", fontsize=10)
-        ax.set_ylabel("Mean P(κ_g > ε | Y_null)", fontsize=10)
-        ax.set_title("Tail suppression as p_g grows\n(ε from tail_eps setting)", fontsize=9)
+        ax.set_ylabel("Mean P(��_g > �� | Y_null)", fontsize=10)
+        ax.set_title("Tail suppression as p_g grows\n(�� from tail_eps setting)", fontsize=9)
         ax.axhline(0.0, color="gray", lw=0.8, ls=":")
         ax.set_ylim(-0.02, max(0.5, float(np.nanmax(tail)) * 1.15))
         ax.legend(fontsize=8)
@@ -143,7 +143,7 @@ def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Pa
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlabel("p_g", fontsize=10)
-        ax.set_ylabel("E[κ_g | Y_null]", fontsize=10)
+        ax.set_ylabel("E[��_g | Y_null]", fontsize=10)
         ax.legend(fontsize=8)
 
     _save(fig, out_path)
@@ -151,21 +151,21 @@ def plot_exp1(df: Any, slope: float, slope_ci: tuple[float, float], out_path: Pa
 
 def plot_exp1_phase(df: Any, out_path: Path) -> None:
     """
-    Exp1 Panel B — phase diagram (Corollary 3.33).
+    Exp1 Panel B �� phase diagram (Corollary 3.33).
 
-    Single panel: x = ξ/ξ_crit (dimensionless, tau-normalized), y = P(κ > u0 | Y).
+    Single panel: x = ��/��_crit (dimensionless, tau-normalized), y = P(�� > u0 | Y).
     Lines are colored by p_g; tau is averaged over since the x-axis already
-    normalizes it out — so curves for different tau should overlap, confirming
+    normalizes it out �� so curves for different tau should overlap, confirming
     that xi/xi_crit is the right scale.
 
-    A shaded band shows the tau-variability. The vertical line at ξ/ξ_crit=1
+    A shaded band shows the tau-variability. The vertical line at ��/��_crit=1
     marks the theoretical transition point.
     """
     rows = _records(df)
     if not rows:
         return
 
-    from .utils import load_pandas
+    from ...utils import load_pandas
     pd = load_pandas()
     frame = pd.DataFrame(rows)
     pg_vals = sorted(frame["p_g"].unique())
@@ -184,11 +184,11 @@ def plot_exp1_phase(df: Any, out_path: Path) -> None:
         if not (agg["min"] == agg["max"]).all():
             ax.fill_between(agg["xi_ratio"], agg["min"], agg["max"], alpha=0.12, color=color)
 
-    ax.axvline(1.0, color="black", linestyle="--", lw=1.5, label="ξ = ξ_crit  (theory threshold)")
+    ax.axvline(1.0, color="black", linestyle="--", lw=1.5, label="�� = ��_crit  (theory threshold)")
     ax.axhline(0.5, color="gray", linestyle=":", lw=0.9)
-    ax.set_xlabel("ξ / ξ_crit  (signal strength / critical threshold)", fontsize=10)
-    ax.set_ylabel("P(κ_g > u₀ | Y)", fontsize=10)
-    ax.set_title("Phase diagram: signal retention  (Cor. 3.33)\nShaded band = variation across τ values; curves should overlap when normalized", fontsize=9)
+    ax.set_xlabel("�� / ��_crit  (signal strength / critical threshold)", fontsize=10)
+    ax.set_ylabel("P(��_g > u? | Y)", fontsize=10)
+    ax.set_title("Phase diagram: signal retention  (Cor. 3.33)\nShaded band = variation across �� values; curves should overlap when normalized", fontsize=9)
     ax.set_ylim(-0.04, 1.08)
     ax.legend(fontsize=8, ncol=2, loc="upper left")
     _save(fig, out_path)
@@ -196,13 +196,13 @@ def plot_exp1_phase(df: Any, out_path: Path) -> None:
 
 def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> None:
     """
-    Exp2 — group separation (Theorem 3.34).
+    Exp2 �� group separation (Theorem 3.34).
 
-    Fig A: Method comparison — null/signal group MSE with error bars (SEM across
+    Fig A: Method comparison �� null/signal group MSE with error bars (SEM across
            replicates), AUROC, and MLPD. Methods sorted by group AUROC.
-    Fig B: GR-RHS κ_g profile across groups — boxplot across replicates ordered
-           by μ_g (gradient from null to strong signal), with null/signal regions
-           shaded. Shows the step-up of κ_g at the signal boundary.
+    Fig B: GR-RHS ��_g profile across groups �� boxplot across replicates ordered
+           by ��_g (gradient from null to strong signal), with null/signal regions
+           shaded. Shows the step-up of ��_g at the signal boundary.
 
     df_kappa_raw should be the raw per-replicate kappa DataFrame (kappa_df),
     with columns: replicate_id, group_id, mu_g, signal_label, post_mean_kappa_g.
@@ -210,7 +210,7 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
     summary = _as_frame(df_summary)
     kappa = _as_frame(df_kappa_raw)
     out_dir = Path(out_dir)
-    from .utils import method_display_name
+    from ...utils import method_display_name
 
     # --- Figure A: method comparison with error bars ---
     if not summary.empty and "method" in summary.columns:
@@ -281,7 +281,7 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
 
         _save(fig, out_dir / "fig2a_method_comparison.png")
 
-    # --- Figure B: GR-RHS κ_g distribution by group (boxplot across replicates) ---
+    # --- Figure B: GR-RHS ��_g distribution by group (boxplot across replicates) ---
     # kappa can be either the raw kappa_df (post_mean_kappa_g column) or kappa_summary (mean_kappa)
     if not kappa.empty:
         # Detect which data format we have
@@ -331,11 +331,11 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
             ax.axvspan(-0.5, n_null - 0.5, alpha=0.06, color="blue", label="null groups")
             ax.axvspan(n_null - 0.5, len(groups) - 0.5, alpha=0.06, color="red", label="signal groups")
 
-        ax.axhline(0.5, color="black", ls="--", lw=1.2, label="u₀ = 0.5")
+        ax.axhline(0.5, color="black", ls="--", lw=1.2, label="u? = 0.5")
         ax.set_xticks(np.arange(len(groups)), labels=labels_g, fontsize=8)
-        ax.set_ylabel("Posterior mean κ_g  (GR-RHS)", fontsize=10)
+        ax.set_ylabel("Posterior mean ��_g  (GR-RHS)", fontsize=10)
         ax.set_title(
-            "GR-RHS κ_g profile by group  (Theorem 3.34)\n"
+            "GR-RHS ��_g profile by group  (Theorem 3.34)\n"
             "Blue = null groups, Red = signal groups  |  Box = IQR across replicates",
             fontsize=9,
         )
@@ -346,7 +346,7 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
 
 def plot_exp3_benchmark(df: Any, out_dir: Path) -> None:
     """
-    Exp3 — factorial benchmark (signal_type × rho_within × snr).
+    Exp3 �� factorial benchmark (signal_type �� rho_within �� snr).
 
     Fig A (primary): One panel per signal type; x = rho_within, y = MSE overall;
       one line per method with consistent colors. snr is shown via subplots or
@@ -363,7 +363,7 @@ def plot_exp3_benchmark(df: Any, out_dir: Path) -> None:
     if frame.empty:
         return
 
-    from .utils import method_display_name
+    from ...utils import method_display_name
 
     signal_col = "signal" if "signal" in frame.columns else ("signal_type" if "signal_type" in frame.columns else None)
     rho_col = "rho_within" if "rho_within" in frame.columns else None
@@ -389,7 +389,7 @@ def plot_exp3_benchmark(df: Any, out_dir: Path) -> None:
     snr_vals = sorted(frame[snr_col].unique()) if snr_col else [None]
     methods_raw = _sort_methods(frame["method"].unique())
 
-    # --- Fig A: MSE line plots (rho × method, panel per signal type) ---
+    # --- Fig A: MSE line plots (rho �� method, panel per signal type) ---
     n_snr = len(snr_vals)
     n_sig = len(signal_types)
     fig_a, axes_a = plt.subplots(n_snr, n_sig, figsize=(5 * n_sig, 4.2 * n_snr), squeeze=False)
@@ -411,12 +411,12 @@ def plot_exp3_benchmark(df: Any, out_dir: Path) -> None:
                 ax.plot(xs, ys, "o-", color=_method_color(m), label=method_display_name(m), lw=1.8, ms=5)
             snr_str = f"  SNR={snr}" if snr is not None else ""
             ax.set_title(f"Signal: {sig}{snr_str}", fontsize=9)
-            ax.set_xlabel("ρ_within", fontsize=9)
+            ax.set_xlabel("��_within", fontsize=9)
             ax.set_ylabel("MSE overall", fontsize=9)
             if col_i == n_sig - 1 and row_i == 0:
                 ax.legend(fontsize=7, loc="upper left", ncol=1)
 
-    fig_a.suptitle("Exp3: MSE vs correlation (per signal type/SNR)\nPreserves rho×method interaction", fontsize=10, y=1.01)
+    fig_a.suptitle("Exp3: MSE vs correlation (per signal type/SNR)\nPreserves rho��method interaction", fontsize=10, y=1.01)
     _save(fig_a, out_dir / "fig3a_mse_by_signal.png")
 
     # --- Fig B: MLPD line plots (same layout) ---
@@ -439,7 +439,7 @@ def plot_exp3_benchmark(df: Any, out_dir: Path) -> None:
                     ax.plot(xs, ys, "o-", color=_method_color(m), label=method_display_name(m), lw=1.8, ms=5)
                 snr_str = f"  SNR={snr}" if snr is not None else ""
                 ax.set_title(f"Signal: {sig}{snr_str}", fontsize=9)
-                ax.set_xlabel("ρ_within", fontsize=9)
+                ax.set_xlabel("��_within", fontsize=9)
                 ax.set_ylabel("MLPD (test)", fontsize=9)
                 if col_i == n_sig - 1 and row_i == 0:
                     ax.legend(fontsize=7, loc="lower left", ncol=1)
@@ -466,10 +466,10 @@ def plot_exp3_benchmark(df: Any, out_dir: Path) -> None:
 
 def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
     """
-    Exp4 — ablation / tau calibration.
+    Exp4 �� ablation / tau calibration.
 
     Fig A (diagnostic): tau_post_mean vs tau_oracle scatter.
-      - One point per (variant × p0_true) combination.
+      - One point per (variant �� p0_true) combination.
       - Color = p0_true, marker shape = variant.
       - Identity line (y=x) is the oracle target.
       - This is a diagnostic view of posterior scale relative to tau0.
@@ -480,14 +480,14 @@ def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
         are on the same plot without dominating each other.
 
     The old `set_index("variant")` pattern crashed when multiple p0 values caused
-    duplicate index entries — replaced with pivot_table throughout.
+    duplicate index entries �� replaced with pivot_table throughout.
     """
     frame = _as_frame(df)
     out_dir = Path(out_dir)
     if frame.empty or "variant" not in frame.columns:
         return
 
-    from .utils import load_pandas
+    from ...utils import load_pandas
     pd = load_pandas()
 
     variants = _sort_methods(frame["variant"].unique())  # use consistent ordering helper
@@ -498,7 +498,7 @@ def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
     _MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*", "h"]
     var_marker = {v: _MARKERS[i % len(_MARKERS)] for i, v in enumerate(variants)}
 
-    # --- Fig A: τ_post_mean vs τ_oracle scatter ---
+    # --- Fig A: ��_post_mean vs ��_oracle scatter ---
     tau_cols_present = "tau_post_mean" in frame.columns and "tau0_oracle" in frame.columns
     if tau_cols_present:
         fig_a, ax_a = plt.subplots(figsize=(6.5, 5.5))
@@ -553,7 +553,7 @@ def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
             sub = ref_df[ref_df["p0_true"] == p0] if p0 is not None else ref_df
             oracle_mse[p0] = float(sub["mse_overall"].mean()) if not sub.empty else float("nan")
 
-        # pivot: rows=p0, cols=variant → normalized MSE
+        # pivot: rows=p0, cols=variant �� normalized MSE
         pivot = pd.DataFrame(index=[str(p) for p in p0_vals], columns=variants, dtype=float)
         for p0 in p0_vals:
             for v in variants:
@@ -582,20 +582,20 @@ def plot_exp4_ablation(df: Any, out_dir: Path) -> None:
 
 def plot_exp5_prior_sensitivity(df: Any, out_dir: Path) -> None:
     """
-    Exp5 — prior sensitivity for (alpha_kappa, beta_kappa).
+    Exp5 �� prior sensitivity for (alpha_kappa, beta_kappa).
 
-    Design goal: demonstrate ROBUSTNESS — show that different (alpha, beta) priors
+    Design goal: demonstrate ROBUSTNESS �� show that different (alpha, beta) priors
     give nearly identical results, so the default (0.5, 1.0) is safe.
 
     Fig A (primary): One panel per metric; x-axis = prior configuration (with
       descriptive labels); one colored line per scenario; default prior (0.5, 1.0)
       highlighted with a vertical dashed line. Flat lines = robust.
 
-    Fig B (secondary, if kappa columns present): κ_null vs κ_signal scatter across
-      priors, one point per prior × scenario; shows separation is stable.
+    Fig B (secondary, if kappa columns present): ��_null vs ��_signal scatter across
+      priors, one point per prior �� scenario; shows separation is stable.
 
     Fixes the old bugs:
-      - `\\n` → `\n` in ylabel (was literal backslash-n)
+      - `\\n` �� `\n` in ylabel (was literal backslash-n)
       - Each setting/scenario is now a LINE (not a row of subplots), making the
         robustness story immediately visible.
     """
@@ -630,8 +630,8 @@ def plot_exp5_prior_sensitivity(df: Any, out_dir: Path) -> None:
         ("group_auroc",       "Group AUROC"),
         ("mse_null",          "Null MSE"),
         ("mse_signal",        "Signal MSE"),
-        ("kappa_null_mean",   "κ_null mean"),
-        ("kappa_signal_mean", "κ_signal mean"),
+        ("kappa_null_mean",   "��_null mean"),
+        ("kappa_signal_mean", "��_signal mean"),
     ]
     valid_metrics = [(c, lbl) for c, lbl in metrics if c in frame.columns]
     if not valid_metrics:
@@ -684,13 +684,13 @@ def plot_exp5_prior_sensitivity(df: Any, out_dir: Path) -> None:
     fig_a.legend(handles=all_handles, fontsize=8, loc="lower center",
                  ncol=min(len(all_handles), 6), bbox_to_anchor=(0.5, -0.04))
     fig_a.suptitle(
-        "Exp5: Prior sensitivity for (α_κ, β_κ)  — flat lines = robust\n"
+        "Exp5: Prior sensitivity for (��_��, ��_��)  �� flat lines = robust\n"
         "Gold band = default prior (0.5, 1.0)  |  One line per scenario",
         fontsize=10, y=1.01,
     )
     _save(fig_a, out_dir / "fig5_prior_sensitivity.png")
 
-    # --- Fig B: κ separation scatter across priors (if both kappa columns present) ---
+    # --- Fig B: �� separation scatter across priors (if both kappa columns present) ---
     if "kappa_null_mean" in frame.columns and "kappa_signal_mean" in frame.columns:
         fig_b, ax_b = plt.subplots(figsize=(6, 5.5))
         for k, pl in enumerate(prior_order):
@@ -707,7 +707,8 @@ def plot_exp5_prior_sensitivity(df: Any, out_dir: Path) -> None:
                          edgecolors="black" if is_default else "none",
                          linewidth=1.2 if is_default else 0)
             ax_b.annotate(pl, (xv, yv), textcoords="offset points", xytext=(5, 3), fontsize=7)
-        ax_b.set_xlabel("κ_null mean  (target: low)", fontsize=9)
-        ax_b.set_ylabel("κ_signal mean  (target: high)", fontsize=9)
-        ax_b.set_title("Exp5: κ separation across priors\nGold = default prior; ideal = bottom-right", fontsize=9)
+        ax_b.set_xlabel("��_null mean  (target: low)", fontsize=9)
+        ax_b.set_ylabel("��_signal mean  (target: high)", fontsize=9)
+        ax_b.set_title("Exp5: �� separation across priors\nGold = default prior; ideal = bottom-right", fontsize=9)
         _save(fig_b, out_dir / "fig5b_kappa_separation.png")
+

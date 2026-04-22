@@ -166,7 +166,7 @@ def _build_benchmark_beta(
 def _exp3_worker(
     task: dict[str, Any] | tuple,
 ) -> list[dict[str, Any]]:
-    from ..dgp_grouped_linear import generate_orthonormal_block_design
+    from .dgp.grouped_linear import generate_orthonormal_block_design
     from ..utils import canonical_groups, sample_correlated_design
 
     if isinstance(task, dict):
@@ -246,7 +246,7 @@ def _exp3_worker(
 
     # Construct training dataset
     if str(design_type) == "orthonormal":
-        from ..dgp_grouped_linear import generate_orthonormal_block_design
+        from .dgp.grouped_linear import generate_orthonormal_block_design
         X_train = generate_orthonormal_block_design(n=n_train, group_sizes=group_sizes, seed=s)
         cov_x = np.eye(p, dtype=float)
     else:
@@ -256,7 +256,7 @@ def _exp3_worker(
     if signal == "boundary":
         sigma2 = sigma2_boundary
     else:
-        from ..dgp_grouped_linear import sigma2_for_target_snr as _s2
+        from .dgp.grouped_linear import sigma2_for_target_snr as _s2
         sigma2 = _s2(beta=beta0, cov_x=cov_x, target_snr=float(target_snr))
 
     rng_y = np.random.default_rng(s + 17)
@@ -652,7 +652,7 @@ def run_exp3_linear_benchmark(
     _record_produced_paths(produced, out_dir / "exp3_meta.json")
 
     try:
-        from ..plotting import plot_exp3_benchmark
+        from .analysis.plotting import plot_exp3_benchmark
         if not table_df.empty:
             plot_exp3_benchmark(table_df, out_dir=fig_dir)
             _record_produced_paths(produced, fig_dir / "fig3a_mse_by_signal.png", fig_dir / "fig3b_lpd_by_signal.png", fig_dir / "fig3c_null_signal_scatter.png")
@@ -723,5 +723,6 @@ def run_exp3b_boundary_stress(
         exp_key="exp3b",
         **kwargs,
     )
+
 
 

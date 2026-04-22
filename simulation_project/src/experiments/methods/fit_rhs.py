@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Sequence
 
@@ -6,8 +6,8 @@ import numpy as np
 
 from simulation_project.src.core.models.baselines import RegularizedHorseshoeRegression
 
-from .fit_helpers import as_int_groups, fit_error_result
-from .utils import (
+from .helpers import as_int_groups, fit_error_result
+from ...utils import (
     FitResult,
     SamplerConfig,
     diagnostics_summary_for_method,
@@ -142,3 +142,4 @@ def fit_rhs(
         )
     except Exception as exc:
         return fit_error_result("RHS", f"{type(exc).__name__}: {exc}")
+

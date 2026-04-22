@@ -6,8 +6,8 @@ import numpy as np
 
 from simulation_project.src.core.models.grrhs_nuts import GRRHS_NUTS, GRRHS_CollapsedNUTS, GRRHS_Gibbs
 
-from .fit_helpers import as_int_groups, fit_error_result
-from .utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
+from .helpers import as_int_groups, fit_error_result
+from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
 
 BACKENDS = ("nuts", "collapsed", "gibbs")
 
@@ -263,3 +263,4 @@ def fit_gr_rhs(
         res = fit_error_result("GR_RHS", f"{type(exc).__name__}: {exc}")
         res.tau_draws = None
         return res
+

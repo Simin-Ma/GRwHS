@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import math
 from typing import Dict, Sequence
 
 import numpy as np
 
-from .utils import canonical_groups, sample_correlated_design
+from ...utils import canonical_groups, sample_correlated_design
 
 
 def build_linear_beta(setting_name: str, group_sizes: Sequence[int]) -> np.ndarray:
@@ -183,3 +183,4 @@ def generate_sparse_within_group_dataset(
         "groups": groups,
         "mu": np.asarray(mu, dtype=float),
     }
+

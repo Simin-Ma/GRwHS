@@ -15,8 +15,8 @@ from simulation_project.src.experiments.evaluation import _evaluate_row, _kappa_
 from simulation_project.src.experiments.fitting import _fit_all_methods, _fit_with_convergence_retry
 from simulation_project.src.experiments.method_registry import MethodRegistry, build_default_method_registry
 from simulation_project.src.experiments.orchestration import run_all_experiments
+from simulation_project.src.experiments.methods.helpers import as_int_groups, fit_error_result, scaled_iteration_budget
 from simulation_project.src.experiments.schemas import RunCommonConfig, RunManifest
-from simulation_project.src.fit_helpers import as_int_groups, fit_error_result, scaled_iteration_budget
 from simulation_project.src.utils import SamplerConfig
 
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 from sklearn.linear_model import LassoCV, LinearRegression
 
-from .fit_helpers import fit_error_result
-from .utils import FitResult, timed_call
+from .helpers import fit_error_result
+from ...utils import FitResult, timed_call
 
 
 def fit_ols(X: np.ndarray, y: np.ndarray, *, task: str, seed: int) -> FitResult:
@@ -61,3 +61,4 @@ def fit_lasso_cv(X: np.ndarray, y: np.ndarray, *, task: str, seed: int) -> FitRe
         )
     except Exception as exc:
         return fit_error_result("LASSO_CV", f"{type(exc).__name__}: {exc}")
+

@@ -54,7 +54,7 @@ def _collect_existing_paths(obj: Any) -> set[Path]:
 
 def _analyze_single_experiment(exp_key: str, results_dir: Path) -> dict[str, Any]:
     try:
-        from ..analysis import analyze_exp1, analyze_exp2, analyze_exp3, analyze_exp4, analyze_exp5
+        from .analysis.report import analyze_exp1, analyze_exp2, analyze_exp3, analyze_exp4, analyze_exp5
         analyzers = {
             "exp1": analyze_exp1,
             "exp2": analyze_exp2,
@@ -395,6 +395,7 @@ def _paired_converged_subset(
     stats["methods_required"] = int(len(methods_target))
     stats["methods_list"] = "|".join(methods_target)
     return paired, stats
+
 
 
 

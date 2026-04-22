@@ -49,11 +49,11 @@ class MethodRegistry:
 
 
 def build_default_method_registry() -> MethodRegistry:
-    from ..fit_classical import fit_lasso_cv, fit_ols
-    from ..fit_gigg import fit_gigg_fixed, fit_gigg_mmle
-    from ..fit_ghs_plus import fit_ghs_plus
-    from ..fit_gr_rhs import fit_gr_rhs
-    from ..fit_rhs import fit_rhs
+    from .methods.fit_classical import fit_lasso_cv, fit_ols
+    from .methods.fit_gigg import fit_gigg_fixed, fit_gigg_mmle
+    from .methods.fit_ghs_plus import fit_ghs_plus
+    from .methods.fit_gr_rhs import fit_gr_rhs
+    from .methods.fit_rhs import fit_rhs
 
     reg = MethodRegistry()
 
@@ -158,4 +158,5 @@ def build_default_method_registry() -> MethodRegistry:
     reg.register("OLS", lambda c: fit_ols(c.X, c.y, task=c.task, seed=c.seed))
     reg.register("LASSO_CV", lambda c: fit_lasso_cv(c.X, c.y, task=c.task, seed=c.seed))
     return reg
+
 

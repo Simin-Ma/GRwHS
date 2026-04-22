@@ -474,3 +474,4 @@ def run_analysis(save_dir: str = "simulation_project") -> dict[str, Any]:
         json.dump(all_metrics, f, indent=2)
 
     return all_metrics
+

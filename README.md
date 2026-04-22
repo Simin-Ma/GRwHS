@@ -50,7 +50,10 @@ Current code exposes 7 runnable experiment targets:
 ## Structure
 
 - `simulation_project/`: active pipeline
-- `simulation_project/src/experiments/`: experiment runners, orchestration, runtime/fitting/evaluation/reporting helpers, schemas
+- `simulation_project/src/experiments/`: experiment runners, orchestration, runtime/fitting/evaluation/reporting/schemas
+- `simulation_project/src/experiments/methods/`: fitters
+- `simulation_project/src/experiments/dgp/`: data generators
+- `simulation_project/src/experiments/analysis/`: metrics/plots/reports
 - `simulation_project/src/cli/`: CLI entrypoints
 - `simulation_project/src/core/`: internal model/inference runtime used by the pipeline
 - `scripts/run_simulation.py`: launcher wrapper

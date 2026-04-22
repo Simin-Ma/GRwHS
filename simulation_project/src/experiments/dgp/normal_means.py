@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import math
 from typing import Dict
@@ -107,3 +107,4 @@ def posterior_summary_from_grid(
         out["window_prob"] = float(np.trapezoid(d[mask], g[mask])) if np.any(mask) else 0.0
 
     return out
+

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from .utils import FitResult, SamplerConfig
+from ...utils import FitResult, SamplerConfig
 
 
 def as_int_groups(groups: Sequence[Sequence[int]]) -> list[list[int]]:
@@ -40,3 +40,4 @@ def fit_error_result(method: str, error: str) -> FitResult:
         error=str(error),
         diagnostics={},
     )
+

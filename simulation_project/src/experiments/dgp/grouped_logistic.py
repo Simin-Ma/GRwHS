@@ -1,8 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import numpy as np
 
-from .utils import canonical_groups, sample_correlated_design
+from ...utils import canonical_groups, sample_correlated_design
 
 
 def generate_grouped_logistic_dataset(
@@ -58,3 +58,4 @@ def generate_grouped_logistic_dataset(
         "cov_x": cov,
         "attempts": int(max_attempts),
     }
+

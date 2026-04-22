@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Optional, Sequence
 
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
-from .utils import flatten_draws, posterior_ci95
+from ...utils import flatten_draws, posterior_ci95
 
 
 def mse_null_signal_overall(beta_hat: np.ndarray, beta_true: np.ndarray) -> dict[str, float]:
@@ -82,3 +82,4 @@ def compute_test_lpd(
     s2 = max(float(sigma2_hat), 1e-8)
     resid = yt - Xt @ b
     return float(-0.5 * np.log(2.0 * np.pi * s2) - 0.5 * float(np.mean(resid ** 2)) / s2)
+

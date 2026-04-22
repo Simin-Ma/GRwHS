@@ -15,7 +15,7 @@ def _evaluate_row(
     y_test: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Compute MSE, CI coverage, and (optionally) held-out log predictive density."""
-    from ..metrics import ci_length_and_coverage, compute_test_lpd, mse_null_signal_overall
+    from .analysis.metrics import ci_length_and_coverage, compute_test_lpd, mse_null_signal_overall
 
     nan = float("nan")
     if result.beta_mean is None:
@@ -64,5 +64,6 @@ def _kappa_group_prob_gt(result: FitResult, n_groups: int, threshold: float = 0.
     if kd.shape[-1] != n_groups:
         return [float("nan")] * n_groups
     return [float(np.mean(kd[:, g] > float(threshold))) for g in range(n_groups)]
+
 
 
