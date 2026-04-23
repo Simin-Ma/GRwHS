@@ -24,7 +24,7 @@ Common CLI args:
 - `--sampler {nuts,collapsed,gibbs}`
 
 `--profile` is intentionally unsupported.
-Default sampler backend is `collapsed`.
+Default sampler backend is `nuts`.
 
 ## 2. Default Protocol
 
@@ -150,7 +150,7 @@ python -m simulation_project.src.run_experiment --experiment 3d --n-jobs 2
 
 - `p0_list=[5,15,30]`
 - `include_oracle=True`
-- default sampler backend: `collapsed`
+- default sampler backend: `nuts`
 
 Run:
 

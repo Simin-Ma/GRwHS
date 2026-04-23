@@ -173,7 +173,7 @@ def run_exp2_group_separation(
     rho_within: float = 0.3,
     rho_between: float = 0.05,
     sigma2: float = 1.0,
-    sampler_backend: str = "collapsed",
+    sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
     Exp2: Toy-example group separation (Theorem 3.34), single-default protocol.
