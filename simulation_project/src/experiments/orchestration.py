@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict
 
@@ -41,6 +42,7 @@ def run_all_experiments(
     sampler_backend: str = "collapsed",
     exp3_gigg_mode: str = "stable",
     skip_analysis: bool = False,
+    all_parallel_jobs: int = 1,
 ) -> Dict[str, Any]:
     exp3_gigg_mode_name = _normalize_exp3_gigg_mode(exp3_gigg_mode)
     common_cfg = RunCommonConfig(
@@ -62,8 +64,20 @@ def run_all_experiments(
         ("exp4", lambda: run_exp4_variant_ablation(repeats=_default_repeats("exp4"), **common_cfg.as_kwargs())),
         ("exp5", lambda: run_exp5_prior_sensitivity(repeats=_default_repeats("exp5"), **common_cfg.as_kwargs())),
     ]
-    for name, runner in tqdm(jobs, total=len(jobs), desc="All Experiments", leave=True):
-        out[name] = runner()
+
+    workers = max(1, min(int(all_parallel_jobs), len(jobs)))
+    if workers <= 1:
+        for name, runner in tqdm(jobs, total=len(jobs), desc="All Experiments", leave=True):
+            out[name] = runner()
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            fut_map = {ex.submit(runner): name for name, runner in jobs}
+            done: dict[str, Any] = {}
+            for fut in tqdm(as_completed(fut_map), total=len(jobs), desc=f"All Experiments (parallel={workers})", leave=True):
+                name = fut_map[fut]
+                done[name] = fut.result()
+            out = {name: done[name] for name, _ in jobs}
+
     save_json(
         {
             "protocol": "single_default",
@@ -71,6 +85,7 @@ def run_all_experiments(
             "max_convergence_retries": max_convergence_retries,
             "until_bayes_converged": bool(until_bayes_converged),
             "exp3_gigg_mode": str(exp3_gigg_mode_name),
+            "all_parallel_jobs": int(workers),
             "results": out,
         },
         Path(save_dir) / "results" / "run_manifest.json",
@@ -105,6 +120,12 @@ def _cli() -> None:
     parser.add_argument("--seed", type=int, default=MASTER_SEED)
     parser.add_argument("--repeats", type=int, default=None)
     parser.add_argument("--n-jobs", type=int, default=1)
+    parser.add_argument(
+        "--all-parallel-jobs",
+        type=int,
+        default=1,
+        help="Number of concurrent experiments when --experiment all (default 1 = serial).",
+    )
     parser.add_argument("--no-enforce-bayes-convergence", action="store_true")
     parser.add_argument("--max-convergence-retries", type=int, default=None)
     parser.add_argument("--until-bayes-converged", action="store_true")
@@ -164,7 +185,11 @@ def _cli() -> None:
             json.dump(result.get("metrics", {}), f, indent=2)
 
     if exp_key == "all":
-        run_all_experiments(**common_cfg.as_kwargs(), exp3_gigg_mode=exp3_gigg_mode_name)
+        run_all_experiments(
+            **common_cfg.as_kwargs(),
+            exp3_gigg_mode=exp3_gigg_mode_name,
+            all_parallel_jobs=max(1, int(args.all_parallel_jobs)),
+        )
     elif exp_key == "analysis":
         run_analysis(save_dir=str(save_dir_resolved))
     else:

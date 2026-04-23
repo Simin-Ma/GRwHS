@@ -101,7 +101,20 @@ def _write_runs_csv(rows: list[dict[str, Any]], path: Path) -> None:
             writer.writerow({k: _to_csv_value(row.get(k)) for k in fields})
 
 
-def _execute_single_sweep_run(task: tuple[str, str, dict[str, Any], Callable[..., dict[str, Any]], bool]) -> dict[str, Any]:
+def _parse_set_items(items: list[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for raw in items:
+        token = str(raw)
+        if "=" not in token:
+            raise ValueError(f"--set expects KEY=VALUE, got: {raw!r}")
+        key, value_text = token.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"--set key cannot be empty: {raw!r}")
+        out[key] = yaml.safe_load(value_text)
+    return out
+
+
     run_name, exp_name, kwargs, runner, dry_run = task
     row: dict[str, Any] = {
         "run_name": str(run_name),
@@ -216,78 +229,93 @@ def run_sweep(
     t_all = time.perf_counter()
     started_at = datetime.now(timezone.utc).isoformat()
 
+    run_tasks: list[tuple[str, str, dict[str, Any], Callable[..., dict[str, Any]], bool]] = []
     for i, combo in enumerate(combos, start=1):
         run_name = f"run_{i:03d}"
         run_dir = ensure_dir(session_dir / "runs" / run_name)
-
         params = dict(common)
         params.update(combo)
         params["save_dir"] = str(run_dir)
-
         label = f"sweep={sweep_name} run={run_name}"
         kwargs = _validate_kwargs(runner, params, label=label)
+        run_tasks.append((run_name, exp_name, kwargs, runner, bool(dry_run)))
 
-        row: dict[str, Any] = {
-            "run_name": run_name,
-            "experiment": exp_name,
-            "status": "dry_run" if dry_run else "pending",
-            "duration_sec": 0.0,
-            "params": kwargs,
-            "outputs": {},
-            "error": "",
-        }
+    sweep_parallel_jobs = int(common.get("sweep_parallel_jobs", 1)) if str(common.get("sweep_parallel_jobs", 1)).strip() != "" else 1
+    sweep_parallel_jobs = max(1, sweep_parallel_jobs)
 
-        t0 = time.perf_counter()
-        if not dry_run:
-            try:
-                outputs = runner(**kwargs)
-                row["status"] = "ok"
-                row["outputs"] = outputs
+    if fail_fast or sweep_parallel_jobs <= 1 or len(run_tasks) <= 1:
+        for run_name, exp_name_task, kwargs, runner_task, dry_run_task in run_tasks:
+            row = _execute_single_sweep_run((run_name, exp_name_task, kwargs, runner_task, dry_run_task))
+            if row["status"] == "ok":
                 ok_count += 1
-            except Exception as exc:
-                row["status"] = "error"
-                row["error"] = f"{type(exc).__name__}: {exc}"
-                row["traceback"] = traceback.format_exc()
+            elif row["status"] == "error":
                 err_count += 1
-                if fail_fast:
-                    row["duration_sec"] = float(time.perf_counter() - t0)
-                    rows.append(row)
-                    save_json(
-                        {
-                            "sweep_name": sweep_name,
-                            "session_id": session_id,
-                            "config_path": str(config_path),
-                            "started_at": started_at,
-                            "finished_at": datetime.now(timezone.utc).isoformat(),
-                            "duration_sec": float(time.perf_counter() - t_all),
-                            "experiment": exp_name,
-                            "dry_run": bool(dry_run),
-                            "fail_fast": bool(fail_fast),
-                            "ok_count": int(ok_count),
-                            "error_count": int(err_count),
-                            "total_runs": int(len(combos)),
-                            "rows": rows,
-                        },
-                        session_dir / "manifest.json",
-                    )
-                    _write_runs_csv(rows, session_dir / "runs.csv")
-                    raise
-        row["duration_sec"] = float(time.perf_counter() - t0)
-
-        save_json(
-            {
-                "run_name": run_name,
-                "experiment": exp_name,
-                "status": row["status"],
-                "duration_sec": row["duration_sec"],
-                "params": row["params"],
-                "outputs": row["outputs"],
-                "error": row["error"],
-                "traceback": row.get("traceback", ""),
-            },
-            run_dir / "run_meta.json",
-        )
-        rows.append(row)
+            run_dir = ensure_dir(session_dir / "runs" / run_name)
+            save_json(
+                {
+                    "run_name": run_name,
+                    "experiment": exp_name_task,
+                    "status": row["status"],
+                    "duration_sec": row["duration_sec"],
+                    "params": row["params"],
+                    "outputs": row["outputs"],
+                    "error": row["error"],
+                    "traceback": row.get("traceback", ""),
+                },
+                run_dir / "run_meta.json",
+            )
+            rows.append(row)
+            if fail_fast and row["status"] == "error":
+                manifest = {
+                    "sweep_name": sweep_name,
+                    "session_id": session_id,
+                    "config_path": str(config_path),
+                    "started_at": started_at,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_sec": float(time.perf_counter() - t_all),
+                    "experiment": exp_name,
+                    "dry_run": bool(dry_run),
+                    "fail_fast": bool(fail_fast),
+                    "ok_count": int(ok_count),
+                    "error_count": int(err_count),
+                    "total_runs": int(len(combos)),
+                    "rows": rows,
+                }
+                save_json(manifest, session_dir / "manifest.json")
+                _write_runs_csv(rows, session_dir / "runs.csv")
+                raise RuntimeError(str(row.get("error", "unknown sweep run failure")))
+    else:
+        workers = min(sweep_parallel_jobs, len(run_tasks))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            fut_map = {
+                ex.submit(_execute_single_sweep_run, task): task[0]
+                for task in run_tasks
+            }
+            done_rows: dict[str, dict[str, Any]] = {}
+            for fut in as_completed(fut_map):
+                run_name = fut_map[fut]
+                row = fut.result()
+                done_rows[run_name] = row
+                if row["status"] == "ok":
+                    ok_count += 1
+                elif row["status"] == "error":
+                    err_count += 1
+                run_dir = ensure_dir(session_dir / "runs" / run_name)
+                save_json(
+                    {
+                        "run_name": run_name,
+                        "experiment": row["experiment"],
+                        "status": row["status"],
+                        "duration_sec": row["duration_sec"],
+                        "params": row["params"],
+                        "outputs": row["outputs"],
+                        "error": row["error"],
+                        "traceback": row.get("traceback", ""),
+                    },
+                    run_dir / "run_meta.json",
+                )
+            ordered_run_names = [task[0] for task in run_tasks]
+            rows = [done_rows[name] for name in ordered_run_names]
 
     manifest = {
         "sweep_name": sweep_name,
@@ -315,6 +343,7 @@ def run_sweep(
         "ok_count": int(ok_count),
         "error_count": int(err_count),
         "total_runs": int(len(combos)),
+        "sweep_parallel_jobs": int(sweep_parallel_jobs),
     }
 
 
