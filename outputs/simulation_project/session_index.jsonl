@@ -6,3 +6,7 @@
 {"timestamp_utc": "2026-04-23T01:09:09.269206+00:00", "run_label": "cli_exp3a", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_010909Z_cli_exp3a"}
 {"timestamp_utc": "2026-04-23T01:09:45.517538+00:00", "run_label": "cli_exp3b", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_010945Z_cli_exp3b"}
 {"timestamp_utc": "2026-04-23T01:31:48.525911+00:00", "run_label": "cli_exp2", "mode": "explicit", "save_dir": "outputs\\simulation_project\\adhoc\\exp2_compare_nuts_r4"}
+{"timestamp_utc": "2026-04-23T01:33:47.675800+00:00", "run_label": "cli_exp3a", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_013347Z_cli_exp3a"}
+{"timestamp_utc": "2026-04-23T01:33:59.800220+00:00", "run_label": "cli_exp3b", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_013359Z_cli_exp3b"}
+{"timestamp_utc": "2026-04-23T01:35:15.876976+00:00", "run_label": "cli_exp4", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_013515Z_cli_exp4"}
+{"timestamp_utc": "2026-04-23T01:36:08.480783+00:00", "run_label": "cli_exp5", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_013608Z_cli_exp5"}
