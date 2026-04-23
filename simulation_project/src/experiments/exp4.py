@@ -13,6 +13,7 @@ from .reporting import _finalize_experiment_run, _record_produced_paths, _stable
 from .runtime import (
     _EXP4_DEFAULT_MAX_CONV_RETRIES,
     _attempts_used,
+    bayes_rhat_threshold_default,
     _parallel_rows,
     _resolve_convergence_retry_limit,
     _resolve_sampler_backend_for_experiment,
@@ -43,7 +44,7 @@ def _smoke_sampler_for_exp4(base: SamplerConfig) -> SamplerConfig:
         strict_adapt_delta=min(float(base.strict_adapt_delta), 0.95),
         strict_max_treedepth=min(int(base.strict_max_treedepth), 12),
         max_divergence_ratio=float(base.max_divergence_ratio),
-        rhat_threshold=max(1.02, float(base.rhat_threshold)),
+        rhat_threshold=max(1.02, bayes_rhat_threshold_default(), float(base.rhat_threshold)),
         ess_threshold=min(150.0, float(base.ess_threshold)),
     )
 
@@ -378,5 +379,4 @@ def run_exp4_variant_ablation(
         skip_run_analysis=bool(skip_run_analysis),
         archive_artifacts=bool(archive_artifacts),
     )
-
 

@@ -18,6 +18,8 @@ from .runtime import (
     _result_diag_fields,
     _sampler_for_exp5,
     _sampler_for_standard,
+    screening_ess_threshold_default,
+    screening_rhat_threshold_default,
 )
 from ..utils import (
     MASTER_SEED,
@@ -62,8 +64,8 @@ def _screen_sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
         strict_adapt_delta=max(0.95, min(float(base.strict_adapt_delta), 0.99)),
         strict_max_treedepth=max(12, min(int(base.strict_max_treedepth), 14)),
         max_divergence_ratio=float(base.max_divergence_ratio),
-        rhat_threshold=max(1.02, float(base.rhat_threshold)),
-        ess_threshold=min(250.0, float(base.ess_threshold)),
+        rhat_threshold=max(screening_rhat_threshold_default(), float(base.rhat_threshold)),
+        ess_threshold=min(screening_ess_threshold_default(), float(base.ess_threshold)),
     )
 
 

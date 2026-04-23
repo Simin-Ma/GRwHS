@@ -26,7 +26,19 @@ _GHS_PLUS_DEFAULT_POST_DRAWS = 2500
 _GHS_PLUS_LAPTOP_CHAINS = 2
 _GHS_PLUS_LAPTOP_WARMUP = 1200
 _GHS_PLUS_LAPTOP_POST_DRAWS = 1200
-_GHS_PLUS_DEFAULT_RHAT_THRESHOLD = 1.01
+_DEFAULT_BAYES_RHAT_THRESHOLD = 1.015
+# Use a single house standard across Bayesian experiments: slightly looser than
+# 1.01 to avoid discarding otherwise stable runs on moderate budgets, but still
+# clearly within common MCMC practice and materially stricter than 1.02/1.03.
+_DEFAULT_BAYES_ESS_THRESHOLD = 400.0
+_DEFAULT_BAYES_MAX_DIVERGENCE_RATIO = 0.005
+_EXP4_DEFAULT_ESS_THRESHOLD = 250.0
+_EXP4_DEFAULT_MAX_DIVERGENCE_RATIO = 0.01
+_EXP5_DEFAULT_ESS_THRESHOLD = 300.0
+_EXP5_DEFAULT_MAX_DIVERGENCE_RATIO = 0.015
+_SCREENING_RHAT_THRESHOLD = 1.02
+_SCREENING_ESS_THRESHOLD = 250.0
+_GHS_PLUS_DEFAULT_RHAT_THRESHOLD = _DEFAULT_BAYES_RHAT_THRESHOLD
 _GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
 _EXP4_DEFAULT_CHAINS = 2
 _EXP4_DEFAULT_WARMUP = 400
@@ -34,6 +46,26 @@ _EXP4_DEFAULT_POST_DRAWS = 400
 _EXP4_DEFAULT_MAX_CONV_RETRIES = 2
 _EXP5_DEFAULT_MAX_CONV_RETRIES = 5
 _DEFAULT_REPEATS = {"exp1": 500, "exp2": 100, "exp3": 100, "exp3c": 30, "exp3d": 100, "exp4": 12, "exp5": 20}
+
+
+def bayes_rhat_threshold_default() -> float:
+    return float(_DEFAULT_BAYES_RHAT_THRESHOLD)
+
+
+def bayes_ess_threshold_default() -> float:
+    return float(_DEFAULT_BAYES_ESS_THRESHOLD)
+
+
+def bayes_max_divergence_ratio_default() -> float:
+    return float(_DEFAULT_BAYES_MAX_DIVERGENCE_RATIO)
+
+
+def screening_rhat_threshold_default() -> float:
+    return float(_SCREENING_RHAT_THRESHOLD)
+
+
+def screening_ess_threshold_default() -> float:
+    return float(_SCREENING_ESS_THRESHOLD)
 
 # ---------------------------------------------------------------------------
 # Runtime-default helpers
@@ -92,9 +124,9 @@ def _sampler_for_exp4(base: SamplerConfig) -> SamplerConfig:
         max_treedepth=max(12, int(base.max_treedepth)),
         strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
         strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
-        max_divergence_ratio=max(0.01, float(base.max_divergence_ratio)),
-        rhat_threshold=max(1.02, float(base.rhat_threshold)),
-        ess_threshold=min(250.0, float(base.ess_threshold)),
+        max_divergence_ratio=max(_EXP4_DEFAULT_MAX_DIVERGENCE_RATIO, float(base.max_divergence_ratio)),
+        rhat_threshold=max(_DEFAULT_BAYES_RHAT_THRESHOLD, float(base.rhat_threshold)),
+        ess_threshold=min(_EXP4_DEFAULT_ESS_THRESHOLD, float(base.ess_threshold)),
     )
 
 
@@ -125,9 +157,9 @@ def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
         max_treedepth=max(12, int(base.max_treedepth)),
         strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
         strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
-        max_divergence_ratio=max(0.015, float(base.max_divergence_ratio)),
-        rhat_threshold=max(1.03, float(base.rhat_threshold)),
-        ess_threshold=min(300.0, float(base.ess_threshold)),
+        max_divergence_ratio=max(_EXP5_DEFAULT_MAX_DIVERGENCE_RATIO, float(base.max_divergence_ratio)),
+        rhat_threshold=max(_DEFAULT_BAYES_RHAT_THRESHOLD, float(base.rhat_threshold)),
+        ess_threshold=min(_EXP5_DEFAULT_ESS_THRESHOLD, float(base.ess_threshold)),
     )
 
 
@@ -150,7 +182,7 @@ def _sampler_for_ghs_plus_default(base: SamplerConfig, *, profile: str = "defaul
         max_treedepth=max(12, int(base.max_treedepth)),
         strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
         strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
-        max_divergence_ratio=min(0.005, float(base.max_divergence_ratio)),
+        max_divergence_ratio=min(_DEFAULT_BAYES_MAX_DIVERGENCE_RATIO, float(base.max_divergence_ratio)),
         rhat_threshold=min(_GHS_PLUS_DEFAULT_RHAT_THRESHOLD, float(base.rhat_threshold)),
         ess_threshold=max(_GHS_PLUS_DEFAULT_ESS_THRESHOLD, float(base.ess_threshold)),
     )
@@ -412,4 +444,3 @@ def kappa_star_xi_rho(xi: float, rho: float) -> float:
 def kappa_star_xi_ratio_u0_rho(xi_ratio: float, u0: float, rho: float) -> float:
     xi = float(xi_ratio) * xi_crit_u0_rho(u0=float(u0), rho=float(rho))
     return kappa_star_xi_rho(xi=xi, rho=float(rho))
-
