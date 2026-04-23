@@ -200,7 +200,7 @@ def run_exp4_variant_ablation(
 
     Note: p0 here denotes active coefficients (sparsity in coefficients).
     DGP defaults: p=50 (5 groups of 10), n=100, rho_within=0.8, rho_between=0.2.
-    Default: p0 in {5, 15, 30}, include_oracle=True, retries=3.
+    Default: p0 in {5, 15, 30}, include_oracle=True, repeats=12, retries=1.
     Sampler routing default: p0=5 uses collapsed; other p0 values use sampler_backend
     (whose function default is nuts).
     """

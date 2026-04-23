@@ -151,11 +151,12 @@ sweeps:
 
   exp4_default:
     experiment: exp4
-    description: Exp4 default protocol (repeats=30, built-in retry default=3).
+    description: Exp4 default protocol (repeats=12, built-in retry default=1).
     fixed:
-      repeats: 30
+      repeats: 12
       method_jobs: 2
       enforce_bayes_convergence: true
+      max_convergence_retries: 1
       until_bayes_converged: true
       sampler_backend: nuts
 
