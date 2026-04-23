@@ -69,14 +69,15 @@ sweeps:
 
   exp4_paper_laptop:
     experiment: exp4
-    description: Paper-laptop main-text Exp4 preset.
+    description: Paper-laptop main-text Exp4 preset (2h minimal config).
     fixed:
-      repeats: 24
+      repeats: 12
       n_jobs: 2
       method_jobs: 2
       skip_run_analysis: true
       archive_artifacts: false
       enforce_bayes_convergence: true
+      max_convergence_retries: 1
       until_bayes_converged: true
       sampler_backend: nuts
 
