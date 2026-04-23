@@ -31,6 +31,8 @@ Laptop-friendly paper preset:
 python -m simulation_project.src.run_experiment --experiment all --preset paper_laptop
 ```
 
+This preset also skips analysis and disables duplicate artifact archiving by default.
+
 Default output layout is now session-based and centralized under:
 
 `outputs/simulation_project/sessions/<timestamp>_cli_<experiment>/`

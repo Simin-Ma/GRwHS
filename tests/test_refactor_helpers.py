@@ -208,10 +208,17 @@ def test_fit_with_convergence_retry_passes_resume_payload_when_enabled() -> None
 def test_paper_laptop_preset_overrides_core_settings() -> None:
     exp3a = _preset_overrides_for_experiment("exp3a", "paper_laptop")
     exp3c = _preset_overrides_for_experiment("exp3c", "paper_laptop")
+    exp5 = _preset_overrides_for_experiment("exp5", "paper_laptop")
     assert int(exp3a["repeats"]) == 50
     assert bool(exp3a["heavy_methods_anchor_only"]) is True
     assert int(exp3a["n_jobs"]) == 2
+    assert exp3a["gigg_budget_profile"] == "laptop"
+    assert exp3a["ghs_plus_budget_profile"] == "laptop"
+    assert exp3a["skip_run_analysis"] is True
+    assert exp3a["archive_artifacts"] is False
     assert exp3c["methods"] == ["GR_RHS", "RHS", "OLS", "LASSO_CV"]
+    assert exp5["skip_run_analysis"] is True
+    assert exp5["archive_artifacts"] is False
 
 
 def test_exp5_defaults_to_full_sensitivity_and_retry_budget_5(monkeypatch) -> None:

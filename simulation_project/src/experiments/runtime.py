@@ -23,6 +23,9 @@ _RETRY_MAX_GIGG_ITER = 50000
 _GHS_PLUS_DEFAULT_CHAINS = 4
 _GHS_PLUS_DEFAULT_WARMUP = 2500
 _GHS_PLUS_DEFAULT_POST_DRAWS = 2500
+_GHS_PLUS_LAPTOP_CHAINS = 2
+_GHS_PLUS_LAPTOP_WARMUP = 1200
+_GHS_PLUS_LAPTOP_POST_DRAWS = 1200
 _GHS_PLUS_DEFAULT_RHAT_THRESHOLD = 1.01
 _GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
 _EXP4_DEFAULT_MAX_CONV_RETRIES = 3
@@ -75,12 +78,19 @@ def _sampler_for_standard(*, experiment: str = "") -> SamplerConfig:
     return SamplerConfig()
 
 
-def _gigg_config_default() -> dict[str, Any]:
+def _gigg_config_default(*, profile: str = "default") -> dict[str, Any]:
     # Single default follows the published GIGG budget.
+    name = str(profile).strip().lower()
+    if name == "laptop":
+        iter_floor = 4000
+        iter_cap = 4000
+    else:
+        iter_floor = 10000
+        iter_cap = 10000
     return {
         "iter_mult": 4,
-        "iter_floor": 10000,
-        "iter_cap": 10000,
+        "iter_floor": int(iter_floor),
+        "iter_cap": int(iter_cap),
         "btrick": False,
         "mmle_burnin_only": True,
         "no_retry": True,
@@ -101,12 +111,21 @@ def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
     )
 
 
-def _sampler_for_ghs_plus_default(base: SamplerConfig) -> SamplerConfig:
+def _sampler_for_ghs_plus_default(base: SamplerConfig, *, profile: str = "default") -> SamplerConfig:
     """Method-specific default budget for Grouped Horseshoe+."""
+    name = str(profile).strip().lower()
+    if name == "laptop":
+        min_chains = _GHS_PLUS_LAPTOP_CHAINS
+        warmup = _GHS_PLUS_LAPTOP_WARMUP
+        draws = _GHS_PLUS_LAPTOP_POST_DRAWS
+    else:
+        min_chains = _GHS_PLUS_DEFAULT_CHAINS
+        warmup = _GHS_PLUS_DEFAULT_WARMUP
+        draws = _GHS_PLUS_DEFAULT_POST_DRAWS
     return SamplerConfig(
-        chains=max(_GHS_PLUS_DEFAULT_CHAINS, int(base.chains)),
-        warmup=max(_GHS_PLUS_DEFAULT_WARMUP, int(base.warmup)),
-        post_warmup_draws=max(_GHS_PLUS_DEFAULT_POST_DRAWS, int(base.post_warmup_draws)),
+        chains=max(int(min_chains), int(base.chains)),
+        warmup=max(int(warmup), int(base.warmup)),
+        post_warmup_draws=max(int(draws), int(base.post_warmup_draws)),
         adapt_delta=max(0.95, float(base.adapt_delta)),
         max_treedepth=max(12, int(base.max_treedepth)),
         strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),

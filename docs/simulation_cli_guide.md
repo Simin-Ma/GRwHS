@@ -29,7 +29,7 @@ Common CLI args:
 - `--sampler {nuts,collapsed,gibbs}`
 
 `--profile` is intentionally unsupported.
-Default sampler backend is `nuts`.
+Default sampler backend is `collapsed`.
 
 ## 2. Default Protocol
 
@@ -94,6 +94,9 @@ Preset behavior for `--preset paper_laptop`:
 - default `--n-jobs 2 --method-jobs 2`
 - default sampler backend `collapsed`
 - `Exp3` heavy methods (`GIGG_MMLE`, `GHS_plus`) restricted to anchor settings in `exp3a/3b`
+- `Exp3` heavy methods use reduced laptop budgets under the preset
+- run-level analysis is skipped by default
+- duplicate artifact archiving is disabled by default
 
 ## 3. Scientific Credibility Rules
 
@@ -150,6 +153,7 @@ python -m simulation_project.src.run_experiment --experiment 3a --preset paper_l
 - boundary `xi/xi_crit` grid via `boundary_xi_ratio_list` (default boundary stress grid)
 - same default methods as Exp3a
 - under `paper_laptop`, heavy methods are restricted to anchor settings (`G10x5`, `RW08_SNR10`, default boundary ratio)
+- under `paper_laptop`, `GIGG_MMLE` and `GHS_plus` use reduced per-fit budgets
 
 Run:
 

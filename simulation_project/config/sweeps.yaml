@@ -24,6 +24,8 @@ sweeps:
     description: Laptop-friendly paper preset for Exp1-Exp5 with anchored heavy methods and reduced repeats.
     fixed:
       preset: paper_laptop
+      skip_run_analysis: true
+      archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
@@ -56,6 +58,10 @@ sweeps:
       n_jobs: 2
       method_jobs: 2
       heavy_methods_anchor_only: true
+      gigg_budget_profile: laptop
+      ghs_plus_budget_profile: laptop
+      skip_run_analysis: true
+      archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
@@ -68,6 +74,8 @@ sweeps:
       repeats: 24
       n_jobs: 2
       method_jobs: 2
+      skip_run_analysis: true
+      archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
@@ -80,6 +88,10 @@ sweeps:
       n_jobs: 2
       method_jobs: 2
       heavy_methods_anchor_only: true
+      gigg_budget_profile: laptop
+      ghs_plus_budget_profile: laptop
+      skip_run_analysis: true
+      archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
@@ -92,6 +104,8 @@ sweeps:
       repeats: 10
       n_jobs: 2
       method_jobs: 2
+      skip_run_analysis: true
+      archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
