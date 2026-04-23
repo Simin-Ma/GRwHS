@@ -11,13 +11,13 @@ from .evaluation import _bridge_ratio_diagnostics, _kappa_group_means
 from .fitting import _fit_with_convergence_retry
 from .reporting import _finalize_experiment_run, _record_produced_paths, _stable_name_seed
 from .runtime import (
-    _BAYESIAN_DEFAULT_CHAINS,
     _EXP4_DEFAULT_MAX_CONV_RETRIES,
     _attempts_used,
     _parallel_rows,
     _resolve_convergence_retry_limit,
     _resolve_sampler_backend_for_experiment,
     _result_diag_fields,
+    _sampler_for_exp4,
     _sampler_for_standard,
 )
 from ..utils import (
@@ -212,8 +212,8 @@ def run_exp4_variant_ablation(
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp4", base / "logs" / "exp4_variant_ablation.log")
 
-    sampler = _sampler_for_standard()
-    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
+    sampler = _sampler_for_exp4(_sampler_for_standard())
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else 2
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     retry_limit = _resolve_convergence_retry_limit(
         _EXP4_DEFAULT_MAX_CONV_RETRIES if max_convergence_retries is None else max_convergence_retries,

@@ -35,6 +35,8 @@ def ci_length_and_coverage(beta_true: np.ndarray, beta_draws: Optional[np.ndarra
 
 def group_l2_score(beta_hat: np.ndarray, groups: Sequence[Sequence[int]]) -> np.ndarray:
     b = np.asarray(beta_hat, dtype=float)
+    if b.ndim == 0 or not np.all(np.isfinite(b)):
+        return np.full(len(groups), np.nan, dtype=float)
     return np.asarray([float(np.sum(b[np.asarray(g, dtype=int)] ** 2)) for g in groups], dtype=float)
 
 
@@ -50,6 +52,11 @@ def group_l2_error(beta_hat: np.ndarray, beta_true: np.ndarray, groups: Sequence
 def group_auroc(scores: np.ndarray, labels: np.ndarray) -> float:
     s = np.asarray(scores, dtype=float).reshape(-1)
     y = np.asarray(labels, dtype=int).reshape(-1)
+    finite = np.isfinite(s) & np.isfinite(y)
+    if not np.any(finite):
+        return float("nan")
+    s = s[finite]
+    y = y[finite]
     if np.unique(y).size < 2:
         return float("nan")
     return float(roc_auc_score(y, s))

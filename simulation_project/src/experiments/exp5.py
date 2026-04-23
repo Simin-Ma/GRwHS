@@ -43,6 +43,15 @@ def _prior_key(alpha_kappa: float, beta_kappa: float) -> str:
     return f"{float(alpha_kappa):.6g}|{float(beta_kappa):.6g}"
 
 
+def _finite_beta_mean(beta_mean: Any) -> np.ndarray | None:
+    if beta_mean is None:
+        return None
+    arr = np.asarray(beta_mean, dtype=float).reshape(-1)
+    if arr.size == 0 or not np.all(np.isfinite(arr)):
+        return None
+    return arr
+
+
 def _screen_sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
     return SamplerConfig(
         chains=max(2, min(int(base.chains), 2)),
@@ -165,7 +174,8 @@ def _exp5_worker(
             enforce_bayes_convergence=bool(enforce_conv),
             continue_on_retry=True,
         )
-        is_valid = bool(res.beta_mean is not None)
+        beta_mean = _finite_beta_mean(res.beta_mean)
+        is_valid = beta_mean is not None
         mse_null = float("nan")
         mse_signal = float("nan")
         auroc = float("nan")
@@ -175,10 +185,10 @@ def _exp5_worker(
         if is_valid:
             from .analysis.metrics import group_auroc, group_l2_score, mse_null_signal_overall
 
-            m = mse_null_signal_overall(res.beta_mean, ds["beta0"])
+            m = mse_null_signal_overall(beta_mean, ds["beta0"])
             mse_null = m["mse_null"]
             mse_signal = m["mse_signal"]
-            score = group_l2_score(res.beta_mean, ds["groups"])
+            score = group_l2_score(beta_mean, ds["groups"])
             auroc = group_auroc(score, labels)
             km = _kappa_group_means(res, n_groups)
             kms = np.array(km)
@@ -328,7 +338,15 @@ def run_exp5_prior_sensitivity(
         if not screen_df.empty:
             success_df = screen_df.groupby(["prior_key", "alpha_kappa", "beta_kappa"], as_index=False).agg(
                 n_screen_runs=("setting_id", "count"),
-                n_screen_success=("converged", lambda s: int(s.fillna(False).astype(bool).sum())),
+                n_screen_success=(
+                    "status",
+                    lambda s: int(
+                        (
+                            screen_df.loc[s.index, "converged"].fillna(False).astype(bool)
+                            & screen_df.loc[s.index, "status"].astype(str).str.lower().eq("ok")
+                        ).sum()
+                    ),
+                ),
                 mean_screen_runtime=("runtime_seconds", "mean"),
             )
             threshold = int(screen_min_successes) if screen_min_successes is not None else max(1, len(scenarios) // 2)

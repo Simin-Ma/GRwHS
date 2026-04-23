@@ -28,6 +28,9 @@ _GHS_PLUS_LAPTOP_WARMUP = 1200
 _GHS_PLUS_LAPTOP_POST_DRAWS = 1200
 _GHS_PLUS_DEFAULT_RHAT_THRESHOLD = 1.01
 _GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
+_EXP4_DEFAULT_CHAINS = 2
+_EXP4_DEFAULT_WARMUP = 400
+_EXP4_DEFAULT_POST_DRAWS = 400
 _EXP4_DEFAULT_MAX_CONV_RETRIES = 3
 _EXP5_DEFAULT_MAX_CONV_RETRIES = 5
 _DEFAULT_REPEATS = {"exp1": 500, "exp2": 100, "exp3": 100, "exp3c": 30, "exp3d": 100, "exp4": 30, "exp5": 20}
@@ -76,6 +79,23 @@ def _resolve_method_list(methods: Sequence[str] | None) -> list[str]:
 def _sampler_for_standard(*, experiment: str = "") -> SamplerConfig:
     _ = str(experiment)
     return SamplerConfig()
+
+
+def _sampler_for_exp4(base: SamplerConfig) -> SamplerConfig:
+    # Exp4 compares multiple Bayesian variants on the same small Gaussian DGP.
+    # Keep a moderate NUTS budget so single-experiment runs remain practical.
+    return SamplerConfig(
+        chains=max(int(_EXP4_DEFAULT_CHAINS), min(int(base.chains), int(_EXP4_DEFAULT_CHAINS))),
+        warmup=max(int(_EXP4_DEFAULT_WARMUP), min(int(base.warmup), int(_EXP4_DEFAULT_WARMUP))),
+        post_warmup_draws=max(int(_EXP4_DEFAULT_POST_DRAWS), min(int(base.post_warmup_draws), int(_EXP4_DEFAULT_POST_DRAWS))),
+        adapt_delta=max(0.95, float(base.adapt_delta)),
+        max_treedepth=max(12, int(base.max_treedepth)),
+        strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
+        strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
+        max_divergence_ratio=float(base.max_divergence_ratio),
+        rhat_threshold=float(base.rhat_threshold),
+        ess_threshold=max(300.0, float(base.ess_threshold)),
+    )
 
 
 def _gigg_config_default(*, profile: str = "default") -> dict[str, Any]:
