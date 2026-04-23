@@ -33,6 +33,21 @@ from ..utils import (
 )
 
 
+def _smoke_sampler_for_exp4(base: SamplerConfig) -> SamplerConfig:
+    return SamplerConfig(
+        chains=1,
+        warmup=min(int(base.warmup), 200),
+        post_warmup_draws=min(int(base.post_warmup_draws), 200),
+        adapt_delta=min(float(base.adapt_delta), 0.90),
+        max_treedepth=min(int(base.max_treedepth), 10),
+        strict_adapt_delta=min(float(base.strict_adapt_delta), 0.95),
+        strict_max_treedepth=min(int(base.strict_max_treedepth), 12),
+        max_divergence_ratio=float(base.max_divergence_ratio),
+        rhat_threshold=max(1.02, float(base.rhat_threshold)),
+        ess_threshold=min(150.0, float(base.ess_threshold)),
+    )
+
+
 def _exp4_worker(
     task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], int, int, bool, int, int, str]
 ) -> list[dict[str, Any]]:
@@ -214,6 +229,10 @@ def run_exp4_variant_ablation(
 
     sampler = _sampler_for_exp4(_sampler_for_standard())
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else 2
+    if not bool(enforce_bayes_convergence):
+        sampler = _smoke_sampler_for_exp4(sampler)
+        if bayes_min_chains is None:
+            bayes_min_chains_use = 1
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     retry_limit = _resolve_convergence_retry_limit(
         _EXP4_DEFAULT_MAX_CONV_RETRIES if max_convergence_retries is None else max_convergence_retries,
@@ -245,7 +264,11 @@ def run_exp4_variant_ablation(
         return variants
 
     def _backend_for_p0(p0_true: int) -> str:
-        # Keep p0=5 on collapsed backend for stability; all other p0 keep caller-selected backend.
+        # Keep the published default on collapsed for p0=5, but allow smoke /
+        # non-enforced runs to stay on the caller-selected backend so validation
+        # paths do not get stuck on the slowest route.
+        if not bool(enforce_bayes_convergence):
+            return str(backend_use)
         if int(p0_true) == 5:
             return "collapsed"
         return str(backend_use)
@@ -355,7 +378,5 @@ def run_exp4_variant_ablation(
         skip_run_analysis=bool(skip_run_analysis),
         archive_artifacts=bool(archive_artifacts),
     )
-
-
 
 

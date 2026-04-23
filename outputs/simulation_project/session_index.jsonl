@@ -33,3 +33,4 @@
 {"timestamp_utc": "2026-04-23T17:39:44.015971+00:00", "run_label": "cli_exp2", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_173944Z_cli_exp2"}
 {"timestamp_utc": "2026-04-23T17:40:50.955029+00:00", "run_label": "cli_exp4", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_174050Z_cli_exp4"}
 {"timestamp_utc": "2026-04-23T18:43:18.857296+00:00", "run_label": "cli_exp5", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_184318Z_cli_exp5"}
+{"timestamp_utc": "2026-04-23T19:01:46.687205+00:00", "run_label": "cli_exp3a", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_190146Z_cli_exp3a"}
