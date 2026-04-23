@@ -49,6 +49,7 @@ def _exp2_worker(
         int,
         int,
         dict,
+        int,
     ]
 ) -> tuple[list[dict], list[dict]]:
     from .dgp.grouped_linear import generate_heterogeneity_dataset
@@ -73,6 +74,7 @@ def _exp2_worker(
         max_retries,
         n_test,
         grrhs_kwargs,
+        method_jobs,
     ) = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     p0_signal_groups = int(np.sum(labels))
@@ -105,6 +107,7 @@ def _exp2_worker(
         grrhs_kwargs=grrhs_kwargs or {},
         enforce_bayes_convergence=bool(enforce_convergence),
         max_convergence_retries=int(max_retries),
+        method_jobs=int(method_jobs),
     )
 
     rep_rows: list[dict] = []
@@ -156,6 +159,7 @@ def _exp2_worker(
 
 def run_exp2_group_separation(
     n_jobs: int = 1,
+    method_jobs: int = 1,
     seed: int = MASTER_SEED,
     repeats: int = 30,
     save_dir: str = "outputs/simulation_project",
@@ -263,6 +267,7 @@ def run_exp2_group_separation(
                 int(retry_limit),
                 int(n_test),
                 grrhs_kw,
+                int(method_jobs),
             )
         )
     results = _parallel_rows(tasks, _exp2_worker, n_jobs=n_jobs, prefer_process=True, process_fallback="serial", progress_desc="Exp2 Group Separation")
@@ -418,6 +423,7 @@ def run_exp2_group_separation(
             "n_test": int(n_test),
             "methods": methods_use,
             "bayes_min_chains": int(bayes_min_chains_use),
+            "method_jobs": int(method_jobs),
         },
         out_dir / "exp2_meta.json",
     )
@@ -461,7 +467,5 @@ def run_exp2_group_separation(
         produced_paths=produced,
         result_paths=result_paths,
     )
-
-
 
 

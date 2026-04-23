@@ -12,7 +12,7 @@ def test_simulation_cli_help_runs() -> None:
     cmd = [sys.executable, "-m", "simulation_project.src.run_experiment", "--help"]
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     assert proc.returncode == 0
-    assert "--experiment {all,1,2,3,3a,3b,3c,4,5,analysis}" in proc.stdout
+    assert "--experiment {all,1,2,3,3a,3b,3c,3d,4,5,analysis}" in proc.stdout
 
 
 def test_simulation_cli_profile_flag_removed() -> None:

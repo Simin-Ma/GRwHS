@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import math
 from pathlib import Path
 from typing import Any, Dict, Sequence
@@ -33,13 +34,13 @@ from ..utils import (
 
 
 def _exp4_worker(
-    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], int, bool, int, int, str]
+    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], int, int, bool, int, int, str]
 ) -> list[dict[str, Any]]:
     from .methods.fit_gr_rhs import fit_gr_rhs
     from .methods.fit_rhs import fit_rhs
     from ..utils import canonical_groups, sample_correlated_design
 
-    p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, enforce_conv, max_retries, n, backend = task
+    p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, method_jobs, enforce_conv, max_retries, n, backend = task
     p = int(sum(group_sizes))
     s = experiment_seed(4, int(p0_true), r, master_seed=seed)
 
@@ -61,8 +62,8 @@ def _exp4_worker(
     # Oracle tau for reference.
     tau0_oracle = rhs_style_tau0(n=n, p=p, p0=int(p0_true))
 
-    rows: list[dict[str, Any]] = []
-    for vname, spec in variants.items():
+    def _fit_variant(item: tuple[str, dict[str, Any]]) -> dict[str, Any]:
+        vname, spec = item
         method = str(spec["method"])
         if method == "GR_RHS":
             res = _fit_with_convergence_retry(
@@ -125,40 +126,51 @@ def _exp4_worker(
                 kms = np.array(km)
                 kappa_null_mean = float(np.nanmean(kms[~group_has_signal])) if np.any(~group_has_signal) else float("nan")
                 kappa_signal_mean = float(np.nanmean(kms[group_has_signal])) if np.any(group_has_signal) else float("nan")
-        rows.append(
-            {
-                "p0_true": int(p0_true),
-                "s_true_active_coeff": int(p0_true),
-                "g_true_active": int(g_true_active),
-                "p": p,
-                "n": n,
-                "replicate_id": r,
-                "variant": vname,
-                "method_type": method,
-                "status": res.status,
-                "converged": bool(res.converged),
-                "fit_attempts": _attempts_used(res),
-                "tau0_oracle": float(tau0_oracle),
-                "tau_post_mean": tau_post_mean,
-                "tau_ratio_to_oracle": float(tau_post_mean / max(tau0_oracle, 1e-12)) if np.isfinite(tau_post_mean) else float("nan"),
-                "kappa_null_mean": kappa_null_mean,
-                "kappa_signal_mean": kappa_signal_mean,
-                **_result_diag_fields(res),
-                **_bridge_ratio_diagnostics(
-                    res,
-                    groups=groups,
-                    X=X,
-                    y=y,
-                    signal_group_mask=group_has_signal,
-                ),
-                **mse_metrics,
-            }
-        )
-    return rows
+        return {
+            "p0_true": int(p0_true),
+            "s_true_active_coeff": int(p0_true),
+            "g_true_active": int(g_true_active),
+            "p": p,
+            "n": n,
+            "replicate_id": r,
+            "variant": vname,
+            "method_type": method,
+            "status": res.status,
+            "converged": bool(res.converged),
+            "fit_attempts": _attempts_used(res),
+            "tau0_oracle": float(tau0_oracle),
+            "tau_post_mean": tau_post_mean,
+            "tau_ratio_to_oracle": float(tau_post_mean / max(tau0_oracle, 1e-12)) if np.isfinite(tau_post_mean) else float("nan"),
+            "kappa_null_mean": kappa_null_mean,
+            "kappa_signal_mean": kappa_signal_mean,
+            **_result_diag_fields(res),
+            **_bridge_ratio_diagnostics(
+                res,
+                groups=groups,
+                X=X,
+                y=y,
+                signal_group_mask=group_has_signal,
+            ),
+            **mse_metrics,
+        }
+
+    variant_items = list(variants.items())
+    workers = max(1, min(int(method_jobs), len(variant_items)))
+    if workers <= 1 or len(variant_items) <= 1:
+        return [_fit_variant(item) for item in variant_items]
+
+    done: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        fut_map = {ex.submit(_fit_variant, item): str(item[0]) for item in variant_items}
+        for fut in as_completed(fut_map):
+            row = fut.result()
+            done[str(row["variant"])] = row
+    return [done[str(vname)] for vname, _ in variant_items]
 
 
 def run_exp4_variant_ablation(
     n_jobs: int = 1,
+    method_jobs: int = 1,
     seed: int = MASTER_SEED,
     repeats: int = 20,
     save_dir: str = "outputs/simulation_project",
@@ -249,6 +261,7 @@ def run_exp4_variant_ablation(
                     sampler,
                     variants,
                     int(bayes_min_chains_use),
+                    int(method_jobs),
                     bool(enforce_bayes_convergence),
                     int(retry_limit),
                     n,
@@ -307,6 +320,7 @@ def run_exp4_variant_ablation(
             "n": n,
             "include_oracle": bool(include_oracle),
             "bayes_min_chains": int(bayes_min_chains_use),
+            "method_jobs": int(method_jobs),
             "max_convergence_retries": int(retry_limit),
         },
         out_dir / "exp4_meta.json",

@@ -3,6 +3,7 @@ version: 1
 defaults:
   save_dir: outputs/simulation_project
   n_jobs: 1
+  method_jobs: 1
   seed: 20260415
 
 sweeps:
@@ -10,6 +11,7 @@ sweeps:
     experiment: all
     description: Unified default protocol run (Exp1 -> Exp5 -> analysis).
     fixed:
+      all_parallel_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
@@ -26,6 +28,7 @@ sweeps:
     description: Exp2 default protocol (repeats=100, rho_ref fixed at 0.8).
     fixed:
       repeats: 100
+      method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
@@ -35,6 +38,7 @@ sweeps:
     description: Exp3a default protocol (repeats=100, gigg_mode=stable).
     fixed:
       repeats: 100
+      method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
@@ -45,6 +49,7 @@ sweeps:
     description: Exp3b default protocol (repeats=100, gigg_mode=stable).
     fixed:
       repeats: 100
+      method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
@@ -55,6 +60,7 @@ sweeps:
     description: Exp4 default protocol (repeats=30, built-in retry default=3).
     fixed:
       repeats: 30
+      method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed
@@ -64,6 +70,7 @@ sweeps:
     description: Exp5 default protocol (repeats=20, built-in retry default=5).
     fixed:
       repeats: 20
+      method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: collapsed

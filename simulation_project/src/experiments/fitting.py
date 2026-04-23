@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Sequence
 
 import numpy as np
@@ -36,6 +37,7 @@ def _fit_all_methods(
     bayes_min_chains: int | None = None,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int = 2,
+    method_jobs: int = 1,
 ) -> dict[str, FitResult]:
     n = X.shape[0]
     grrhs_kwargs = grrhs_kwargs or {}
@@ -103,8 +105,7 @@ def _fit_all_methods(
     gigg_methods = {"GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large"}
     gigg_no_retry = bool(gigg_cfg.get("no_retry", False))
     gigg_extra_retry = int(gigg_extra_retry_cfg)
-    out: dict[str, FitResult] = {}
-    for method in methods_use:
+    def _run_single_method(method: str) -> tuple[str, FitResult]:
         res: FitResult | None = None
         attempts = 1
         # GIGG methods with no_retry=True run exactly once (paper budget = 10k+10k);
@@ -134,7 +135,23 @@ def _fit_all_methods(
             until_mode=until_mode,
             enforce_bayes_convergence=bool(enforce_bayes_convergence),
         )
-        out[str(method)] = res
+        return str(method), res
+
+    out: dict[str, FitResult] = {}
+    workers = max(1, min(int(method_jobs), len(methods_use)))
+    if workers <= 1 or len(methods_use) <= 1:
+        for method in methods_use:
+            key, res = _run_single_method(method)
+            out[key] = res
+        return out
+
+    done: dict[str, FitResult] = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        fut_map = {ex.submit(_run_single_method, method): str(method) for method in methods_use}
+        for fut in as_completed(fut_map):
+            key, res = fut.result()
+            done[key] = res
+    out = {str(method): done[str(method)] for method in methods_use}
     return out
 
 

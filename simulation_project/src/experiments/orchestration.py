@@ -33,6 +33,7 @@ from .exp5 import run_exp5_prior_sensitivity
 
 def run_all_experiments(
     n_jobs: int = 1,
+    method_jobs: int = 1,
     seed: int = MASTER_SEED,
     save_dir: str = "outputs/simulation_project",
     *,
@@ -47,6 +48,7 @@ def run_all_experiments(
     exp3_gigg_mode_name = _normalize_exp3_gigg_mode(exp3_gigg_mode)
     common_cfg = RunCommonConfig(
         n_jobs=n_jobs,
+        method_jobs=method_jobs,
         seed=seed,
         save_dir=save_dir,
         enforce_bayes_convergence=bool(enforce_bayes_convergence),
@@ -81,6 +83,7 @@ def run_all_experiments(
     save_json(
         {
             "protocol": "single_default",
+            "method_jobs": int(method_jobs),
             "enforce_bayes_convergence": bool(enforce_bayes_convergence),
             "max_convergence_retries": max_convergence_retries,
             "until_bayes_converged": bool(until_bayes_converged),
@@ -102,8 +105,8 @@ def _cli() -> None:
         description=(
             "Run the unified simulation pipeline (Exp1, Exp2, Exp3a, Exp3b, Exp4, Exp5), "
             "or run individual experiment entries. "
-            "On Windows, process-pool parallelism is disabled by default; "
-            "set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to force-enable from a spawn-safe script entrypoint."
+            "On Windows, process-pool parallelism is allowed from spawn-safe script entrypoints "
+            "and disabled only in interactive/non-spawn-safe contexts."
         )
     )
     parser.add_argument("--experiment", default="all", choices=list(CLI_EXPERIMENT_CHOICES))
@@ -120,6 +123,12 @@ def _cli() -> None:
     parser.add_argument("--seed", type=int, default=MASTER_SEED)
     parser.add_argument("--repeats", type=int, default=None)
     parser.add_argument("--n-jobs", type=int, default=1)
+    parser.add_argument(
+        "--method-jobs",
+        type=int,
+        default=1,
+        help="Concurrent fits within a single replicate/task (default 1 = serial within task).",
+    )
     parser.add_argument(
         "--all-parallel-jobs",
         type=int,
@@ -159,6 +168,7 @@ def _cli() -> None:
         )
     common_cfg = RunCommonConfig(
         n_jobs=args.n_jobs,
+        method_jobs=args.method_jobs,
         seed=args.seed,
         save_dir=str(save_dir_resolved),
         enforce_bayes_convergence=enforce_conv,

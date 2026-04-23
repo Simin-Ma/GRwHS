@@ -7,6 +7,7 @@ from typing import Any
 @dataclass(frozen=True)
 class RunCommonConfig:
     n_jobs: int
+    method_jobs: int
     seed: int
     save_dir: str
     enforce_bayes_convergence: bool
@@ -17,6 +18,7 @@ class RunCommonConfig:
     def as_kwargs(self) -> dict[str, Any]:
         return {
             "n_jobs": int(self.n_jobs),
+            "method_jobs": int(self.method_jobs),
             "seed": int(self.seed),
             "save_dir": str(self.save_dir),
             "enforce_bayes_convergence": bool(self.enforce_bayes_convergence),

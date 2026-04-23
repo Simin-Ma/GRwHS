@@ -107,6 +107,7 @@ def test_entrypoint_importable() -> None:
 def test_architecture_models_and_registry() -> None:
     cfg = RunCommonConfig(
         n_jobs=2,
+        method_jobs=3,
         seed=123,
         save_dir="simulation_project",
         enforce_bayes_convergence=True,
@@ -116,6 +117,7 @@ def test_architecture_models_and_registry() -> None:
     )
     cfg_kwargs = cfg.as_kwargs()
     assert cfg_kwargs["n_jobs"] == 2
+    assert cfg_kwargs["method_jobs"] == 3
     assert cfg_kwargs["sampler_backend"] == "nuts"
 
     manifest = RunManifest(
@@ -205,11 +207,30 @@ def test_exp5_defaults_to_full_sensitivity_and_retry_budget_5(monkeypatch) -> No
     captured: dict[str, object] = {}
 
     def _fake_parallel_rows(tasks, worker, n_jobs, **kwargs):
+        captured.setdefault("tasks_by_worker", {})[getattr(worker, "__name__", "worker")] = list(tasks)
         captured["tasks"] = list(tasks)
+        if worker is exp5_mod._exp5_screen_prior_worker:
+            rows = []
+            for task in tasks:
+                sid, _group_sizes, _mu, _seed, _sampler, alpha_k, beta_k, _bayes_min_chains, _enforce, _max_retries, _backend = task
+                rows.append(
+                    {
+                        "setting_id": int(sid),
+                        "prior_key": f"{float(alpha_k):.6g}|{float(beta_k):.6g}",
+                        "alpha_kappa": float(alpha_k),
+                        "beta_kappa": float(beta_k),
+                        "status": "ok",
+                        "converged": (float(alpha_k), float(beta_k)) == (1.0, 3.0),
+                        "fit_attempts": 1,
+                        "runtime_seconds": 1.0,
+                        "error": "",
+                    }
+                )
+            return rows
         return [worker(t) for t in tasks]
 
     def _fake_exp5_worker(task):
-        sid, r, _group_sizes, _mu, _seed, _sampler, prior_grid, _bayes_min_chains, _enforce, _max_retries, _backend = task
+        sid, r, _group_sizes, _mu, _seed, _sampler, prior_grid, _bayes_min_chains, _method_jobs, _enforce, _max_retries, _backend = task
         rows = []
         for pid, (alpha_k, beta_k) in enumerate(prior_grid, start=1):
             rows.append(
@@ -263,9 +284,15 @@ def test_exp5_defaults_to_full_sensitivity_and_retry_budget_5(monkeypatch) -> No
 
     tasks = captured.get("tasks")
     assert isinstance(tasks, list) and tasks
-    for task in tasks:
-        assert int(task[9]) == 5  # retry budget
-        assert len(task[6]) == 5  # full-sensitivity prior grid
+    screen_tasks = captured["tasks_by_worker"]["_exp5_screen_prior_worker"]
+    full_tasks = captured["tasks_by_worker"]["_fake_exp5_worker"]
+    assert screen_tasks and full_tasks
+    for task in full_tasks:
+        assert int(task[10]) == 5  # retry budget
+        assert len(task[6]) == 2  # default prior + screened-in prior
+
+    summary_partial = save_dir / "results" / "exp5_prior_sensitivity" / "summary_partial.csv"
+    assert summary_partial.exists()
 
 
 def test_exp4_forces_collapsed_backend_only_for_p0_5(monkeypatch, tmp_path) -> None:
@@ -333,7 +360,7 @@ def test_exp4_forces_collapsed_backend_only_for_p0_5(monkeypatch, tmp_path) -> N
     backends_by_p0: dict[int, set[str]] = {}
     for task in captured_tasks:
         p0_true = int(task[0])
-        backend = str(task[10])
+        backend = str(task[11])
         backends_by_p0.setdefault(p0_true, set()).add(backend)
 
     assert backends_by_p0.get(5) == {"collapsed"}
@@ -375,7 +402,7 @@ def test_exp4_default_correlation_uses_0_8_and_0_2(monkeypatch) -> None:
     monkeypatch.setattr(exp4_mod, "_fit_with_convergence_retry", _fake_fit_with_convergence_retry)
 
     variants = {"RHS_oracle": {"method": "RHS"}}
-    task = (5, 1, 20260415, [10, 10, 10, 10, 10], SamplerConfig(), variants, 4, True, 1, 100, "collapsed")
+    task = (5, 1, 20260415, [10, 10, 10, 10, 10], SamplerConfig(), variants, 4, 1, True, 1, 100, "collapsed")
     rows = exp4_mod._exp4_worker(task)
 
     assert rows

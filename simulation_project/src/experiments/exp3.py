@@ -220,6 +220,7 @@ def _exp3_worker(
         gigg_config = dict(task["gigg_config"])
         gigg_mode = str(task.get("gigg_mode", "stable"))
         bayes_min_chains = task.get("bayes_min_chains")
+        method_jobs = int(task.get("method_jobs", 1))
         enforce_conv = bool(task["enforce_bayes_convergence"])
         max_retries = int(task["max_convergence_retries"])
         grrhs_kwargs = dict(task["grrhs_kwargs"])
@@ -228,9 +229,13 @@ def _exp3_worker(
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
             boundary_xi_ratio = float(_BOUNDARY_XI_RATIO)
             n_train = 100
-        else:
+            method_jobs = 1
+        elif len(task) == 20:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
             n_train = 100
+            method_jobs = 1
+        else:
+            sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_train, n_test, sampler, methods, gigg_config, bayes_min_chains, method_jobs, enforce_conv, max_retries, grrhs_kwargs = task
         methods = [str(m) for m in methods]
         gigg_mode = "stable"
     group_cfg_name: str = str(group_cfg["name"])
@@ -341,6 +346,7 @@ def _exp3_worker(
         grrhs_kwargs=grrhs_kwargs or {},
         enforce_bayes_convergence=bool(enforce_conv),
         max_convergence_retries=int(max_retries),
+        method_jobs=int(method_jobs),
     )
 
     out_rows: list[dict[str, Any]] = []
@@ -403,6 +409,7 @@ def _exp3_worker(
 
 def run_exp3_linear_benchmark(
     n_jobs: int = 1,
+    method_jobs: int = 1,
     seed: int = MASTER_SEED,
     repeats: int = 20,
     save_dir: str = "outputs/simulation_project",
@@ -588,6 +595,7 @@ def run_exp3_linear_benchmark(
                 "gigg_config": dict(gigg_cfg),
                 "gigg_mode": str(gigg_mode_name),
                 "bayes_min_chains": int(bayes_min_chains_use),
+                "method_jobs": int(method_jobs),
                 "enforce_bayes_convergence": bool(enforce_bayes_convergence),
                 "max_convergence_retries": int(retry_limit),
                 "grrhs_kwargs": dict(grrhs_kw),
@@ -782,6 +790,7 @@ def run_exp3_linear_benchmark(
         "n_test": int(n_test),
         "methods": methods_use,
         "bayes_min_chains": int(bayes_min_chains_use),
+        "method_jobs": int(method_jobs),
         "n_settings": len(settings),
         "repeats": int(repeats),
         "enforce_bayes_convergence": bool(enforce_bayes_convergence),
