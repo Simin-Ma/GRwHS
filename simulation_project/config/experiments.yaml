@@ -11,7 +11,7 @@ exp2_group_separation:
     Exp2 - group separation toy aligned to Exp3 scale (Theorem 3.34).
     group_sizes=[10,10,10,10,10], rho_ref=0.5,
     xi_ratios=[0.0,1.0,2.0,5.0,10.0], n_train=100, n_test=30,
-    rho_within=0.3, rho_between=0.05, methods=[GR_RHS,RHS].
+    rho_within=0.8, rho_between=0.2, methods=[GR_RHS,RHS].
     Main summary uses paired-converged-and-ok subset.
 
 exp3a_main_benchmark:
@@ -52,7 +52,8 @@ exp4_variant_ablation:
   repeats_default: 30
   description: >
     Exp4 - GR-RHS variant ablation with oracle reference.
-    p0_list=[5,15,30], include_oracle=true, Exp4 default sampler=gibbs.
+    p0_list=[5,15,30], include_oracle=true, sampler routing: p0=5->collapsed,
+    otherwise use sampler_backend (default nuts).
     Summary uses converged-and-ok rows only.
 
 exp5_prior_sensitivity:

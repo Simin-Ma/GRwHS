@@ -266,3 +266,118 @@ def test_exp5_defaults_to_full_sensitivity_and_retry_budget_5(monkeypatch) -> No
     for task in tasks:
         assert int(task[9]) == 5  # retry budget
         assert len(task[6]) == 5  # full-sensitivity prior grid
+
+
+def test_exp4_forces_collapsed_backend_only_for_p0_5(monkeypatch, tmp_path) -> None:
+    import simulation_project.src.experiments.exp4 as exp4_mod
+
+    captured_tasks: list[tuple] = []
+
+    def _fake_parallel_rows(tasks, worker, n_jobs, **kwargs):
+        captured_tasks.extend(list(tasks))
+        out = []
+        for task in tasks:
+            p0_true = int(task[0])
+            out.append(
+                [
+                    {
+                        "p0_true": p0_true,
+                        "variant": "RHS_oracle",
+                        "method_type": "RHS",
+                        "status": "ok",
+                        "converged": True,
+                        "fit_attempts": 1,
+                        "tau0_oracle": 0.01,
+                        "tau_post_mean": 0.01,
+                        "tau_ratio_to_oracle": 1.0,
+                        "kappa_null_mean": 0.1,
+                        "kappa_signal_mean": 0.2,
+                        "g_true_active": 1,
+                        "runtime_seconds": 1.0,
+                        "rhat_max": 1.0,
+                        "bulk_ess_min": 500.0,
+                        "divergence_ratio": 0.0,
+                        "error": "",
+                        "bridge_ratio_mean": 1.0,
+                        "bridge_ratio_min": 1.0,
+                        "bridge_ratio_max": 1.0,
+                        "bridge_ratio_p95": 1.0,
+                        "bridge_ratio_violations": 0,
+                        "bridge_ratio_null_mean": 1.0,
+                        "bridge_ratio_signal_mean": 1.0,
+                        "bridge_ratio_by_group": "{}",
+                        "mse_null": 1.0,
+                        "mse_signal": 1.0,
+                        "mse_overall": 1.0,
+                    }
+                ]
+            )
+        return out
+
+    monkeypatch.setattr(exp4_mod, "_parallel_rows", _fake_parallel_rows)
+
+    save_dir = tmp_path / "exp4_backend_route_probe"
+    exp4_mod.run_exp4_variant_ablation(
+        n_jobs=1,
+        repeats=1,
+        seed=20260415,
+        save_dir=str(save_dir),
+        p0_list=[5, 15, 30],
+        sampler_backend="nuts",
+        include_oracle=False,
+        enforce_bayes_convergence=False,
+        until_bayes_converged=False,
+    )
+
+    assert captured_tasks
+    backends_by_p0: dict[int, set[str]] = {}
+    for task in captured_tasks:
+        p0_true = int(task[0])
+        backend = str(task[10])
+        backends_by_p0.setdefault(p0_true, set()).add(backend)
+
+    assert backends_by_p0.get(5) == {"collapsed"}
+    assert backends_by_p0.get(15) == {"nuts"}
+    assert backends_by_p0.get(30) == {"nuts"}
+
+
+def test_exp4_default_correlation_uses_0_8_and_0_2(monkeypatch) -> None:
+    import simulation_project.src.experiments.exp4 as exp4_mod
+    from simulation_project.src.utils import SamplerConfig
+
+    captured: dict[str, float] = {}
+
+    def _fake_sample_correlated_design(*, n, group_sizes, rho_within, rho_between, seed):
+        captured["rho_within"] = float(rho_within)
+        captured["rho_between"] = float(rho_between)
+        p = int(sum(group_sizes))
+        return np.zeros((int(n), p), dtype=float), np.eye(p, dtype=float)
+
+    def _fake_fit_with_convergence_retry(*args, **kwargs):
+        return FitResult(
+            method="RHS",
+            status="ok",
+            beta_mean=np.zeros(50, dtype=float),
+            beta_draws=None,
+            kappa_draws=None,
+            group_scale_draws=None,
+            runtime_seconds=0.0,
+            rhat_max=1.0,
+            bulk_ess_min=500.0,
+            divergence_ratio=0.0,
+            converged=True,
+            tau_draws=None,
+            error="",
+            diagnostics={},
+        )
+
+    monkeypatch.setattr("simulation_project.src.utils.sample_correlated_design", _fake_sample_correlated_design)
+    monkeypatch.setattr(exp4_mod, "_fit_with_convergence_retry", _fake_fit_with_convergence_retry)
+
+    variants = {"RHS_oracle": {"method": "RHS"}}
+    task = (5, 1, 20260415, [10, 10, 10, 10, 10], SamplerConfig(), variants, 4, True, 1, 100, "collapsed")
+    rows = exp4_mod._exp4_worker(task)
+
+    assert rows
+    assert captured["rho_within"] == 0.8
+    assert captured["rho_between"] == 0.2

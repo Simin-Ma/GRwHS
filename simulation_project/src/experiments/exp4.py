@@ -45,7 +45,7 @@ def _exp4_worker(
 
     # DGP: mixed strong/weak signals, randomly placed.
     # Here p0_true is the true active COEFFICIENT count.
-    X, _cov_x = sample_correlated_design(n=n, group_sizes=group_sizes, rho_within=0.3, rho_between=0.05, seed=s)
+    X, _cov_x = sample_correlated_design(n=n, group_sizes=group_sizes, rho_within=0.8, rho_between=0.2, seed=s)
     groups = canonical_groups(group_sizes)
     rng = np.random.default_rng(s + 19)
     beta = np.zeros(p, dtype=float)
@@ -185,8 +185,10 @@ def run_exp4_variant_ablation(
       oracle:     optional; enable with include_oracle=True for full ablation
 
     Note: p0 here denotes active coefficients (sparsity in coefficients).
-    DGP matches Exp3 scale: p=50 (5 groups of 10), n=100.
-    Default: p0 in {5, 15, 30}, include_oracle=True, retries=3, sampler=nuts.
+    DGP defaults: p=50 (5 groups of 10), n=100, rho_within=0.8, rho_between=0.2.
+    Default: p0 in {5, 15, 30}, include_oracle=True, retries=3.
+    Sampler routing default: p0=5 uses collapsed; other p0 values use sampler_backend
+    (whose function default is nuts).
     """
     pd = load_pandas()
     produced: set[Path] = set()
@@ -228,11 +230,31 @@ def run_exp4_variant_ablation(
             }
         return variants
 
+    def _backend_for_p0(p0_true: int) -> str:
+        # Keep p0=5 on collapsed backend for stability; all other p0 keep caller-selected backend.
+        if int(p0_true) == 5:
+            return "collapsed"
+        return str(backend_use)
+
     tasks: list[tuple] = []
     for p0_v in p0_vals:
         variants = _variants_for_p0(int(p0_v))
         for r in range(1, int(repeats) + 1):
-            tasks.append((int(p0_v), r, seed, group_sizes, sampler, variants, int(bayes_min_chains_use), bool(enforce_bayes_convergence), int(retry_limit), n, str(backend_use)))
+            tasks.append(
+                (
+                    int(p0_v),
+                    r,
+                    seed,
+                    group_sizes,
+                    sampler,
+                    variants,
+                    int(bayes_min_chains_use),
+                    bool(enforce_bayes_convergence),
+                    int(retry_limit),
+                    n,
+                    _backend_for_p0(int(p0_v)),
+                )
+            )
 
     n_variants = len(_variants_for_p0(int(p0_vals[0]))) if p0_vals else 0
     log.info(

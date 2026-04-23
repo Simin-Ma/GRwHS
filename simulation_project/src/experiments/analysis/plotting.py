@@ -2082,13 +2082,14 @@ def plot_exp1_transition_width_readable(
 
 def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> None:
     """
-    Exp2 �� group separation (Theorem 3.34).
+    Exp2 -- group separation (Theorem 3.34).
 
-    Fig A: Method comparison �� null/signal group MSE with error bars (SEM across
+    Fig A: Method comparison of null/signal group MSE with error bars (SEM across
            replicates), AUROC, and MLPD. Methods sorted by group AUROC.
-    Fig B: GR-RHS ��_g profile across groups �� boxplot across replicates ordered
-           by ��_g (gradient from null to strong signal), with null/signal regions
-           shaded. Shows the step-up of ��_g at the signal boundary.
+    Fig B: GR-RHS kappa_g profile across groups -- boxplot across replicates
+           ordered by kappa_g (gradient from null to strong signal), with
+           null/signal regions shaded. Shows the step-up of kappa_g at the
+           signal boundary.
 
     df_kappa_raw should be the raw per-replicate kappa DataFrame (kappa_df),
     with columns: replicate_id, group_id, mu_g, signal_label, post_mean_kappa_g.
@@ -2098,76 +2099,96 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
     out_dir = Path(out_dir)
     from ...utils import method_display_name
 
-    # --- Figure A: method comparison with error bars ---
+    # --- Figure A: MSE-only comparison (detailed) ---
     if not summary.empty and "method" in summary.columns:
-        # Sort by group_auroc descending; GR_RHS first if tied
-        if "group_auroc" in summary.columns:
-            summary = summary.copy()
-            summary["_rank"] = summary["group_auroc"].rank(ascending=False, method="first")
+        # Sort by MSE (lower is better); GR_RHS first if tied.
+        summary = summary.copy()
+        sort_col = "mse_overall" if "mse_overall" in summary.columns else "null_group_mse"
+        if sort_col in summary.columns:
+            summary["_rank"] = summary[sort_col].rank(ascending=True, method="first")
             gr_mask = summary["method"] == "GR_RHS"
             if gr_mask.any():
-                summary.loc[gr_mask, "_rank"] = 0
+                summary.loc[gr_mask, "_rank"] = np.minimum(summary.loc[gr_mask, "_rank"], 0.0)
             summary = summary.sort_values("_rank").drop(columns=["_rank"])
 
         methods = [method_display_name(m) for m in summary["method"]]
         raw_methods = list(summary["method"])
-        x = np.arange(len(methods))
+        x = np.arange(len(methods), dtype=float)
         colors = [_method_color(m) for m in raw_methods]
 
-        fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+        fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.8))
 
-        # Null vs signal group MSE
-        ax = axes[0]
-        w = 0.38
-        null_vals = summary["null_group_mse"].to_numpy() if "null_group_mse" in summary else np.full(len(methods), np.nan)
-        sig_vals = summary["signal_group_mse"].to_numpy() if "signal_group_mse" in summary else np.full(len(methods), np.nan)
-        null_sem = summary["null_group_mse_std"].to_numpy() / np.sqrt(np.maximum(summary["n_effective"].to_numpy(), 1)) if "null_group_mse_std" in summary.columns else None
-        sig_sem = summary["signal_group_mse_std"].to_numpy() / np.sqrt(np.maximum(summary["n_effective"].to_numpy(), 1)) if "signal_group_mse_std" in summary.columns else None
-        ax.bar(x - w / 2, null_vals, width=w, color=colors, alpha=0.7, label="null groups")
-        ax.bar(x + w / 2, sig_vals, width=w, color=colors, alpha=1.0, label="signal groups", edgecolor="white", linewidth=0.5)
-        if null_sem is not None:
-            ax.errorbar(x - w / 2, null_vals, yerr=null_sem, fmt="none", color="black", capsize=3, lw=1)
-        if sig_sem is not None:
-            ax.errorbar(x + w / 2, sig_vals, yerr=sig_sem, fmt="none", color="black", capsize=3, lw=1)
-        ax.set_xticks(x, labels=methods, rotation=32, ha="right", fontsize=8)
-        ax.set_ylabel("Group-level L2 Error", fontsize=9)
-        ax.set_title("Null (light) vs Signal (dark) MSE\nError bars = SEM across replicates", fontsize=8)
-        ax.legend(fontsize=7)
+        metric_specs = [
+            ("null_group_mse", "null_group_mse_std", "Null-group MSE"),
+            ("signal_group_mse", "signal_group_mse_std", "Signal-group MSE"),
+            ("mse_overall", "mse_overall_std", "Overall MSE"),
+        ]
+        n_eff = (
+            summary["n_effective"].to_numpy(dtype=float)
+            if "n_effective" in summary.columns
+            else np.ones(len(methods), dtype=float)
+        )
 
-        # Group AUROC
-        ax = axes[1]
-        auroc_vals = summary["group_auroc"].to_numpy() if "group_auroc" in summary.columns else np.full(len(methods), np.nan)
-        auroc_sem = summary["group_auroc_std"].to_numpy() / np.sqrt(np.maximum(summary["n_effective"].to_numpy(), 1)) if "group_auroc_std" in summary.columns else None
-        ax.bar(x, auroc_vals, color=colors, alpha=0.9)
-        if auroc_sem is not None:
-            ax.errorbar(x, auroc_vals, yerr=auroc_sem, fmt="none", color="black", capsize=3, lw=1)
-        ax.set_xticks(x, labels=methods, rotation=32, ha="right", fontsize=8)
-        ax.set_ylim(0, 1.08)
-        ax.axhline(0.5, color="gray", ls=":", lw=0.8)
-        ax.set_ylabel("Group AUROC", fontsize=9)
-        ax.set_title("Group-separation AUROC\n(random = 0.5)", fontsize=8)
+        for ax, (metric, std_metric, title_txt) in zip(axes, metric_specs):
+            vals = (
+                summary[metric].to_numpy(dtype=float)
+                if metric in summary.columns
+                else np.full(len(methods), np.nan, dtype=float)
+            )
+            ax.bar(x, vals, color=colors, alpha=0.9, edgecolor="white", linewidth=0.6)
+            if std_metric in summary.columns:
+                sem = summary[std_metric].to_numpy(dtype=float) / np.sqrt(np.maximum(n_eff, 1.0))
+                ax.errorbar(x, vals, yerr=sem, fmt="none", color="black", capsize=3, lw=1.0)
 
-        # MLPD (test)
-        ax = axes[2]
-        if "lpd_test" in summary.columns:
-            lpd_vals = summary["lpd_test"].to_numpy()
-            lpd_sem = summary["lpd_test_std"].to_numpy() / np.sqrt(np.maximum(summary["n_effective"].to_numpy(), 1)) if "lpd_test_std" in summary.columns else None
-            ax.bar(x, lpd_vals, color=colors, alpha=0.9)
-            if lpd_sem is not None:
-                ax.errorbar(x, lpd_vals, yerr=lpd_sem, fmt="none", color="black", capsize=3, lw=1)
-            ax.set_xticks(x, labels=methods, rotation=32, ha="right", fontsize=8)
-            ax.set_ylabel("MLPD (test set)", fontsize=9)
-            ax.set_title("Marginal log predictive density\n(higher = better)", fontsize=8)
+            ax.set_xticks(x, labels=methods, rotation=30, ha="right", fontsize=8)
+            ax.set_ylabel("MSE", fontsize=9)
+            ax.set_title(f"{title_txt}\n(lower is better)", fontsize=8)
+            ax.grid(axis="y", alpha=0.18)
 
-        # n_effective annotation
-        for ax_i in axes:
-            ax_i.annotate("", xy=(0, 0), xytext=(0, 0))
-        for mi, (ax_idx, n_eff) in enumerate(zip(range(3), [])):
-            pass
+            finite_idx = np.where(np.isfinite(vals))[0]
+            if finite_idx.size:
+                ymax = float(np.nanmax(vals[finite_idx]))
+                offset = 0.02 * max(ymax, 1e-6)
+                for i in finite_idx.tolist():
+                    ax.text(
+                        float(x[i]),
+                        float(vals[i]) + offset,
+                        f"{vals[i]:.3f}",
+                        ha="center",
+                        va="bottom",
+                        fontsize=7,
+                        color="#333333",
+                    )
+                ax.set_ylim(0.0, ymax * 1.18 + 1e-6)
+
+        title = "Exp2 MSE-only comparison"
+        if {"GR_RHS", "RHS"}.issubset(set(summary["method"].astype(str).tolist())):
+            rel_parts = []
+            for metric, label in (
+                ("null_group_mse", "null"),
+                ("signal_group_mse", "signal"),
+                ("mse_overall", "overall"),
+            ):
+                if metric not in summary.columns:
+                    continue
+                gr_v = float(summary.loc[summary["method"] == "GR_RHS", metric].iloc[0])
+                rhs_v = float(summary.loc[summary["method"] == "RHS", metric].iloc[0])
+                if np.isfinite(gr_v) and np.isfinite(rhs_v) and abs(rhs_v) > 1e-12:
+                    rel_parts.append(f"{label}: {(rhs_v - gr_v) / rhs_v * 100.0:+.1f}%")
+            if rel_parts:
+                title += " | GR_RHS reduction vs RHS: " + " | ".join(rel_parts)
+        fig.suptitle(title, fontsize=10, y=1.02)
+
+        if "n_effective" in summary.columns:
+            n_txt = " | ".join(
+                f"{method_display_name(m)}: n={int(n)}"
+                for m, n in zip(summary["method"], summary["n_effective"])
+            )
+            fig.text(0.5, 0.02, f"Paired-converged replicates: {n_txt}", ha="center", va="bottom", fontsize=8)
 
         _save(fig, out_dir / "fig2a_method_comparison.png")
 
-    # --- Figure B: GR-RHS ��_g distribution by group (boxplot across replicates) ---
+    # --- Figure B: GR-RHS kappa_g distribution by group (boxplot across replicates) ---
     # kappa can be either the raw kappa_df (post_mean_kappa_g column) or kappa_summary (mean_kappa)
     if not kappa.empty:
         # Detect which data format we have
@@ -2189,10 +2210,10 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
             mu_val = float(sub["mu_g"].iloc[0]) if "mu_g" in sub.columns else 0.0
             xi_r = float(sub["xi_ratio"].iloc[0]) if "xi_ratio" in sub.columns else float("nan")
             if not math.isnan(xi_r):
-                regime = "null" if xi_r == 0 else f"xi/xi_c={xi_r:.1f}"
+                regime = "null" if xi_r == 0 else rf"$\xi/\xi_{{\mathrm{{crit}}}}={xi_r:.1f}$"
                 labels_g.append(f"G{int(g)}\n{regime}")
             else:
-                labels_g.append(f"G{int(g)}\n{'null' if mu_val == 0 else f'mu={mu_val:.2g}'}")
+                labels_g.append(f"G{int(g)}\n{'null' if mu_val == 0 else rf'$\\mu={mu_val:.2g}$'}")
             colors_g.append("#ff7f7f" if sig else "#7fb3d3")
 
         fig, ax = plt.subplots(figsize=(8, 4.5))
@@ -2217,11 +2238,11 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
             ax.axvspan(-0.5, n_null - 0.5, alpha=0.06, color="blue", label="null groups")
             ax.axvspan(n_null - 0.5, len(groups) - 0.5, alpha=0.06, color="red", label="signal groups")
 
-        ax.axhline(0.5, color="black", ls="--", lw=1.2, label="u? = 0.5")
+        ax.axhline(0.5, color="black", ls="--", lw=1.2, label=r"$u_0 = 0.5$")
         ax.set_xticks(np.arange(len(groups)), labels=labels_g, fontsize=8)
-        ax.set_ylabel("Posterior mean ��_g  (GR-RHS)", fontsize=10)
+        ax.set_ylabel(r"Posterior mean $\kappa_g$ (GR-RHS)", fontsize=10)
         ax.set_title(
-            "GR-RHS ��_g profile by group  (Theorem 3.34)\n"
+            r"GR-RHS $\kappa_g$ profile by group (Theorem 3.34)" "\n"
             "Blue = null groups, Red = signal groups  |  Box = IQR across replicates",
             fontsize=9,
         )

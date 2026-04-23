@@ -59,8 +59,6 @@ def run_all_experiments(
         ("exp2", lambda: run_exp2_group_separation(repeats=_default_repeats("exp2"), **common_cfg.as_kwargs())),
         ("exp3a", lambda: run_exp3a_main_benchmark(repeats=_default_repeats("exp3"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
         ("exp3b", lambda: run_exp3b_boundary_stress(repeats=_default_repeats("exp3"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
-        ("exp3c", lambda: run_exp3c_highdim_stress(repeats=_default_repeats("exp3c"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
-        ("exp3d", lambda: run_exp3d_within_group_mixed(repeats=_default_repeats("exp3d"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
         ("exp4", lambda: run_exp4_variant_ablation(repeats=_default_repeats("exp4"), **common_cfg.as_kwargs())),
         ("exp5", lambda: run_exp5_prior_sensitivity(repeats=_default_repeats("exp5"), **common_cfg.as_kwargs())),
     ]
@@ -87,7 +85,7 @@ def run_all_experiments(
 def _cli() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the unified simulation pipeline (Exp1, Exp2, Exp3a, Exp3b, Exp3c, Exp3d, Exp4, Exp5), "
+            "Run the unified simulation pipeline (Exp1, Exp2, Exp3a, Exp3b, Exp4, Exp5), "
             "or run individual experiment entries. "
             "On Windows, process-pool parallelism is disabled by default; "
             "set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to force-enable from a spawn-safe script entrypoint."

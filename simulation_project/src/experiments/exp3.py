@@ -85,16 +85,16 @@ _DEFAULT_EXP3_GROUP_CONFIGS: list[dict[str, Any]] = [
 
 def _default_exp3_env_points() -> list[dict[str, Any]]:
     points: list[dict[str, Any]] = []
-    for rw in [0.3, 0.6, 0.8]:
+    for rw in [0.8]:
         for snr in [0.2, 1.0, 5.0]:
             points.append(
                 {
                     "env_id": f"RW{int(round(rw*10)):02d}_SNR{int(round(snr*10)):02d}",
                     "setting_block": "core_axis",
                     "rho_within": float(rw),
-                    "rho_between": 0.1,
+                    "rho_between": 0.2,
                     "target_snr": float(snr),
-                    "signals": ["concentrated", "distributed", "boundary", "within_group_mixed", "half_dense", "dense"],
+                    "signals": ["concentrated", "distributed", "boundary"],
                 }
             )
     return points
@@ -887,21 +887,21 @@ def run_exp3c_highdim_stress(
     save_dir: str = "outputs/simulation_project",
     **kwargs,
 ) -> Dict[str, str]:
-    """Exp3c: high-dimensional random-coefficient stress test (n=200, p=500)."""
+    """Exp3c: high-dimensional stress test (n=200, p=500) with sparse signals only."""
     group_configs = [
         {"name": "HD10x50", "group_sizes": [50] * 10, "active_groups": [0, 1]},
     ]
     env_points = []
-    for rw in [0.3, 0.6, 0.8]:
+    for rw in [0.8]:
         for snr in [0.2, 1.0, 5.0]:
             env_points.append(
                 {
                     "env_id": f"HD_RW{int(round(rw*10)):02d}_SNR{int(round(snr*10)):02d}",
                     "setting_block": "highdim_axis",
                     "rho_within": float(rw),
-                    "rho_between": 0.1,
+                    "rho_between": 0.2,
                     "target_snr": float(snr),
-                    "signals": ["half_dense", "dense"],
+                    "signals": ["concentrated", "distributed"],
                 }
             )
     return run_exp3_linear_benchmark(
@@ -909,7 +909,7 @@ def run_exp3c_highdim_stress(
         seed=seed,
         repeats=repeats,
         save_dir=save_dir,
-        signal_types=["half_dense", "dense"],
+        signal_types=["concentrated", "distributed"],
         group_configs=group_configs,
         env_points=env_points,
         n_train=200,
@@ -927,13 +927,13 @@ def run_exp3d_within_group_mixed(
     save_dir: str = "outputs/simulation_project",
     **kwargs,
 ) -> Dict[str, str]:
-    """Exp3d: controlled within-group strong+weak mixture stress benchmark."""
+    """Exp3d: boundary-focused stress benchmark under simplified Exp3 protocol."""
     return run_exp3_linear_benchmark(
         n_jobs=n_jobs,
         seed=seed,
         repeats=repeats,
         save_dir=save_dir,
-        signal_types=["within_group_mixed"],
+        signal_types=["boundary"],
         result_dir_name="exp3d_within_group_mixed",
         exp_key="exp3d",
         **kwargs,

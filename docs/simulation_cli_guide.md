@@ -83,7 +83,7 @@ Diagnostics side table is always exported:
 - `rho_ref=0.5`
 - `xi_ratios=[0.0,1.0,2.0,5.0,10.0]`
 - `n_train=100`, `n_test=30`
-- `rho_within=0.3`, `rho_between=0.05`
+- `rho_within=0.8`, `rho_between=0.2`
 - methods: `GR_RHS`, `RHS`
 
 Run:
@@ -150,7 +150,8 @@ python -m simulation_project.src.run_experiment --experiment 3d --n-jobs 2
 
 - `p0_list=[5,15,30]`
 - `include_oracle=True`
-- default sampler backend: `nuts`
+- DGP default correlation: `rho_within=0.8`, `rho_between=0.2`
+- sampler routing default: `p0=5 -> collapsed`; other `p0` use `--sampler` (default `nuts`)
 
 Run:
 

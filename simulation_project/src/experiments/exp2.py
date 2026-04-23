@@ -170,8 +170,8 @@ def run_exp2_group_separation(
     xi_ratios: Sequence[float] | None = None,
     n_train: int = 100,
     n_test: int = 30,
-    rho_within: float = 0.3,
-    rho_between: float = 0.05,
+    rho_within: float = 0.8,
+    rho_between: float = 0.2,
     sigma2: float = 1.0,
     sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
@@ -182,7 +182,7 @@ def run_exp2_group_separation(
     xi_crit(u0=0.5, rho=rho_ref=0.5):
       group_sizes = [10, 10, 10, 10, 10]
       xi_ratios   = [0.0, 1.0, 2.0, 5.0, 10.0]
-      n_train=100, n_test=30, rho_within=0.3, rho_between=0.05, sigma2=1.0
+      n_train=100, n_test=30, rho_within=0.8, rho_between=0.2, sigma2=1.0
 
     Methods: GR_RHS vs RHS only; summary uses paired-converged subset.
 
