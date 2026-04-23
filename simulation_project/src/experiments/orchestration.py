@@ -307,7 +307,6 @@ def _cli() -> None:
             **common_cfg.as_kwargs(),
             exp3_gigg_mode=exp3_gigg_mode_name,
             skip_analysis=bool(args.skip_analysis) or bool(preset_overrides.get("skip_run_analysis", False)),
-            archive_artifacts=(not bool(args.no_archive_artifacts)) and bool(preset_overrides.get("archive_artifacts", True)),
             preset=str(args.preset),
             all_parallel_jobs=max(1, int(preset_overrides.get("all_parallel_jobs", args.all_parallel_jobs))),
         )
