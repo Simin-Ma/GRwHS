@@ -3,3 +3,5 @@
 {"timestamp_utc": "2026-04-22T22:48:08.232204+00:00", "run_label": "cli_exp2", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260422_224808Z_cli_exp2"}
 {"timestamp_utc": "2026-04-22T23:52:54.830258+00:00", "run_label": "cli_exp5", "mode": "explicit", "save_dir": "outputs\\simulation_project\\adhoc\\exp5_lightweight"}
 {"timestamp_utc": "2026-04-23T00:16:47.536779+00:00", "run_label": "cli_exp2", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_001647Z_cli_exp2"}
+{"timestamp_utc": "2026-04-23T01:09:09.269206+00:00", "run_label": "cli_exp3a", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_010909Z_cli_exp3a"}
+{"timestamp_utc": "2026-04-23T01:09:45.517538+00:00", "run_label": "cli_exp3b", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_010945Z_cli_exp3b"}

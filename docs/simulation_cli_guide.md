@@ -162,6 +162,9 @@ python -m simulation_project.src.run_experiment --experiment 4 --n-jobs 2 --samp
 - paired prior comparisons on the same replicate
 - main delta file: `prior_pairwise_delta.csv`
 - default contrast baseline: prior `(0.5,1.0)`
+- default prior grid is full sensitivity: `(0.5,1.0),(1.0,1.0),(0.5,0.5),(2.0,5.0),(1.0,3.0)`
+- default convergence retry budget is `max_convergence_retries=5` for Exp5
+- retry attempts continue from previous sampler state (no cold restart)
 
 Run:
 

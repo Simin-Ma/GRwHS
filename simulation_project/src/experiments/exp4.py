@@ -66,7 +66,7 @@ def _exp4_worker(
         method = str(spec["method"])
         if method == "GR_RHS":
             res = _fit_with_convergence_retry(
-                lambda st, att, _s=spec, _s_val=s, _vn=vname, _be=backend: fit_gr_rhs(
+                lambda st, att, _resume=None, _s=spec, _s_val=s, _vn=vname, _be=backend: fit_gr_rhs(
                     X,
                     y,
                     groups,
@@ -82,16 +82,18 @@ def _exp4_worker(
                     use_local_scale=bool(_s.get("use_local_scale", True)),
                     shared_kappa=bool(_s.get("shared_kappa", False)),
                     backend=_be,
+                    retry_resume_payload=_resume,
                 ),
                 method="GR_RHS",
                 sampler=sampler,
                 bayes_min_chains=int(bayes_min_chains),
                 max_convergence_retries=max_retries,
                 enforce_bayes_convergence=bool(enforce_conv),
+                continue_on_retry=True,
             )
         else:  # RHS baseline
             res = _fit_with_convergence_retry(
-                lambda st, att, _s_val=s: fit_rhs(
+                lambda st, att, _resume=None, _s_val=s: fit_rhs(
                     X,
                     y,
                     groups,

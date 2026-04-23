@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 import math
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jax.numpy as jnp
 from jax import random
@@ -42,6 +42,45 @@ def _thin(arr: Optional[np.ndarray], step: int) -> Optional[np.ndarray]:
     out = arr if step <= 1 else arr[:, ::step, ...]
     if out.shape[0] == 1:
         return out[0]
+    return out
+
+
+def _normalize_init_params(
+    init_params: Optional[Dict[str, Any]],
+    *,
+    num_chains: int,
+) -> Optional[Dict[str, jnp.ndarray]]:
+    if not isinstance(init_params, dict) or not init_params:
+        return None
+    out: Dict[str, jnp.ndarray] = {}
+    chains = max(1, int(num_chains))
+    for key, value in init_params.items():
+        arr = np.asarray(value, dtype=np.float32)
+        if chains == 1:
+            if arr.ndim > 0 and arr.shape[0] == 1:
+                arr = arr[0]
+        else:
+            if arr.ndim == 0:
+                arr = np.repeat(arr.reshape(1), chains, axis=0)
+            elif arr.shape[0] != chains:
+                arr = np.repeat(np.expand_dims(arr, axis=0), chains, axis=0)
+        out[str(key)] = jnp.asarray(arr)
+    return out or None
+
+
+def _extract_last_init_params(
+    samples: Dict[str, jnp.ndarray],
+    *,
+    latent_keys: Sequence[str],
+) -> Dict[str, np.ndarray]:
+    out: Dict[str, np.ndarray] = {}
+    for key in latent_keys:
+        if key not in samples:
+            continue
+        arr = np.asarray(samples[key], dtype=np.float32)
+        if arr.ndim < 2:
+            continue
+        out[str(key)] = np.asarray(arr[:, -1, ...], dtype=np.float32)
     return out
 
 
@@ -93,6 +132,8 @@ class GRRHS_NUTS:
     chain_method: str = "sequential"
     progress_bar: bool = True
     seed: int = 42
+    init_params: Optional[Dict[str, Any]] = None
+    resume_no_warmup: bool = False
 
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -115,6 +156,7 @@ class GRRHS_NUTS:
     group_id_: Optional[np.ndarray] = field(default=None, init=False)
     group_sizes_: Optional[np.ndarray] = field(default=None, init=False)
     sampler_diagnostics_: Dict[str, Any] = field(default_factory=dict, init=False)
+    last_init_params_: Optional[Dict[str, np.ndarray]] = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.eta <= 0.0:
@@ -298,9 +340,16 @@ class GRRHS_NUTS:
             max_tree_depth=int(self.max_tree_depth),
             init_strategy=init_strategy,
         )
+        init_params_use = _normalize_init_params(
+            self.init_params,
+            num_chains=int(self.num_chains),
+        )
+        warmup_use = int(self.num_warmup)
+        if bool(self.resume_no_warmup) and init_params_use is not None:
+            warmup_use = 0
         mcmc = MCMC(
             kernel,
-            num_warmup=int(self.num_warmup),
+            num_warmup=int(warmup_use),
             num_samples=int(self.num_samples),
             num_chains=int(self.num_chains),
             chain_method=str(self.chain_method),
@@ -308,6 +357,9 @@ class GRRHS_NUTS:
         )
 
         start = time.perf_counter()
+        run_kwargs: Dict[str, Any] = {}
+        if init_params_use is not None:
+            run_kwargs["init_params"] = init_params_use
         mcmc.run(
             random.PRNGKey(int(self.seed)),
             jnp.asarray(X_arr),
@@ -316,9 +368,20 @@ class GRRHS_NUTS:
             jnp.asarray(gsz),
             float(tau0_eff),
             extra_fields=("diverging", "energy", "num_steps"),
+            **run_kwargs,
         )
         runtime_sec = max(time.perf_counter() - start, 1e-12)
         samples = mcmc.get_samples(group_by_chain=True)
+        latent_keys = ["sigma", "tau", "beta_raw"]
+        if bool(self.use_local_scale):
+            latent_keys.append("lambda")
+        if bool(self.use_group_scale):
+            latent_keys.append("a")
+        if bool(self.shared_kappa):
+            latent_keys.append("logit_kappa_shared_raw")
+        else:
+            latent_keys.append("logit_kappa_raw")
+        self.last_init_params_ = _extract_last_init_params(samples, latent_keys=latent_keys)
         self._store_samples(samples)
         self.sampler_diagnostics_ = self._extract_diagnostics(mcmc, runtime_sec=runtime_sec)
         transformed = ["logit_kappa"]
@@ -544,6 +607,8 @@ class GRRHS_Gibbs:
     slice_width_logit: float = 1.0
     slice_max_steps: int = 200
     progress_bar: bool = True
+    initial_chain_states: Optional[List[Dict[str, Any]]] = None
+    resume_no_burnin: bool = False
 
     # posterior storage (set by fit)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -565,6 +630,7 @@ class GRRHS_Gibbs:
     group_id_: Optional[np.ndarray] = field(default=None, init=False)
     group_sizes_: Optional[np.ndarray] = field(default=None, init=False)
     sampler_diagnostics_: Dict[str, Any] = field(default_factory=dict, init=False)
+    chain_last_states_: Optional[List[Dict[str, Any]]] = field(default=None, init=False)
 
     # ------------------------------------------------------------------ helpers
 
@@ -705,6 +771,10 @@ class GRRHS_Gibbs:
         group_sizes: np.ndarray,
         tau0_eff: float,
         seed: int,
+        *,
+        iters: int,
+        burnin: int,
+        initial_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, np.ndarray]:
         rng = default_rng(int(seed))
         n, p = X.shape
@@ -730,8 +800,30 @@ class GRRHS_Gibbs:
         log_lam = np.zeros(p)
         log_a = np.zeros(G)
         logit_kappa = np.zeros(G)
+        if isinstance(initial_state, dict):
+            beta = np.asarray(initial_state.get("beta", beta), dtype=float).reshape(-1)
+            if beta.size != p:
+                beta = np.asarray(np.zeros(p), dtype=float)
+            log_sigma = float(initial_state.get("log_sigma", log_sigma))
+            log_tau = float(initial_state.get("log_tau", log_tau))
+            log_lam = np.asarray(initial_state.get("log_lam", log_lam), dtype=float).reshape(-1)
+            if log_lam.size != p:
+                log_lam = np.zeros(p)
+            log_a = np.asarray(initial_state.get("log_a", log_a), dtype=float).reshape(-1)
+            if log_a.size != G:
+                log_a = np.zeros(G)
+            logit_kappa = np.asarray(initial_state.get("logit_kappa", logit_kappa), dtype=float).reshape(-1)
+            if logit_kappa.size != G:
+                logit_kappa = np.zeros(G)
+            sigma2 = max(float(math.exp(2.0 * log_sigma)), self.jitter)
+            tau = max(float(math.exp(log_tau)), self.jitter)
+            lam = np.maximum(np.exp(log_lam), self.jitter)
+            a = np.maximum(np.exp(log_a), self.jitter)
+            kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
 
-        kept = max(0, (int(self.iters) - int(self.burnin) + int(self.thin) - 1) // int(self.thin))
+        iters_use = int(max(1, iters))
+        burnin_use = int(max(0, min(burnin, iters_use - 1)))
+        kept = max(0, (iters_use - burnin_use + int(self.thin) - 1) // int(self.thin))
         beta_draws = np.zeros((kept, p))
         sigma_draws = np.zeros(kept)
         tau_draws = np.zeros(kept)
@@ -740,11 +832,11 @@ class GRRHS_Gibbs:
         kappa_draws = np.zeros((kept, G))
         keep_i = 0
 
-        iterator = range(int(self.iters))
+        iterator = range(iters_use)
         if bool(self.progress_bar):
             try:
                 from simulation_project.src.core.utils.logging_utils import progress
-                iterator = progress(iterator, total=int(self.iters), desc="GR-RHS Gibbs")
+                iterator = progress(iterator, total=iters_use, desc="GR-RHS Gibbs")
             except Exception:
                 pass
 
@@ -813,7 +905,7 @@ class GRRHS_Gibbs:
 
             kappa_j = kappa[group_id]
 
-            if it >= int(self.burnin) and (it - int(self.burnin)) % int(self.thin) == 0:
+            if it >= burnin_use and (it - burnin_use) % int(self.thin) == 0:
                 beta_draws[keep_i] = beta
                 sigma_draws[keep_i] = math.exp(log_sigma)
                 tau_draws[keep_i] = tau
@@ -829,6 +921,14 @@ class GRRHS_Gibbs:
             "lambda": lam_draws,
             "a": a_draws,
             "kappa": kappa_draws,
+            "last_state": {
+                "beta": np.asarray(beta, dtype=float).copy(),
+                "log_sigma": float(log_sigma),
+                "log_tau": float(log_tau),
+                "log_lam": np.asarray(log_lam, dtype=float).copy(),
+                "log_a": np.asarray(log_a, dtype=float).copy(),
+                "logit_kappa": np.asarray(logit_kappa, dtype=float).copy(),
+            },
         }
 
     # ------------------------------------------------------------------ public API
@@ -860,12 +960,34 @@ class GRRHS_Gibbs:
         else:
             tau0_eff = 0.1
 
+        initial_states: list[Optional[Dict[str, Any]]] = [None] * int(self.num_chains)
+        if isinstance(self.initial_chain_states, list) and self.initial_chain_states:
+            for ci in range(min(len(self.initial_chain_states), int(self.num_chains))):
+                st = self.initial_chain_states[ci]
+                if isinstance(st, dict):
+                    initial_states[ci] = st
+        burnin_use = int(self.burnin)
+        if bool(self.resume_no_burnin) and any(s is not None for s in initial_states):
+            burnin_use = 0
+
         start = time.perf_counter()
         all_chains = [
-            self._sample_chain(X_arr, y_arr, groups_use, gid, gsz, tau0_eff, int(self.seed) + ci)
+            self._sample_chain(
+                X_arr,
+                y_arr,
+                groups_use,
+                gid,
+                gsz,
+                tau0_eff,
+                int(self.seed) + ci,
+                iters=int(self.iters),
+                burnin=int(burnin_use),
+                initial_state=initial_states[ci],
+            )
             for ci in range(int(self.num_chains))
         ]
         runtime_sec = max(time.perf_counter() - start, 1e-12)
+        self.chain_last_states_ = [dict(c.get("last_state", {})) for c in all_chains]
 
         def _stack(key: str) -> np.ndarray:
             arrs = [c[key] for c in all_chains]
@@ -985,6 +1107,8 @@ class GRRHS_CollapsedNUTS:
     chain_method: str = "sequential"
     progress_bar: bool = True
     seed: int = 42
+    init_params: Optional[Dict[str, Any]] = None
+    resume_no_warmup: bool = False
     beta_draws_per_sample: int = 1   # posterior beta draws per hyperparameter sample
     sigma_jitter: float = 1e-6       # numerical jitter on Sigma_y diagonal
 
@@ -1008,6 +1132,7 @@ class GRRHS_CollapsedNUTS:
     group_id_: Optional[np.ndarray] = field(default=None, init=False)
     group_sizes_: Optional[np.ndarray] = field(default=None, init=False)
     sampler_diagnostics_: Dict[str, Any] = field(default_factory=dict, init=False)
+    last_init_params_: Optional[Dict[str, np.ndarray]] = field(default=None, init=False)
 
     # ------------------------------------------------------------------ model
 
@@ -1149,9 +1274,16 @@ class GRRHS_CollapsedNUTS:
             max_tree_depth=int(self.max_tree_depth),
             init_strategy=init_strategy,
         )
+        init_params_use = _normalize_init_params(
+            self.init_params,
+            num_chains=int(self.num_chains),
+        )
+        warmup_use = int(self.num_warmup)
+        if bool(self.resume_no_warmup) and init_params_use is not None:
+            warmup_use = 0
         mcmc = MCMC(
             kernel,
-            num_warmup=int(self.num_warmup),
+            num_warmup=int(warmup_use),
             num_samples=int(self.num_samples),
             num_chains=int(self.num_chains),
             chain_method=str(self.chain_method),
@@ -1159,6 +1291,9 @@ class GRRHS_CollapsedNUTS:
         )
 
         start = time.perf_counter()
+        run_kwargs: Dict[str, Any] = {}
+        if init_params_use is not None:
+            run_kwargs["init_params"] = init_params_use
         mcmc.run(
             random.PRNGKey(int(self.seed)),
             jnp.asarray(X_arr),
@@ -1167,10 +1302,21 @@ class GRRHS_CollapsedNUTS:
             jnp.asarray(gsz),
             float(tau0_eff),
             extra_fields=("diverging", "energy", "num_steps"),
+            **run_kwargs,
         )
         runtime_nuts = time.perf_counter() - start
 
         samples = mcmc.get_samples(group_by_chain=True)
+        latent_keys = ["sigma", "tau"]
+        if bool(self.use_local_scale):
+            latent_keys.append("lambda")
+        if bool(self.use_group_scale):
+            latent_keys.append("a")
+        if bool(self.shared_kappa):
+            latent_keys.append("logit_kappa_shared_raw")
+        else:
+            latent_keys.append("logit_kappa_raw")
+        self.last_init_params_ = _extract_last_init_params(samples, latent_keys=latent_keys)
 
         # ---- Draw beta from p(beta | theta_i, y) via Woodbury ----
         rng_post = default_rng(int(self.seed) + 1)

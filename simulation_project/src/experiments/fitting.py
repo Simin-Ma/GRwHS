@@ -146,6 +146,7 @@ def _fit_with_convergence_retry(
     bayes_min_chains: int | None = None,
     max_convergence_retries: int,
     enforce_bayes_convergence: bool,
+    continue_on_retry: bool = False,
 ) -> FitResult:
     retry_max, until_mode = _retry_budget_from_limit(int(max_convergence_retries))
     sampler_base = sampler
@@ -153,10 +154,22 @@ def _fit_with_convergence_retry(
         sampler_base = _sampler_for_bayesian_default(sampler_base, min_chains=bayes_min_chains)
     res: FitResult | None = None
     attempts = 1
+    resume_payload: dict[str, Any] | None = None
     for attempt in range(retry_max + 1):
         attempts = attempt + 1
         sampler_try = _scale_sampler_for_retry(sampler_base, attempt)
-        res = fit_fn(sampler_try, attempt)
+        try:
+            res = fit_fn(sampler_try, attempt, resume_payload)
+        except TypeError:
+            # Backwards compatible path for existing fit_fn signatures.
+            res = fit_fn(sampler_try, attempt)
+        if bool(continue_on_retry):
+            payload = None
+            if isinstance(res.diagnostics, dict):
+                maybe = res.diagnostics.get("retry_resume_payload")
+                if isinstance(maybe, dict):
+                    payload = maybe
+            resume_payload = payload
         if not bool(enforce_bayes_convergence):
             break
         if bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):

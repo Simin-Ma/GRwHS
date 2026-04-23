@@ -203,7 +203,7 @@ def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
     groups = [list(range(int(pg)))]
 
     res = _fit_with_convergence_retry(
-        lambda st, att, _s=s, _be=str(backend), _ak=alpha_kappa, _bk=beta_kappa: fit_gr_rhs(
+        lambda st, att, _resume=None, _s=s, _be=str(backend), _ak=alpha_kappa, _bk=beta_kappa: fit_gr_rhs(
             X,
             y,
             groups,
@@ -219,12 +219,14 @@ def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
             tau_target="groups",
             backend=str(_be),
             progress_bar=False,
+            retry_resume_payload=_resume,
         ),
         method="GR_RHS",
         sampler=sampler,
         bayes_min_chains=int(getattr(sampler, "chains", 2)),
         max_convergence_retries=int(retry_limit),
         enforce_bayes_convergence=bool(enforce_convergence),
+        continue_on_retry=True,
     )
 
     post_mean = float("nan")

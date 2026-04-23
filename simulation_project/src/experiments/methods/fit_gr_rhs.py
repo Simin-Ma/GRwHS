@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -10,6 +10,72 @@ from .helpers import as_int_groups, fit_error_result
 from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
 
 BACKENDS = ("nuts", "collapsed", "gibbs")
+
+
+def _clone_numeric_dict(obj: dict[str, Any] | None) -> dict[str, np.ndarray] | None:
+    if not isinstance(obj, dict) or not obj:
+        return None
+    out: dict[str, np.ndarray] = {}
+    for k, v in obj.items():
+        if isinstance(v, np.ndarray):
+            out[str(k)] = np.asarray(v, dtype=float).copy()
+            continue
+        if isinstance(v, (list, tuple)):
+            out[str(k)] = np.asarray(v, dtype=float).copy()
+            continue
+        if isinstance(v, (float, int, np.floating, np.integer)):
+            out[str(k)] = np.asarray(float(v), dtype=float)
+    return out or None
+
+
+def _clone_chain_states(states: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(states, list) or not states:
+        return None
+    out: list[dict[str, Any]] = []
+    for item in states:
+        if not isinstance(item, dict):
+            continue
+        cur: dict[str, Any] = {}
+        for key, val in item.items():
+            if isinstance(val, np.ndarray):
+                cur[str(key)] = np.asarray(val, dtype=float).copy()
+            elif isinstance(val, (list, tuple)):
+                cur[str(key)] = np.asarray(val, dtype=float).copy()
+            elif isinstance(val, (float, int, np.floating, np.integer)):
+                cur[str(key)] = float(val)
+        if cur:
+            out.append(cur)
+    return out or None
+
+
+def _resume_payload_for_backend(
+    retry_resume_payload: dict[str, Any] | None,
+    *,
+    backend: str,
+) -> tuple[dict[str, np.ndarray] | None, list[dict[str, Any]] | None]:
+    if not isinstance(retry_resume_payload, dict):
+        return None, None
+    source_backend = str(retry_resume_payload.get("backend", "")).strip().lower()
+    if source_backend != str(backend).strip().lower():
+        return None, None
+    init_params = _clone_numeric_dict(retry_resume_payload.get("init_params"))
+    chain_states = _clone_chain_states(retry_resume_payload.get("chain_states"))
+    return init_params, chain_states
+
+
+def _extract_retry_resume_payload(*, model: Any, backend: str) -> dict[str, Any] | None:
+    b = str(backend).strip().lower()
+    if b in {"nuts", "collapsed"}:
+        init_params = _clone_numeric_dict(getattr(model, "last_init_params_", None))
+        if init_params:
+            return {"backend": b, "init_params": init_params}
+        return None
+    if b == "gibbs":
+        states = _clone_chain_states(getattr(model, "chain_last_states_", None))
+        if states:
+            return {"backend": b, "chain_states": states}
+        return None
+    return None
 
 
 def _build_nuts(
@@ -30,6 +96,8 @@ def _build_nuts(
     adapt_delta: float,
     max_treedepth: int,
     progress_bar: bool,
+    init_params: dict[str, np.ndarray] | None = None,
+    resume_no_warmup: bool = False,
 ) -> GRRHS_NUTS:
     likelihood = "logistic" if str(task).lower() == "logistic" else "gaussian"
     return GRRHS_NUTS(
@@ -54,6 +122,8 @@ def _build_nuts(
         chain_method="sequential",
         progress_bar=bool(progress_bar),
         seed=int(seed),
+        init_params=_clone_numeric_dict(init_params),
+        resume_no_warmup=bool(resume_no_warmup),
     )
 
 
@@ -75,6 +145,8 @@ def _build_collapsed(
     adapt_delta: float,
     max_treedepth: int,
     progress_bar: bool,
+    init_params: dict[str, np.ndarray] | None = None,
+    resume_no_warmup: bool = False,
 ) -> GRRHS_CollapsedNUTS:
     if str(task).lower() == "logistic":
         raise ValueError("GRRHS_CollapsedNUTS does not support logistic likelihood")
@@ -101,6 +173,8 @@ def _build_collapsed(
         seed=int(seed),
         beta_draws_per_sample=1,
         sigma_jitter=1e-6,
+        init_params=_clone_numeric_dict(init_params),
+        resume_no_warmup=bool(resume_no_warmup),
     )
 
 
@@ -120,6 +194,8 @@ def _build_gibbs(
     sigma_reference: float,
     sampler: SamplerConfig,
     progress_bar: bool,
+    initial_chain_states: list[dict[str, Any]] | None = None,
+    resume_no_burnin: bool = False,
 ) -> GRRHS_Gibbs:
     if str(task).lower() == "logistic":
         raise ValueError("GRRHS_Gibbs does not support logistic likelihood")
@@ -143,6 +219,8 @@ def _build_gibbs(
         num_chains=int(sampler.chains),
         seed=int(seed),
         progress_bar=bool(progress_bar),
+        initial_chain_states=_clone_chain_states(initial_chain_states),
+        resume_no_burnin=bool(resume_no_burnin),
     )
 
 
@@ -178,6 +256,7 @@ def fit_gr_rhs(
     tau_target: str = "coefficients",
     backend: str = "nuts",
     progress_bar: bool = True,
+    retry_resume_payload: dict[str, Any] | None = None,
 ) -> FitResult:
     tracked = ["beta", "tau", "kappa", "a"]
     b = str(backend).strip().lower()
@@ -203,17 +282,34 @@ def fit_gr_rhs(
         if str(task).lower() == "logistic":
             pseudo_sigma = logistic_pseudo_sigma(y)
 
-        def _make(seed_: int, adapt_delta: float, max_treedepth: int):
+        def _make(
+            seed_: int,
+            adapt_delta: float,
+            max_treedepth: int,
+            resume_payload: dict[str, Any] | None,
+        ):
             kw = dict(common_kwargs)
             kw["sigma_reference"] = pseudo_sigma
             kw["seed"] = seed_
+            init_params, chain_states = _resume_payload_for_backend(resume_payload, backend=b)
             if b in ("nuts", "collapsed"):
                 kw["adapt_delta"] = adapt_delta
                 kw["max_treedepth"] = max_treedepth
+                kw["init_params"] = init_params
+                kw["resume_no_warmup"] = bool(init_params)
+            elif b == "gibbs":
+                kw["initial_chain_states"] = chain_states
+                kw["resume_no_burnin"] = bool(chain_states)
             return _build_model(b, **kw)
 
-        model = _make(seed, float(sampler.adapt_delta), int(sampler.max_treedepth))
+        model = _make(
+            seed,
+            float(sampler.adapt_delta),
+            int(sampler.max_treedepth),
+            resume_payload=retry_resume_payload,
+        )
         model, runtime = timed_call(model.fit, X, y, groups=as_int_groups(groups))
+        resume_payload_out = _extract_retry_resume_payload(model=model, backend=b)
         beta_draws = getattr(model, "coef_samples_", None)
         beta_mean = getattr(model, "coef_mean_", None)
         tau_draws = getattr(model, "tau_samples_", None)
@@ -229,8 +325,14 @@ def fit_gr_rhs(
 
         # Auto-retry with stricter NUTS settings (only meaningful for gradient-based samplers)
         if b in ("nuts", "collapsed") and np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
-            strict = _make(seed + 999, float(sampler.strict_adapt_delta), int(sampler.strict_max_treedepth))
+            strict = _make(
+                seed + 999,
+                float(sampler.strict_adapt_delta),
+                int(sampler.strict_max_treedepth),
+                resume_payload=resume_payload_out,
+            )
             strict, runtime2 = timed_call(strict.fit, X, y, groups=as_int_groups(groups))
+            resume_payload_out = _extract_retry_resume_payload(model=strict, backend=b)
             beta_draws = getattr(strict, "coef_samples_", None)
             beta_mean = getattr(strict, "coef_mean_", None)
             tau_draws = getattr(strict, "tau_samples_", None)
@@ -243,6 +345,10 @@ def fit_gr_rhs(
                 config=sampler,
             )
             runtime += runtime2
+
+        diagnostics = dict(details or {})
+        if resume_payload_out is not None:
+            diagnostics["retry_resume_payload"] = resume_payload_out
 
         return FitResult(
             method="GR_RHS",
@@ -257,7 +363,7 @@ def fit_gr_rhs(
             bulk_ess_min=float(ess_min),
             divergence_ratio=float(div_ratio),
             converged=bool(converged),
-            diagnostics=details,
+            diagnostics=diagnostics,
         )
     except Exception as exc:
         res = fit_error_result("GR_RHS", f"{type(exc).__name__}: {exc}")

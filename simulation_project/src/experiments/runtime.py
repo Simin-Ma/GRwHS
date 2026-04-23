@@ -27,6 +27,7 @@ _GHS_PLUS_DEFAULT_RHAT_THRESHOLD = 1.01
 _GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
 _EXP4_DEFAULT_BACKEND = "gibbs"
 _EXP4_DEFAULT_MAX_CONV_RETRIES = 3
+_EXP5_DEFAULT_MAX_CONV_RETRIES = 5
 _DEFAULT_REPEATS = {"exp1": 500, "exp2": 100, "exp3": 100, "exp3c": 30, "exp3d": 100, "exp4": 30, "exp5": 20}
 
 # ---------------------------------------------------------------------------

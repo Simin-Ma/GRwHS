@@ -10,6 +10,7 @@ from .fitting import _fit_with_convergence_retry
 from .reporting import _finalize_experiment_run, _paired_converged_subset, _record_produced_paths
 from .runtime import (
     _BAYESIAN_DEFAULT_CHAINS,
+    _EXP5_DEFAULT_MAX_CONV_RETRIES,
     _attempts_used,
     _parallel_rows,
     _resolve_convergence_retry_limit,
@@ -62,7 +63,7 @@ def _exp5_worker(
     rows: list[dict[str, Any]] = []
     for pid, (alpha_k, beta_k) in enumerate(prior_grid, start=1):
         res = _fit_with_convergence_retry(
-            lambda st, att, _a=alpha_k, _b=beta_k, _s=s, _pid=pid, _be=backend: fit_gr_rhs(
+            lambda st, att, _resume=None, _a=alpha_k, _b=beta_k, _s=s, _pid=pid, _be=backend: fit_gr_rhs(
                 ds["X"],
                 ds["y"],
                 ds["groups"],
@@ -77,12 +78,14 @@ def _exp5_worker(
                 shared_kappa=False,
                 tau_target="groups",
                 backend=_be,
+                retry_resume_payload=_resume,
             ),
             method="GR_RHS",
             sampler=sampler,
             bayes_min_chains=int(bayes_min_chains),
             max_convergence_retries=max_retries,
             enforce_bayes_convergence=bool(enforce_conv),
+            continue_on_retry=True,
         )
         is_valid = bool(res.beta_mean is not None)
         mse_null = float("nan")
@@ -182,10 +185,13 @@ def run_exp5_prior_sensitivity(
     sampler = _sampler_for_exp5(_sampler_for_standard())
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
-    retry_limit = _resolve_convergence_retry_limit(max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
-    if max_convergence_retries is None and retry_limit < 0:
+    if max_convergence_retries is None:
+        retry_limit = int(_EXP5_DEFAULT_MAX_CONV_RETRIES)
+    else:
+        retry_limit = _resolve_convergence_retry_limit(max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
+    if retry_limit < 0:
         # Exp5 is intentionally heavy; cap unlimited mode to a practical retry budget.
-        retry_limit = 3
+        retry_limit = int(_EXP5_DEFAULT_MAX_CONV_RETRIES)
     priors = list(prior_grid or _DEFAULT_PRIOR_GRID)
 
     scenarios: list[tuple[int, list[int], list[float]]] = [

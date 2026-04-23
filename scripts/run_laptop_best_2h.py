@@ -213,7 +213,6 @@ def _run_main(cfg: ProtocolConfig, *, smoke_mode: bool = False) -> None:
     # Exp5
     run_exp5_prior_sensitivity(
         repeats=repeats["exp5"],
-        prior_grid=[(0.5, 1.0), (1.0, 1.0), (2.0, 5.0)],
         **common_nuts,
     )
 

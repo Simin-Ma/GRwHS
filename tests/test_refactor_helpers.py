@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import numpy as np
+from pathlib import Path
+
 from simulation_project.src.cli.run_experiment_cli import main as cli_main
 from simulation_project.src.experiment_aliases import cli_choice_to_key, normalize_sweep_experiment
 from simulation_project.src.experiments import (
@@ -19,7 +22,7 @@ from simulation_project.src.experiments.orchestration import run_all_experiments
 from simulation_project.src.experiments.methods.helpers import as_int_groups, fit_error_result, scaled_iteration_budget
 from simulation_project.src.experiments.schemas import RunCommonConfig, RunManifest
 from simulation_project.src.output_layout import resolve_analysis_dir, resolve_run_save_dir, resolve_workspace_dir
-from simulation_project.src.utils import SamplerConfig
+from simulation_project.src.utils import FitResult, SamplerConfig
 
 
 def test_normalize_sweep_experiment_aliases() -> None:
@@ -151,3 +154,115 @@ def test_output_layout_relative_explicit_path_is_centralized(tmp_path) -> None:
     explicit = resolve_run_save_dir("my_custom/output", workspace=str(workspace), run_label="cli_exp1")
     assert explicit.exists()
     assert (workspace / "adhoc") in explicit.parents
+
+
+def test_fit_with_convergence_retry_passes_resume_payload_when_enabled() -> None:
+    seen_payloads: list[dict | None] = []
+
+    def _fit_stub(sampler_try, attempt: int, resume_payload=None):
+        seen_payloads.append(resume_payload)
+        diag = {
+            "retry_resume_payload": {
+                "backend": "gibbs",
+                "chain_states": [{"log_sigma": float(attempt)}],
+            }
+        }
+        return FitResult(
+            method="GR_RHS",
+            status="ok",
+            beta_mean=np.asarray([0.0], dtype=float),
+            beta_draws=np.asarray([[0.0], [0.0], [0.0], [0.0]], dtype=float),
+            kappa_draws=None,
+            group_scale_draws=None,
+            runtime_seconds=1.0,
+            rhat_max=1.02,
+            bulk_ess_min=500.0,
+            divergence_ratio=0.0,
+            converged=bool(attempt >= 1),
+            diagnostics=diag,
+        )
+
+    out = _fit_with_convergence_retry(
+        _fit_stub,
+        method="GR_RHS",
+        sampler=SamplerConfig(),
+        bayes_min_chains=1,
+        max_convergence_retries=3,
+        enforce_bayes_convergence=True,
+        continue_on_retry=True,
+    )
+
+    assert len(seen_payloads) == 2
+    assert seen_payloads[0] is None
+    assert isinstance(seen_payloads[1], dict)
+    assert seen_payloads[1].get("backend") == "gibbs"
+    assert bool(out.converged)
+
+
+def test_exp5_defaults_to_full_sensitivity_and_retry_budget_5(monkeypatch) -> None:
+    import simulation_project.src.experiments.exp5 as exp5_mod
+
+    captured: dict[str, object] = {}
+
+    def _fake_parallel_rows(tasks, worker, n_jobs, **kwargs):
+        captured["tasks"] = list(tasks)
+        return [worker(t) for t in tasks]
+
+    def _fake_exp5_worker(task):
+        sid, r, _group_sizes, _mu, _seed, _sampler, prior_grid, _bayes_min_chains, _enforce, _max_retries, _backend = task
+        rows = []
+        for pid, (alpha_k, beta_k) in enumerate(prior_grid, start=1):
+            rows.append(
+                {
+                    "setting_id": int(sid),
+                    "replicate_id": int(r),
+                    "prior_id": int(pid),
+                    "alpha_kappa": float(alpha_k),
+                    "beta_kappa": float(beta_k),
+                    "p0_signal_groups": 3,
+                    "tau_target": "groups",
+                    "status": "ok",
+                    "converged": True,
+                    "fit_attempts": 1,
+                    "mse_null": 1.0,
+                    "mse_signal": 1.0,
+                    "group_auroc": 0.75,
+                    "kappa_null_mean": 0.1,
+                    "kappa_signal_mean": 0.5,
+                    "kappa_null_prob_gt_0_1": 0.2,
+                    "runtime_seconds": 1.0,
+                    "rhat_max": 1.01,
+                    "bulk_ess_min": 500.0,
+                    "divergence_ratio": 0.0,
+                    "error": "",
+                    "bridge_ratio_mean": 1.0,
+                    "bridge_ratio_min": 1.0,
+                    "bridge_ratio_max": 1.0,
+                    "bridge_ratio_p95": 1.0,
+                    "bridge_ratio_violations": 0,
+                    "bridge_ratio_null_mean": 1.0,
+                    "bridge_ratio_signal_mean": 1.0,
+                    "bridge_ratio_by_group": "{}",
+                }
+            )
+        return rows
+
+    monkeypatch.setattr(exp5_mod, "_parallel_rows", _fake_parallel_rows)
+    monkeypatch.setattr(exp5_mod, "_exp5_worker", _fake_exp5_worker)
+
+    save_dir = Path("outputs") / "exp5_default_probe_test"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    exp5_mod.run_exp5_prior_sensitivity(
+        n_jobs=1,
+        repeats=1,
+        seed=20260415,
+        save_dir=str(save_dir),
+        max_convergence_retries=None,
+    )
+
+    tasks = captured.get("tasks")
+    assert isinstance(tasks, list) and tasks
+    for task in tasks:
+        assert int(task[9]) == 5  # retry budget
+        assert len(task[6]) == 5  # full-sensitivity prior grid
