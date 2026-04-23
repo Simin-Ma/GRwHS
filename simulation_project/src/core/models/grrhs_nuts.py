@@ -101,6 +101,26 @@ def _flatten_param(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
     return data.reshape(-1, *data.shape[2:])
 
 
+def _should_use_median_init(
+    *,
+    use_init_to_median: bool,
+    init_params: Optional[Dict[str, jnp.ndarray]],
+) -> bool:
+    # Resumed runs already provide explicit latent values, so a median-based
+    # strategy just adds noisy "skipping initialization" warnings.
+    return bool(use_init_to_median) and not bool(init_params)
+
+
+def _safe_nanmin(values: Sequence[float]) -> float:
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return float("nan")
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return float("nan")
+    return float(np.min(finite))
+
+
 @dataclass
 class GRRHS_NUTS:
     """
@@ -328,9 +348,16 @@ class GRRHS_NUTS:
         else:
             tau0_eff = 0.1
 
+        init_params_use = _normalize_init_params(
+            self.init_params,
+            num_chains=int(self.num_chains),
+        )
         init_strategy = (
             numpyro.infer.init_to_median(num_samples=15)
-            if bool(self.use_init_to_median)
+            if _should_use_median_init(
+                use_init_to_median=bool(self.use_init_to_median),
+                init_params=init_params_use,
+            )
             else numpyro.infer.init_to_uniform()
         )
         kernel = NUTS(
@@ -339,10 +366,6 @@ class GRRHS_NUTS:
             dense_mass=bool(self.dense_mass),
             max_tree_depth=int(self.max_tree_depth),
             init_strategy=init_strategy,
-        )
-        init_params_use = _normalize_init_params(
-            self.init_params,
-            num_chains=int(self.num_chains),
         )
         warmup_use = int(self.num_warmup)
         if bool(self.resume_no_warmup) and init_params_use is not None:
@@ -466,7 +489,7 @@ class GRRHS_NUTS:
                 num = float(np.mean(np.diff(chain_energy) ** 2))
                 den = float(np.var(chain_energy))
                 ebfmi_vals.append(float("nan") if den <= 0.0 or not np.isfinite(den) else num / den)
-        ebfmi_min = float(np.nanmin(ebfmi_vals)) if ebfmi_vals else float("nan")
+        ebfmi_min = _safe_nanmin(ebfmi_vals)
         out["hmc"] = {
             "divergences": int(divergences),
             "treedepth_hits": int(treedepth_hits),
@@ -1262,9 +1285,16 @@ class GRRHS_CollapsedNUTS:
 
         model_fn = self._build_model(profile_mode=profile_mode, group_XXT=group_XXT_jnp)
 
+        init_params_use = _normalize_init_params(
+            self.init_params,
+            num_chains=int(self.num_chains),
+        )
         init_strategy = (
             numpyro.infer.init_to_median(num_samples=15)
-            if bool(self.use_init_to_median)
+            if _should_use_median_init(
+                use_init_to_median=bool(self.use_init_to_median),
+                init_params=init_params_use,
+            )
             else numpyro.infer.init_to_uniform()
         )
         kernel = NUTS(
@@ -1273,10 +1303,6 @@ class GRRHS_CollapsedNUTS:
             dense_mass=bool(self.dense_mass),
             max_tree_depth=int(self.max_tree_depth),
             init_strategy=init_strategy,
-        )
-        init_params_use = _normalize_init_params(
-            self.init_params,
-            num_chains=int(self.num_chains),
         )
         warmup_use = int(self.num_warmup)
         if bool(self.resume_no_warmup) and init_params_use is not None:

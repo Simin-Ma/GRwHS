@@ -18,6 +18,14 @@ _SCALAR_PARAMETER_NAMES = {
 }
 
 
+def _safe_stat(values: Array, reducer: Any) -> float:
+    arr = np.asarray(values, dtype=float)
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return float("nan")
+    return float(reducer(finite))
+
+
 def _reshape_samples(samples: Array, *, scalar_param: bool = False) -> Tuple[Array, Tuple[int, ...]]:
     arr = np.asarray(samples, dtype=float)
     if arr.ndim == 0:
@@ -89,7 +97,13 @@ def _rhat_from_chains(chains: Array) -> Array:
 def split_rhat(samples: Array, *, scalar_param: bool = False) -> Array:
     arr, param_shape = _reshape_samples(samples, scalar_param=scalar_param)
     split = _split_chains(arr)
-    rhat = _rhat_from_chains(split)
+    split2d = split.reshape(split.shape[0], split.shape[1], -1)
+    finite_cols = np.all(np.isfinite(split2d), axis=(0, 1))
+    rhat_flat = np.full(split2d.shape[2], np.nan, dtype=float)
+    if np.any(finite_cols):
+        good = split2d[:, :, finite_cols].reshape(split.shape[0], split.shape[1], -1)
+        rhat_flat[finite_cols] = np.asarray(_rhat_from_chains(good), dtype=float).reshape(-1)
+    rhat = rhat_flat.reshape(param_shape if param_shape else (1,))
     if param_shape:
         return rhat.reshape(param_shape)
     return np.squeeze(rhat)
@@ -126,7 +140,13 @@ def _ess_from_chains(chains: Array) -> Array:
     C, N = chains.shape[:2]
     chains2d = chains.reshape(C, N, -1)
     param_shape = chains.shape[2:]
-    centered = chains2d - chains2d.mean(axis=1, keepdims=True)
+    finite_mask = np.isfinite(chains2d)
+    all_nonfinite = ~np.any(finite_mask, axis=(0, 1))
+    sanitized = np.where(finite_mask, chains2d, np.nan)
+    counts = np.sum(finite_mask, axis=1, keepdims=True)
+    sums = np.nansum(sanitized, axis=1, keepdims=True)
+    mean = np.divide(sums, counts, out=np.zeros_like(sums), where=counts > 0)
+    centered = np.where(finite_mask, chains2d - mean, 0.0)
     ac_avg = np.zeros((N,) + chains2d.shape[2:], dtype=float)
     for c in range(C):
         ac_avg += _autocorrelation(centered[c])
@@ -145,13 +165,22 @@ def _ess_from_chains(chains: Array) -> Array:
             total += pair
         ess[idx] = C * N / max(1.0, 1.0 + 2.0 * total)
         ess[idx] = min(ess[idx], C * N)
+    if np.any(all_nonfinite):
+        ess_flat = ess.reshape(-1)
+        ess_flat[np.where(all_nonfinite)[0]] = 0.0
     return ess if param_shape else np.squeeze(ess)
 
 
 def effective_sample_size(samples: Array, *, scalar_param: bool = False) -> Array:
     arr, param_shape = _reshape_samples(samples, scalar_param=scalar_param)
     split = _split_chains(arr)
-    ess = _ess_from_chains(split)
+    split2d = split.reshape(split.shape[0], split.shape[1], -1)
+    finite_cols = np.all(np.isfinite(split2d), axis=(0, 1))
+    ess_flat = np.full(split2d.shape[2], np.nan, dtype=float)
+    if np.any(finite_cols):
+        good = split2d[:, :, finite_cols].reshape(split.shape[0], split.shape[1], -1)
+        ess_flat[finite_cols] = np.asarray(_ess_from_chains(good), dtype=float).reshape(-1)
+    ess = ess_flat.reshape(param_shape if param_shape else (1,))
     if param_shape:
         return ess.reshape(param_shape)
     return np.squeeze(ess)
@@ -208,12 +237,12 @@ def summarize_convergence(
                 # MCSE / posterior sd ~= sqrt(1 / ESS) for the posterior mean.
                 mcse_over_sd = np.where(flat_ess > 0.0, np.sqrt(1.0 / flat_ess), np.inf)
             summary[name] = {
-                "rhat_max": float(np.max(flat_rhat)),
-                "rhat_median": float(np.median(flat_rhat)),
-                "ess_min": float(np.min(flat_ess)),
-                "ess_median": float(np.median(flat_ess)),
-                "mcse_over_sd_max": float(np.max(mcse_over_sd)),
-                "mcse_over_sd_median": float(np.median(mcse_over_sd)),
+                "rhat_max": _safe_stat(flat_rhat, np.max),
+                "rhat_median": _safe_stat(flat_rhat, np.median),
+                "ess_min": _safe_stat(flat_ess, np.min),
+                "ess_median": _safe_stat(flat_ess, np.median),
+                "mcse_over_sd_max": _safe_stat(mcse_over_sd, np.max),
+                "mcse_over_sd_median": _safe_stat(mcse_over_sd, np.median),
                 **meta,
             }
         except ValueError as exc:

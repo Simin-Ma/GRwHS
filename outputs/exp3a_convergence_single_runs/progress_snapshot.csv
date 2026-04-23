@@ -1,0 +1,7 @@
+task_index,n_tasks,setting_id,group_config,signal,env_id,method,status,converged,fit_attempts,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error
+1,72,1,G10x5,concentrated,RW08_SNR02,GR_RHS,ok,True,1,19.544965799999773,1.0087159872055054,633.0850984741834,0.0,
+2,72,1,G10x5,concentrated,RW08_SNR02,RHS,ok,True,1,14.265778999993927,1.0089356507459981,650.2826038686383,0.0,
+3,72,1,G10x5,concentrated,RW08_SNR02,GIGG_MMLE,error,False,3,711.4145159000036,1.1702433367930962,54479.26116408927,,ConvergenceError: GIGG_MMLE did not converge after 3 attempt(s)
+4,72,1,G10x5,concentrated,RW08_SNR02,GHS_plus,ok,True,1,9.0259451999882,1.0034376383614825,1591.6155742351864,,
+5,72,2,G10x5,distributed,RW08_SNR02,GR_RHS,ok,True,1,14.180376900010742,1.004650592803955,944.4924731821345,0.0005,
+6,72,2,G10x5,distributed,RW08_SNR02,RHS,ok,True,1,15.48505629999272,1.009861041833579,409.9788640254852,0.0,
