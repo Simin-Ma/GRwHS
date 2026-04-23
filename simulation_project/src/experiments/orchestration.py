@@ -30,6 +30,37 @@ from .exp3 import (
 from .exp4 import run_exp4_variant_ablation
 from .exp5 import run_exp5_prior_sensitivity
 
+PRESET_CHOICES: tuple[str, ...] = ("default", "paper_laptop")
+
+
+def _preset_overrides_for_experiment(exp_key: str, preset: str) -> dict[str, Any]:
+    exp = str(exp_key).strip().lower()
+    name = str(preset).strip().lower()
+    if name == "" or name == "default":
+        return {}
+    if name != "paper_laptop":
+        raise ValueError(f"unknown preset: {preset!r}; expected one of {PRESET_CHOICES}")
+    common: dict[str, Any] = {
+        "n_jobs": 2,
+        "method_jobs": 2,
+        "sampler_backend": "collapsed",
+    }
+    per_exp: dict[str, dict[str, Any]] = {
+        "all": {"all_parallel_jobs": 2},
+        "exp1": {"repeats": 300},
+        "exp2": {"repeats": 60},
+        "exp3": {"repeats": 50, "heavy_methods_anchor_only": True},
+        "exp3a": {"repeats": 50, "heavy_methods_anchor_only": True},
+        "exp3b": {"repeats": 24, "heavy_methods_anchor_only": True},
+        "exp3c": {"repeats": 8, "methods": ["GR_RHS", "RHS", "OLS", "LASSO_CV"]},
+        "exp3d": {"repeats": 15, "methods": ["GR_RHS", "RHS", "OLS", "LASSO_CV"]},
+        "exp4": {"repeats": 24},
+        "exp5": {"repeats": 10},
+    }
+    out = dict(common)
+    out.update(per_exp.get(exp, {}))
+    return out
+
 
 def run_all_experiments(
     n_jobs: int = 1,
@@ -37,20 +68,31 @@ def run_all_experiments(
     seed: int = MASTER_SEED,
     save_dir: str = "outputs/simulation_project",
     *,
+    skip_run_analysis: bool = False,
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
     sampler_backend: str = "collapsed",
     exp3_gigg_mode: str = "stable",
     skip_analysis: bool = False,
+    archive_artifacts: bool = True,
+    preset: str = "default",
     all_parallel_jobs: int = 1,
 ) -> Dict[str, Any]:
+    skip_analysis = bool(skip_analysis) or bool(skip_run_analysis)
+    preset_overrides = _preset_overrides_for_experiment("all", preset)
+    n_jobs = int(preset_overrides.get("n_jobs", n_jobs))
+    method_jobs = int(preset_overrides.get("method_jobs", method_jobs))
+    sampler_backend = str(preset_overrides.get("sampler_backend", sampler_backend))
+    all_parallel_jobs = int(preset_overrides.get("all_parallel_jobs", all_parallel_jobs))
     exp3_gigg_mode_name = _normalize_exp3_gigg_mode(exp3_gigg_mode)
     common_cfg = RunCommonConfig(
         n_jobs=n_jobs,
         method_jobs=method_jobs,
         seed=seed,
         save_dir=save_dir,
+        skip_run_analysis=bool(skip_analysis),
+        archive_artifacts=bool(archive_artifacts),
         enforce_bayes_convergence=bool(enforce_bayes_convergence),
         max_convergence_retries=max_convergence_retries,
         until_bayes_converged=bool(until_bayes_converged),
@@ -59,12 +101,58 @@ def run_all_experiments(
 
     out: Dict[str, Any] = {}
     jobs: list[tuple[str, Any]] = [
-        ("exp1", lambda: run_exp1_kappa_profile_regimes(n_jobs=n_jobs, seed=seed, save_dir=save_dir, repeats=_default_repeats("exp1"))),
-        ("exp2", lambda: run_exp2_group_separation(repeats=_default_repeats("exp2"), **common_cfg.as_kwargs())),
-        ("exp3a", lambda: run_exp3a_main_benchmark(repeats=_default_repeats("exp3"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
-        ("exp3b", lambda: run_exp3b_boundary_stress(repeats=_default_repeats("exp3"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
-        ("exp4", lambda: run_exp4_variant_ablation(repeats=_default_repeats("exp4"), **common_cfg.as_kwargs())),
-        ("exp5", lambda: run_exp5_prior_sensitivity(repeats=_default_repeats("exp5"), **common_cfg.as_kwargs())),
+        (
+            "exp1",
+            lambda: run_exp1_kappa_profile_regimes(
+                n_jobs=n_jobs,
+                seed=seed,
+                save_dir=save_dir,
+                repeats=int(_preset_overrides_for_experiment("exp1", preset).get("repeats", _default_repeats("exp1"))),
+                skip_run_analysis=bool(skip_analysis),
+                archive_artifacts=bool(archive_artifacts),
+            ),
+        ),
+        (
+            "exp2",
+            lambda: run_exp2_group_separation(
+                repeats=int(_preset_overrides_for_experiment("exp2", preset).get("repeats", _default_repeats("exp2"))),
+                **common_cfg.as_kwargs(),
+            ),
+        ),
+        (
+            "exp3a",
+            lambda: run_exp3a_main_benchmark(
+                repeats=int(_preset_overrides_for_experiment("exp3a", preset).get("repeats", _default_repeats("exp3"))),
+                gigg_mode=exp3_gigg_mode_name,
+                heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3a", preset).get("heavy_methods_anchor_only", False)),
+                methods=_preset_overrides_for_experiment("exp3a", preset).get("methods"),
+                **common_cfg.as_kwargs(),
+            ),
+        ),
+        (
+            "exp3b",
+            lambda: run_exp3b_boundary_stress(
+                repeats=int(_preset_overrides_for_experiment("exp3b", preset).get("repeats", _default_repeats("exp3"))),
+                gigg_mode=exp3_gigg_mode_name,
+                heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3b", preset).get("heavy_methods_anchor_only", False)),
+                methods=_preset_overrides_for_experiment("exp3b", preset).get("methods"),
+                **common_cfg.as_kwargs(),
+            ),
+        ),
+        (
+            "exp4",
+            lambda: run_exp4_variant_ablation(
+                repeats=int(_preset_overrides_for_experiment("exp4", preset).get("repeats", _default_repeats("exp4"))),
+                **common_cfg.as_kwargs(),
+            ),
+        ),
+        (
+            "exp5",
+            lambda: run_exp5_prior_sensitivity(
+                repeats=int(_preset_overrides_for_experiment("exp5", preset).get("repeats", _default_repeats("exp5"))),
+                **common_cfg.as_kwargs(),
+            ),
+        ),
     ]
 
     workers = max(1, min(int(all_parallel_jobs), len(jobs)))
@@ -84,6 +172,8 @@ def run_all_experiments(
         {
             "protocol": "single_default",
             "method_jobs": int(method_jobs),
+            "preset": str(preset),
+            "archive_artifacts": bool(archive_artifacts),
             "enforce_bayes_convergence": bool(enforce_bayes_convergence),
             "max_convergence_retries": max_convergence_retries,
             "until_bayes_converged": bool(until_bayes_converged),
@@ -123,6 +213,7 @@ def _cli() -> None:
     parser.add_argument("--seed", type=int, default=MASTER_SEED)
     parser.add_argument("--repeats", type=int, default=None)
     parser.add_argument("--n-jobs", type=int, default=1)
+    parser.add_argument("--preset", type=str, default="default", choices=list(PRESET_CHOICES))
     parser.add_argument(
         "--method-jobs",
         type=int,
@@ -135,6 +226,8 @@ def _cli() -> None:
         default=1,
         help="Number of concurrent experiments when --experiment all (default 1 = serial).",
     )
+    parser.add_argument("--skip-analysis", action="store_true")
+    parser.add_argument("--no-archive-artifacts", action="store_true")
     parser.add_argument("--no-enforce-bayes-convergence", action="store_true")
     parser.add_argument("--max-convergence-retries", type=int, default=None)
     parser.add_argument("--until-bayes-converged", action="store_true")
@@ -154,10 +247,15 @@ def _cli() -> None:
     )
     args = parser.parse_args()
     exp_key = cli_choice_to_key(args.experiment)
+    preset_overrides = _preset_overrides_for_experiment(exp_key, args.preset)
+    n_jobs_use = int(preset_overrides.get("n_jobs", args.n_jobs))
+    method_jobs_use = int(preset_overrides.get("method_jobs", args.method_jobs))
+    repeats_use = args.repeats if args.repeats is not None else preset_overrides.get("repeats")
+    sampler_backend_arg = str(preset_overrides.get("sampler_backend", args.sampler))
     exp3_gigg_mode_name = _normalize_exp3_gigg_mode(args.exp3_gigg_mode)
     enforce_conv = not bool(args.no_enforce_bayes_convergence)
     until_conv = bool(args.until_bayes_converged) or (enforce_conv and args.max_convergence_retries is None)
-    sampler_backend_cli = _resolve_sampler_backend_for_experiment(exp_key, args.sampler)
+    sampler_backend_cli = _resolve_sampler_backend_for_experiment(exp_key, sampler_backend_arg)
     if exp_key == "analysis":
         save_dir_resolved = resolve_analysis_dir(args.save_dir, workspace=args.workspace)
     else:
@@ -167,16 +265,18 @@ def _cli() -> None:
             run_label=f"cli_{exp_key}",
         )
     common_cfg = RunCommonConfig(
-        n_jobs=args.n_jobs,
-        method_jobs=args.method_jobs,
+        n_jobs=n_jobs_use,
+        method_jobs=method_jobs_use,
         seed=args.seed,
         save_dir=str(save_dir_resolved),
+        skip_run_analysis=bool(args.skip_analysis),
+        archive_artifacts=not bool(args.no_archive_artifacts),
         enforce_bayes_convergence=enforce_conv,
         max_convergence_retries=args.max_convergence_retries,
         until_bayes_converged=until_conv,
         sampler_backend=sampler_backend_cli,
     )
-    reps = args.repeats
+    reps = repeats_use
 
     from .analysis.report import analyze_exp1, analyze_exp2, analyze_exp3, analyze_exp4, analyze_exp5, _safe_print, run_analysis
 
@@ -198,7 +298,10 @@ def _cli() -> None:
         run_all_experiments(
             **common_cfg.as_kwargs(),
             exp3_gigg_mode=exp3_gigg_mode_name,
-            all_parallel_jobs=max(1, int(args.all_parallel_jobs)),
+            skip_analysis=bool(args.skip_analysis),
+            archive_artifacts=not bool(args.no_archive_artifacts),
+            preset=str(args.preset),
+            all_parallel_jobs=max(1, int(preset_overrides.get("all_parallel_jobs", args.all_parallel_jobs))),
         )
     elif exp_key == "analysis":
         run_analysis(save_dir=str(save_dir_resolved))
@@ -206,7 +309,9 @@ def _cli() -> None:
         dispatch: dict[str, dict[str, Any]] = {
             "exp1": {
                 "run": lambda: run_exp1_kappa_profile_regimes(
-                    n_jobs=args.n_jobs,
+                    n_jobs=n_jobs_use,
+                    skip_run_analysis=bool(args.skip_analysis),
+                    archive_artifacts=not bool(args.no_archive_artifacts),
                     seed=args.seed,
                     save_dir=str(save_dir_resolved),
                     repeats=reps or _default_repeats("exp1"),
@@ -228,6 +333,8 @@ def _cli() -> None:
                 "run": lambda: run_exp3_linear_benchmark(
                     repeats=reps or _default_repeats("exp3"),
                     gigg_mode=exp3_gigg_mode_name,
+                    methods=_preset_overrides_for_experiment("exp3", args.preset).get("methods"),
+                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3", args.preset).get("heavy_methods_anchor_only", False)),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -238,6 +345,8 @@ def _cli() -> None:
                 "run": lambda: run_exp3a_main_benchmark(
                     repeats=reps or _default_repeats("exp3"),
                     gigg_mode=exp3_gigg_mode_name,
+                    methods=_preset_overrides_for_experiment("exp3a", args.preset).get("methods"),
+                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3a", args.preset).get("heavy_methods_anchor_only", False)),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -248,6 +357,8 @@ def _cli() -> None:
                 "run": lambda: run_exp3b_boundary_stress(
                     repeats=reps or _default_repeats("exp3"),
                     gigg_mode=exp3_gigg_mode_name,
+                    methods=_preset_overrides_for_experiment("exp3b", args.preset).get("methods"),
+                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3b", args.preset).get("heavy_methods_anchor_only", False)),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -258,6 +369,8 @@ def _cli() -> None:
                 "run": lambda: run_exp3c_highdim_stress(
                     repeats=reps or _default_repeats("exp3c"),
                     gigg_mode=exp3_gigg_mode_name,
+                    methods=_preset_overrides_for_experiment("exp3c", args.preset).get("methods"),
+                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3c", args.preset).get("heavy_methods_anchor_only", False)),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -268,6 +381,8 @@ def _cli() -> None:
                 "run": lambda: run_exp3d_within_group_mixed(
                     repeats=reps or _default_repeats("exp3d"),
                     gigg_mode=exp3_gigg_mode_name,
+                    methods=_preset_overrides_for_experiment("exp3d", args.preset).get("methods"),
+                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3d", args.preset).get("heavy_methods_anchor_only", False)),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -295,7 +410,8 @@ def _cli() -> None:
         }
         spec = dispatch[exp_key]
         spec["run"]()
-        analyzer = spec["analyze"]
-        label = str(spec["label"])
-        results_subdir = str(spec["results_subdir"])
-        _print_exp_analysis(label, analyzer(base / "results" / results_subdir))
+        if not bool(args.skip_analysis):
+            analyzer = spec["analyze"]
+            label = str(spec["label"])
+            results_subdir = str(spec["results_subdir"])
+            _print_exp_analysis(label, analyzer(base / "results" / results_subdir))

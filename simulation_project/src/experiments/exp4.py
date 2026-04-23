@@ -175,6 +175,8 @@ def run_exp4_variant_ablation(
     repeats: int = 20,
     save_dir: str = "outputs/simulation_project",
     *,
+    skip_run_analysis: bool = False,
+    archive_artifacts: bool = True,
     p0_list: Sequence[int] | None = None,
     include_oracle: bool = True,
     bayes_min_chains: int | None = None,
@@ -350,6 +352,8 @@ def run_exp4_variant_ablation(
         results_dir=out_dir,
         produced_paths=produced,
         result_paths=result_paths,
+        skip_run_analysis=bool(skip_run_analysis),
+        archive_artifacts=bool(archive_artifacts),
     )
 
 

@@ -59,10 +59,16 @@ Run full default pipeline:
 python -m simulation_project.src.run_experiment --experiment all --n-jobs 2 --method-jobs 2 --all-parallel-jobs 2
 ```
 
+Run the laptop-friendly paper preset:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --preset paper_laptop
+```
+
 Run one experiment:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2 --method-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3c --preset paper_laptop
 ```
 
 Run analysis only:
@@ -94,7 +100,27 @@ Analysis artifacts include:
 `scripts/run_laptop_best_2h.py` is retained as an optional quick-check utility only.
 It is not the default scientific protocol.
 
+## Paper-Laptop Design
+
+Main-text recommendation on one laptop:
+
+- `exp1`
+- `exp2`
+- `exp3a`
+- `exp4`
+
+Appendix recommendation:
+
+- `exp3b`
+- `exp5`
+- `exp3c/exp3d` as spot checks
+
+The `paper_laptop` preset reduces repeats, keeps the default Bayesian convergence gate,
+and restricts the heaviest Exp3 methods to anchor settings.
+
 ## Runtime Notes
 
 - On Windows, process pools are available from spawn-safe script entrypoints.
 - In interactive or non-spawn-safe launch contexts, the runtime falls back away from process pools automatically.
+- Use `--skip-analysis` to skip run-level and global analysis work during long runs.
+- Use `--no-archive-artifacts` to skip copying duplicate artifact snapshots into `runs/.../artifacts`.

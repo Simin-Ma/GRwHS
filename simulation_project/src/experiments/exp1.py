@@ -357,6 +357,8 @@ def run_exp1_kappa_profile_regimes(
     repeats: int = 500,
     save_dir: str = "outputs/simulation_project",
     *,
+    skip_run_analysis: bool = False,
+    archive_artifacts: bool = True,
     # Panel A - null contraction
     pg_null_list: Sequence[int] | None = None,
     tau_null: float = 0.5,
@@ -658,6 +660,8 @@ def run_exp1_kappa_profile_regimes(
         results_dir=out_dir,
         produced_paths=produced,
         result_paths=result_paths,
+        skip_run_analysis=bool(skip_run_analysis),
+        archive_artifacts=bool(archive_artifacts),
     )
 
 

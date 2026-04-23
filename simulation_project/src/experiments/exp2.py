@@ -164,6 +164,8 @@ def run_exp2_group_separation(
     repeats: int = 30,
     save_dir: str = "outputs/simulation_project",
     *,
+    skip_run_analysis: bool = False,
+    archive_artifacts: bool = True,
     bayes_min_chains: int | None = None,
     methods: Sequence[str] | None = None,
     enforce_bayes_convergence: bool = True,
@@ -466,6 +468,7 @@ def run_exp2_group_separation(
         results_dir=out_dir,
         produced_paths=produced,
         result_paths=result_paths,
+        skip_run_analysis=bool(skip_run_analysis),
+        archive_artifacts=bool(archive_artifacts),
     )
-
 

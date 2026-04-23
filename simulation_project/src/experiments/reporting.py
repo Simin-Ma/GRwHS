@@ -275,6 +275,8 @@ def _finalize_experiment_run(
     results_dir: Path,
     produced_paths: set[Path] | None,
     result_paths: dict[str, Any],
+    skip_run_analysis: bool = False,
+    archive_artifacts: bool = True,
 ) -> dict[str, Any]:
     pd = load_pandas()
 
@@ -290,7 +292,10 @@ def _finalize_experiment_run(
         else:
             summary_table.to_csv(summary_table_path, index=False)
 
-    analysis_result = _analyze_single_experiment(exp_key=exp_key, results_dir=results_dir)
+    if bool(skip_run_analysis):
+        analysis_result = {"metrics": {}, "findings": ["Run-level analysis skipped by configuration."]}
+    else:
+        analysis_result = _analyze_single_experiment(exp_key=exp_key, results_dir=results_dir)
     analysis_json_path = run_dir / "run_analysis.json"
     analysis_json_path.write_text(json.dumps(analysis_result, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -303,12 +308,14 @@ def _finalize_experiment_run(
         summary_table=summary_table,
     )
 
-    copied_artifacts = _archive_experiment_outputs(
-        save_root=save_root,
-        run_dir=run_dir,
-        produced_paths=set(produced_paths or set()),
-        result_paths=result_paths,
-    )
+    copied_artifacts: list[str] = []
+    if bool(archive_artifacts):
+        copied_artifacts = _archive_experiment_outputs(
+            save_root=save_root,
+            run_dir=run_dir,
+            produced_paths=set(produced_paths or set()),
+            result_paths=result_paths,
+        )
 
     manifest_obj = RunManifest(
         exp_key=str(exp_key),

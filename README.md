@@ -25,6 +25,12 @@ Run all experiments:
 python -m simulation_project.src.run_experiment --experiment all --n-jobs 2 --method-jobs 2 --all-parallel-jobs 2
 ```
 
+Laptop-friendly paper preset:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --preset paper_laptop
+```
+
 Default output layout is now session-based and centralized under:
 
 `outputs/simulation_project/sessions/<timestamp>_cli_<experiment>/`

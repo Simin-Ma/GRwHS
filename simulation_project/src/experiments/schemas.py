@@ -10,6 +10,8 @@ class RunCommonConfig:
     method_jobs: int
     seed: int
     save_dir: str
+    skip_run_analysis: bool
+    archive_artifacts: bool
     enforce_bayes_convergence: bool
     max_convergence_retries: int | None
     until_bayes_converged: bool
@@ -21,6 +23,8 @@ class RunCommonConfig:
             "method_jobs": int(self.method_jobs),
             "seed": int(self.seed),
             "save_dir": str(self.save_dir),
+            "skip_run_analysis": bool(self.skip_run_analysis),
+            "archive_artifacts": bool(self.archive_artifacts),
             "enforce_bayes_convergence": bool(self.enforce_bayes_convergence),
             "max_convergence_retries": self.max_convergence_retries,
             "until_bayes_converged": bool(self.until_bayes_converged),

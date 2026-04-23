@@ -5,6 +5,8 @@ defaults:
   n_jobs: 1
   method_jobs: 1
   seed: 20260415
+  archive_artifacts: true
+  skip_run_analysis: false
 
 sweeps:
   exp1_to_exp5:
@@ -16,6 +18,83 @@ sweeps:
       until_bayes_converged: true
       sampler_backend: collapsed
       exp3_gigg_mode: stable
+
+  exp1_to_exp5_paper_laptop:
+    experiment: all
+    description: Laptop-friendly paper preset for Exp1-Exp5 with anchored heavy methods and reduced repeats.
+    fixed:
+      preset: paper_laptop
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
+      exp3_gigg_mode: stable
+      all_parallel_jobs: 2
+
+  exp1_paper_laptop:
+    experiment: exp1
+    description: Paper-laptop main-text Exp1 preset.
+    fixed:
+      repeats: 300
+      n_jobs: 2
+
+  exp2_paper_laptop:
+    experiment: exp2
+    description: Paper-laptop main-text Exp2 preset.
+    fixed:
+      repeats: 60
+      n_jobs: 2
+      method_jobs: 2
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
+
+  exp3a_paper_laptop:
+    experiment: exp3a
+    description: Paper-laptop main-text Exp3a preset with heavy methods restricted to anchor settings.
+    fixed:
+      repeats: 50
+      n_jobs: 2
+      method_jobs: 2
+      heavy_methods_anchor_only: true
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
+      gigg_mode: stable
+
+  exp4_paper_laptop:
+    experiment: exp4
+    description: Paper-laptop main-text Exp4 preset.
+    fixed:
+      repeats: 24
+      n_jobs: 2
+      method_jobs: 2
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
+
+  exp3b_paper_laptop_appendix:
+    experiment: exp3b
+    description: Paper-laptop appendix Exp3b preset with heavy methods restricted to anchor settings.
+    fixed:
+      repeats: 24
+      n_jobs: 2
+      method_jobs: 2
+      heavy_methods_anchor_only: true
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
+      gigg_mode: stable
+
+  exp5_paper_laptop_appendix:
+    experiment: exp5
+    description: Paper-laptop appendix Exp5 preset with prior screening enabled.
+    fixed:
+      repeats: 10
+      n_jobs: 2
+      method_jobs: 2
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
 
   exp1_default:
     experiment: exp1

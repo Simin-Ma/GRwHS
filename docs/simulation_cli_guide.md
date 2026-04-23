@@ -19,6 +19,9 @@ Common CLI args:
 - `--n-jobs <int>`
 - `--method-jobs <int>`
 - `--all-parallel-jobs <int>` (used when `--experiment all`)
+- `--preset {default,paper_laptop}`
+- `--skip-analysis`
+- `--no-archive-artifacts`
 - `--no-enforce-bayes-convergence`
 - `--max-convergence-retries <int>`
 - `--until-bayes-converged`
@@ -34,6 +37,12 @@ Default run:
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment all --n-jobs 2 --method-jobs 2 --all-parallel-jobs 2
+```
+
+Laptop-friendly paper run:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment all --preset paper_laptop
 ```
 
 Default experiment order:
@@ -56,6 +65,35 @@ Default repeats:
 - `exp5=20`
 
 `exp3c=30` and `exp3d=100` remain available via explicit `--experiment 3c/3d` runs.
+
+## 2b. Paper-Laptop Protocol
+
+Recommended main-text experiments on a single laptop:
+
+1. `exp1`
+2. `exp2`
+3. `exp3a`
+4. `exp4`
+
+Recommended appendix/supporting experiments:
+
+1. `exp3b`
+2. `exp5`
+3. `exp3c` and `exp3d` as spot-check stress runs
+
+Preset behavior for `--preset paper_laptop`:
+
+- `exp1=300`
+- `exp2=60`
+- `exp3a=50`
+- `exp3b=24`
+- `exp3c=8`
+- `exp3d=15`
+- `exp4=24`
+- `exp5=10`
+- default `--n-jobs 2 --method-jobs 2`
+- default sampler backend `collapsed`
+- `Exp3` heavy methods (`GIGG_MMLE`, `GHS_plus`) restricted to anchor settings in `exp3a/3b`
 
 ## 3. Scientific Credibility Rules
 
@@ -89,7 +127,7 @@ Diagnostics side table is always exported:
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 2 --n-jobs 2 --method-jobs 2
+python -m simulation_project.src.run_experiment --experiment 2 --preset paper_laptop
 ```
 
 ### Exp3a (`main_benchmark`)
@@ -102,7 +140,7 @@ python -m simulation_project.src.run_experiment --experiment 2 --n-jobs 2 --meth
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3a --n-jobs 2 --method-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3a --preset paper_laptop
 ```
 
 ### Exp3b (`boundary_stress`)
@@ -111,11 +149,12 @@ python -m simulation_project.src.run_experiment --experiment 3a --n-jobs 2 --met
 - same correlation/SNR axes as Exp3a
 - boundary `xi/xi_crit` grid via `boundary_xi_ratio_list` (default boundary stress grid)
 - same default methods as Exp3a
+- under `paper_laptop`, heavy methods are restricted to anchor settings (`G10x5`, `RW08_SNR10`, default boundary ratio)
 
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3b --n-jobs 2 --method-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3b --preset paper_laptop
 ```
 
 ### Exp3c (`highdim_stress`)
@@ -129,7 +168,7 @@ python -m simulation_project.src.run_experiment --experiment 3b --n-jobs 2 --met
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2 --method-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3c --preset paper_laptop
 ```
 
 ### Exp3d (`within_group_mixed`)
@@ -143,7 +182,7 @@ python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2 --met
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3d --n-jobs 2 --method-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3d --preset paper_laptop
 ```
 
 ### Exp4 (`variant_ablation`)
@@ -156,7 +195,7 @@ python -m simulation_project.src.run_experiment --experiment 3d --n-jobs 2 --met
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 4 --n-jobs 2 --method-jobs 2
+python -m simulation_project.src.run_experiment --experiment 4 --preset paper_laptop
 ```
 
 ### Exp5 (`prior_sensitivity`)
@@ -172,7 +211,7 @@ python -m simulation_project.src.run_experiment --experiment 4 --n-jobs 2 --meth
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 5 --n-jobs 2 --method-jobs 2
+python -m simulation_project.src.run_experiment --experiment 5 --preset paper_laptop
 ```
 
 ## 5. Analysis Only
@@ -186,6 +225,7 @@ python -m simulation_project.src.run_experiment --experiment analysis
 ```bash
 python -m simulation_project.src.run_sweep --list
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5
+python -m simulation_project.src.run_sweep --sweep exp1_to_exp5_paper_laptop
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --set n_jobs=2 --set method_jobs=2 --set all_parallel_jobs=2 --set max_convergence_retries=2
 ```
 

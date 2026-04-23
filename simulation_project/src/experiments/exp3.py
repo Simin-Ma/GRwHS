@@ -62,6 +62,7 @@ _BOUNDARY_XI_RATIO = 1.2
 _SIGMA2_BOUNDARY = 1.0
 _WITHIN_GROUP_MIXED_STRONG = 1.0
 _WITHIN_GROUP_MIXED_WEAK = 0.25
+_EXP3_HEAVY_METHODS = {"GIGG_MMLE", "GHS_plus"}
 
 # ---------------------------------------------------------------------------
 # Default group configurations for Exp3 - mirrors GIGG paper Table 1 coverage,
@@ -117,6 +118,25 @@ def _exp3_filter_env_points_rw_gt_rb(points: Sequence[dict[str, Any]]) -> tuple[
         else:
             dropped.append(epi)
     return kept, dropped
+
+
+def _exp3_is_anchor_setting(
+    *,
+    group_cfg: dict[str, Any],
+    env_id: str,
+    signal: str,
+    boundary_xi_ratio: float,
+) -> bool:
+    group_name = str(group_cfg.get("name", "")).strip()
+    env_name = str(env_id).strip()
+    sig = str(signal).strip().lower()
+    if group_name != "G10x5":
+        return False
+    if env_name != "RW08_SNR10":
+        return False
+    if sig == "boundary":
+        return abs(float(boundary_xi_ratio) - float(_BOUNDARY_XI_RATIO)) < 1e-9
+    return sig in {"concentrated", "distributed"}
 
 
 def _build_benchmark_beta(
@@ -414,6 +434,8 @@ def run_exp3_linear_benchmark(
     repeats: int = 20,
     save_dir: str = "outputs/simulation_project",
     *,
+    skip_run_analysis: bool = False,
+    archive_artifacts: bool = True,
     signal_types: Sequence[str] | None = None,
     boundary_xi_ratio_list: Sequence[float] | None = None,
     env_points: Sequence[dict[str, Any]] | None = None,
@@ -428,6 +450,7 @@ def run_exp3_linear_benchmark(
     sampler_backend: str = "nuts",
     grrhs_extra_kwargs: dict | None = None,
     gigg_mode: str = "stable",
+    heavy_methods_anchor_only: bool = False,
     result_dir_name: str = "exp3_linear_benchmark",
     exp_key: str = "exp3",
 ) -> Dict[str, str]:
@@ -575,6 +598,15 @@ def run_exp3_linear_benchmark(
     bayes_tasks: list[dict[str, Any]] = []
     classical_tasks: list[dict[str, Any]] = []
     for (sid_v, signal_v, gc_v, block_v, env_v, dt_v, rho_v, rhob_v, snr_v, bxi_v) in settings:
+        is_anchor = _exp3_is_anchor_setting(
+            group_cfg=dict(gc_v),
+            env_id=str(env_v),
+            signal=str(signal_v),
+            boundary_xi_ratio=float(bxi_v),
+        )
+        bayes_methods_for_setting = list(bayes_methods_use)
+        if bool(heavy_methods_anchor_only) and not bool(is_anchor):
+            bayes_methods_for_setting = [m for m in bayes_methods_for_setting if m not in _EXP3_HEAVY_METHODS]
         for r in range(1, int(repeats) + 1):
             base_task = {
                 "setting_id": int(sid_v),
@@ -600,9 +632,9 @@ def run_exp3_linear_benchmark(
                 "max_convergence_retries": int(retry_limit),
                 "grrhs_kwargs": dict(grrhs_kw),
             }
-            if bayes_methods_use:
+            if bayes_methods_for_setting:
                 bayes_task = dict(base_task)
-                bayes_task["methods"] = list(bayes_methods_use)
+                bayes_task["methods"] = list(bayes_methods_for_setting)
                 bayes_tasks.append(bayes_task)
             if classical_methods_use:
                 classical_task = dict(base_task)
@@ -681,7 +713,7 @@ def run_exp3_linear_benchmark(
         replicate_col="replicate_id",
         converged_col="converged",
         required_cols=["mse_null", "mse_signal", "mse_overall", "lpd_test"],
-        method_levels=methods_use,
+        method_levels=None if bool(heavy_methods_anchor_only) else methods_use,
     )
 
     metric_df = paired_raw.groupby(group_keys, as_index=False).agg(
@@ -791,6 +823,7 @@ def run_exp3_linear_benchmark(
         "methods": methods_use,
         "bayes_min_chains": int(bayes_min_chains_use),
         "method_jobs": int(method_jobs),
+        "heavy_methods_anchor_only": bool(heavy_methods_anchor_only),
         "n_settings": len(settings),
         "repeats": int(repeats),
         "enforce_bayes_convergence": bool(enforce_bayes_convergence),
@@ -843,6 +876,8 @@ def run_exp3_linear_benchmark(
         results_dir=out_dir,
         produced_paths=produced,
         result_paths=result_paths,
+        skip_run_analysis=bool(skip_run_analysis),
+        archive_artifacts=bool(archive_artifacts),
     )
 
 
