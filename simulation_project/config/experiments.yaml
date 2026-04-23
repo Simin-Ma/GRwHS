@@ -49,7 +49,7 @@ exp3d_within_group_mixed:
     Main summary uses paired-converged-and-ok subset.
 
 exp4_variant_ablation:
-  repeats_default: 30
+  repeats_default: 12
   description: >
     Exp4 - GR-RHS variant ablation with oracle reference.
     p0_list=[5,15,30], include_oracle=true, sampler routing: p0=5->collapsed,
