@@ -36,3 +36,4 @@
 {"timestamp_utc": "2026-04-23T19:01:46.687205+00:00", "run_label": "cli_exp3a", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_190146Z_cli_exp3a"}
 {"timestamp_utc": "2026-04-23T19:54:07.934910+00:00", "run_label": "cli_exp5", "mode": "explicit", "save_dir": "outputs\\simulation_project\\exp5_convcheck_repeat1"}
 {"timestamp_utc": "2026-04-23T20:20:25.788997+00:00", "run_label": "cli_exp2", "mode": "explicit", "save_dir": "outputs\\simulation_project\\exp2_warning_check"}
+{"timestamp_utc": "2026-04-23T20:47:34.427603+00:00", "run_label": "cli_exp2", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_204734Z_cli_exp2"}
