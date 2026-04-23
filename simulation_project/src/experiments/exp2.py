@@ -304,11 +304,13 @@ def run_exp2_group_separation(
     if not paired_raw.empty and {"mse_null", "mse_signal", "mse_overall"}.issubset(set(paired_raw.columns)):
         m0 = pd.to_numeric(paired_raw["mse_null"], errors="coerce")
         m1 = pd.to_numeric(paired_raw["mse_signal"], errors="coerce")
-        mo = pd.to_numeric(paired_raw["mse_overall"], errors="coerce")
-        den = (m0 + m1).replace(0.0, np.nan)
-        scale = (mo / den).replace([np.inf, -np.inf], np.nan).fillna(1.0)
-        paired_raw["mse_null"] = m0 * scale
-        paired_raw["mse_signal"] = m1 * scale
+        total_dim = int(sum(group_sizes_use))
+        signal_dim = int(sum(group_sizes_use[i] for i, mg in enumerate(mu) if float(mg) > 0.0))
+        null_dim = max(total_dim - signal_dim, 0)
+        w_null = float(null_dim / total_dim) if total_dim > 0 else 0.0
+        w_signal = float(signal_dim / total_dim) if total_dim > 0 else 0.0
+        paired_raw["mse_null"] = m0 * w_null
+        paired_raw["mse_signal"] = m1 * w_signal
 
     summary_df = paired_raw.groupby("method", as_index=False).agg(
         null_group_mse=("null_group_mse", "mean"),
