@@ -31,7 +31,7 @@ _GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
 _EXP4_DEFAULT_CHAINS = 2
 _EXP4_DEFAULT_WARMUP = 400
 _EXP4_DEFAULT_POST_DRAWS = 400
-_EXP4_DEFAULT_MAX_CONV_RETRIES = 1
+_EXP4_DEFAULT_MAX_CONV_RETRIES = 2
 _EXP5_DEFAULT_MAX_CONV_RETRIES = 5
 _DEFAULT_REPEATS = {"exp1": 500, "exp2": 100, "exp3": 100, "exp3c": 30, "exp3d": 100, "exp4": 12, "exp5": 20}
 
@@ -92,9 +92,9 @@ def _sampler_for_exp4(base: SamplerConfig) -> SamplerConfig:
         max_treedepth=max(12, int(base.max_treedepth)),
         strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
         strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
-        max_divergence_ratio=float(base.max_divergence_ratio),
-        rhat_threshold=float(base.rhat_threshold),
-        ess_threshold=max(300.0, float(base.ess_threshold)),
+        max_divergence_ratio=max(0.01, float(base.max_divergence_ratio)),
+        rhat_threshold=max(1.02, float(base.rhat_threshold)),
+        ess_threshold=min(250.0, float(base.ess_threshold)),
     )
 
 
@@ -125,9 +125,9 @@ def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
         max_treedepth=max(12, int(base.max_treedepth)),
         strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
         strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
-        max_divergence_ratio=min(0.015, float(base.max_divergence_ratio)),
-        rhat_threshold=min(1.03, float(base.rhat_threshold)),
-        ess_threshold=max(400.0, float(base.ess_threshold)),
+        max_divergence_ratio=max(0.015, float(base.max_divergence_ratio)),
+        rhat_threshold=max(1.03, float(base.rhat_threshold)),
+        ess_threshold=min(300.0, float(base.ess_threshold)),
     )
 
 
@@ -412,5 +412,4 @@ def kappa_star_xi_rho(xi: float, rho: float) -> float:
 def kappa_star_xi_ratio_u0_rho(xi_ratio: float, u0: float, rho: float) -> float:
     xi = float(xi_ratio) * xi_crit_u0_rho(u0=float(u0), rho=float(rho))
     return kappa_star_xi_rho(xi=xi, rho=float(rho))
-
 

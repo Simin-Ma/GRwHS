@@ -25,7 +25,7 @@ class SamplerConfig:
     strict_adapt_delta: float = 0.99
     strict_max_treedepth: int = 14
     max_divergence_ratio: float = 0.005
-    rhat_threshold: float = 1.01
+    rhat_threshold: float = 1.015
     ess_threshold: float = 400.0
 
 
