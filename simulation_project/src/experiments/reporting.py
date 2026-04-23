@@ -61,6 +61,8 @@ def _analyze_single_experiment(exp_key: str, results_dir: Path) -> dict[str, Any
             "exp3": analyze_exp3,
             "exp3a": analyze_exp3,
             "exp3b": analyze_exp3,
+            "exp3c": analyze_exp3,
+            "exp3d": analyze_exp3,
             "exp4": analyze_exp4,
             "exp5": analyze_exp5,
         }

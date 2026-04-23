@@ -39,11 +39,13 @@ from ..utils import (
 #   "kappa_g mechanism is most beneficial when signals are group-concentrated"
 #
 # Factors (default single design):
-#   signal_structure: concentrated / distributed / boundary / half_dense / dense
+#   signal_structure: concentrated / distributed / boundary / within_group_mixed / half_dense / dense
 #     concentrated: 2/5 groups fully active, beta_j = 1/sqrt(p_g) (dense in group)
 #     distributed:  2/5 groups with one active variable each, beta_j = 1
 #     boundary:     2/5 groups active, beta calibrated at xi_ratio * xi_crit(u0, rho_profile),
 #                   where rho_profile = rho_within / sqrt(sigma2_boundary)
+#     within_group_mixed: each active group has one strong coefficient and
+#                   the remaining coefficients weak but nonzero
 #     half_dense:   random active coefficients at 20% density
 #     dense:        random active coefficients at 60% density
 #   env points:
@@ -58,6 +60,8 @@ from ..utils import (
 _BOUNDARY_U0 = 0.5
 _BOUNDARY_XI_RATIO = 1.2
 _SIGMA2_BOUNDARY = 1.0
+_WITHIN_GROUP_MIXED_STRONG = 1.0
+_WITHIN_GROUP_MIXED_WEAK = 0.25
 
 # ---------------------------------------------------------------------------
 # Default group configurations for Exp3 - mirrors GIGG paper Table 1 coverage,
@@ -90,7 +94,7 @@ def _default_exp3_env_points() -> list[dict[str, Any]]:
                     "rho_within": float(rw),
                     "rho_between": 0.1,
                     "target_snr": float(snr),
-                    "signals": ["concentrated", "distributed", "boundary", "half_dense", "dense"],
+                    "signals": ["concentrated", "distributed", "boundary", "within_group_mixed", "half_dense", "dense"],
                 }
             )
     return points
@@ -132,6 +136,7 @@ def _build_benchmark_beta(
     concentrated: all variables in active groups with equal weight (||beta_g||=1 per group)
     distributed:  first variable only in each active group (beta_j=1)
     boundary:     all vars in active groups, calibrated at xi_ratio * xi_crit(u0, rho_profile)
+    within_group_mixed: one strong + (p_g-1) weak coefficients per active group
     half_dense:   random coefficients over all p with 20% active density
     dense:        random coefficients over all p with 60% active density
     """
@@ -158,6 +163,18 @@ def _build_benchmark_beta(
             mu_g = float(boundary_xi_ratio) * xi_c * pg
             beta_val = math.sqrt(2.0 * float(sigma2) * mu_g / pg)
             beta[idx] = beta_val
+    elif signal == "within_group_mixed":
+        # Controlled heterogeneity: one strong coefficient plus weak nonzeros
+        # within each active group, useful for stress-testing group+local shrinkage.
+        strong = float(_WITHIN_GROUP_MIXED_STRONG)
+        weak = float(_WITHIN_GROUP_MIXED_WEAK)
+        for gid in _active:
+            idx = np.asarray(groups[gid], dtype=int)
+            if idx.size == 0:
+                continue
+            beta[idx[0]] = strong
+            if idx.size > 1:
+                beta[idx[1:]] = weak
     elif signal in {"half_dense", "dense"}:
         rng_local = rng if rng is not None else np.random.default_rng(12345)
         density = 0.2 if signal == "half_dense" else 0.6
@@ -899,6 +916,26 @@ def run_exp3c_highdim_stress(
         n_test=100,
         result_dir_name="exp3c_highdim_stress",
         exp_key="exp3c",
+        **kwargs,
+    )
+
+
+def run_exp3d_within_group_mixed(
+    n_jobs: int = 1,
+    seed: int = MASTER_SEED,
+    repeats: int = 20,
+    save_dir: str = "outputs/simulation_project",
+    **kwargs,
+) -> Dict[str, str]:
+    """Exp3d: controlled within-group strong+weak mixture stress benchmark."""
+    return run_exp3_linear_benchmark(
+        n_jobs=n_jobs,
+        seed=seed,
+        repeats=repeats,
+        save_dir=save_dir,
+        signal_types=["within_group_mixed"],
+        result_dir_name="exp3d_within_group_mixed",
+        exp_key="exp3d",
         **kwargs,
     )
 

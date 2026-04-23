@@ -165,11 +165,11 @@ def run_exp2_group_separation(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    rho_ref: float = 0.1,
+    rho_ref: float = 0.5,
     group_sizes: Sequence[int] | None = None,
     xi_ratios: Sequence[float] | None = None,
-    n_train: int = 200,
-    n_test: int = 50,
+    n_train: int = 100,
+    n_test: int = 30,
     rho_within: float = 0.3,
     rho_between: float = 0.05,
     sigma2: float = 1.0,
@@ -178,18 +178,18 @@ def run_exp2_group_separation(
     """
     Exp2: Toy-example group separation (Theorem 3.34), single-default protocol.
 
-    Default design calibrated at xi_crit(u0=0.5, rho=rho_ref=0.1):
-      group_sizes = [30, 20, 15, 10, 5, 5]
-      xi_ratios   = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0]
-      n_train=200, n_test=50, rho_within=0.3, rho_between=0.05, sigma2=1.0
+    Default design aligned to Exp3 scale (p=50; G10x5), calibrated at
+    xi_crit(u0=0.5, rho=rho_ref=0.5):
+      group_sizes = [10, 10, 10, 10, 10]
+      xi_ratios   = [0.0, 1.0, 2.0, 5.0, 10.0]
+      n_train=100, n_test=30, rho_within=0.3, rho_between=0.05, sigma2=1.0
 
     Methods: GR_RHS vs RHS only; summary uses paired-converged subset.
 
     Key claims:
-      - kappa_G0 ~ 0  (null contraction, Thm 3.22)
-      - kappa_G1 < 0.5  (below-threshold suppression)
-      - kappa_G2 > 0.5  (above-threshold activation, phase transition)
-      - kappa_G3 ~ 1   (strong-signal retention, Thm 3.32)
+      - null groups exhibit strong contraction (Thm 3.22)
+      - boundary-near groups show threshold-sensitive activation behavior
+      - strongest signal groups retain large posterior activity (Thm 3.32)
       - GR_RHS lower null MSE and higher signal retention than RHS
     """
     pd = load_pandas()
@@ -218,10 +218,10 @@ def run_exp2_group_separation(
     if float(rho_within) <= float(rho_between):
         raise ValueError("Expected rho_within > rho_between for grouped design.")
 
-    group_sizes_use = [int(v) for v in (group_sizes or [30, 20, 15, 10, 5, 5])]
+    group_sizes_use = [int(v) for v in (group_sizes or [10, 10, 10, 10, 10])]
     if not group_sizes_use or any(v <= 0 for v in group_sizes_use):
         raise ValueError("group_sizes must be a non-empty sequence of positive integers.")
-    xi_ratios_use = [float(v) for v in (xi_ratios or [0.0, 0.5, 1.0, 2.0, 4.0, 8.0])]
+    xi_ratios_use = [float(v) for v in (xi_ratios or [0.0, 1.0, 2.0, 5.0, 10.0])]
     if len(xi_ratios_use) != len(group_sizes_use):
         raise ValueError("xi_ratios length must equal group_sizes length.")
 
@@ -241,7 +241,7 @@ def run_exp2_group_separation(
         [round(v, 3) for v in mu],
     )
 
-    grrhs_kw = {"backend": str(sampler_backend), "tau_target": "groups"}
+    grrhs_kw = {"backend": str(sampler_backend), "tau_target": "groups", "progress_bar": False}
     # Method-level task granularity gives smoother progress updates and better
     # load balancing when one method is much slower than others.
     tasks: list[tuple] = []

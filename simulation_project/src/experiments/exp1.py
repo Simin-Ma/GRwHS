@@ -395,12 +395,11 @@ def run_exp1_kappa_profile_regimes(
       xi_crit = u0 * rho^2 / (2*(u0 + (1-u0)*rho^2)), eq. 104 of 0415 paper.
 
     Main figure (density story)
-      x = kappa_g, y = p(kappa_g | Y), with xi/xi_crit in {0.7, 1.0, 1.3}.
-      Uses small vs large p_g facets to show sharper concentration as p_g grows.
+      Small-multiples density figure with exactly p_g in {50, 100, 200, 500}.
+      Remove unrelated Fig1 variants and keep one final Figure 1 design.
     """
     from .analysis.plotting import (
-        plot_exp1_posterior_density_main,
-        plot_exp1_single_story_readable,
+        plot_exp1_posterior_density_small_multiples,
     )
     produced: set[Path] = set()
 
@@ -532,13 +531,13 @@ def run_exp1_kappa_profile_regimes(
         )
     else:
         tau_ref = float(density_story_tau) if density_story_tau is not None else 1.0
-    density_pg_default = [5, 10, 20, 50, 100, 200, 500]
-    density_pg = sorted({int(v) for v in (density_story_pg_list or density_pg_default) if int(v) > 0})
-    density_xi_ratios = [float(v) for v in (density_story_xi_ratio_list or [0.7, 1.0, 1.3])]
+    # Keep Figure 1 fixed to the four requested groups.
+    density_pg = [50, 100, 200, 500]
+    density_xi_ratios = [float(v) for v in (density_story_xi_ratio_list or [0.5, 1.0, 1.5])]
     density_repeats_eff = (
         int(density_story_repeats)
         if density_story_repeats is not None
-        else int(max(20, min(int(repeats), 200)))
+        else int(max(20, int(repeats)))
     )
     density_rows = _build_exp1_density_story_rows(
         pg_values=density_pg,
@@ -601,44 +600,41 @@ def run_exp1_kappa_profile_regimes(
         _record_produced_paths(produced, out_dir / "null_slope_check_full.json")
 
     main_fig_path = fig_dir / "fig1_single_story_readable.png"
-    appendix_fig_path = fig_dir / "fig1_appendix_theory_checks.png"
-    main_ok = False
+    main_fig_logy_path = fig_dir / "fig1_single_story_readable_logy.png"
+    # Remove unrelated Fig1 variants in the current output directory.
+    for old_fig in fig_dir.glob("fig1*.png"):
+        if old_fig.resolve() in {main_fig_path.resolve(), main_fig_logy_path.resolve()}:
+            continue
+        try:
+            old_fig.unlink()
+        except Exception as exc:
+            log.warning("Failed to remove old Fig1 variant %s: %s", old_fig, exc)
+
     if density_rows:
         try:
-            plot_exp1_posterior_density_main(
-                pd.DataFrame(density_rows),
+            den = pd.DataFrame(density_rows).copy()
+            den = den[den["p_g"].astype(int).isin({50, 100, 200, 500})].copy()
+            if den.empty:
+                den = pd.DataFrame(density_rows)
+            plot_exp1_posterior_density_small_multiples(
+                den,
                 out_path=main_fig_path,
                 xi_ratio_order=density_xi_ratios,
+                normalize_peak=False,
+                fill_area=False,
+            )
+            plot_exp1_posterior_density_small_multiples(
+                den,
+                out_path=main_fig_logy_path,
+                xi_ratio_order=density_xi_ratios,
+                normalize_peak=False,
+                fill_area=False,
+                log_y=True,
             )
             _record_produced_paths(produced, main_fig_path)
-            main_ok = True
+            _record_produced_paths(produced, main_fig_logy_path)
         except Exception as exc:
-            log.warning("Plot exp1 posterior-density main failed: %s", exc)
-
-    if not main_ok:
-        try:
-            plot_exp1_single_story_readable(
-                pd.DataFrame(phase_agg),
-                out_path=main_fig_path,
-                u0=float(u0),
-                slope=float(slope),
-                slope_ci=(float(slope_ci[0]), float(slope_ci[1])),
-            )
-            _record_produced_paths(produced, main_fig_path)
-        except Exception as exc:
-            log.warning("Plot exp1 single-story fallback failed: %s", exc)
-
-    try:
-        plot_exp1_single_story_readable(
-            pd.DataFrame(phase_agg),
-            out_path=appendix_fig_path,
-            u0=float(u0),
-            slope=float(slope),
-            slope_ci=(float(slope_ci[0]), float(slope_ci[1])),
-        )
-        _record_produced_paths(produced, appendix_fig_path)
-    except Exception as exc:
-        log.warning("Plot exp1 appendix theory-check failed: %s", exc)
+            log.warning("Plot exp1 density small-multiples failed: %s", exc)
 
     log.info("Exp1 done: %d null rows, %d phase rows", len(null_rows), len(phase_rows))
     result_paths = {
@@ -647,10 +643,10 @@ def run_exp1_kappa_profile_regimes(
         "phase_summary": str(out_dir / "summary_phase.csv"),
         "null_slope_check": str(out_dir / "null_slope_check.json"),
         "fig1_single_story_readable": str(main_fig_path),
-        "fig1_appendix_theory_checks": str(appendix_fig_path),
     }
     if density_rows:
         result_paths["density_main_summary"] = str(out_dir / "summary_density_main.csv")
+        result_paths["fig1_single_story_readable_logy"] = str(main_fig_logy_path)
     if full_agg:
         result_paths["null_summary_full"] = str(out_dir / "summary_null_full.csv")
         result_paths["null_slope_check_full"] = str(out_dir / "null_slope_check_full.json")

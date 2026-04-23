@@ -1,6 +1,6 @@
 {
-  "timestamp_utc": "2026-04-22T18:40:00.181751+00:00",
-  "run_label": "cli_all",
+  "timestamp_utc": "2026-04-23T00:16:47.536779+00:00",
+  "run_label": "cli_exp2",
   "mode": "auto_session",
-  "save_dir": "outputs\\simulation_project\\sessions\\20260422_184000Z_cli_all"
+  "save_dir": "outputs\\simulation_project\\sessions\\20260423_001647Z_cli_exp2"
 }

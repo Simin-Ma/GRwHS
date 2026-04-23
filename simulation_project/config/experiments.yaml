@@ -8,9 +8,10 @@ exp1_kappa_profile_regimes:
 exp2_group_separation:
   repeats_default: 100
   description: >
-    Exp2 - 6-group gradient separation (Theorem 3.34).
-    group_sizes=[30,20,15,10,5,5], rho_ref=0.1,
-    xi_ratios=[0.0,0.5,1.0,2.0,4.0,8.0], methods=[GR_RHS,RHS].
+    Exp2 - group separation toy aligned to Exp3 scale (Theorem 3.34).
+    group_sizes=[10,10,10,10,10], rho_ref=0.5,
+    xi_ratios=[0.0,1.0,2.0,5.0,10.0], n_train=100, n_test=30,
+    rho_within=0.3, rho_between=0.05, methods=[GR_RHS,RHS].
     Main summary uses paired-converged-and-ok subset.
 
 exp3a_main_benchmark:
@@ -34,6 +35,15 @@ exp3c_highdim_stress:
   description: >
     Exp3c - high-dimensional random-coefficient stress.
     n=200, p=500 (group_sizes=[50]*10), signals=[half_dense,dense].
+    Axes: rho_within=[0.3,0.6,0.8], rho_between=0.1, SNR=[0.2,1.0,5.0], rw>rb.
+    Methods=[GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV].
+    Main summary uses paired-converged-and-ok subset.
+
+exp3d_within_group_mixed:
+  repeats_default: 100
+  description: >
+    Exp3d - controlled within-group strong+weak mixture stress.
+    Signals=[within_group_mixed] with default group configs [G10x5, CL, CS].
     Axes: rho_within=[0.3,0.6,0.8], rho_between=0.1, SNR=[0.2,1.0,5.0], rw>rb.
     Methods=[GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV].
     Main summary uses paired-converged-and-ok subset.

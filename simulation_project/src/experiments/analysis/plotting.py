@@ -37,6 +37,14 @@ _PRIOR_LABELS: dict[tuple[float, float], str] = {
     (1.0, 3.0): "moderate\n(1,3)",
 }
 
+# Common math-label snippets for Exp1 figures.
+_LBL_PG = r"$p_g$"
+_LBL_KAPPA = r"$\kappa_g$"
+_LBL_XI_RATIO = r"$\xi/\xi_{\mathrm{crit}}$"
+_LBL_E_KAPPA = rf"$\mathbb{{E}}[{_LBL_KAPPA[1:-1]}\mid Y]$"
+_LBL_E_KAPPA_NULL = rf"$\mathbb{{E}}[{_LBL_KAPPA[1:-1]}\mid Y_{{\mathrm{{null}}}}]$"
+_LBL_P_KEEP = rf"$\mathbb{{P}}({_LBL_KAPPA[1:-1]}>u_0\mid Y)$"
+
 
 def _method_color(name: str) -> str:
     return _METHOD_COLORS.get(str(name), "#7f7f7f")
@@ -123,15 +131,23 @@ def plot_exp1(
     lx = np.log(p_g)
     ly = np.log(np.maximum(med, 1e-12))
     fit_mask = (p_g >= 20) & (p_g <= 500)
-    ax.plot(lx[fit_mask], ly[fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, label="Profile: fit range (20-500)")
+    ax.plot(
+        lx[fit_mask],
+        ly[fit_mask],
+        "o",
+        color=_METHOD_COLORS["GR_RHS"],
+        ms=7,
+        zorder=3,
+        label=r"Profile fit range: $20\leq p_g\leq 500$",
+    )
     ax.plot(lx[~fit_mask], ly[~fit_mask], "o", color=_METHOD_COLORS["GR_RHS"], ms=7, zorder=3, alpha=0.35, markerfacecolor="none")
     ax.plot(lx, ly, "-", color=_METHOD_COLORS["GR_RHS"], alpha=0.4)
 
     fit_lx = lx[fit_mask]
     coef = np.polyfit(fit_lx, ly[fit_mask], deg=1)
-    ax.plot(lx, coef[0] * lx + coef[1], "--", color="black", lw=1.5, label=f"Profile fit slope={slope:.3f}")
+    ax.plot(lx, coef[0] * lx + coef[1], "--", color="black", lw=1.5, label=rf"Profile fit: $\hat s={slope:.3f}$")
     ref = np.log(med[fit_mask][0]) - (-0.5) * fit_lx[0]
-    ax.plot(lx, -0.5 * lx + ref, ":", color="gray", lw=1.2, label="Theory slope=-0.5")
+    ax.plot(lx, -0.5 * lx + ref, ":", color="gray", lw=1.2, label=r"Theory: $s=-\frac{1}{2}$")
 
     if rows_full:
         ok_full = np.isfinite(p_full) & np.isfinite(med_full) & (med_full > 0)
@@ -139,7 +155,15 @@ def plot_exp1(
             lx_full = np.log(p_full[ok_full])
             ly_full = np.log(np.maximum(med_full[ok_full], 1e-12))
             fit_mask_full = (p_full[ok_full] >= 20) & (p_full[ok_full] <= 500)
-            ax.plot(lx_full[fit_mask_full], ly_full[fit_mask_full], "s", color=_METHOD_COLORS["RHS"], ms=6, zorder=3, label="Full: fit range (20-500)")
+            ax.plot(
+                lx_full[fit_mask_full],
+                ly_full[fit_mask_full],
+                "s",
+                color=_METHOD_COLORS["RHS"],
+                ms=6,
+                zorder=3,
+                label=r"Full fit range: $20\leq p_g\leq 500$",
+            )
             ax.plot(lx_full[~fit_mask_full], ly_full[~fit_mask_full], "s", color=_METHOD_COLORS["RHS"], ms=6, zorder=3, alpha=0.35, markerfacecolor="none")
             ax.plot(lx_full, ly_full, "-", color=_METHOD_COLORS["RHS"], alpha=0.45)
             if int(np.sum(fit_mask_full)) >= 2:
@@ -151,15 +175,19 @@ def plot_exp1(
                     "--",
                     color=_METHOD_COLORS["RHS"],
                     lw=1.5,
-                    label=f"Full fit slope={slope_full_show:.3f}",
+                    label=rf"Full fit: $\hat s={slope_full_show:.3f}$",
                 )
 
-    ax.set_xlabel("log p_g", fontsize=10)
-    ax.set_ylabel("log E[kappa_g | Y_null] (median)", fontsize=10)
+    ax.set_xlabel(r"$\log p_g$", fontsize=10)
+    ax.set_ylabel(r"$\log\,\operatorname{median}\!\left(\mathbb{E}[\kappa_g\mid Y_{\mathrm{null}}]\right)$", fontsize=10)
     ci_str = f"[{slope_ci[0]:.3f}, {slope_ci[1]:.3f}]"
-    title = f"Null contraction (Thm 3.22)\nProfile slope={slope:.3f} 95% CI {ci_str}"
+    title = rf"Null contraction (Thm 3.22)" + "\n" + rf"Profile $\hat s={slope:.3f}$, 95% CI {ci_str}"
     if full_slope is not None and full_slope_ci is not None:
-        title += f"\nFull slope={float(full_slope):.3f} 95% CI [{float(full_slope_ci[0]):.3f}, {float(full_slope_ci[1]):.3f}]"
+        title += (
+            "\n"
+            + rf"Full $\hat s={float(full_slope):.3f}$, 95% CI "
+            + rf"[{float(full_slope_ci[0]):.3f}, {float(full_slope_ci[1]):.3f}]"
+        )
     ax.set_title(title, fontsize=9)
     ax.legend(fontsize=8)
 
@@ -167,7 +195,7 @@ def plot_exp1(
     ax = axes[1]
     tail = np.asarray([float(r.get("mean_tail_prob_kappa_gt_eps", float("nan"))) for r in rows], dtype=float)
     if np.any(np.isfinite(tail)):
-        ax.plot(p_g, tail, "o-", color=_METHOD_COLORS["GR_RHS"], ms=6, label="Profile P(kappa>eps)")
+        ax.plot(p_g, tail, "o-", color=_METHOD_COLORS["GR_RHS"], ms=6, label=r"Profile $\mathbb{P}(\kappa_g>\varepsilon)$")
         if rows_full:
             tail_full = np.asarray([float(r.get("mean_tail_prob_kappa_gt_eps", float("nan"))) for r in rows_full], dtype=float)
             ok_tail = np.isfinite(p_full) & np.isfinite(tail_full)
@@ -179,25 +207,25 @@ def plot_exp1(
                     color=_METHOD_COLORS["RHS"],
                     ms=5,
                     lw=1.2,
-                    label="Full P(kappa>eps)",
+                    label=r"Full $\mathbb{P}(\kappa_g>\varepsilon)$",
                 )
         ax.set_xscale("log")
-        ax.set_xlabel("p_g (log scale)", fontsize=10)
-        ax.set_ylabel("Mean P(kappa_g > eps | Y_null)", fontsize=10)
-        ax.set_title("Tail suppression as p_g grows", fontsize=9)
+        ax.set_xlabel(r"$p_g$ (log scale)", fontsize=10)
+        ax.set_ylabel(r"$\mathbb{E}\!\left[\mathbb{P}(\kappa_g>\varepsilon\mid Y_{\mathrm{null}})\right]$", fontsize=10)
+        ax.set_title(r"Tail suppression as $p_g$ grows", fontsize=9)
         ax.axhline(0.0, color="gray", lw=0.8, ls=":")
         ax.set_ylim(-0.02, max(0.5, float(np.nanmax(tail)) * 1.15))
         ax.legend(fontsize=8)
     else:
         q25 = np.asarray([float(r.get("q25_post_mean_kappa", float("nan"))) for r in rows], dtype=float)
         q75 = np.asarray([float(r.get("q75_post_mean_kappa", float("nan"))) for r in rows], dtype=float)
-        ax.plot(p_g, med, "o-", color=_METHOD_COLORS["GR_RHS"], label="median")
+        ax.plot(p_g, med, "o-", color=_METHOD_COLORS["GR_RHS"], label=r"$\mathrm{median}$")
         if np.any(np.isfinite(q25)):
-            ax.fill_between(p_g, q25, q75, alpha=0.22, color=_METHOD_COLORS["GR_RHS"], label="IQR")
+            ax.fill_between(p_g, q25, q75, alpha=0.22, color=_METHOD_COLORS["GR_RHS"], label=r"$\mathrm{IQR}$")
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.set_xlabel("p_g", fontsize=10)
-        ax.set_ylabel("E[kappa_g | Y_null]", fontsize=10)
+        ax.set_xlabel(_LBL_PG, fontsize=10)
+        ax.set_ylabel(_LBL_E_KAPPA_NULL, fontsize=10)
         ax.legend(fontsize=8)
 
     _save(fig, out_path)
@@ -240,17 +268,16 @@ def plot_exp1_phase(df: Any, out_path: Path) -> None:
             .sort_values("xi_plot")
         )
         color = cmap(j)
-        ax.plot(agg["xi_plot"], agg["mean"], "o-", color=color, lw=1.8, ms=5, label=f"p_g={int(pg)}", zorder=3)
+        ax.plot(agg["xi_plot"], agg["mean"], "o-", color=color, lw=1.8, ms=5, label=rf"$p_g={int(pg)}$", zorder=3)
         if not (agg["q25"] == agg["q75"]).all():
             ax.fill_between(agg["xi_plot"], agg["q25"], agg["q75"], alpha=0.12, color=color)
 
-    ax.axvline(1.0, color="black", linestyle="--", lw=1.5, label="xi = xi_crit (theory threshold)")
+    ax.axvline(1.0, color="black", linestyle="--", lw=1.5, label=r"$\xi=\xi_{\mathrm{crit}}$ (theory threshold)")
     ax.axhline(0.5, color="gray", linestyle=":", lw=0.9)
-    ax.set_xlabel("xi / xi_crit (signal strength / critical threshold)", fontsize=10)
-    ax.set_ylabel("P(kappa_g > u0 | Y)", fontsize=10)
+    ax.set_xlabel(_LBL_XI_RATIO, fontsize=10)
+    ax.set_ylabel(_LBL_P_KEEP, fontsize=10)
     ax.set_title(
-        "Phase diagram: signal retention (Cor. 3.33)\n"
-        "Band = IQR across tau; curves should align under xi/xi_crit normalization",
+        r"Phase diagram: signal retention (Cor. 3.33)" + "\n" + r"Band = IQR across $\tau$; curves align under $\xi/\xi_{\mathrm{crit}}$ normalization",
         fontsize=9,
     )
     ax.set_ylim(-0.04, 1.08)
@@ -297,7 +324,7 @@ def plot_exp1_phase_kappa_overlay(df: Any, out_path: Path) -> None:
             color=color,
             lw=1.8,
             ms=5,
-            label=f"Empirical E[kappa], p_g={int(pg)}",
+            label=rf"Empirical $\mathbb{{E}}[\kappa_g\mid Y]$, $p_g={int(pg)}$",
             zorder=3,
         )
         if not (agg["q25"] == agg["q75"]).all():
@@ -312,13 +339,13 @@ def plot_exp1_phase_kappa_overlay(df: Any, out_path: Path) -> None:
         "--",
         color="black",
         lw=2.0,
-        label="Theory kappa*(xi) (Cor 3.18)",
+        label=r"Theory $\kappa^\star(\xi)$ (Cor 3.18)",
         zorder=4,
     )
     ax.axvline(1.0, color="gray", linestyle=":", lw=1.2)
-    ax.set_xlabel("xi / xi_crit", fontsize=10)
-    ax.set_ylabel("E[kappa_g | Y]", fontsize=10)
-    ax.set_title("Exp1 phase overlay: empirical E[kappa] vs theory kappa*(xi)", fontsize=9)
+    ax.set_xlabel(_LBL_XI_RATIO, fontsize=10)
+    ax.set_ylabel(_LBL_E_KAPPA, fontsize=10)
+    ax.set_title(r"Exp1 phase overlay: empirical $\mathbb{E}[\kappa_g\mid Y]$ vs theory $\kappa^\star(\xi)$", fontsize=9)
     ax.set_ylim(-0.03, 1.05)
     ax.legend(fontsize=7, ncol=2, loc="upper left")
     _save(fig, out_path)
@@ -366,8 +393,8 @@ def plot_exp1_phase_readable(
     xmin, xmax = float(min(xi_vals)), float(max(xi_vals))
     ax.axvspan(xmin, 1.0, alpha=0.06, color="#b0bec5")
     ax.axvspan(1.0, xmax, alpha=0.06, color="#c8e6c9")
-    ax.axvline(1.0, color="black", linestyle="--", lw=1.4, label="xi = xi_crit")
-    ax.axhline(float(u0), color="gray", linestyle=":", lw=1.0, label=f"u0={float(u0):.2f}")
+    ax.axvline(1.0, color="black", linestyle="--", lw=1.4, label=r"$\xi=\xi_{\mathrm{crit}}$")
+    ax.axhline(float(u0), color="gray", linestyle=":", lw=1.0, label=rf"$u_0={float(u0):.2f}$")
 
     colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
     for i, pg in enumerate(reps):
@@ -391,15 +418,15 @@ def plot_exp1_phase_readable(
             color=c,
             lw=2.0,
             ms=6,
-            label=f"p_g={int(pg)}",
+            label=rf"$p_g={int(pg)}$",
             zorder=3,
         )
         ax.fill_between(agg["xi_plot"], agg["q25"], agg["q75"], color=c, alpha=0.14)
 
-    ax.set_xlabel("xi / xi_crit")
-    ax.set_ylabel("P(kappa_g > u0 | Y)")
+    ax.set_xlabel(_LBL_XI_RATIO)
+    ax.set_ylabel(_LBL_P_KEEP)
     ax.set_ylim(-0.03, 1.05)
-    ax.set_title("Exp1 readable phase view: representative group sizes + uncertainty")
+    ax.set_title(r"Exp1 readable phase view: representative $p_g$ + uncertainty")
     ax.grid(axis="y", alpha=0.22)
     ax.legend(fontsize=8, loc="upper left")
     _save(fig, out_path)
@@ -441,7 +468,7 @@ def plot_exp1_kappa_residual_readable(
 
     fig, ax = plt.subplots(figsize=(8.0, 4.8))
     ax.axhline(0.0, color="black", lw=1.2, ls="--")
-    ax.axhspan(-0.05, 0.05, color="#eeeeee", alpha=0.7, zorder=0, label="near-theory band")
+    ax.axhspan(-0.05, 0.05, color="#eeeeee", alpha=0.7, zorder=0, label=r"near-theory band ($\pm 0.05$)")
     ax.axvline(1.0, color="gray", linestyle=":", lw=1.2)
 
     for i, pg in enumerate(reps):
@@ -462,12 +489,12 @@ def plot_exp1_kappa_residual_readable(
         resid_lo = merged["q25"].to_numpy(dtype=float) - merged["kappa_theory"].to_numpy(dtype=float)
         resid_hi = merged["q75"].to_numpy(dtype=float) - merged["kappa_theory"].to_numpy(dtype=float)
         c = colors[i % len(colors)]
-        ax.plot(merged["xi_plot"], resid, "o-", color=c, lw=2.0, ms=6, label=f"p_g={int(pg)}")
+        ax.plot(merged["xi_plot"], resid, "o-", color=c, lw=2.0, ms=6, label=rf"$p_g={int(pg)}$")
         ax.fill_between(merged["xi_plot"], resid_lo, resid_hi, color=c, alpha=0.14)
 
-    ax.set_xlabel("xi / xi_crit")
-    ax.set_ylabel("Empirical - Theory (E[kappa_g|Y] - kappa*(xi))")
-    ax.set_title("Exp1 residual view: where and by how much empirical departs from theory")
+    ax.set_xlabel(_LBL_XI_RATIO)
+    ax.set_ylabel(r"$\mathbb{E}[\kappa_g\mid Y]-\kappa^\star(\xi)$")
+    ax.set_title(r"Exp1 residual view: empirical minus theory")
     ax.grid(axis="y", alpha=0.22)
     ax.legend(fontsize=8, loc="upper left")
     _save(fig, out_path)
@@ -505,7 +532,7 @@ def plot_exp1_phase_heatmap_readable(df: Any, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(8.2, 4.4))
     im = ax.imshow(z, aspect="auto", cmap="viridis", vmin=0.0, vmax=1.0, origin="lower")
     cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Mean P(kappa_g > u0 | Y)")
+    cbar.set_label(r"$\mathbb{E}_{\tau}[\mathbb{P}(\kappa_g>u_0\mid Y)]$")
 
     xi_cols = [float(v) for v in piv.columns.tolist()]
     pg_rows = [int(v) for v in piv.index.tolist()]
@@ -513,9 +540,9 @@ def plot_exp1_phase_heatmap_readable(df: Any, out_path: Path) -> None:
     ax.set_xticklabels([f"{x:.2f}".rstrip("0").rstrip(".") for x in xi_cols], rotation=0, fontsize=8)
     ax.set_yticks(np.arange(len(pg_rows)))
     ax.set_yticklabels([str(v) for v in pg_rows], fontsize=9)
-    ax.set_xlabel("xi / xi_crit (display bins)")
-    ax.set_ylabel("p_g")
-    ax.set_title("Exp1 heatmap supplement: retention probability across (xi/xi_crit, p_g)")
+    ax.set_xlabel(_LBL_XI_RATIO + " (display bins)")
+    ax.set_ylabel(_LBL_PG)
+    ax.set_title(r"Exp1 heatmap supplement: retention across $(\xi/\xi_{\mathrm{crit}}, p_g)$")
 
     if xi_cols:
         xi_arr = np.asarray(xi_cols, dtype=float)
@@ -604,22 +631,22 @@ def plot_exp1_phase_by_tau_readable(
                 ms=7.2,
                 markeredgecolor="white",
                 markeredgewidth=0.8,
-                label=f"p_g={int(pg)}",
+                label=rf"$p_g={int(pg)}$",
                 zorder=3,
             )
             try:
                 p_lo = float(agg.loc[np.isclose(agg["xi_plot"], 0.85), "mean_prob_kappa_gt_u0"].iloc[0])
                 p_hi = float(agg.loc[np.isclose(agg["xi_plot"], 1.15), "mean_prob_kappa_gt_u0"].iloc[0])
-                anno_lines.append(f"p_g={int(pg)}: Delta_wide={p_hi - p_lo:+.2f}")
+                anno_lines.append(rf"$p_g={int(pg)}$: $\Delta_{{\mathrm{{wide}}}}={p_hi - p_lo:+.2f}$")
             except Exception:
                 pass
 
         ax.set_ylim(-0.03, 1.05)
         ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
         ax.set_xticks([0.5, 0.85, 1.0, 1.15, 1.5, 2.0])
-        ax.set_title(f"tau = {tau:.2g}", fontsize=12, fontweight="semibold")
-        ax.set_xlabel("xi / xi_crit", fontsize=11)
-        ax.set_ylabel("P(kappa_g > u0 | Y)", fontsize=11)
+        ax.set_title(rf"$\tau={tau:.2g}$", fontsize=12, fontweight="semibold")
+        ax.set_xlabel(_LBL_XI_RATIO, fontsize=11)
+        ax.set_ylabel(_LBL_P_KEEP, fontsize=11)
         ax.tick_params(labelsize=10)
         ax.grid(axis="y", alpha=0.18)
         if anno_lines:
@@ -633,14 +660,14 @@ def plot_exp1_phase_by_tau_readable(
                 bbox=dict(boxstyle="round,pad=0.28", facecolor="white", edgecolor="#cccccc", alpha=0.92),
             )
         if not legend_added:
-            ax.legend(fontsize=9, title="Only min/max p_g", title_fontsize=9, loc="upper left", framealpha=0.96)
+            ax.legend(fontsize=9, title=r"Only min/max $p_g$", title_fontsize=9, loc="upper left", framealpha=0.96)
             legend_added = True
 
     for k in range(n, nrows * ncols):
         r, c = divmod(k, ncols)
         axes[r][c].set_visible(False)
 
-    fig.suptitle("Exp1 Main Phase (Glance View): Fixed tau, compare smallest vs largest p_g", fontsize=15, fontweight="bold")
+    fig.suptitle(r"Exp1 Main Phase (Glance View): fixed $\tau$, compare smallest vs largest $p_g$", fontsize=15, fontweight="bold")
     _save(fig, out_path)
 
 
@@ -726,13 +753,13 @@ def plot_exp1_phase_zoom_by_tau_readable(
                 ms=7.2,
                 markeredgecolor="white",
                 markeredgewidth=0.8,
-                label=f"p_g={int(pg)}",
+                label=rf"$p_g={int(pg)}$",
                 zorder=3,
             )
             try:
                 p_l = float(agg.loc[np.isclose(agg["xi_plot"], 0.95), "mean_prob_kappa_gt_u0"].iloc[0])
                 p_r = float(agg.loc[np.isclose(agg["xi_plot"], 1.05), "mean_prob_kappa_gt_u0"].iloc[0])
-                anno_lines.append(f"p_g={int(pg)}: Delta_local={p_r - p_l:+.2f}")
+                anno_lines.append(rf"$p_g={int(pg)}$: $\Delta_{{\mathrm{{local}}}}={p_r - p_l:+.2f}$")
             except Exception:
                 pass
 
@@ -740,9 +767,9 @@ def plot_exp1_phase_zoom_by_tau_readable(
         ax.set_ylim(-0.03, 1.05)
         ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
         ax.set_xticks(zoom_ticks)
-        ax.set_title(f"tau = {tau:.2g}", fontsize=12, fontweight="semibold")
-        ax.set_xlabel("xi / xi_crit", fontsize=11)
-        ax.set_ylabel("P(kappa_g > u0 | Y)", fontsize=11)
+        ax.set_title(rf"$\tau={tau:.2g}$", fontsize=12, fontweight="semibold")
+        ax.set_xlabel(_LBL_XI_RATIO, fontsize=11)
+        ax.set_ylabel(_LBL_P_KEEP, fontsize=11)
         ax.tick_params(labelsize=10)
         ax.grid(axis="y", alpha=0.18)
         if anno_lines:
@@ -756,14 +783,14 @@ def plot_exp1_phase_zoom_by_tau_readable(
                 bbox=dict(boxstyle="round,pad=0.28", facecolor="white", edgecolor="#cccccc", alpha=0.92),
             )
         if not legend_added:
-            ax.legend(fontsize=9, title="Only min/max p_g", title_fontsize=9, loc="upper left", framealpha=0.96)
+            ax.legend(fontsize=9, title=r"Only min/max $p_g$", title_fontsize=9, loc="upper left", framealpha=0.96)
             legend_added = True
 
     for k in range(n, nrows * ncols):
         r, c = divmod(k, ncols)
         axes[r][c].set_visible(False)
 
-    fig.suptitle("Exp1 Threshold Zoom (Glance View): x in [0.85, 1.15] with Delta_local labels", fontsize=15, fontweight="bold")
+    fig.suptitle(r"Exp1 Threshold Zoom (Glance View): $x\in[0.85,1.15]$ with $\Delta_{\mathrm{local}}$ labels", fontsize=15, fontweight="bold")
     _save(fig, out_path)
 
 
@@ -832,8 +859,8 @@ def plot_exp1_threshold_sharpness_readable(
     # Glance style: one panel, tau-averaged local/wide deltas.
     palette = {"local": "#1f77b4", "wide": "#ff7f0e"}
     labels = {
-        "local": f"Delta_local = P({lr:.2f})-P({ll:.2f})",
-        "wide": f"Delta_wide = P({wr:.2f})-P({wl:.2f})",
+        "local": rf"$\Delta_{{\mathrm{{local}}}}=\mathbb{{P}}(x={lr:.2f})-\mathbb{{P}}(x={ll:.2f})$",
+        "wide": rf"$\Delta_{{\mathrm{{wide}}}}=\mathbb{{P}}(x={wr:.2f})-\mathbb{{P}}(x={wl:.2f})$",
     }
     end_texts: list[str] = []
     for kind in ["local", "wide"]:
@@ -861,11 +888,11 @@ def plot_exp1_threshold_sharpness_readable(
             label=labels[kind],
         )
         ax.fill_between(x, ylo, yhi, color=palette[kind], alpha=0.14)
-        end_texts.append(f"{kind}: {y[0]:.2f} -> {y[-1]:.2f}")
+        end_texts.append(rf"{kind}: {y[0]:.2f} \rightarrow {y[-1]:.2f}")
     ax.axhline(0.0, color="black", lw=1.2, ls="--")
     ax.set_xscale("log")
-    ax.set_xlabel("p_g (log scale)", fontsize=11)
-    ax.set_ylabel("Delta P", fontsize=11)
+    ax.set_xlabel(r"$p_g$ (log scale)", fontsize=11)
+    ax.set_ylabel(r"$\Delta\mathbb{P}$", fontsize=11)
     ax.set_title("Threshold Sharpness Summary", fontsize=13, fontweight="semibold")
     ax.tick_params(labelsize=10)
     ax.grid(axis="y", alpha=0.18)
@@ -881,7 +908,7 @@ def plot_exp1_threshold_sharpness_readable(
             bbox=dict(boxstyle="round,pad=0.28", facecolor="white", edgecolor="#cccccc", alpha=0.92),
         )
     ax.annotate(
-        "Higher = sharper transition",
+        r"Larger $\Delta\mathbb{P}$ = sharper transition",
         xy=(0.87, 0.82),
         xytext=(0.55, 0.67),
         textcoords="axes fraction",
@@ -891,7 +918,7 @@ def plot_exp1_threshold_sharpness_readable(
         color="#333333",
     )
 
-    fig.suptitle("Exp1 Sharpness (Glance View): Delta_local and Delta_wide rise with p_g", fontsize=15, fontweight="bold")
+    fig.suptitle(r"Exp1 Sharpness (Glance View): $\Delta_{\mathrm{local}}$ and $\Delta_{\mathrm{wide}}$ rise with $p_g$", fontsize=15, fontweight="bold")
     _save(fig, out_path)
 
 
@@ -952,13 +979,13 @@ def plot_exp1_threshold_jump_readable(
     y = agg["mean"].to_numpy(dtype=float)
     ylo = agg["min"].to_numpy(dtype=float)
     yhi = agg["max"].to_numpy(dtype=float)
-    ax.plot(x, y, "o-", color="#1f77b4", lw=2.2, ms=6, label="mean over tau")
-    ax.fill_between(x, ylo, yhi, color="#1f77b4", alpha=0.16, label="range over tau")
+    ax.plot(x, y, "o-", color="#1f77b4", lw=2.2, ms=6, label=r"$\mathrm{mean}_{\tau}$")
+    ax.fill_between(x, ylo, yhi, color="#1f77b4", alpha=0.16, label=r"$[\min_{\tau},\max_{\tau}]$")
     ax.axhline(0.0, color="black", lw=1.1, ls="--")
     ax.set_xscale("log")
-    ax.set_xlabel("p_g (log scale)")
-    ax.set_ylabel(f"Delta P = P(x={xr:.2f}) - P(x={xl:.2f})")
-    ax.set_title("Local jump around threshold (tau-averaged)")
+    ax.set_xlabel(r"$p_g$ (log scale)")
+    ax.set_ylabel(rf"$\Delta\mathbb{{P}}=\mathbb{{P}}(x={xr:.2f})-\mathbb{{P}}(x={xl:.2f})$")
+    ax.set_title(r"Local jump around threshold ($\tau$-averaged)")
     ax.grid(axis="y", alpha=0.2)
     ax.legend(fontsize=8, loc="upper left")
 
@@ -975,18 +1002,18 @@ def plot_exp1_threshold_jump_readable(
             color=cmap(i),
             lw=1.9,
             ms=5,
-            label=f"tau={tau:.2g}",
+            label=rf"$\tau={tau:.2g}$",
         )
     ax.axhline(0.0, color="black", lw=1.1, ls="--")
     ax.set_xscale("log")
-    ax.set_xlabel("p_g (log scale)")
-    ax.set_ylabel(f"Delta P = P(x={xr:.2f}) - P(x={xl:.2f})")
-    ax.set_title("Local jump around threshold (by tau)")
+    ax.set_xlabel(r"$p_g$ (log scale)")
+    ax.set_ylabel(rf"$\Delta\mathbb{{P}}=\mathbb{{P}}(x={xr:.2f})-\mathbb{{P}}(x={xl:.2f})$")
+    ax.set_title(r"Local jump around threshold (by $\tau$)")
     ax.grid(axis="y", alpha=0.2)
     ax.legend(fontsize=8, loc="upper left")
 
     fig.suptitle(
-        f"Exp1 threshold diagnostic: local jump from x={xl:.2f} to x={xr:.2f}",
+        rf"Exp1 threshold diagnostic: local jump from $x={xl:.2f}$ to $x={xr:.2f}$",
         fontsize=11,
         y=1.02,
     )
@@ -1042,7 +1069,7 @@ def plot_exp1_posterior_density_main(
     """
     Main-text Exp1 figure:
       x = kappa_g, y = p(kappa_g | Y)
-      Facet by xi/xi_crit in {0.7, 1.0, 1.3},
+      Facet by xi/xi_crit in {0.5, 1.0, 1.5},
       with black-and-white line-style encoding for p_g values.
       Style target: classic paper figure (no bright colors).
     """
@@ -1072,7 +1099,7 @@ def plot_exp1_posterior_density_main(
     if not all_pg:
         return
 
-    ratio_targets = [float(v) for v in (xi_ratio_order or [0.7, 1.0, 1.3])]
+    ratio_targets = [float(v) for v in (xi_ratio_order or [0.5, 1.0, 1.5])]
     ncols = len(ratio_targets)
     fig, axes = plt.subplots(1, ncols, figsize=(5.6 * ncols, 4.9), sharey=False)
     if ncols == 1:
@@ -1092,7 +1119,7 @@ def plot_exp1_posterior_density_main(
             "color": "black",
             "ls": line_styles[idx % len(line_styles)],
             "lw": 2.1 if idx == 0 else 1.9,
-            "label": f"p_g = {int(pg)}",
+            "label": rf"$p_g={int(pg)}$",
         }
         for idx, pg in enumerate(all_pg)
     }
@@ -1158,15 +1185,19 @@ def plot_exp1_posterior_density_main(
                 continue
 
             panel_tag = chr(ord("a") + panel_idx - 1)
-            status = "< 1" if float(target) < 1.0 else ("> 1" if float(target) > 1.0 else "= 1")
+            status = (
+                r"$\xi/\xi_{\mathrm{crit}}<1$"
+                if float(target) < 1.0
+                else (r"$\xi/\xi_{\mathrm{crit}}>1$" if float(target) > 1.0 else r"$\xi/\xi_{\mathrm{crit}}=1$")
+            )
             ax.set_xlim(0.0, 1.0)
             if mode == "log_density":
                 span = max(local_max - local_min, 0.5)
                 ax.set_ylim(local_min - 0.06 * span, local_max + 0.10 * span)
             else:
                 ax.set_ylim(0.0, local_peak * 1.08 if local_peak > 0 else 1.0)
-            ax.set_xlabel("kappa_g", fontsize=12)
-            ax.set_title(f"({panel_tag})  xi/xi_crit {status}", fontsize=12)
+            ax.set_xlabel(_LBL_KAPPA, fontsize=12)
+            ax.set_title(rf"({panel_tag})  {status}", fontsize=12)
             ax.tick_params(axis="both", labelsize=10, length=5)
             ax.legend(
                 fontsize=8.5,
@@ -1178,26 +1209,26 @@ def plot_exp1_posterior_density_main(
             )
 
         if mode == "density":
-            y_label = "p(kappa_g | Y)"
+            y_label = r"$p(\kappa_g\mid Y)$"
         elif mode == "relative_density":
-            y_label = "p(kappa_g | Y) / max p"
+            y_label = r"$p(\kappa_g\mid Y)\,/\,\max p$"
         else:
-            y_label = "log10 p(kappa_g | Y)"
+            y_label = r"$\log_{10} p(\kappa_g\mid Y)$"
         axes[0].set_ylabel(y_label, fontsize=12)
 
     tau_note = ""
     if "tau" in frame.columns:
         tau_vals = sorted(float(v) for v in frame["tau"].dropna().unique())
         if len(tau_vals) == 1:
-            tau_note = f" (tau={tau_vals[0]:.2f})"
-    pg_note = f", p_g in [{int(all_pg[0])}, {int(all_pg[-1])}]"
+            tau_note = rf" ($\tau={tau_vals[0]:.2f}$)"
+    pg_note = rf", $p_g\in[{int(all_pg[0])},{int(all_pg[-1])}]$"
     mode_note = {
-        "density": "density scale",
-        "relative_density": "peak-normalized scale",
-        "log_density": "log10 density scale",
+        "density": r"density scale",
+        "relative_density": r"peak-normalized scale",
+        "log_density": r"$\log_{10}$ density scale",
     }[mode]
     fig.suptitle(
-        "Exp1: posterior density p(kappa_g | Y) in kappa_g space with varying p_g"
+        r"Exp1: posterior density $p(\kappa_g\mid Y)$ in $\kappa_g$ space with varying $p_g$"
         + tau_note
         + pg_note
         + f" [{mode_note}]",
@@ -1264,7 +1295,7 @@ def plot_exp1_posterior_density_heatmap(
     if all_kappa.size < 2:
         return
 
-    ratio_targets = [float(v) for v in (xi_ratio_order or [0.7, 1.0, 1.3])]
+    ratio_targets = [float(v) for v in (xi_ratio_order or [0.5, 1.0, 1.5])]
     ncols = len(ratio_targets)
     fig, axes = plt.subplots(1, ncols, figsize=(5.6 * ncols, 4.9), sharey=True)
     if ncols == 1:
@@ -1322,9 +1353,9 @@ def plot_exp1_posterior_density_heatmap(
 
             y_rows = np.arange(len(all_pg), dtype=float)
             if np.any(np.isfinite(med)):
-                ax.plot(med, y_rows, color="white", lw=1.8, label="median")
+                ax.plot(med, y_rows, color="white", lw=1.8, label=r"$\mathrm{median}$")
             if np.any(np.isfinite(q25)) and np.any(np.isfinite(q75)):
-                ax.plot(q25, y_rows, color="white", lw=1.0, ls="--", alpha=0.85, label="IQR")
+                ax.plot(q25, y_rows, color="white", lw=1.0, ls="--", alpha=0.85, label=r"$\mathrm{IQR}$")
                 ax.plot(q75, y_rows, color="white", lw=1.0, ls="--", alpha=0.85)
 
             xt_vals = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=float)
@@ -1334,24 +1365,405 @@ def plot_exp1_posterior_density_heatmap(
 
             ax.set_yticks(np.arange(len(all_pg), dtype=float))
             ax.set_yticklabels([str(v) for v in all_pg], fontsize=10)
-            ax.set_xlabel("kappa_g", fontsize=12)
+            ax.set_xlabel(_LBL_KAPPA, fontsize=12)
             panel_tag = chr(ord("a") + panel_idx - 1)
-            status = "< 1" if float(target) < 1.0 else ("> 1" if float(target) > 1.0 else "= 1")
-            ax.set_title(f"({panel_tag})  xi/xi_crit {status}", fontsize=12)
+            status = (
+                r"$\xi/\xi_{\mathrm{crit}}<1$"
+                if float(target) < 1.0
+                else (r"$\xi/\xi_{\mathrm{crit}}>1$" if float(target) > 1.0 else r"$\xi/\xi_{\mathrm{crit}}=1$")
+            )
+            ax.set_title(rf"({panel_tag})  {status}", fontsize=12)
             ax.tick_params(axis="both", length=4)
             if panel_idx == ncols:
                 ax.legend(fontsize=8.5, frameon=False, loc="upper right")
 
-        axes[0].set_ylabel("p_g", fontsize=12)
+        axes[0].set_ylabel(_LBL_PG, fontsize=12)
 
     if image_handle is not None:
         cbar = fig.colorbar(image_handle, ax=axes, fraction=0.022, pad=0.015)
-        cbar.set_label("log10 p(kappa_g | Y)", fontsize=11)
+        cbar.set_label(r"$\log_{10} p(\kappa_g\mid Y)$", fontsize=11)
         cbar.ax.tick_params(labelsize=9)
 
     fig.suptitle(
-        "Exp1 Density Heatmap View: non-overlapping posterior density across p_g",
+        r"Exp1 Density Heatmap View: non-overlapping posterior density across $p_g$",
         fontsize=13,
+    )
+    _save(fig, out_path)
+
+
+def plot_exp1_posterior_density_ridgeline(
+    df: Any,
+    out_path: Path,
+    *,
+    xi_ratio_order: Sequence[float] | None = None,
+) -> None:
+    """
+    Ridgeline (joyplot-style) density view for Exp1.
+
+    Facets by xi/xi_crit and stacks one density ridge per p_g.
+    Each ridge uses:
+      - shared x support kappa in [0, 1]
+      - within-ridge peak normalization for height (0~1 scale)
+
+    Notes:
+      - y tick labels indicate ridge baselines (p_g values), not raw density.
+      - ridge height scale is shown in-panel to avoid ambiguity.
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"p_g", "xi_ratio", "kappa", "density"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    frame["p_g"] = frame["p_g"].astype(int)
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    frame["kappa"] = frame["kappa"].astype(float)
+    frame["density"] = frame["density"].astype(float)
+    frame = frame[np.isfinite(frame["kappa"]) & np.isfinite(frame["density"])]
+    if frame.empty:
+        return
+
+    all_pg = sorted(int(v) for v in frame["p_g"].unique())
+    if not all_pg:
+        return
+
+    ratio_targets = [float(v) for v in (xi_ratio_order or [0.5, 1.0, 1.5])]
+    ncols = len(ratio_targets)
+    fig, axes = plt.subplots(1, ncols, figsize=(5.9 * ncols, 6.3), sharex=True, sharey=True)
+    if ncols == 1:
+        axes = [axes]
+
+    avail_global = np.asarray(sorted(float(v) for v in frame["xi_plot"].unique()), dtype=float)
+    if avail_global.size == 0:
+        return
+
+    step = 1.05
+    ridge_height = 0.80
+    n_pg = max(len(all_pg), 1)
+    x_left, x_right = 0.0, 1.0
+    x_margin = 0.02
+
+    with plt.rc_context({"font.family": "serif", "mathtext.fontset": "stix", "axes.unicode_minus": False}):
+        for panel_idx, (ax, target) in enumerate(zip(axes, ratio_targets), start=1):
+            chosen = float(avail_global[int(np.argmin(np.abs(avail_global - float(target))))])
+            if abs(chosen - float(target)) > 0.03:
+                continue
+            sub_ratio = frame[np.isclose(frame["xi_plot"], chosen, atol=1e-9)].copy()
+            if sub_ratio.empty:
+                continue
+
+            any_ridge = False
+            for i, pg in enumerate(all_pg):
+                sub = (
+                    sub_ratio[sub_ratio["p_g"] == int(pg)]
+                    .groupby("kappa", as_index=False)["density"]
+                    .mean()
+                    .sort_values("kappa")
+                )
+                if sub.empty:
+                    continue
+                x = sub["kappa"].to_numpy(dtype=float)
+                y = sub["density"].to_numpy(dtype=float)
+                if x.size < 2:
+                    continue
+                area = float(np.trapezoid(y, x))
+                if area > 0:
+                    y = y / area
+
+                x_plot = np.clip(x, x_left, x_right)
+
+                peak = float(np.nanmax(y))
+                if not np.isfinite(peak) or peak <= 0:
+                    continue
+                y_shape = y / peak
+                base = float(i) * step
+                y_top = base + ridge_height * y_shape
+
+                # Monochrome-friendly gradient for print-style figures.
+                g = 0.88 - 0.55 * (i / max(n_pg - 1, 1))
+                color = (g, g, g)
+                ax.fill_between(x_plot, base, y_top, color=color, alpha=0.95, linewidth=0.0)
+                ax.plot(x_plot, y_top, color="black", lw=1.0, alpha=0.95)
+                ax.plot([x_left, x_right], [base, base], color="black", lw=0.55, alpha=0.55)
+
+                med = _posterior_quantile_from_density(x, y, 0.5)
+                if np.isfinite(med):
+                    med_plot = float(np.clip(float(med), x_left, x_right))
+                    ax.plot([med_plot, med_plot], [base + 0.05, base + ridge_height * 0.95], color="black", lw=1.0, ls="--", alpha=0.95)
+                any_ridge = True
+
+            if not any_ridge:
+                continue
+
+            y_ticks = [i * step + ridge_height * 0.45 for i in range(len(all_pg))]
+            ax.set_yticks(y_ticks)
+            ax.set_yticklabels([str(v) for v in all_pg], fontsize=10)
+            ax.set_xlim(x_left - x_margin, x_right + x_margin)
+            ax.set_xticks(np.linspace(0.0, 1.0, 6))
+            ax.set_ylim(-0.2, (len(all_pg) - 1) * step + ridge_height + 0.28)
+            ax.set_xlabel(r"$\kappa_g$", fontsize=13)
+            ax.axvline(x_left, color="black", lw=0.7, ls=":", alpha=0.55)
+            ax.axvline(x_right, color="black", lw=0.7, ls=":", alpha=0.55)
+
+            panel_tag = chr(ord("a") + panel_idx - 1)
+            ax.text(
+                0.5,
+                -0.16,
+                f"({panel_tag})",
+                transform=ax.transAxes,
+                ha="center",
+                va="top",
+                fontsize=13,
+                clip_on=False,
+            )
+            ax.text(
+                0.985,
+                0.015,
+                r"support: $0\leq \kappa_g \leq 1$",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=8.2,
+                color="#333333",
+            )
+            if panel_idx == 1:
+                # Compact in-panel scale cue for ridge-height meaning.
+                bar_x = 0.05
+                bar_y0, bar_y1 = 0.06, 0.19
+                ax.plot([bar_x, bar_x], [bar_y0, bar_y1], transform=ax.transAxes, color="black", lw=0.9, clip_on=False)
+                ax.plot([bar_x - 0.008, bar_x + 0.008], [bar_y0, bar_y0], transform=ax.transAxes, color="black", lw=0.9, clip_on=False)
+                ax.plot([bar_x - 0.008, bar_x + 0.008], [bar_y1, bar_y1], transform=ax.transAxes, color="black", lw=0.9, clip_on=False)
+                ax.text(bar_x - 0.013, bar_y0, "0", transform=ax.transAxes, ha="right", va="center", fontsize=8)
+                ax.text(bar_x - 0.013, bar_y1, "1", transform=ax.transAxes, ha="right", va="center", fontsize=8)
+                ax.text(
+                    bar_x + 0.013,
+                    0.5 * (bar_y0 + bar_y1),
+                    "ridge height\n(normalized density)",
+                    transform=ax.transAxes,
+                    ha="left",
+                    va="center",
+                    fontsize=8,
+                )
+
+            ax.grid(axis="x", visible=False)
+            ax.grid(axis="y", visible=False)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.tick_params(axis="both", labelsize=11, length=4)
+
+        axes[0].set_ylabel(r"$p_g$ (ridge baseline)", fontsize=13)
+
+    # No figure-level title; keep only panel tags (a), (b), (c).
+    _save(fig, out_path)
+
+
+def plot_exp1_posterior_density_small_multiples(
+    df: Any,
+    out_path: Path,
+    *,
+    xi_ratio_order: Sequence[float] | None = None,
+    normalize_peak: bool = False,
+    fill_area: bool = False,
+    log_y: bool = False,
+    log_floor: float = 1e-4,
+) -> None:
+    """
+    Clean small-multiples layout:
+      columns = xi/xi_crit values
+      rows    = p_g values
+      each panel contains exactly one density curve
+
+    This avoids overlap entirely and is usually the easiest to read.
+    """
+    rows = _records(df)
+    if not rows:
+        return
+
+    from ...utils import load_pandas
+    pd = load_pandas()
+    frame = pd.DataFrame(rows).copy()
+    req = {"p_g", "xi_ratio", "kappa", "density"}
+    if not req.issubset(set(frame.columns)):
+        return
+
+    frame["p_g"] = frame["p_g"].astype(int)
+    frame["xi_plot"] = frame["xi_ratio"].astype(float).round(6)
+    frame["kappa"] = frame["kappa"].astype(float)
+    frame["density"] = frame["density"].astype(float)
+    frame = frame[np.isfinite(frame["kappa"]) & np.isfinite(frame["density"])]
+    if frame.empty:
+        return
+
+    all_pg = sorted(int(v) for v in frame["p_g"].unique())
+    if not all_pg:
+        return
+    ratio_targets = [float(v) for v in (xi_ratio_order or [0.5, 1.0, 1.5])]
+    avail = np.asarray(sorted(float(v) for v in frame["xi_plot"].unique()), dtype=float)
+    if avail.size == 0:
+        return
+    chosen_ratios = []
+    for t in ratio_targets:
+        c = float(avail[int(np.argmin(np.abs(avail - float(t))))])
+        if abs(c - float(t)) <= 0.03:
+            chosen_ratios.append(c)
+        else:
+            chosen_ratios.append(float("nan"))
+
+    nrows = len(all_pg)
+    ncols = len(ratio_targets)
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(4.5 * ncols, 1.35 * nrows + 1.1),
+        sharex=True,
+        sharey="row",
+        squeeze=False,
+    )
+
+    # Use one y-range per p_g row so each row has a clear, comparable density axis.
+    row_ymax: dict[int, float] = {}
+    row_ymin: dict[int, float] = {}
+    for pg in all_pg:
+        ymax = 0.0
+        ymin = float("inf")
+        for chosen in chosen_ratios:
+            if not np.isfinite(chosen):
+                continue
+            sub = (
+                frame[
+                    (frame["p_g"] == int(pg))
+                    & np.isclose(frame["xi_plot"], float(chosen), atol=1e-9)
+                ]
+                .groupby("kappa", as_index=False)["density"]
+                .mean()
+                .sort_values("kappa")
+            )
+            if sub.empty:
+                continue
+            x = sub["kappa"].to_numpy(dtype=float)
+            y = sub["density"].to_numpy(dtype=float)
+            if x.size < 2:
+                continue
+            area = float(np.trapezoid(y, x))
+            if area > 0:
+                y = y / area
+            if bool(normalize_peak):
+                peak = float(np.nanmax(y))
+                if peak > 0:
+                    y = y / peak
+            if bool(log_y):
+                y_eval = np.maximum(y, float(log_floor))
+                ymax = max(ymax, float(np.nanmax(y_eval)))
+                ymin = min(ymin, float(np.nanmin(y_eval)))
+            else:
+                ymax = max(ymax, float(np.nanmax(y)))
+        if bool(log_y):
+            row_ymin[int(pg)] = max(min(ymin, ymax), float(log_floor))
+        row_ymax[int(pg)] = max(ymax, 1e-8)
+
+    with plt.rc_context({"font.family": "serif"}):
+        for r_idx, pg in enumerate(all_pg):
+            for c_idx, target in enumerate(ratio_targets):
+                ax = axes[r_idx][c_idx]
+                chosen = chosen_ratios[c_idx]
+                if not np.isfinite(chosen):
+                    ax.axis("off")
+                    continue
+
+                sub = (
+                    frame[
+                        (frame["p_g"] == int(pg))
+                        & np.isclose(frame["xi_plot"], float(chosen), atol=1e-9)
+                    ]
+                    .groupby("kappa", as_index=False)["density"]
+                    .mean()
+                    .sort_values("kappa")
+                )
+                if sub.empty:
+                    ax.axis("off")
+                    continue
+
+                x = sub["kappa"].to_numpy(dtype=float)
+                y = sub["density"].to_numpy(dtype=float)
+                if x.size < 2:
+                    ax.axis("off")
+                    continue
+                area = float(np.trapezoid(y, x))
+                if area > 0:
+                    y = y / area
+                if bool(normalize_peak):
+                    peak = float(np.nanmax(y))
+                    if peak > 0:
+                        y = y / peak
+
+                if bool(log_y):
+                    y = np.maximum(y, float(log_floor))
+
+                if bool(fill_area) and (not bool(log_y)):
+                    ax.fill_between(x, 0.0, y, color="#d9d9d9", alpha=0.55, linewidth=0)
+                ax.plot(x, y, color="black", lw=1.15)
+                ax.set_xlim(-0.01, 1.01)
+                if bool(log_y):
+                    y_min = float(row_ymin.get(int(pg), float(log_floor)))
+                    y_max = float(row_ymax.get(int(pg), max(y_min * 10.0, float(log_floor))))
+                    ax.set_yscale("log")
+                    ax.set_ylim(
+                        max(y_min * 0.95, float(log_floor)),
+                        max(y_max * 1.05, max(y_min * 1.2, float(log_floor) * 10.0)),
+                    )
+                else:
+                    ylim_top = 1.08 if bool(normalize_peak) else float(row_ymax.get(int(pg), 1e-8)) * 1.08
+                    ax.set_ylim(0.0, max(ylim_top, 1e-8))
+                ax.set_xticks(np.linspace(0.0, 1.0, 6))
+                ax.tick_params(axis="both", labelsize=8, length=3, pad=1)
+                ax.grid(axis="x", color="#ececec", lw=0.5, alpha=0.8)
+                ax.grid(axis="y", color="#f2f2f2", lw=0.5, alpha=0.8)
+                ax.axvline(0.0, color="#888888", lw=0.6, ls=":")
+                ax.axvline(1.0, color="#888888", lw=0.6, ls=":")
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+
+                if c_idx == 0:
+                    if bool(log_y):
+                        ylab = r"$p(\kappa_g\mid Y)$ (log y)"
+                    else:
+                        ylab = r"$p(\kappa_g\mid Y)$" if not bool(normalize_peak) else r"$p(\kappa_g\mid Y)/\max p$"
+                    ax.set_ylabel(ylab, fontsize=8.5)
+                    ax.text(
+                        -0.32,
+                        0.5,
+                        rf"$p_g={int(pg)}$",
+                        transform=ax.transAxes,
+                        ha="right",
+                        va="center",
+                        fontsize=8.5,
+                    )
+                else:
+                    ax.set_ylabel("")
+                if r_idx == nrows - 1:
+                    ax.set_xlabel(_LBL_KAPPA, fontsize=9)
+                else:
+                    ax.set_xlabel("")
+
+        for c_idx, target in enumerate(ratio_targets):
+            status = (
+                r"$\xi/\xi_{\mathrm{crit}}<1$"
+                if float(target) < 1.0
+                else (r"$\xi/\xi_{\mathrm{crit}}>1$" if float(target) > 1.0 else r"$\xi/\xi_{\mathrm{crit}}=1$")
+            )
+            axes[0][c_idx].set_title(status, fontsize=10.5, pad=6)
+
+    mode_note = "peak-normalized density" if bool(normalize_peak) else "raw density"
+    if bool(log_y):
+        mode_note += ", log-y"
+    fig.suptitle(
+        rf"Exp1 Small Multiples: one curve per panel ({mode_note})",
+        fontsize=12.5,
     )
     _save(fig, out_path)
 
@@ -1455,7 +1867,7 @@ def plot_exp1_single_story_readable(
             ms=7.2,
             markeredgecolor="white",
             markeredgewidth=0.8,
-            label=f"p_g={int(pg)}",
+            label=rf"$p_g={int(pg)}$",
         )
     ax.axvspan(0.85, 1.0, alpha=0.08, color="#eceff1")
     ax.axvspan(1.0, 1.15, alpha=0.08, color="#e8f5e9")
@@ -1465,9 +1877,9 @@ def plot_exp1_single_story_readable(
     ax.set_ylim(-0.03, 1.05)
     ax.set_xticks([0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15])
     ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
-    ax.set_title("A. Threshold Region (Small vs Large p_g)", fontsize=12, fontweight="semibold")
-    ax.set_xlabel("xi / xi_crit", fontsize=11)
-    ax.set_ylabel("P(kappa_g > u0 | Y)", fontsize=11)
+    ax.set_title(r"A. Threshold Region (small vs large $p_g$)", fontsize=12, fontweight="semibold")
+    ax.set_xlabel(_LBL_XI_RATIO, fontsize=11)
+    ax.set_ylabel(_LBL_P_KEEP, fontsize=11)
     ax.tick_params(labelsize=10)
     ax.grid(axis="y", alpha=0.18)
     ax.legend(fontsize=9, loc="upper left", framealpha=0.96)
@@ -1486,7 +1898,7 @@ def plot_exp1_single_story_readable(
                 ms=6.8,
                 markeredgecolor="white",
                 markeredgewidth=0.8,
-                label="Delta_local = P(1.05)-P(0.95)",
+                label=r"$\Delta_{\mathrm{local}}=\mathbb{P}(1.05)-\mathbb{P}(0.95)$",
             )
         if np.any(np.isfinite(mm["delta_wide"])):
             ax.plot(
@@ -1498,13 +1910,13 @@ def plot_exp1_single_story_readable(
                 ms=6.2,
                 markeredgecolor="white",
                 markeredgewidth=0.8,
-                label="Delta_wide = P(1.15)-P(0.85)",
+                label=r"$\Delta_{\mathrm{wide}}=\mathbb{P}(1.15)-\mathbb{P}(0.85)$",
             )
         ax.set_xscale("log")
         ax.axhline(0.0, color="black", lw=1.1, ls="--")
         ax.set_title("B. Phase Sharpness Metrics", fontsize=12, fontweight="semibold")
-        ax.set_xlabel("p_g (log scale)", fontsize=11)
-        ax.set_ylabel("Delta P (higher is sharper)", fontsize=11)
+        ax.set_xlabel(r"$p_g$ (log scale)", fontsize=11)
+        ax.set_ylabel(r"$\Delta\mathbb{P}$ (higher is sharper)", fontsize=11)
         ax.tick_params(labelsize=10)
         ax.grid(axis="y", alpha=0.18)
         ax.legend(fontsize=8.7, loc="upper left", framealpha=0.96)
@@ -1524,9 +1936,9 @@ def plot_exp1_single_story_readable(
             markeredgewidth=0.8,
         )
         ax.set_xscale("log")
-        ax.set_title("C. Transition Width W50", fontsize=12, fontweight="semibold")
-        ax.set_xlabel("p_g (log scale)", fontsize=11)
-        ax.set_ylabel("W50 = x@P0.75 - x@P0.25 (lower is sharper)", fontsize=11)
+        ax.set_title(r"C. Transition Width $W_{50}$", fontsize=12, fontweight="semibold")
+        ax.set_xlabel(r"$p_g$ (log scale)", fontsize=11)
+        ax.set_ylabel(r"$W_{50}=x@P_{0.75}-x@P_{0.25}$ (lower is sharper)", fontsize=11)
         ax.tick_params(labelsize=10)
         ax.grid(axis="y", alpha=0.18)
         ax.annotate(
@@ -1540,12 +1952,12 @@ def plot_exp1_single_story_readable(
             color="#333333",
         )
 
-    title = "Exp1 Single-Figure Evidence: Finite-sample smooth transition + asymptotic threshold sharpening"
+    title = r"Exp1 Single-Figure Evidence: finite-sample smooth transition + asymptotic threshold sharpening"
     if slope is not None and np.isfinite(float(slope)):
         if slope_ci is not None and np.isfinite(float(slope_ci[0])) and np.isfinite(float(slope_ci[1])):
-            title += f" | null slope={float(slope):.3f} (95% CI [{float(slope_ci[0]):.3f}, {float(slope_ci[1]):.3f}])"
+            title += rf" | null $\hat s={float(slope):.3f}$ (95% CI [{float(slope_ci[0]):.3f}, {float(slope_ci[1]):.3f}])"
         else:
-            title += f" | null slope={float(slope):.3f}"
+            title += rf" | null $\hat s={float(slope):.3f}$"
     fig.suptitle(title, fontsize=14, fontweight="bold")
     _save(fig, out_path)
 
@@ -1630,27 +2042,27 @@ def plot_exp1_transition_width_readable(
         ms=6.8,
         markeredgecolor="white",
         markeredgewidth=0.8,
-        label="mean over tau",
+        label=r"$\mathrm{mean}_{\tau}$",
     )
-    ax.fill_between(x, ylo, yhi, color="#1f77b4", alpha=0.16, label="range over tau")
+    ax.fill_between(x, ylo, yhi, color="#1f77b4", alpha=0.16, label=r"$[\min_{\tau},\max_{\tau}]$")
     ax.set_xscale("log")
-    ax.set_xlabel("p_g (log scale)", fontsize=11)
-    ax.set_ylabel(f"W50 = x@P={hi:.2f} - x@P={lo:.2f}", fontsize=11)
-    ax.set_title("Tau-averaged Transition Width", fontsize=12, fontweight="semibold")
+    ax.set_xlabel(r"$p_g$ (log scale)", fontsize=11)
+    ax.set_ylabel(rf"$W_{{50}}=x@P_{{{hi:.2f}}}-x@P_{{{lo:.2f}}}$", fontsize=11)
+    ax.set_title(r"$\tau$-averaged Transition Width", fontsize=12, fontweight="semibold")
     ax.tick_params(labelsize=10)
     ax.grid(axis="y", alpha=0.18)
     ax.legend(fontsize=9, loc="upper right", framealpha=0.95)
     ax.text(
         0.03,
         0.92,
-        "Lower W50 = sharper threshold",
+        r"Lower $W_{50}$ = sharper threshold",
         transform=ax.transAxes,
         fontsize=9,
         color="#333333",
         bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="#cccccc", alpha=0.9),
     )
     ax.annotate(
-        "Downward trend supports\nasymptotic threshold sharpening",
+        r"Downward trend supports" + "\n" + r"asymptotic threshold sharpening",
         xy=(0.80, 0.25),
         xytext=(0.52, 0.50),
         textcoords="axes fraction",
@@ -1661,7 +2073,7 @@ def plot_exp1_transition_width_readable(
     )
 
     fig.suptitle(
-        "Exp1 Width (Glance View): W50 shrinks as p_g grows",
+        r"Exp1 Width (Glance View): $W_{50}$ shrinks as $p_g$ grows",
         fontsize=15,
         fontweight="bold",
     )

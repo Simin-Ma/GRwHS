@@ -1,10 +1,10 @@
 """
-Post-run analysis for Exp1-5.
+Post-run analysis for Exp1-5 (including Exp3c/Exp3d).
 
 Each analyze_expN() reads the saved CSVs/JSONs for that experiment and
 returns a dict of key metrics plus a list of human-readable finding strings.
 
-run_analysis() calls all five, prints a formatted report to stdout, and
+run_analysis() calls all configured experiments, prints a formatted report to stdout, and
 saves results/analysis_report.json + results/analysis_report.txt.
 """
 
@@ -494,7 +494,7 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
 
     sep   = "=" * 68
     sep2  = "-" * 60
-    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5(+Exp3c)", sep]
+    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5(+Exp3c/Exp3d)", sep]
 
     all_metrics: dict[str, Any] = {}
     exp_configs = [
@@ -508,6 +508,8 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
          analyze_exp3, res / "exp3b_boundary_stress"),
         ("exp3c", "Exp3c: Highdim Stress",
          analyze_exp3, res / "exp3c_highdim_stress"),
+        ("exp3d", "Exp3d: Within-Group Mixed Stress",
+         analyze_exp3, res / "exp3d_within_group_mixed"),
         ("exp4", "Exp4: Variant Ablation",
          analyze_exp4, res / "exp4_variant_ablation"),
         ("exp5", "Exp5: Prior Sensitivity",
@@ -533,6 +535,7 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
         ("exp3a", res / "exp3a_main_benchmark" / "raw_results.csv", "method", bayes_method_set),
         ("exp3b", res / "exp3b_boundary_stress" / "raw_results.csv", "method", bayes_method_set),
         ("exp3c", res / "exp3c_highdim_stress" / "raw_results.csv", "method", bayes_method_set),
+        ("exp3d", res / "exp3d_within_group_mixed" / "raw_results.csv", "method", bayes_method_set),
         ("exp4", res / "exp4_variant_ablation" / "raw_results.csv", "method_type", {"GR_RHS", "RHS"}),
         ("exp5", res / "exp5_prior_sensitivity" / "raw_results.csv", "", None),
     ]

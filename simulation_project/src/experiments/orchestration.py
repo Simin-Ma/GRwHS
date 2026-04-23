@@ -19,7 +19,13 @@ from ..output_layout import resolve_analysis_dir, resolve_run_save_dir
 from ..utils import MASTER_SEED, save_json
 from .exp1 import run_exp1_kappa_profile_regimes
 from .exp2 import run_exp2_group_separation
-from .exp3 import run_exp3_linear_benchmark, run_exp3a_main_benchmark, run_exp3b_boundary_stress, run_exp3c_highdim_stress
+from .exp3 import (
+    run_exp3_linear_benchmark,
+    run_exp3a_main_benchmark,
+    run_exp3b_boundary_stress,
+    run_exp3c_highdim_stress,
+    run_exp3d_within_group_mixed,
+)
 from .exp4 import run_exp4_variant_ablation
 from .exp5 import run_exp5_prior_sensitivity
 
@@ -54,6 +60,7 @@ def run_all_experiments(
         ("exp3a", lambda: run_exp3a_main_benchmark(repeats=_default_repeats("exp3"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
         ("exp3b", lambda: run_exp3b_boundary_stress(repeats=_default_repeats("exp3"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
         ("exp3c", lambda: run_exp3c_highdim_stress(repeats=_default_repeats("exp3c"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
+        ("exp3d", lambda: run_exp3d_within_group_mixed(repeats=_default_repeats("exp3d"), gigg_mode=exp3_gigg_mode_name, **common_cfg.as_kwargs())),
         ("exp4", lambda: run_exp4_variant_ablation(repeats=_default_repeats("exp4"), **common_cfg.as_kwargs())),
         ("exp5", lambda: run_exp5_prior_sensitivity(repeats=_default_repeats("exp5"), **common_cfg.as_kwargs())),
     ]
@@ -80,7 +87,8 @@ def run_all_experiments(
 def _cli() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the unified simulation pipeline (Exp1, Exp2, Exp3a, Exp3b, Exp3c, Exp4, Exp5). "
+            "Run the unified simulation pipeline (Exp1, Exp2, Exp3a, Exp3b, Exp3c, Exp3d, Exp4, Exp5), "
+            "or run individual experiment entries. "
             "On Windows, process-pool parallelism is disabled by default; "
             "set SIM_ALLOW_WINDOWS_PROCESS_POOL=1 to force-enable from a spawn-safe script entrypoint."
         )
@@ -223,6 +231,16 @@ def _cli() -> None:
                 "label": "Exp3c: Highdim Stress",
                 "results_subdir": "exp3c_highdim_stress",
             },
+            "exp3d": {
+                "run": lambda: run_exp3d_within_group_mixed(
+                    repeats=reps or _default_repeats("exp3d"),
+                    gigg_mode=exp3_gigg_mode_name,
+                    **common_cfg.as_kwargs(),
+                ),
+                "analyze": analyze_exp3,
+                "label": "Exp3d: Within-Group Mixed Stress",
+                "results_subdir": "exp3d_within_group_mixed",
+            },
             "exp4": {
                 "run": lambda: run_exp4_variant_ablation(
                     repeats=reps or _default_repeats("exp4"),
@@ -248,4 +266,3 @@ def _cli() -> None:
         label = str(spec["label"])
         results_subdir = str(spec["results_subdir"])
         _print_exp_analysis(label, analyzer(base / "results" / results_subdir))
-

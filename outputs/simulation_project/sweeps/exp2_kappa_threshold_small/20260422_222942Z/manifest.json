@@ -1,0 +1,172 @@
+{
+  "sweep_name": "exp2_kappa_threshold_small",
+  "session_id": "20260422_222942Z",
+  "config_path": "simulation_project/config/sweeps.yaml",
+  "experiment": "exp2",
+  "started_at": "2026-04-22T22:29:42.826419+00:00",
+  "finished_at": "2026-04-22T22:29:42.828919+00:00",
+  "duration_sec": 0.002510000002075685,
+  "dry_run": true,
+  "fail_fast": false,
+  "ok_count": 0,
+  "error_count": 0,
+  "total_runs": 4,
+  "rows": [
+    {
+      "run_name": "run_001",
+      "experiment": "exp2",
+      "status": "dry_run",
+      "duration_sec": 3.9999940781854093e-07,
+      "params": {
+        "save_dir": "outputs\\simulation_project\\sweeps\\exp2_kappa_threshold_small\\20260422_222942Z\\runs\\run_001",
+        "n_jobs": 2,
+        "seed": 20260415,
+        "enforce_bayes_convergence": false,
+        "until_bayes_converged": false,
+        "sampler_backend": "nuts",
+        "repeats": 4,
+        "bayes_min_chains": 1,
+        "n_train": 300,
+        "n_test": 50,
+        "rho_within": 0.3,
+        "rho_between": 0.05,
+        "group_sizes": [
+          30,
+          20,
+          15,
+          10,
+          5,
+          5
+        ],
+        "xi_ratios": [
+          0.0,
+          0.5,
+          1.0,
+          2.0,
+          6.0,
+          10.0
+        ],
+        "rho_ref": 0.2
+      },
+      "outputs": {},
+      "error": ""
+    },
+    {
+      "run_name": "run_002",
+      "experiment": "exp2",
+      "status": "dry_run",
+      "duration_sec": 3.00002284348011e-07,
+      "params": {
+        "save_dir": "outputs\\simulation_project\\sweeps\\exp2_kappa_threshold_small\\20260422_222942Z\\runs\\run_002",
+        "n_jobs": 2,
+        "seed": 20260415,
+        "enforce_bayes_convergence": false,
+        "until_bayes_converged": false,
+        "sampler_backend": "nuts",
+        "repeats": 4,
+        "bayes_min_chains": 1,
+        "n_train": 300,
+        "n_test": 50,
+        "rho_within": 0.3,
+        "rho_between": 0.05,
+        "group_sizes": [
+          30,
+          20,
+          15,
+          10,
+          5,
+          5
+        ],
+        "xi_ratios": [
+          0.0,
+          0.5,
+          1.0,
+          2.0,
+          6.0,
+          10.0
+        ],
+        "rho_ref": 0.3
+      },
+      "outputs": {},
+      "error": ""
+    },
+    {
+      "run_name": "run_003",
+      "experiment": "exp2",
+      "status": "dry_run",
+      "duration_sec": 2.00001522898674e-07,
+      "params": {
+        "save_dir": "outputs\\simulation_project\\sweeps\\exp2_kappa_threshold_small\\20260422_222942Z\\runs\\run_003",
+        "n_jobs": 2,
+        "seed": 20260415,
+        "enforce_bayes_convergence": false,
+        "until_bayes_converged": false,
+        "sampler_backend": "nuts",
+        "repeats": 4,
+        "bayes_min_chains": 1,
+        "n_train": 300,
+        "n_test": 50,
+        "rho_within": 0.3,
+        "rho_between": 0.05,
+        "group_sizes": [
+          30,
+          20,
+          15,
+          10,
+          5,
+          5
+        ],
+        "xi_ratios": [
+          0.0,
+          0.5,
+          1.0,
+          2.0,
+          6.0,
+          10.0
+        ],
+        "rho_ref": 0.4
+      },
+      "outputs": {},
+      "error": ""
+    },
+    {
+      "run_name": "run_004",
+      "experiment": "exp2",
+      "status": "dry_run",
+      "duration_sec": 1.00000761449337e-07,
+      "params": {
+        "save_dir": "outputs\\simulation_project\\sweeps\\exp2_kappa_threshold_small\\20260422_222942Z\\runs\\run_004",
+        "n_jobs": 2,
+        "seed": 20260415,
+        "enforce_bayes_convergence": false,
+        "until_bayes_converged": false,
+        "sampler_backend": "nuts",
+        "repeats": 4,
+        "bayes_min_chains": 1,
+        "n_train": 300,
+        "n_test": 50,
+        "rho_within": 0.3,
+        "rho_between": 0.05,
+        "group_sizes": [
+          30,
+          20,
+          15,
+          10,
+          5,
+          5
+        ],
+        "xi_ratios": [
+          0.0,
+          0.5,
+          1.0,
+          2.0,
+          6.0,
+          10.0
+        ],
+        "rho_ref": 0.5
+      },
+      "outputs": {},
+      "error": ""
+    }
+  ]
+}

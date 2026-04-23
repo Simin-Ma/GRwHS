@@ -11,7 +11,7 @@ python scripts/run_simulation.py --help
 
 Common CLI args:
 
-- `--experiment {all,1,2,3,3a,3b,3c,4,5,analysis}`
+- `--experiment {all,1,2,3,3a,3b,3c,3d,4,5,analysis}`
 - `--workspace simulation_project`
 - `--save-dir <path>`
 - `--seed <int>`
@@ -40,9 +40,10 @@ Default experiment order:
 3. `exp3a`
 4. `exp3b`
 5. `exp3c`
-6. `exp4`
-7. `exp5`
-8. `analysis`
+6. `exp3d`
+7. `exp4`
+8. `exp5`
+9. `analysis`
 
 Default repeats:
 
@@ -51,6 +52,7 @@ Default repeats:
 - `exp3a=100`
 - `exp3b=100`
 - `exp3c=30`
+- `exp3d=100`
 - `exp4=30`
 - `exp5=20`
 
@@ -64,7 +66,7 @@ Main conclusions are evaluated under strict convergence:
 Main summary tables use paired-converged-and-ok subsets where applicable:
 
 - Exp2: `summary_paired.csv`, `paired_deltas.csv`
-- Exp3a/3b/3c: `summary_paired.csv`, `summary_paired_deltas.csv`
+- Exp3a/3b/3c/3d: `summary_paired.csv`, `summary_paired_deltas.csv`
 - Exp5: `summary_paired.csv`, `prior_pairwise_delta.csv`
 
 Diagnostics side table is always exported:
@@ -76,9 +78,11 @@ Diagnostics side table is always exported:
 
 ### Exp2 (`group_separation`)
 
-- `group_sizes=[30,20,15,10,5,5]`
-- `rho_ref=0.1`
-- `xi_ratios=[0.0,0.5,1.0,2.0,4.0,8.0]`
+- `group_sizes=[10,10,10,10,10]` (aligned to Exp3 `G10x5`, `p=50`)
+- `rho_ref=0.5`
+- `xi_ratios=[0.0,1.0,2.0,5.0,10.0]`
+- `n_train=100`, `n_test=30`
+- `rho_within=0.3`, `rho_between=0.05`
 - methods: `GR_RHS`, `RHS`
 
 Run:
@@ -125,6 +129,20 @@ Run:
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2
+```
+
+### Exp3d (`within_group_mixed`)
+
+- signal: `within_group_mixed` (one strong + remaining weak nonzero coefficients per active group)
+- default group configs: `G10x5`, `CL`, `CS`
+- correlation axis: `rho_within=[0.3,0.6,0.8]`, `rho_between=0.1`, enforced `rw>rb`
+- SNR axis: `[0.2,1.0,5.0]`
+- same default methods as Exp3a
+
+Run:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment 3d --n-jobs 2
 ```
 
 ### Exp4 (`variant_ablation`)
