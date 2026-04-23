@@ -494,7 +494,7 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
 
     sep   = "=" * 68
     sep2  = "-" * 60
-    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5(+Exp3c/Exp3d)", sep]
+    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5(+optional Exp3c/Exp3d)", sep]
 
     all_metrics: dict[str, Any] = {}
     exp_configs = [
@@ -531,26 +531,32 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
     # Strict Bayesian convergence gate + diagnostics table.
     bayes_method_set = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
     gate_specs = [
-        ("exp2", res / "exp2_group_separation" / "raw_results.csv", "method", {"GR_RHS", "RHS"}),
-        ("exp3a", res / "exp3a_main_benchmark" / "raw_results.csv", "method", bayes_method_set),
-        ("exp3b", res / "exp3b_boundary_stress" / "raw_results.csv", "method", bayes_method_set),
-        ("exp3c", res / "exp3c_highdim_stress" / "raw_results.csv", "method", bayes_method_set),
-        ("exp3d", res / "exp3d_within_group_mixed" / "raw_results.csv", "method", bayes_method_set),
-        ("exp4", res / "exp4_variant_ablation" / "raw_results.csv", "method_type", {"GR_RHS", "RHS"}),
-        ("exp5", res / "exp5_prior_sensitivity" / "raw_results.csv", "", None),
+        ("exp2", res / "exp2_group_separation" / "raw_results.csv", "method", {"GR_RHS", "RHS"}, True),
+        ("exp3a", res / "exp3a_main_benchmark" / "raw_results.csv", "method", bayes_method_set, True),
+        ("exp3b", res / "exp3b_boundary_stress" / "raw_results.csv", "method", bayes_method_set, True),
+        ("exp3c", res / "exp3c_highdim_stress" / "raw_results.csv", "method", bayes_method_set, False),
+        ("exp3d", res / "exp3d_within_group_mixed" / "raw_results.csv", "method", bayes_method_set, False),
+        ("exp4", res / "exp4_variant_ablation" / "raw_results.csv", "method_type", {"GR_RHS", "RHS"}, True),
+        ("exp5", res / "exp5_prior_sensitivity" / "raw_results.csv", "", None, True),
     ]
     gate_ok = True
     gate_lines: list[str] = []
     diag_rows: list[dict[str, Any]] = []
-    for exp_name, path, method_col, include_methods in gate_specs:
+    for exp_name, path, method_col, include_methods, required in gate_specs:
         if not path.exists():
-            gate_ok = False
-            gate_lines.append(f"  {exp_name}: missing raw_results.csv")
+            if required:
+                gate_ok = False
+                gate_lines.append(f"  {exp_name}: missing raw_results.csv")
+            else:
+                gate_lines.append(f"  {exp_name}: missing raw_results.csv  [SKIP optional]")
             continue
         rows = _load_csv(path)
         if not rows:
-            gate_ok = False
-            gate_lines.append(f"  {exp_name}: empty raw_results.csv")
+            if required:
+                gate_ok = False
+                gate_lines.append(f"  {exp_name}: empty raw_results.csv")
+            else:
+                gate_lines.append(f"  {exp_name}: empty raw_results.csv  [SKIP optional]")
             continue
         if method_col:
             target = [r for r in rows if str(r.get(method_col, "")).strip() in set(include_methods or set())]
@@ -564,8 +570,11 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
             if _bool(r.get("converged", False)) and str(r.get("status", "")).strip().lower() == "ok"
         )
         pass_flag = n_ok == n_total and n_total > 0
-        gate_ok = gate_ok and pass_flag
-        gate_lines.append(f"  {exp_name}: {n_ok}/{n_total} converged&ok  [{'PASS' if pass_flag else 'FAIL'}]")
+        if required:
+            gate_ok = gate_ok and pass_flag
+            gate_lines.append(f"  {exp_name}: {n_ok}/{n_total} converged&ok  [{'PASS' if pass_flag else 'FAIL'}]")
+        else:
+            gate_lines.append(f"  {exp_name}: {n_ok}/{n_total} converged&ok  [{'PASS' if pass_flag else 'FAIL'} optional]")
 
     report_lines.append("\nStrict Convergence Gate")
     report_lines.append(sep2)

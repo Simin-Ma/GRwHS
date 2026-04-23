@@ -1,6 +1,6 @@
 # simulation_project
 
-Single-default simulation framework for GR-RHS Exp1-Exp5 (with Exp3c high-dimensional stress).
+Single-default simulation framework for GR-RHS Exp1-Exp5 (with optional Exp3c/Exp3d stress runs).
 
 ## Entrypoints
 
@@ -20,7 +20,8 @@ python scripts/run_sweep.py --list
 
 - No `laptop/full` split.
 - No `--profile` CLI option.
-- Default pipeline order: `Exp1 -> Exp2 -> Exp3a -> Exp3b -> Exp3c -> Exp4 -> Exp5 -> analysis`.
+- Default pipeline order: `Exp1 -> Exp2 -> Exp3a -> Exp3b -> Exp4 -> Exp5 -> analysis`.
+- `Exp3c/Exp3d` are optional stress experiments and run only when explicitly selected.
 - Scientific conclusion gate: Exp2-Exp5 Bayesian rows must satisfy `converged=True` and `status=ok`.
 
 Default repeats when `--repeats` is omitted:
@@ -29,9 +30,13 @@ Default repeats when `--repeats` is omitted:
 - `exp2=100`
 - `exp3a=100`
 - `exp3b=100`
-- `exp3c=30`
 - `exp4=30`
 - `exp5=20`
+
+Optional explicit runs:
+
+- `exp3c=30`
+- `exp3d=100`
 
 ## Experiments
 
@@ -39,11 +44,12 @@ Default repeats when `--repeats` is omitted:
 2. `run_exp2_group_separation`
 3. `run_exp3a_main_benchmark`
 4. `run_exp3b_boundary_stress`
-5. `run_exp3c_highdim_stress`
-6. `run_exp4_variant_ablation`
-7. `run_exp5_prior_sensitivity`
+5. `run_exp3c_highdim_stress` (optional)
+6. `run_exp3d_within_group_mixed` (optional)
+7. `run_exp4_variant_ablation`
+8. `run_exp5_prior_sensitivity`
 
-`run_exp3_linear_benchmark` is still available as a combined Exp3 entry, but the default paper pipeline uses `3a/3b/3c`.
+`run_exp3_linear_benchmark` is still available as a combined Exp3 entry.
 
 ## Typical Commands
 

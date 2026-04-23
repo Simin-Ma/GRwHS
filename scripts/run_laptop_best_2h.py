@@ -172,7 +172,7 @@ def _run_main(cfg: ProtocolConfig, *, smoke_mode: bool = False) -> None:
     run_exp2_group_separation(
         repeats=repeats["exp2"],
         methods=["GR_RHS", "RHS"],
-        rho_ref=0.5,
+        rho_ref=0.8,
         n_test=50,
         **common_collapsed,
     )

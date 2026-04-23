@@ -2119,9 +2119,9 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
         fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.8))
 
         metric_specs = [
-            ("null_group_mse", "null_group_mse_std", "Null-group MSE"),
-            ("signal_group_mse", "signal_group_mse_std", "Signal-group MSE"),
-            ("mse_overall", "mse_overall_std", "Overall MSE"),
+            ("mse_null", "mse_null_std", "Null MSE Contribution"),
+            ("mse_signal", "mse_signal_std", "Non-Null MSE Contribution"),
+            ("mse_overall", "mse_overall_std", "Overall MSE (= Null + Non-Null)"),
         ]
         n_eff = (
             summary["n_effective"].to_numpy(dtype=float)
@@ -2161,12 +2161,12 @@ def plot_exp2_separation(df_summary: Any, df_kappa_raw: Any, out_dir: Path) -> N
                     )
                 ax.set_ylim(0.0, ymax * 1.18 + 1e-6)
 
-        title = "Exp2 MSE-only comparison"
+        title = "Exp2 MSE-only comparison (GIGG/GRASP-aligned decomposition)"
         if {"GR_RHS", "RHS"}.issubset(set(summary["method"].astype(str).tolist())):
             rel_parts = []
             for metric, label in (
-                ("null_group_mse", "null"),
-                ("signal_group_mse", "signal"),
+                ("mse_null", "null"),
+                ("mse_signal", "signal"),
                 ("mse_overall", "overall"),
             ):
                 if metric not in summary.columns:

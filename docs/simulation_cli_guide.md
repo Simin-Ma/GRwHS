@@ -40,11 +40,9 @@ Default experiment order:
 2. `exp2`
 3. `exp3a`
 4. `exp3b`
-5. `exp3c`
-6. `exp3d`
-7. `exp4`
-8. `exp5`
-9. `analysis`
+5. `exp4`
+6. `exp5`
+7. `analysis`
 
 Default repeats:
 
@@ -52,10 +50,10 @@ Default repeats:
 - `exp2=100`
 - `exp3a=100`
 - `exp3b=100`
-- `exp3c=30`
-- `exp3d=100`
 - `exp4=30`
 - `exp5=20`
+
+`exp3c=30` and `exp3d=100` remain available via explicit `--experiment 3c/3d` runs.
 
 ## 3. Scientific Credibility Rules
 
@@ -80,7 +78,7 @@ Diagnostics side table is always exported:
 ### Exp2 (`group_separation`)
 
 - `group_sizes=[10,10,10,10,10]` (aligned to Exp3 `G10x5`, `p=50`)
-- `rho_ref=0.5`
+- `rho_ref=0.8`
 - `xi_ratios=[0.0,1.0,2.0,5.0,10.0]`
 - `n_train=100`, `n_test=30`
 - `rho_within=0.8`, `rho_between=0.2`
@@ -95,7 +93,7 @@ python -m simulation_project.src.run_experiment --experiment 2 --n-jobs 2
 ### Exp3a (`main_benchmark`)
 
 - signals: `concentrated`, `distributed`
-- correlation axis: `rho_within=[0.3,0.6,0.8]`, `rho_between=0.1`, enforced `rw>rb`
+- correlation axis: `rho_within=[0.8]`, `rho_between=0.2`, enforced `rw>rb`
 - SNR axis: `[0.2,1.0,5.0]`
 - methods: `GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV`
 
@@ -121,8 +119,8 @@ python -m simulation_project.src.run_experiment --experiment 3b --n-jobs 2
 ### Exp3c (`highdim_stress`)
 
 - `n_train=200`, `n_test=100`, `p=500`, `group_sizes=[50]*10`
-- signals: `half_dense`, `dense`
-- correlation axis: `rho_within=[0.3,0.6,0.8]`, `rho_between=0.1`, enforced `rw>rb`
+- signals: `concentrated`, `distributed`
+- correlation axis: `rho_within=[0.8]`, `rho_between=0.2`, enforced `rw>rb`
 - SNR axis: `[0.2,1.0,5.0]`
 - same default methods as Exp3a
 
@@ -134,9 +132,9 @@ python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2
 
 ### Exp3d (`within_group_mixed`)
 
-- signal: `within_group_mixed` (one strong + remaining weak nonzero coefficients per active group)
+- signal: `boundary`
 - default group configs: `G10x5`, `CL`, `CS`
-- correlation axis: `rho_within=[0.3,0.6,0.8]`, `rho_between=0.1`, enforced `rw>rb`
+- correlation axis: `rho_within=[0.8]`, `rho_between=0.2`, enforced `rw>rb`
 - SNR axis: `[0.2,1.0,5.0]`
 - same default methods as Exp3a
 

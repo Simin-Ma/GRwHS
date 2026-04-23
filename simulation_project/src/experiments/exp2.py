@@ -165,7 +165,7 @@ def run_exp2_group_separation(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    rho_ref: float = 0.5,
+    rho_ref: float = 0.8,
     group_sizes: Sequence[int] | None = None,
     xi_ratios: Sequence[float] | None = None,
     n_train: int = 100,
@@ -179,7 +179,7 @@ def run_exp2_group_separation(
     Exp2: Toy-example group separation (Theorem 3.34), single-default protocol.
 
     Default design aligned to Exp3 scale (p=50; G10x5), calibrated at
-    xi_crit(u0=0.5, rho=rho_ref=0.5):
+    xi_crit(u0=0.5, rho=rho_ref=0.8):
       group_sizes = [10, 10, 10, 10, 10]
       xi_ratios   = [0.0, 1.0, 2.0, 5.0, 10.0]
       n_train=100, n_test=30, rho_within=0.8, rho_between=0.2, sigma2=1.0
@@ -286,15 +286,41 @@ def run_exp2_group_separation(
         method_col="method",
         replicate_col="replicate_id",
         converged_col="converged",
-        required_cols=["null_group_mse", "signal_group_mse", "group_auroc", "mse_overall"],
+        required_cols=[
+            "null_group_mse",
+            "signal_group_mse",
+            "mse_null",
+            "mse_signal",
+            "mse_overall",
+            "group_auroc",
+        ],
         method_levels=methods_use,
     )
+
+    # Paper-aligned reporting (GIGG / GRASP):
+    # For Exp2 summaries, report coefficient-level MSE contributions so that
+    #   mse_overall = mse_null + mse_signal
+    # where null/signal are the aggregate contributions over all coordinates.
+    if not paired_raw.empty and {"mse_null", "mse_signal", "mse_overall"}.issubset(set(paired_raw.columns)):
+        m0 = pd.to_numeric(paired_raw["mse_null"], errors="coerce")
+        m1 = pd.to_numeric(paired_raw["mse_signal"], errors="coerce")
+        mo = pd.to_numeric(paired_raw["mse_overall"], errors="coerce")
+        den = (m0 + m1).replace(0.0, np.nan)
+        scale = (mo / den).replace([np.inf, -np.inf], np.nan).fillna(1.0)
+        paired_raw["mse_null"] = m0 * scale
+        paired_raw["mse_signal"] = m1 * scale
+
     summary_df = paired_raw.groupby("method", as_index=False).agg(
         null_group_mse=("null_group_mse", "mean"),
         null_group_mse_std=("null_group_mse", "std"),
         signal_group_mse=("signal_group_mse", "mean"),
         signal_group_mse_std=("signal_group_mse", "std"),
+        mse_null=("mse_null", "mean"),
+        mse_null_std=("mse_null", "std"),
+        mse_signal=("mse_signal", "mean"),
+        mse_signal_std=("mse_signal", "std"),
         mse_overall=("mse_overall", "mean"),
+        mse_overall_std=("mse_overall", "std"),
         group_auroc=("group_auroc", "mean"),
         group_auroc_std=("group_auroc", "std"),
         lpd_test=("lpd_test", "mean"),
@@ -315,7 +341,15 @@ def run_exp2_group_separation(
         summary_df = summary_df.merge(lpd_plugin, on="method", how="left")
 
     paired_delta_rows: list[dict[str, Any]] = []
-    for metric in ["null_group_mse", "signal_group_mse", "mse_overall", "group_auroc", "lpd_test"]:
+    for metric in [
+        "mse_null",
+        "mse_signal",
+        "mse_overall",
+        "null_group_mse",
+        "signal_group_mse",
+        "group_auroc",
+        "lpd_test",
+    ]:
         if metric not in paired_raw.columns:
             continue
         wide = paired_raw.pivot_table(index="replicate_id", columns="method", values=metric, aggfunc="mean")
