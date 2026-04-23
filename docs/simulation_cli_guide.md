@@ -17,6 +17,8 @@ Common CLI args:
 - `--seed <int>`
 - `--repeats <int>`
 - `--n-jobs <int>`
+- `--method-jobs <int>`
+- `--all-parallel-jobs <int>` (used when `--experiment all`)
 - `--no-enforce-bayes-convergence`
 - `--max-convergence-retries <int>`
 - `--until-bayes-converged`
@@ -31,7 +33,7 @@ Default sampler backend is `nuts`.
 Default run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --n-jobs 2 --method-jobs 2 --all-parallel-jobs 2
 ```
 
 Default experiment order:
@@ -87,7 +89,7 @@ Diagnostics side table is always exported:
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 2 --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 2 --n-jobs 2 --method-jobs 2
 ```
 
 ### Exp3a (`main_benchmark`)
@@ -100,7 +102,7 @@ python -m simulation_project.src.run_experiment --experiment 2 --n-jobs 2
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3a --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3a --n-jobs 2 --method-jobs 2
 ```
 
 ### Exp3b (`boundary_stress`)
@@ -113,7 +115,7 @@ python -m simulation_project.src.run_experiment --experiment 3a --n-jobs 2
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3b --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3b --n-jobs 2 --method-jobs 2
 ```
 
 ### Exp3c (`highdim_stress`)
@@ -127,7 +129,7 @@ python -m simulation_project.src.run_experiment --experiment 3b --n-jobs 2
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2 --method-jobs 2
 ```
 
 ### Exp3d (`within_group_mixed`)
@@ -141,7 +143,7 @@ python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3d --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3d --n-jobs 2 --method-jobs 2
 ```
 
 ### Exp4 (`variant_ablation`)
@@ -154,7 +156,7 @@ python -m simulation_project.src.run_experiment --experiment 3d --n-jobs 2
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 4 --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 4 --n-jobs 2 --method-jobs 2
 ```
 
 ### Exp5 (`prior_sensitivity`)
@@ -162,14 +164,15 @@ python -m simulation_project.src.run_experiment --experiment 4 --n-jobs 2
 - paired prior comparisons on the same replicate
 - main delta file: `prior_pairwise_delta.csv`
 - default contrast baseline: prior `(0.5,1.0)`
-- default prior grid is full sensitivity: `(0.5,1.0),(1.0,1.0),(0.5,0.5),(2.0,5.0),(1.0,3.0)`
+- default prior grid starts from full sensitivity, then runs a lightweight screening stage before the full paired run
 - default convergence retry budget is `max_convergence_retries=5` for Exp5
 - retry attempts continue from previous sampler state (no cold restart)
+- `summary_partial.csv` is exported even when strict paired summary is empty
 
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 5 --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 5 --n-jobs 2 --method-jobs 2
 ```
 
 ## 5. Analysis Only
@@ -183,7 +186,7 @@ python -m simulation_project.src.run_experiment --experiment analysis
 ```bash
 python -m simulation_project.src.run_sweep --list
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5
-python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --set n_jobs=2 --set max_convergence_retries=2
+python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --set n_jobs=2 --set method_jobs=2 --set all_parallel_jobs=2 --set max_convergence_retries=2
 ```
 
 ## 7. Optional Quick Utility

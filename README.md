@@ -22,7 +22,7 @@ python -m simulation_project.src.run_experiment --help
 Run all experiments:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --n-jobs 2 --method-jobs 2 --all-parallel-jobs 2
 ```
 
 Default output layout is now session-based and centralized under:

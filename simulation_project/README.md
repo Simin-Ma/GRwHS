@@ -56,13 +56,13 @@ Optional explicit runs:
 Run full default pipeline:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment all --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment all --n-jobs 2 --method-jobs 2 --all-parallel-jobs 2
 ```
 
 Run one experiment:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2
+python -m simulation_project.src.run_experiment --experiment 3c --n-jobs 2 --method-jobs 2
 ```
 
 Run analysis only:
@@ -96,6 +96,5 @@ It is not the default scientific protocol.
 
 ## Runtime Notes
 
-- On Windows, process pools are disabled by default in interactive launch contexts.
-- To force-enable process pools from a spawn-safe script entrypoint:
-  `SIM_ALLOW_WINDOWS_PROCESS_POOL=1`
+- On Windows, process pools are available from spawn-safe script entrypoints.
+- In interactive or non-spawn-safe launch contexts, the runtime falls back away from process pools automatically.
