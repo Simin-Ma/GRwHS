@@ -242,32 +242,29 @@ def run_exp2_group_separation(
     )
 
     grrhs_kw = {"backend": str(sampler_backend), "tau_target": "groups", "progress_bar": False}
-    # Method-level task granularity gives smoother progress updates and better
-    # load balancing when one method is much slower than others.
     tasks: list[tuple] = []
     for r in range(1, int(repeats) + 1):
-        for method in methods_use:
-            tasks.append(
-                (
-                    r,
-                    seed,
-                    group_sizes_use,
-                    mu,
-                    xi_ratios_use,
-                    float(rho_within),
-                    float(rho_between),
-                    sigma2_use,
-                    int(n_train),
-                    sampler,
-                    [method],
-                    gigg_cfg,
-                    int(bayes_min_chains_use),
-                    bool(enforce_bayes_convergence),
-                    int(retry_limit),
-                    int(n_test),
-                    grrhs_kw,
-                )
+        tasks.append(
+            (
+                r,
+                seed,
+                group_sizes_use,
+                mu,
+                xi_ratios_use,
+                float(rho_within),
+                float(rho_between),
+                sigma2_use,
+                int(n_train),
+                sampler,
+                methods_use,
+                gigg_cfg,
+                int(bayes_min_chains_use),
+                bool(enforce_bayes_convergence),
+                int(retry_limit),
+                int(n_test),
+                grrhs_kw,
             )
+        )
     results = _parallel_rows(tasks, _exp2_worker, n_jobs=n_jobs, prefer_process=True, process_fallback="serial", progress_desc="Exp2 Group Separation")
 
     rep_rows: list[dict] = []

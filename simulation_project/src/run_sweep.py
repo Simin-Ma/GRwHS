@@ -115,6 +115,7 @@ def _parse_set_items(items: list[str]) -> dict[str, Any]:
     return out
 
 
+def _execute_single_sweep_run(task: tuple[str, str, dict[str, Any], Callable[..., dict[str, Any]], bool]) -> dict[str, Any]:
     run_name, exp_name, kwargs, runner, dry_run = task
     row: dict[str, Any] = {
         "run_name": str(run_name),
@@ -209,6 +210,9 @@ def run_sweep(
     common.update(dict(fixed))
     if overrides:
         common.update(dict(overrides))
+    sweep_parallel_jobs_raw = common.pop("sweep_parallel_jobs", 1)
+    sweep_parallel_jobs = int(sweep_parallel_jobs_raw) if str(sweep_parallel_jobs_raw).strip() != "" else 1
+    sweep_parallel_jobs = max(1, sweep_parallel_jobs)
 
     if save_dir is not None:
         base_save_dir = str(resolve_explicit_save_dir(str(save_dir), workspace="simulation_project", create=True))
@@ -239,9 +243,6 @@ def run_sweep(
         label = f"sweep={sweep_name} run={run_name}"
         kwargs = _validate_kwargs(runner, params, label=label)
         run_tasks.append((run_name, exp_name, kwargs, runner, bool(dry_run)))
-
-    sweep_parallel_jobs = int(common.get("sweep_parallel_jobs", 1)) if str(common.get("sweep_parallel_jobs", 1)).strip() != "" else 1
-    sweep_parallel_jobs = max(1, sweep_parallel_jobs)
 
     if fail_fast or sweep_parallel_jobs <= 1 or len(run_tasks) <= 1:
         for run_name, exp_name_task, kwargs, runner_task, dry_run_task in run_tasks:
