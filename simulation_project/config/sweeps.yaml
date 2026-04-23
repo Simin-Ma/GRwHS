@@ -16,7 +16,7 @@ sweeps:
       all_parallel_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
       exp3_gigg_mode: stable
 
   exp1_to_exp5_paper_laptop:
@@ -28,7 +28,7 @@ sweeps:
       archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
       exp3_gigg_mode: stable
       all_parallel_jobs: 2
 
@@ -48,7 +48,7 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
 
   exp3a_paper_laptop:
     experiment: exp3a
@@ -64,7 +64,7 @@ sweeps:
       archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
       gigg_mode: stable
 
   exp4_paper_laptop:
@@ -78,7 +78,7 @@ sweeps:
       archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
 
   exp3b_paper_laptop_appendix:
     experiment: exp3b
@@ -94,7 +94,7 @@ sweeps:
       archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
       gigg_mode: stable
 
   exp5_paper_laptop_appendix:
@@ -108,7 +108,7 @@ sweeps:
       archive_artifacts: false
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
 
   exp1_default:
     experiment: exp1
@@ -124,7 +124,7 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
 
   exp3a_default:
     experiment: exp3a
@@ -134,7 +134,7 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
       gigg_mode: stable
 
   exp3b_default:
@@ -145,7 +145,7 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
       gigg_mode: stable
 
   exp4_default:
@@ -156,7 +156,7 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
 
   exp5_default:
     experiment: exp5
@@ -166,5 +166,5 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: collapsed
+      sampler_backend: nuts
 

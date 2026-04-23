@@ -246,7 +246,7 @@ def run_exp5_prior_sensitivity(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    sampler_backend: str = "collapsed",
+    sampler_backend: str = "nuts",
     screen_priors: bool = True,
     screen_min_successes: int | None = None,
     screen_max_retries: int = 1,

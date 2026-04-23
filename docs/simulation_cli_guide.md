@@ -29,7 +29,7 @@ Common CLI args:
 - `--sampler {nuts,collapsed,gibbs}`
 
 `--profile` is intentionally unsupported.
-Default sampler backend is `collapsed`.
+Default sampler backend is `nuts`.
 
 ## 2. Default Protocol
 
@@ -92,7 +92,8 @@ Preset behavior for `--preset paper_laptop`:
 - `exp4=24`
 - `exp5=10`
 - default `--n-jobs 2 --method-jobs 2`
-- default sampler backend `collapsed`
+- default sampler backend `nuts`
+- default sampler routing keeps `Exp4` on `p0=5 -> collapsed`; other `p0` use `nuts`
 - `Exp3` heavy methods (`GIGG_MMLE`, `GHS_plus`) restricted to anchor settings in `exp3a/3b`
 - `Exp3` heavy methods use reduced laptop budgets under the preset
 - run-level analysis is skipped by default

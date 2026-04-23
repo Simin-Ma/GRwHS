@@ -43,7 +43,7 @@ def _preset_overrides_for_experiment(exp_key: str, preset: str) -> dict[str, Any
     common: dict[str, Any] = {
         "n_jobs": 2,
         "method_jobs": 2,
-        "sampler_backend": "collapsed",
+        "sampler_backend": "nuts",
         "skip_run_analysis": True,
         "archive_artifacts": False,
     }
@@ -74,7 +74,7 @@ def run_all_experiments(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    sampler_backend: str = "collapsed",
+    sampler_backend: str = "nuts",
     exp3_gigg_mode: str = "stable",
     skip_analysis: bool = False,
     archive_artifacts: bool = True,
@@ -249,9 +249,9 @@ def _cli() -> None:
     parser.add_argument(
         "--sampler",
         type=str,
-        default="collapsed",
+        default="nuts",
         choices=["nuts", "collapsed", "gibbs"],
-        help="GR-RHS posterior sampler: nuts, collapsed (Gaussian only), or gibbs (Gaussian only). Default is collapsed.",
+        help="GR-RHS posterior sampler: nuts, collapsed (Gaussian only), or gibbs (Gaussian only). Default is nuts.",
     )
     args = parser.parse_args()
     exp_key = cli_choice_to_key(args.experiment)
