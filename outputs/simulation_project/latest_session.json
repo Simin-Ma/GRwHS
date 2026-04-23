@@ -1,6 +1,6 @@
 {
-  "timestamp_utc": "2026-04-23T03:06:34.557223+00:00",
-  "run_label": "cli_exp2",
-  "mode": "explicit",
-  "save_dir": "outputs\\simulation_project\\adhoc\\exp2_compare_collapsed_r1"
+  "timestamp_utc": "2026-04-23T12:35:29.978830+00:00",
+  "run_label": "cli_exp5",
+  "mode": "auto_session",
+  "save_dir": "outputs\\simulation_project\\sessions\\20260423_123529Z_cli_exp5"
 }
