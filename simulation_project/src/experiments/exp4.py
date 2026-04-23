@@ -95,7 +95,6 @@ def _exp4_worker(
                     tau0=_s.get("tau0"),
                     alpha_kappa=float(_s.get("alpha_kappa", 0.5)),
                     beta_kappa=float(_s.get("beta_kappa", 1.0)),
-                    use_group_scale=bool(_s.get("use_group_scale", True)),
                     use_local_scale=bool(_s.get("use_local_scale", True)),
                     shared_kappa=bool(_s.get("shared_kappa", False)),
                     backend=_be,
@@ -248,8 +247,8 @@ def run_exp4_variant_ablation(
     def _variants_for_p0(p0_true: int) -> dict[str, dict]:
         tau0_oracle = rhs_style_tau0(n=n, p=p, p0=p0_true)
         variants: dict[str, dict] = {
-            "calibrated": {"method": "GR_RHS", "auto_calibrate_tau": True, "tau0": None, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
-            "fixed_10x": {"method": "GR_RHS", "auto_calibrate_tau": False, "tau0": tau0_oracle * 10.0, "p0_for_fit": p0_true, "use_group_scale": True, "use_local_scale": True},
+            "calibrated": {"method": "GR_RHS", "auto_calibrate_tau": True, "tau0": None, "p0_for_fit": p0_true, "use_local_scale": True},
+            "fixed_10x": {"method": "GR_RHS", "auto_calibrate_tau": False, "tau0": tau0_oracle * 10.0, "p0_for_fit": p0_true, "use_local_scale": True},
             "RHS_oracle": {"method": "RHS"},
         }
         if bool(include_oracle):
@@ -258,7 +257,6 @@ def run_exp4_variant_ablation(
                 "auto_calibrate_tau": False,
                 "tau0": tau0_oracle,
                 "p0_for_fit": p0_true,
-                "use_group_scale": True,
                 "use_local_scale": True,
             }
         return variants

@@ -46,7 +46,7 @@ def _linreg_slope_ci(x: np.ndarray, y: np.ndarray) -> tuple[float, tuple[float, 
 # EXP1 - kappa_g Profile Regimes
 # ---------------------------------------------------------------------------
 # Two panels from the 1-D profile posterior (profile specialization: lambda=1,
-# a_g=1, tau fixed):
+# tau fixed):
 #   Panel A (null): sweep p_g, verify E[kappa_g | Y_null] = O(p_g^{-1/2})
 #                   (Theorem 3.22)
 #   Panel B (phase): sweep xi/xi_crit, verify P(kappa_g > u0) -> 1 for xi > xi_crit
@@ -213,7 +213,6 @@ def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
             sampler=st,
             alpha_kappa=float(_ak),
             beta_kappa=float(_bk),
-            use_group_scale=True,
             use_local_scale=True,
             shared_kappa=False,
             tau_target="groups",
@@ -390,7 +389,7 @@ def run_exp1_kappa_profile_regimes(
     Exp1: kappa_g profile regimes (Theorems 3.22, 3.32, Corollary 3.33).
 
     Panel A - null contraction
-      DGP: Y_j ~ N(0, sigma2), profile posterior under lambda=1, a_g=1, tau fixed.
+      DGP: Y_j ~ N(0, sigma2), profile posterior under lambda=1, tau fixed.
       Validates E[kappa_g | Y_null] = O(p_g^{-1/2}): log-log slope should be -1/2.
 
     Panel B - phase diagram

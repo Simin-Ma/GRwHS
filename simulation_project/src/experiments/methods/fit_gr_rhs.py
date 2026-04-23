@@ -85,7 +85,6 @@ def _build_nuts(
     p0: int,
     alpha_kappa: float,
     beta_kappa: float,
-    use_group_scale: bool,
     use_local_scale: bool,
     shared_kappa: bool,
     auto_calibrate_tau: bool,
@@ -110,7 +109,6 @@ def _build_nuts(
         tau_target=str(tau_target),
         sigma_reference=float(sigma_reference),
         likelihood=likelihood,
-        use_group_scale=bool(use_group_scale),
         use_local_scale=bool(use_local_scale),
         shared_kappa=bool(shared_kappa),
         num_warmup=int(sampler.warmup),
@@ -134,7 +132,6 @@ def _build_collapsed(
     p0: int,
     alpha_kappa: float,
     beta_kappa: float,
-    use_group_scale: bool,
     use_local_scale: bool,
     shared_kappa: bool,
     auto_calibrate_tau: bool,
@@ -159,7 +156,6 @@ def _build_collapsed(
         auto_calibrate_tau=bool(auto_calibrate_tau),
         tau_target=str(tau_target),
         sigma_reference=float(sigma_reference),
-        use_group_scale=bool(use_group_scale),
         use_local_scale=bool(use_local_scale),
         shared_kappa=bool(shared_kappa),
         num_warmup=int(sampler.warmup),
@@ -185,7 +181,6 @@ def _build_gibbs(
     p0: int,
     alpha_kappa: float,
     beta_kappa: float,
-    use_group_scale: bool,
     use_local_scale: bool,
     shared_kappa: bool,
     auto_calibrate_tau: bool,
@@ -210,7 +205,6 @@ def _build_gibbs(
         auto_calibrate_tau=bool(auto_calibrate_tau),
         tau_target=str(tau_target),
         sigma_reference=float(sigma_reference),
-        use_group_scale=bool(use_group_scale),
         use_local_scale=bool(use_local_scale),
         shared_kappa=bool(shared_kappa),
         iters=burnin + kept,
@@ -248,7 +242,6 @@ def fit_gr_rhs(
     sampler: SamplerConfig,
     alpha_kappa: float = 0.5,
     beta_kappa: float = 1.0,
-    use_group_scale: bool = True,
     use_local_scale: bool = True,
     shared_kappa: bool = False,
     auto_calibrate_tau: bool = True,
@@ -258,7 +251,7 @@ def fit_gr_rhs(
     progress_bar: bool = True,
     retry_resume_payload: dict[str, Any] | None = None,
 ) -> FitResult:
-    tracked = ["beta", "tau", "kappa", "a"]
+    tracked = ["beta", "tau", "kappa"]
     b = str(backend).strip().lower()
 
     common_kwargs = dict(
@@ -267,7 +260,6 @@ def fit_gr_rhs(
         p0=p0,
         alpha_kappa=alpha_kappa,
         beta_kappa=beta_kappa,
-        use_group_scale=use_group_scale,
         use_local_scale=use_local_scale,
         shared_kappa=shared_kappa,
         auto_calibrate_tau=auto_calibrate_tau,
@@ -314,7 +306,6 @@ def fit_gr_rhs(
         beta_mean = getattr(model, "coef_mean_", None)
         tau_draws = getattr(model, "tau_samples_", None)
         kappa_draws = getattr(model, "kappa_samples_", None)
-        a_draws = getattr(model, "a_samples_", None)
 
         rhat_max, ess_min, div_ratio, converged, details = diagnostics_summary_for_method(
             model=model,
@@ -337,7 +328,6 @@ def fit_gr_rhs(
             beta_mean = getattr(strict, "coef_mean_", None)
             tau_draws = getattr(strict, "tau_samples_", None)
             kappa_draws = getattr(strict, "kappa_samples_", None)
-            a_draws = getattr(strict, "a_samples_", None)
             rhat_max, ess_min, div_ratio, converged, details = diagnostics_summary_for_method(
                 model=strict,
                 tracked_params=tracked,
@@ -356,7 +346,7 @@ def fit_gr_rhs(
             beta_mean=None if beta_mean is None else np.asarray(beta_mean, dtype=float),
             beta_draws=None if beta_draws is None else np.asarray(beta_draws, dtype=float),
             kappa_draws=None if kappa_draws is None else np.asarray(kappa_draws, dtype=float),
-            group_scale_draws=None if a_draws is None else np.asarray(a_draws, dtype=float),
+            group_scale_draws=None,
             tau_draws=None if tau_draws is None else np.asarray(tau_draws, dtype=float),
             runtime_seconds=float(runtime),
             rhat_max=float(rhat_max),

@@ -134,7 +134,6 @@ class GRRHS_NUTS:
     alpha_kappa: float = 2.0
     beta_kappa: float = 8.0
     likelihood: str = "gaussian"
-    use_group_scale: bool = True
     use_local_scale: bool = True
     shared_kappa: bool = False
     auto_calibrate_tau: bool = True
@@ -159,18 +158,14 @@ class GRRHS_NUTS:
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    a_samples_: Optional[np.ndarray] = field(default=None, init=False)
     kappa_samples_: Optional[np.ndarray] = field(default=None, init=False)
     c2_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    phi_samples_: Optional[np.ndarray] = field(default=None, init=False)  # alias of a_samples_
     coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
     sigma_mean_: Optional[float] = field(default=None, init=False)
     tau_mean_: Optional[float] = field(default=None, init=False)
     lambda_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    a_mean_: Optional[np.ndarray] = field(default=None, init=False)
     kappa_mean_: Optional[np.ndarray] = field(default=None, init=False)
     c2_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    phi_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
     groups_: Optional[List[List[int]]] = field(default=None, init=False)
     group_id_: Optional[np.ndarray] = field(default=None, init=False)
@@ -256,12 +251,6 @@ class GRRHS_NUTS:
         else:
             lam = numpyro.deterministic("lambda", jnp.ones((p,), dtype=X.dtype))
 
-        s_a = self.eta / jnp.sqrt(jnp.maximum(group_sizes.astype(X.dtype), 1.0))
-        if self.use_group_scale:
-            a = numpyro.sample("a", dist.HalfNormal(s_a).to_event(1))
-        else:
-            a = numpyro.deterministic("a", jnp.ones((G,), dtype=X.dtype))
-
         if self.shared_kappa:
             logit_kappa_raw = numpyro.sample("logit_kappa_shared_raw", dist.Normal(0.0, 1.0))
             kappa_shared = sigmoid(logit_kappa_raw)
@@ -288,15 +277,13 @@ class GRRHS_NUTS:
         sigma2 = sigma * sigma
         numpyro.deterministic("c2", sigma2 * kappa / (1.0 - kappa + _EPS))
 
-        a_j = a[group_id]
         kappa_j = kappa[group_id]
         tau2 = tau * tau
         lam2 = lam * lam
-        a2_j = a_j * a_j
-        # Dimensionless ratio r_j = tau^2 * lambda_j^2 * a_g(j)^2 / sigma^2
+        # Dimensionless ratio r_j = tau^2 * lambda_j^2 / sigma^2
         # keeps each factor O(1) and avoids overflow in products of scales.
         # v_j = sigma^2 * kappa_g(j) * r_j / (kappa_g(j) + (1-kappa_g(j)) * r_j)
-        r = tau2 * lam2 * a2_j / (sigma2 + _EPS)
+        r = tau2 * lam2 / (sigma2 + _EPS)
         beta_var = sigma2 * kappa_j * r / (kappa_j + (1.0 - kappa_j) * r + _EPS)
         beta_scale = jnp.sqrt(jnp.maximum(beta_var, _EPS))
 
@@ -398,8 +385,6 @@ class GRRHS_NUTS:
         latent_keys = ["sigma", "tau", "beta_raw"]
         if bool(self.use_local_scale):
             latent_keys.append("lambda")
-        if bool(self.use_group_scale):
-            latent_keys.append("a")
         if bool(self.shared_kappa):
             latent_keys.append("logit_kappa_shared_raw")
         else:
@@ -413,7 +398,6 @@ class GRRHS_NUTS:
             "transformed_variables": transformed,
             "non_centered_beta": True,
             "likelihood": str(self.likelihood),
-            "use_group_scale": bool(self.use_group_scale),
             "use_local_scale": bool(self.use_local_scale),
             "shared_kappa": bool(self.shared_kappa),
             "tau0_effective": float(tau0_eff),
@@ -431,27 +415,21 @@ class GRRHS_NUTS:
         self.sigma_samples_ = get("sigma")
         self.tau_samples_ = get("tau")
         self.lambda_samples_ = get("lambda")
-        self.a_samples_ = get("a")
         self.kappa_samples_ = get("kappa")
         self.c2_samples_ = get("c2")
-
-        self.phi_samples_ = self.a_samples_
 
         coef_draws = _flatten_param(self.coef_samples_)
         self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
         sigma_draws = _flatten_scalar(self.sigma_samples_)
         tau_draws = _flatten_scalar(self.tau_samples_)
         lam_draws = _flatten_param(self.lambda_samples_)
-        a_draws = _flatten_param(self.a_samples_)
         kappa_draws = _flatten_param(self.kappa_samples_)
         c2_draws = _flatten_param(self.c2_samples_)
         self.sigma_mean_ = None if sigma_draws is None else float(sigma_draws.mean())
         self.tau_mean_ = None if tau_draws is None else float(tau_draws.mean())
         self.lambda_mean_ = None if lam_draws is None else lam_draws.mean(axis=0)
-        self.a_mean_ = None if a_draws is None else a_draws.mean(axis=0)
         self.kappa_mean_ = None if kappa_draws is None else kappa_draws.mean(axis=0)
         self.c2_mean_ = None if c2_draws is None else c2_draws.mean(axis=0)
-        self.phi_mean_ = self.a_mean_
         self.intercept_ = 0.0
 
     def _extract_diagnostics(self, mcmc: MCMC, *, runtime_sec: float) -> Dict[str, Any]:
@@ -562,10 +540,8 @@ class GRRHS_NUTS:
             "beta_ci95": np.quantile(coef, [0.025, 0.975], axis=0),
             "sigma_mean": self.sigma_mean_,
             "tau_mean": self.tau_mean_,
-            "a_mean": self.a_mean_,
             "kappa_mean": self.kappa_mean_,
             "c2_mean": self.c2_mean_,
-            "phi_mean": self.phi_mean_,
             "lambda_mean": self.lambda_mean_,
         }
         return out
@@ -595,12 +571,11 @@ class GRRHS_Gibbs:
     sigma^2 update : O(p) (1-D slice on log sigma)
     tau update     : O(p) (1-D slice on log tau)
     lambda_j update: O(1) x p (1-D slice per coefficient, if use_local_scale)
-    a_g update     : O(p_g) x G (1-D slice per group, if use_group_scale)
     kappa_g update : O(p_g) x G (1-D slice per group)
 
     Profile specialisation (O5)
     ---------------------------
-    When use_local_scale=False and use_group_scale=False the posterior
+    When use_local_scale=False the posterior
     factorises across groups (Prop. 3.16).  The algorithm exploits this
     automatically because every kappa_g slice step is conditionally
     independent of every other kappa_{g'} given beta, tau, and sigma^2.
@@ -612,7 +587,6 @@ class GRRHS_Gibbs:
     s0: float = 1.0
     alpha_kappa: float = 2.0
     beta_kappa: float = 8.0
-    use_group_scale: bool = True
     use_local_scale: bool = True
     shared_kappa: bool = False
     auto_calibrate_tau: bool = True
@@ -638,14 +612,12 @@ class GRRHS_Gibbs:
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    a_samples_: Optional[np.ndarray] = field(default=None, init=False)
     kappa_samples_: Optional[np.ndarray] = field(default=None, init=False)
     c2_samples_: Optional[np.ndarray] = field(default=None, init=False)
     coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
     sigma_mean_: Optional[float] = field(default=None, init=False)
     tau_mean_: Optional[float] = field(default=None, init=False)
     lambda_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    a_mean_: Optional[np.ndarray] = field(default=None, init=False)
     kappa_mean_: Optional[np.ndarray] = field(default=None, init=False)
     c2_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
@@ -662,15 +634,14 @@ class GRRHS_Gibbs:
         sigma2: float,
         tau2: float,
         lam2: np.ndarray,
-        a2_j: np.ndarray,
         kappa_j: np.ndarray,
         jitter: float,
     ) -> np.ndarray:
         """Per-coefficient prior variance:
         v_{j,g} = sigma^2 * kappa * r / (kappa + (1-kappa) * r),
-        where r = tau^2 * lambda^2 * a^2 / sigma^2.
+        where r = tau^2 * lambda^2 / sigma^2.
         """
-        r = tau2 * lam2 * a2_j / (sigma2 + jitter)
+        r = tau2 * lam2 / (sigma2 + jitter)
         return np.maximum(sigma2 * kappa_j * r / (kappa_j + (1.0 - kappa_j) * r + jitter), jitter)
 
     @staticmethod
@@ -688,13 +659,12 @@ class GRRHS_Gibbs:
         Xbeta: np.ndarray,
         tau2: float,
         lam2: np.ndarray,
-        a2_j: np.ndarray,
         kappa_j: np.ndarray,
     ) -> float:
         """Log-conditional for r = log(sigma), including Jacobian."""
         sigma2 = math.exp(2.0 * r)
         resid = y - Xbeta
-        v = self._v_arr(sigma2, tau2, lam2, a2_j, kappa_j, self.jitter)
+        v = self._v_arr(sigma2, tau2, lam2, kappa_j, self.jitter)
         n = float(len(y))
         # Gaussian likelihood + beta prior + half-Cauchy(s0) prior + Jacobian (+r)
         return (
@@ -711,13 +681,12 @@ class GRRHS_Gibbs:
         beta: np.ndarray,
         sigma2: float,
         lam2: np.ndarray,
-        a2_j: np.ndarray,
         kappa_j: np.ndarray,
         tau_scale: float,
     ) -> float:
         """Log-conditional for u = log(tau)."""
         tau2 = math.exp(2.0 * u)
-        v = self._v_arr(sigma2, tau2, lam2, a2_j, kappa_j, self.jitter)
+        v = self._v_arr(sigma2, tau2, lam2, kappa_j, self.jitter)
         return (
             self._ll_beta(beta, v)
             + u
@@ -730,37 +699,14 @@ class GRRHS_Gibbs:
         beta_j: float,
         sigma2: float,
         tau2: float,
-        a2_j: float,
         kappa_j: float,
     ) -> float:
         """Log-conditional for s = log(lambda_j); affects coefficient j only."""
         lam2_j = math.exp(2.0 * s)
-        r = tau2 * lam2_j * a2_j / (sigma2 + self.jitter)
+        r = tau2 * lam2_j / (sigma2 + self.jitter)
         v_j = max(sigma2 * kappa_j * r / (kappa_j + (1.0 - kappa_j) * r + self.jitter), self.jitter)
         # half-Cauchy(1) prior on lambda_j + Jacobian
         return -0.5 * (math.log(v_j) + beta_j ** 2 / v_j) + s - math.log(max(1.0 + math.exp(2.0 * s), self.jitter))
-
-    def _lc_log_a_g(
-        self,
-        t: float,
-        beta_g: np.ndarray,
-        sigma2: float,
-        tau2: float,
-        lam2_g: np.ndarray,
-        kappa_g: float,
-        s_a_g: float,
-    ) -> float:
-        """Log-conditional for t = log a_g (affects all j in group g)."""
-        a2 = math.exp(2.0 * t)
-        r = tau2 * lam2_g * a2 / (sigma2 + self.jitter)
-        kg = np.full_like(r, kappa_g)
-        v_g = np.maximum(sigma2 * kg * r / (kg + (1.0 - kg) * r + self.jitter), self.jitter)
-        # half-Normal(s_a_g) prior on a_g + Jacobian
-        return (
-            self._ll_beta(beta_g, v_g)
-            + t
-            - 0.5 * math.exp(2.0 * t) / max(s_a_g ** 2, self.jitter)
-        )
 
     def _lc_logit_kappa_g(
         self,
@@ -769,12 +715,11 @@ class GRRHS_Gibbs:
         sigma2: float,
         tau2: float,
         lam2_g: np.ndarray,
-        a2_g: float,
     ) -> float:
         """Log-conditional for w = logit(kappa_g). Jacobian is included in the Beta prior term."""
         kappa_g = 1.0 / (1.0 + math.exp(-w))
         kg = np.full(len(beta_g), kappa_g)
-        r = tau2 * lam2_g * a2_g / (sigma2 + self.jitter)
+        r = tau2 * lam2_g / (sigma2 + self.jitter)
         v_g = np.maximum(sigma2 * kg * r / (kg + (1.0 - kg) * r + self.jitter), self.jitter)
         # Beta(alpha_kappa, beta_kappa) prior with logit Jacobian absorbed.
         return (
@@ -805,9 +750,6 @@ class GRRHS_Gibbs:
         XtX = X.T @ X
         Xty = X.T @ y
 
-        # group-scale prior for a_g: a_g ~ HalfNormal(eta / sqrt(group_size_g))
-        s_a = self.eta / np.sqrt(np.maximum(group_sizes.astype(float), 1.0))
-
         # initialise parameters
         try:
             beta = np.linalg.solve(XtX + 1e-3 * np.eye(p), Xty)
@@ -816,12 +758,10 @@ class GRRHS_Gibbs:
         sigma2 = max(float(np.var(y - X @ beta)), self.jitter)
         tau = float(tau0_eff)
         lam = np.ones(p)
-        a = np.ones(G)
         kappa = np.full(G, float(self.alpha_kappa) / (self.alpha_kappa + self.beta_kappa))
         log_sigma = 0.5 * math.log(max(sigma2, self.jitter))
         log_tau = math.log(max(tau, self.jitter))
         log_lam = np.zeros(p)
-        log_a = np.zeros(G)
         logit_kappa = np.zeros(G)
         if isinstance(initial_state, dict):
             beta = np.asarray(initial_state.get("beta", beta), dtype=float).reshape(-1)
@@ -832,16 +772,12 @@ class GRRHS_Gibbs:
             log_lam = np.asarray(initial_state.get("log_lam", log_lam), dtype=float).reshape(-1)
             if log_lam.size != p:
                 log_lam = np.zeros(p)
-            log_a = np.asarray(initial_state.get("log_a", log_a), dtype=float).reshape(-1)
-            if log_a.size != G:
-                log_a = np.zeros(G)
             logit_kappa = np.asarray(initial_state.get("logit_kappa", logit_kappa), dtype=float).reshape(-1)
             if logit_kappa.size != G:
                 logit_kappa = np.zeros(G)
             sigma2 = max(float(math.exp(2.0 * log_sigma)), self.jitter)
             tau = max(float(math.exp(log_tau)), self.jitter)
             lam = np.maximum(np.exp(log_lam), self.jitter)
-            a = np.maximum(np.exp(log_a), self.jitter)
             kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
 
         iters_use = int(max(1, iters))
@@ -851,7 +787,6 @@ class GRRHS_Gibbs:
         sigma_draws = np.zeros(kept)
         tau_draws = np.zeros(kept)
         lam_draws = np.ones((kept, p))
-        a_draws = np.ones((kept, G))
         kappa_draws = np.zeros((kept, G))
         keep_i = 0
 
@@ -867,11 +802,10 @@ class GRRHS_Gibbs:
             tau2 = tau ** 2
             sigma2 = math.exp(2.0 * log_sigma)
             lam2 = lam ** 2
-            a2_j = a[group_id] ** 2
             kappa_j = kappa[group_id]
 
             # ---- beta | rest  (Woodbury when n < p, else Cholesky) ----
-            v = self._v_arr(sigma2, tau2, lam2, a2_j, kappa_j, self.jitter)
+            v = self._v_arr(sigma2, tau2, lam2, kappa_j, self.jitter)
             if n < p:
                 beta = beta_sample_woodbury(X, y, sigma2, v, rng, jitter=self.jitter)
             else:
@@ -880,14 +814,14 @@ class GRRHS_Gibbs:
 
             # ---- log sigma | rest  (1-D slice) ----
             def _lc_s(r: float) -> float:
-                return self._lc_log_sigma(r, beta, y, Xbeta, tau2, lam2, a2_j, kappa_j)
+                return self._lc_log_sigma(r, beta, y, Xbeta, tau2, lam2, kappa_j)
             log_sigma = slice_sample_1d(_lc_s, log_sigma, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
             sigma2 = math.exp(2.0 * log_sigma)
 
             # ---- log tau | rest  (1-D slice) ----
             tau_scale = float(tau0_eff) * math.sqrt(max(sigma2, self.jitter))
             def _lc_t(u: float) -> float:
-                return self._lc_log_tau(u, beta, sigma2, lam2, a2_j, kappa_j, tau_scale)
+                return self._lc_log_tau(u, beta, sigma2, lam2, kappa_j, tau_scale)
             log_tau = slice_sample_1d(_lc_t, log_tau, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
             tau = math.exp(log_tau)
             tau2 = tau ** 2
@@ -896,33 +830,22 @@ class GRRHS_Gibbs:
             if self.use_local_scale:
                 for j in range(p):
                     def _lc_lj(s: float, _j: int = j) -> float:
-                        return self._lc_log_lam_j(s, float(beta[_j]), sigma2, tau2, float(a2_j[_j]), float(kappa_j[_j]))
+                        return self._lc_log_lam_j(s, float(beta[_j]), sigma2, tau2, float(kappa_j[_j]))
                     log_lam[j] = slice_sample_1d(_lc_lj, log_lam[j], rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
                 lam = np.exp(log_lam)
                 lam2 = lam ** 2
 
-            # ---- log a_g | rest  (1-D slice per group) ----
-            if self.use_group_scale:
-                for g, members in enumerate(groups):
-                    idx = np.asarray(members, dtype=int)
-                    def _lc_ag(t: float, _g: int = g, _idx: np.ndarray = idx) -> float:
-                        return self._lc_log_a_g(t, beta[_idx], sigma2, tau2, lam2[_idx], float(kappa[_g]), float(s_a[_g]))
-                    log_a[g] = slice_sample_1d(_lc_ag, log_a[g], rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
-                a = np.exp(log_a)
-
-            a2_j = a[group_id] ** 2
-
             # ---- logit kappa_g | rest  (1-D slice per group; factorizes in profile mode) ----
             if self.shared_kappa:
                 def _lc_ksh(w: float) -> float:
-                    return self._lc_logit_kappa_g(w, beta, sigma2, tau2, lam2, float(np.mean(a2_j)))
+                    return self._lc_logit_kappa_g(w, beta, sigma2, tau2, lam2)
                 logit_kappa[0] = slice_sample_1d(_lc_ksh, logit_kappa[0], rng, width=self.slice_width_logit, max_steps=self.slice_max_steps)
                 kappa[:] = 1.0 / (1.0 + math.exp(-logit_kappa[0]))
             else:
                 for g, members in enumerate(groups):
                     idx = np.asarray(members, dtype=int)
                     def _lc_kg(w: float, _g: int = g, _idx: np.ndarray = idx) -> float:
-                        return self._lc_logit_kappa_g(w, beta[_idx], sigma2, tau2, lam2[_idx], float(np.mean(a2_j[_idx])))
+                        return self._lc_logit_kappa_g(w, beta[_idx], sigma2, tau2, lam2[_idx])
                     logit_kappa[g] = slice_sample_1d(_lc_kg, logit_kappa[g], rng, width=self.slice_width_logit, max_steps=self.slice_max_steps)
                 kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
 
@@ -933,7 +856,6 @@ class GRRHS_Gibbs:
                 sigma_draws[keep_i] = math.exp(log_sigma)
                 tau_draws[keep_i] = tau
                 lam_draws[keep_i] = lam.copy()
-                a_draws[keep_i] = a.copy()
                 kappa_draws[keep_i] = kappa.copy()
                 keep_i += 1
 
@@ -942,14 +864,12 @@ class GRRHS_Gibbs:
             "sigma": sigma_draws,
             "tau": tau_draws,
             "lambda": lam_draws,
-            "a": a_draws,
             "kappa": kappa_draws,
             "last_state": {
                 "beta": np.asarray(beta, dtype=float).copy(),
                 "log_sigma": float(log_sigma),
                 "log_tau": float(log_tau),
                 "log_lam": np.asarray(log_lam, dtype=float).copy(),
-                "log_a": np.asarray(log_a, dtype=float).copy(),
                 "logit_kappa": np.asarray(logit_kappa, dtype=float).copy(),
             },
         }
@@ -1020,7 +940,6 @@ class GRRHS_Gibbs:
         self.sigma_samples_ = _stack("sigma")
         self.tau_samples_ = _stack("tau")
         self.lambda_samples_ = _stack("lambda")
-        self.a_samples_ = _stack("a")
         self.kappa_samples_ = _stack("kappa")
 
         def _flat2(arr: np.ndarray) -> np.ndarray:
@@ -1034,7 +953,6 @@ class GRRHS_Gibbs:
         self.sigma_mean_ = float(_flat1(self.sigma_samples_).mean())
         self.tau_mean_ = float(_flat1(self.tau_samples_).mean())
         self.lambda_mean_ = _flat2(self.lambda_samples_).mean(axis=0)
-        self.a_mean_ = _flat2(self.a_samples_).mean(axis=0)
         self.kappa_mean_ = _flat2(self.kappa_samples_).mean(axis=0)
         self.c2_samples_ = (np.asarray(self.sigma_samples_, dtype=float) ** 2)[..., None] * (
             np.asarray(self.kappa_samples_, dtype=float)
@@ -1043,7 +961,7 @@ class GRRHS_Gibbs:
         self.c2_mean_ = _flat2(self.c2_samples_).mean(axis=0)
         self.intercept_ = 0.0
 
-        profile_mode = not bool(self.use_local_scale) and not bool(self.use_group_scale)
+        profile_mode = not bool(self.use_local_scale)
         self.sampler_diagnostics_ = {
             "backend": "simcore_gibbs_slice",
             "runtime_sec": float(runtime_sec),
@@ -1052,7 +970,6 @@ class GRRHS_Gibbs:
             "beta_sampler": "woodbury_bhattacharya" if n < p else "cholesky",
             "profile_mode_factorised": bool(profile_mode),
             "use_local_scale": bool(self.use_local_scale),
-            "use_group_scale": bool(self.use_group_scale),
             "tau0_effective": float(tau0_eff),
         }
         return self
@@ -1074,7 +991,6 @@ class GRRHS_Gibbs:
             "beta_ci95": np.quantile(coef, [0.025, 0.975], axis=0),
             "sigma_mean": self.sigma_mean_,
             "tau_mean": self.tau_mean_,
-            "a_mean": self.a_mean_,
             "kappa_mean": self.kappa_mean_,
             "c2_mean": self.c2_mean_,
             "lambda_mean": self.lambda_mean_,
@@ -1096,8 +1012,8 @@ class GRRHS_CollapsedNUTS:
     Dimension reduction vs GRRHS_NUTS
     ----------------------------------
     Mode                   GRRHS_NUTS    Collapsed
-    Full (lambda+a active)  2p+2G+2      p+2G+2
-    Profile (lam=a=1)       p+G+2        G+2       <- orders-of-magnitude smaller
+    Full (lambda active)    2p+G+2       p+G+2
+    Profile (lam=1)         p+G+2        G+2       <- orders-of-magnitude smaller
 
     Profile mode precomputes M_g = X_g X_g^T so every NUTS gradient step
     computes Sigma_y = sum_g v_g M_g + sigma^2 I in O(G n^2 + n^3) instead of O(n^2 p).
@@ -1112,7 +1028,6 @@ class GRRHS_CollapsedNUTS:
     s0: float = 1.0
     alpha_kappa: float = 2.0
     beta_kappa: float = 8.0
-    use_group_scale: bool = True
     use_local_scale: bool = True
     shared_kappa: bool = False
     auto_calibrate_tau: bool = True
@@ -1140,14 +1055,12 @@ class GRRHS_CollapsedNUTS:
     sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
     tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
     lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    a_samples_: Optional[np.ndarray] = field(default=None, init=False)
     kappa_samples_: Optional[np.ndarray] = field(default=None, init=False)
     c2_samples_: Optional[np.ndarray] = field(default=None, init=False)
     coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
     sigma_mean_: Optional[float] = field(default=None, init=False)
     tau_mean_: Optional[float] = field(default=None, init=False)
     lambda_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    a_mean_: Optional[np.ndarray] = field(default=None, init=False)
     kappa_mean_: Optional[np.ndarray] = field(default=None, init=False)
     c2_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
@@ -1168,9 +1081,7 @@ class GRRHS_CollapsedNUTS:
         s0 = float(self.s0)
         alpha_kappa = float(self.alpha_kappa)
         beta_kappa = float(self.beta_kappa)
-        eta = float(self.eta)
         use_local = bool(self.use_local_scale)
-        use_group = bool(self.use_group_scale)
         shared_kappa = bool(self.shared_kappa)
         sig_jit = float(self.sigma_jitter)
         # capture static helper as local reference (avoids self-capture inside JAX trace)
@@ -1190,12 +1101,6 @@ class GRRHS_CollapsedNUTS:
                 lam = numpyro.sample("lambda", dist.HalfCauchy(jnp.ones(p, dtype=X.dtype)).to_event(1))
             else:
                 lam = numpyro.deterministic("lambda", jnp.ones(p, dtype=X.dtype))
-
-            s_a = eta / jnp.sqrt(jnp.maximum(group_sizes.astype(X.dtype), 1.0))
-            if use_group:
-                a = numpyro.sample("a", dist.HalfNormal(s_a).to_event(1))
-            else:
-                a = numpyro.deterministic("a", jnp.ones(G, dtype=X.dtype))
 
             if shared_kappa:
                 logit_kappa_raw = numpyro.sample("logit_kappa_shared_raw", dist.Normal(0.0, 1.0))
@@ -1223,18 +1128,16 @@ class GRRHS_CollapsedNUTS:
 
             # Marginal likelihood: y ~ N(0, X V X^T + sigma^2 I_n)
             if profile_mode and group_XXT is not None:
-                # lam=1 and a=1 => v depends only on group:
+                # lam=1 => v depends only on group:
                 # v_g = sigma2*kappa_g*tau2 / (sigma2*kappa_g + (1-kappa_g)*tau2)
                 r_g = tau2 / (sigma2 + _EPS)
                 v_g = sigma2 * kappa * r_g / (kappa + (1.0 - kappa) * r_g + _EPS)  # (G,)
                 # Sigma_y = sum_g v_g * M_g + sigma2 * I  [M_g = X_g X_g^T precomputed]
                 Sigma_y = jnp.einsum("g,gnm->nm", v_g, group_XXT) + sigma2 * jnp.eye(n, dtype=X.dtype)
             else:
-                a_j = a[group_id]
                 kappa_j = kappa[group_id]
                 lam2 = lam * lam
-                a2_j = a_j * a_j
-                r = tau2 * lam2 * a2_j / (sigma2 + _EPS)
+                r = tau2 * lam2 / (sigma2 + _EPS)
                 v = sigma2 * kappa_j * r / (kappa_j + (1.0 - kappa_j) * r + _EPS)  # (p,)
                 XD = X * v        # n x p
                 Sigma_y = XD @ X.T + sigma2 * jnp.eye(n, dtype=X.dtype)
@@ -1272,7 +1175,7 @@ class GRRHS_CollapsedNUTS:
         else:
             tau0_eff = 0.1
 
-        profile_mode = not bool(self.use_local_scale) and not bool(self.use_group_scale)
+        profile_mode = not bool(self.use_local_scale)
 
         # Precompute M_g = X_g X_g^T for profile mode
         group_XXT_jnp = None
@@ -1336,8 +1239,6 @@ class GRRHS_CollapsedNUTS:
         latent_keys = ["sigma", "tau"]
         if bool(self.use_local_scale):
             latent_keys.append("lambda")
-        if bool(self.use_group_scale):
-            latent_keys.append("a")
         if bool(self.shared_kappa):
             latent_keys.append("logit_kappa_shared_raw")
         else:
@@ -1358,7 +1259,6 @@ class GRRHS_CollapsedNUTS:
         sigma_flat = _get_flat("sigma")          # (S,)
         tau_flat = _get_flat("tau")              # (S,)
         lam_flat = _get_flat("lambda")           # (S, p)
-        a_flat = _get_flat("a")                  # (S, G)
         kappa_flat = _get_flat("kappa")          # (S, G)
 
         S = sigma_flat.shape[0] if sigma_flat is not None else 0
@@ -1368,10 +1268,9 @@ class GRRHS_CollapsedNUTS:
             sig2_i = float(sigma_flat[i]) ** 2 if sigma_flat is not None else 1.0
             tau2_i = float(tau_flat[i]) ** 2 if tau_flat is not None else 1.0
             lam2_i = lam_flat[i] ** 2 if lam_flat is not None else np.ones(p)
-            a2_j_i = (a_flat[i][gid]) ** 2 if a_flat is not None else np.ones(p)
             kappa_j_i = kappa_flat[i][gid] if kappa_flat is not None else np.full(p, 0.5)
 
-            r_i = tau2_i * lam2_i * a2_j_i / (sig2_i + 1e-12)
+            r_i = tau2_i * lam2_i / (sig2_i + 1e-12)
             v_i = sig2_i * kappa_j_i * r_i / (kappa_j_i + (1.0 - kappa_j_i) * r_i + 1e-12)
             v_i = np.maximum(v_i, 1e-12)
 
@@ -1395,7 +1294,6 @@ class GRRHS_CollapsedNUTS:
         self.sigma_samples_ = _thin_flat(sigma_flat)
         self.tau_samples_ = _thin_flat(tau_flat)
         self.lambda_samples_ = _thin_flat(lam_flat)
-        self.a_samples_ = _thin_flat(a_flat)
         self.kappa_samples_ = _thin_flat(kappa_flat)
         c2_flat = _get_flat("c2")
         self.c2_samples_ = _thin_flat(c2_flat)
@@ -1409,7 +1307,6 @@ class GRRHS_CollapsedNUTS:
         self.sigma_mean_ = _mean1(self.sigma_samples_)
         self.tau_mean_ = _mean1(self.tau_samples_)
         self.lambda_mean_ = _mean2(self.lambda_samples_)
-        self.a_mean_ = _mean2(self.a_samples_)
         self.kappa_mean_ = _mean2(self.kappa_samples_)
         self.c2_mean_ = _mean2(self.c2_samples_)
         self.intercept_ = 0.0
@@ -1425,7 +1322,7 @@ class GRRHS_CollapsedNUTS:
             "runtime_sec": float(runtime_sec),
             "runtime_nuts_sec": float(runtime_nuts),
             "profile_mode": bool(profile_mode),
-            "nuts_dim": G + 2 if profile_mode else (p + 2 * G + 2 if (self.use_local_scale and self.use_group_scale) else p + G + 2),
+            "nuts_dim": G + 2 if profile_mode else p + G + 2,
             "beta_sampler": "woodbury_bhattacharya" if n < p else "cholesky",
             "divergences": div,
             "tau0_effective": float(tau0_eff),
@@ -1447,7 +1344,6 @@ class GRRHS_CollapsedNUTS:
             "beta_ci95": np.quantile(coef, [0.025, 0.975], axis=0),
             "sigma_mean": self.sigma_mean_,
             "tau_mean": self.tau_mean_,
-            "a_mean": self.a_mean_,
             "kappa_mean": self.kappa_mean_,
             "c2_mean": self.c2_mean_,
             "lambda_mean": self.lambda_mean_,

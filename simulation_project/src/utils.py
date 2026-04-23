@@ -162,7 +162,6 @@ def collect_model_draws(model: Any) -> Dict[str, Optional[np.ndarray]]:
         "sigma": "sigma_samples_",
         "lambda": "lambda_samples_",
         "kappa": "kappa_samples_",
-        "a": "a_samples_",
         "group_scale": "group_lambda_samples_",
         "gamma2": "gamma2_samples_",
     }
@@ -332,8 +331,6 @@ def method_display_name(name: str) -> str:
         "GHS_plus": "Grouped Horseshoe+",
         "OLS": "OLS",
         "LASSO_CV": "Lasso (CV)",
-        "GR_RHS_full": "GR-RHS (full)",
-        "GR_RHS_no_ag": "GR-RHS (no a_g)",
         "GR_RHS_no_local_scales": "GR-RHS (lambda_j=1)",
         "GR_RHS_shared_kappa": "GR-RHS (shared kappa)",
         "GR_RHS_no_kappa": "GR-RHS (no kappa)",
