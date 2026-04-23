@@ -161,7 +161,7 @@ def run_exp2_group_separation(
     n_jobs: int = 1,
     method_jobs: int = 1,
     seed: int = MASTER_SEED,
-    repeats: int = 30,
+    repeats: int = 100,
     save_dir: str = "outputs/simulation_project",
     *,
     skip_run_analysis: bool = False,
@@ -471,4 +471,3 @@ def run_exp2_group_separation(
         skip_run_analysis=bool(skip_run_analysis),
         archive_artifacts=bool(archive_artifacts),
     )
-

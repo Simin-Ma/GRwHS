@@ -1,0 +1,3 @@
+setting_name,method,status,converged,fit_attempts,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error,chains,draws_per_chain,max_rhat_pq,min_ess_pq,total_divergences,bridge_ratio_mean,bridge_ratio_max,bridge_ratio_violations
+exp2_default_main,GR_RHS,ok,True,2,140.15170189998753,1.0026441812515259,1001.5169036843248,0.00125,,,,1.0026441812515259,1001.5169036843248,5,0.11745319151096675,0.1657936250011248,0
+exp2_default_main,RHS,ok,True,2,673.329347100007,1.0078928489759704,471.8889945630792,0.0,,,,,,0,nan,nan,nan

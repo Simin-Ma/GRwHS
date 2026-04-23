@@ -115,7 +115,7 @@ Appendix recommendation:
 - `exp5`
 - `exp3c/exp3d` as spot checks
 
-The `paper_laptop` preset reduces repeats, keeps the default Bayesian convergence gate,
+The `paper_laptop` preset keeps Exp2 at the full default repeats while reducing repeats for selected other experiments, keeps the default Bayesian convergence gate,
 restricts the heaviest Exp3 methods to anchor settings, lowers GIGG/GHS+ per-fit budgets,
 skips analysis by default, and disables duplicate artifact archiving.
 

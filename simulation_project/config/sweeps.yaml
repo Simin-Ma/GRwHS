@@ -43,7 +43,7 @@ sweeps:
     experiment: exp2
     description: Paper-laptop main-text Exp2 preset.
     fixed:
-      repeats: 60
+      repeats: 100
       n_jobs: 2
       method_jobs: 2
       enforce_bayes_convergence: true
@@ -169,4 +169,3 @@ sweeps:
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: nuts
-

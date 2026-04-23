@@ -84,7 +84,7 @@ Recommended appendix/supporting experiments:
 Preset behavior for `--preset paper_laptop`:
 
 - `exp1=300`
-- `exp2=60`
+- `exp2=100`
 - `exp3a=50`
 - `exp3b=24`
 - `exp3c=8`
