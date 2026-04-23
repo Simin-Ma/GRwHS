@@ -380,7 +380,7 @@ def run_exp1_kappa_profile_regimes(
     include_full_null_curve: bool = False,
     full_null_repeats: int | None = None,
     full_null_pg_list: Sequence[int] | None = None,
-    full_null_backend: str = "gibbs",
+    full_null_backend: str = "collapsed",
     full_null_max_convergence_retries: int = 1,
     full_null_enforce_convergence: bool = True,
 ) -> Dict[str, str]:

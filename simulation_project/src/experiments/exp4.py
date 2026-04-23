@@ -169,7 +169,7 @@ def run_exp4_variant_ablation(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    sampler_backend: str = "gibbs",
+    sampler_backend: str = "collapsed",
 ) -> Dict[str, str]:
     """
     Exp4: GR-RHS variant ablation - tau calibration strategies.
@@ -186,7 +186,7 @@ def run_exp4_variant_ablation(
 
     Note: p0 here denotes active coefficients (sparsity in coefficients).
     DGP matches Exp3 scale: p=50 (5 groups of 10), n=100.
-    Default: p0 in {5, 15, 30}, include_oracle=True, retries=3, sampler=gibbs.
+    Default: p0 in {5, 15, 30}, include_oracle=True, retries=3, sampler=collapsed.
     """
     pd = load_pandas()
     produced: set[Path] = set()

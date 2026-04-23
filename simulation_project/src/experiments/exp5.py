@@ -155,7 +155,7 @@ def run_exp5_prior_sensitivity(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    sampler_backend: str = "nuts",
+    sampler_backend: str = "collapsed",
 ) -> Dict[str, str]:
     """
     Exp5: Prior sensitivity - (alpha_kappa, beta_kappa) grid.

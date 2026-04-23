@@ -148,7 +148,7 @@ def _run_main(cfg: ProtocolConfig, *, smoke_mode: bool = False) -> None:
         "exp5": 1 if smoke_mode else int(cfg.exp5_repeats),
     }
 
-    common_nuts = _common_kwargs(cfg, max_retries=cfg.nuts_max_convergence_retries, sampler_backend="nuts")
+    common_collapsed = _common_kwargs(cfg, max_retries=cfg.nuts_max_convergence_retries, sampler_backend="collapsed")
 
     print(f"[main] save_dir={cfg.save_dir}")
     print(f"[main] n_jobs={cfg.n_jobs}, seed={cfg.seed}, smoke_mode={smoke_mode}")
@@ -174,7 +174,7 @@ def _run_main(cfg: ProtocolConfig, *, smoke_mode: bool = False) -> None:
         methods=["GR_RHS", "RHS"],
         rho_ref=0.5,
         n_test=50,
-        **common_nuts,
+        **common_collapsed,
     )
 
     # Exp3a
@@ -183,7 +183,7 @@ def _run_main(cfg: ProtocolConfig, *, smoke_mode: bool = False) -> None:
         group_configs=_group_configs_main(),
         env_points=_env_points_e0(),
         methods=_methods_exp3(),
-        **common_nuts,
+        **common_collapsed,
     )
 
     # Exp4
@@ -197,7 +197,7 @@ def _run_main(cfg: ProtocolConfig, *, smoke_mode: bool = False) -> None:
         enforce_bayes_convergence=True,
         max_convergence_retries=int(cfg.exp4_max_convergence_retries),
         until_bayes_converged=True,
-        sampler_backend="gibbs",
+        sampler_backend="collapsed",
     )
 
     # Exp3b
@@ -207,13 +207,13 @@ def _run_main(cfg: ProtocolConfig, *, smoke_mode: bool = False) -> None:
         env_points=_env_points_e0(),
         boundary_xi_ratio_list=[0.8, 1.0, 1.2],
         methods=_methods_exp3(),
-        **common_nuts,
+        **common_collapsed,
     )
 
     # Exp5
     run_exp5_prior_sensitivity(
         repeats=repeats["exp5"],
-        **common_nuts,
+        **common_collapsed,
     )
 
     total_min = (time.time() - t0) / 60.0

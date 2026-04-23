@@ -418,7 +418,7 @@ def run_exp3_linear_benchmark(
     until_bayes_converged: bool = True,
     n_train: int = 100,
     n_test: int = 30,
-    sampler_backend: str = "nuts",
+    sampler_backend: str = "collapsed",
     grrhs_extra_kwargs: dict | None = None,
     gigg_mode: str = "stable",
     result_dir_name: str = "exp3_linear_benchmark",

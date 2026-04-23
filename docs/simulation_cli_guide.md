@@ -24,6 +24,7 @@ Common CLI args:
 - `--sampler {nuts,collapsed,gibbs}`
 
 `--profile` is intentionally unsupported.
+Default sampler backend is `collapsed`.
 
 ## 2. Default Protocol
 
@@ -149,12 +150,12 @@ python -m simulation_project.src.run_experiment --experiment 3d --n-jobs 2
 
 - `p0_list=[5,15,30]`
 - `include_oracle=True`
-- default sampler fallback: `gibbs` for Exp4 when omitted
+- default sampler backend: `collapsed`
 
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 4 --n-jobs 2 --sampler gibbs
+python -m simulation_project.src.run_experiment --experiment 4 --n-jobs 2
 ```
 
 ### Exp5 (`prior_sensitivity`)
