@@ -217,8 +217,7 @@ def run_exp4_variant_ablation(
     Note: p0 here denotes active coefficients (sparsity in coefficients).
     DGP defaults: p=50 (5 groups of 10), n=100, rho_within=0.8, rho_between=0.2.
     Default: p0 in {5, 15, 30}, include_oracle=True, repeats=12, retries=1.
-    Sampler routing default: p0=5 uses collapsed; other p0 values use sampler_backend
-    (whose function default is nuts).
+    Sampler routing default: Exp4 always uses collapsed for all p0 values.
     """
     pd = load_pandas()
     produced: set[Path] = set()
@@ -265,14 +264,10 @@ def run_exp4_variant_ablation(
         return variants
 
     def _backend_for_p0(p0_true: int) -> str:
-        # Keep the published default on collapsed for p0=5, but allow smoke /
-        # non-enforced runs to stay on the caller-selected backend so validation
-        # paths do not get stuck on the slowest route.
-        if not bool(enforce_bayes_convergence):
-            return str(backend_use)
-        if int(p0_true) == 5:
-            return "collapsed"
-        return str(backend_use)
+        _ = int(p0_true)
+        # Exp4 now hard-routes to collapsed for all settings to avoid the
+        # unstable NUTS path in this experiment's high-correlation design.
+        return "collapsed"
 
     tasks: list[tuple] = []
     for p0_v in p0_vals:
@@ -379,4 +374,3 @@ def run_exp4_variant_ablation(
         skip_run_analysis=bool(skip_run_analysis),
         archive_artifacts=bool(archive_artifacts),
     )
-

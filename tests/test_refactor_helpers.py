@@ -315,7 +315,7 @@ def test_exp5_defaults_to_full_sensitivity_and_retry_budget_5(monkeypatch) -> No
     assert summary_partial.exists()
 
 
-def test_exp4_forces_collapsed_backend_only_for_p0_5(monkeypatch, tmp_path) -> None:
+def test_exp4_forces_collapsed_backend_for_all_p0(monkeypatch, tmp_path) -> None:
     import simulation_project.src.experiments.exp4 as exp4_mod
 
     captured_tasks: list[tuple] = []
@@ -384,8 +384,8 @@ def test_exp4_forces_collapsed_backend_only_for_p0_5(monkeypatch, tmp_path) -> N
         backends_by_p0.setdefault(p0_true, set()).add(backend)
 
     assert backends_by_p0.get(5) == {"collapsed"}
-    assert backends_by_p0.get(15) == {"nuts"}
-    assert backends_by_p0.get(30) == {"nuts"}
+    assert backends_by_p0.get(15) == {"collapsed"}
+    assert backends_by_p0.get(30) == {"collapsed"}
 
 
 def test_exp4_default_correlation_uses_0_8_and_0_2(monkeypatch) -> None:
