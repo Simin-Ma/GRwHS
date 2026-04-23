@@ -17,3 +17,6 @@
 {"timestamp_utc": "2026-04-23T15:10:27.407898+00:00", "run_label": "cli_exp2", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_151027Z_cli_exp2"}
 {"timestamp_utc": "2026-04-23T15:32:54.324674+00:00", "run_label": "cli_exp2", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_153254Z_cli_exp2"}
 {"timestamp_utc": "2026-04-23T15:53:06.756949+00:00", "run_label": "cli_exp5", "mode": "explicit", "save_dir": "outputs\\simulation_project\\quick_exp5_nuts_check"}
+{"timestamp_utc": "2026-04-23T16:00:49.658814+00:00", "run_label": "cli_exp5", "mode": "explicit", "save_dir": "outputs\\simulation_project\\quick_exp5_nuts_check_r5"}
+{"timestamp_utc": "2026-04-23T16:02:01.578637+00:00", "run_label": "cli_exp4", "mode": "explicit", "save_dir": "outputs\\simulation_project\\adhoc\\exp4_light_conv_20260423_180055"}
+{"timestamp_utc": "2026-04-23T16:21:36.164514+00:00", "run_label": "cli_exp4", "mode": "explicit", "save_dir": "outputs\\simulation_project\\adhoc\\exp4_light_conv_retry0_20260423_182024"}

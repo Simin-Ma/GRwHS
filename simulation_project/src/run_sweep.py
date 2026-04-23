@@ -7,6 +7,7 @@ import itertools
 import json
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -100,18 +101,29 @@ def _write_runs_csv(rows: list[dict[str, Any]], path: Path) -> None:
             writer.writerow({k: _to_csv_value(row.get(k)) for k in fields})
 
 
-def _parse_set_items(items: list[str]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for raw in items:
-        token = str(raw)
-        if "=" not in token:
-            raise ValueError(f"--set expects KEY=VALUE, got: {raw!r}")
-        key, value_text = token.split("=", 1)
-        key = key.strip()
-        if not key:
-            raise ValueError(f"--set key cannot be empty: {raw!r}")
-        out[key] = yaml.safe_load(value_text)
-    return out
+def _execute_single_sweep_run(task: tuple[str, str, dict[str, Any], Callable[..., dict[str, Any]], bool]) -> dict[str, Any]:
+    run_name, exp_name, kwargs, runner, dry_run = task
+    row: dict[str, Any] = {
+        "run_name": str(run_name),
+        "experiment": str(exp_name),
+        "status": "dry_run" if bool(dry_run) else "pending",
+        "duration_sec": 0.0,
+        "params": kwargs,
+        "outputs": {},
+        "error": "",
+    }
+    t0 = time.perf_counter()
+    if not bool(dry_run):
+        try:
+            outputs = runner(**kwargs)
+            row["status"] = "ok"
+            row["outputs"] = outputs
+        except Exception as exc:
+            row["status"] = "error"
+            row["error"] = f"{type(exc).__name__}: {exc}"
+            row["traceback"] = traceback.format_exc()
+    row["duration_sec"] = float(time.perf_counter() - t0)
+    return row
 
 
 def list_sweeps(*, config_path: str = "simulation_project/config/sweeps.yaml") -> list[dict[str, str]]:

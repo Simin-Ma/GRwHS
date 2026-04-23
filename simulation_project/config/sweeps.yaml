@@ -8,30 +8,63 @@ defaults:
 sweeps:
   exp1_to_exp5:
     experiment: all
-    description: Single unified sweep that runs Exp1-Exp5 end-to-end.
+    description: Unified default protocol run (Exp1 -> Exp5 -> analysis).
     fixed:
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: gibbs
-    grid:
-      max_convergence_retries: [2]
+      sampler_backend: collapsed
+      exp3_gigg_mode: stable
 
-  exp2_kappa_threshold_small:
-    experiment: exp2
-    description: Small Exp2 sweep to push high-signal groups across kappa=0.5.
+  exp1_default:
+    experiment: exp1
+    description: Exp1 default protocol (repeats=500).
     fixed:
+      repeats: 500
+
+  exp2_default:
+    experiment: exp2
+    description: Exp2 default protocol (repeats=100, rho_ref fixed at 0.8).
+    fixed:
+      repeats: 100
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: nuts
-      repeats: 12
-      n_jobs: 2
-      bayes_min_chains: 2
-      n_train: 100
-      n_test: 30
-      rho_within: 0.3
-      rho_between: 0.05
-      group_sizes: [10, 10, 10, 10, 10]
-      xi_ratios: [0.0, 1.0, 2.0, 5.0, 10.0]
-    grid:
-      rho_ref: [0.2, 0.3, 0.4, 0.5]
+      sampler_backend: collapsed
+
+  exp3a_default:
+    experiment: exp3a
+    description: Exp3a default protocol (repeats=100, gigg_mode=stable).
+    fixed:
+      repeats: 100
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
+      gigg_mode: stable
+
+  exp3b_default:
+    experiment: exp3b
+    description: Exp3b default protocol (repeats=100, gigg_mode=stable).
+    fixed:
+      repeats: 100
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
+      gigg_mode: stable
+
+  exp4_default:
+    experiment: exp4
+    description: Exp4 default protocol (repeats=30, built-in retry default=3).
+    fixed:
+      repeats: 30
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
+
+  exp5_default:
+    experiment: exp5
+    description: Exp5 default protocol (repeats=20, built-in retry default=5).
+    fixed:
+      repeats: 20
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+      sampler_backend: collapsed
 

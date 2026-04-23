@@ -38,7 +38,7 @@ def run_all_experiments(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    sampler_backend: str = "nuts",
+    sampler_backend: str = "collapsed",
     exp3_gigg_mode: str = "stable",
     skip_analysis: bool = False,
 ) -> Dict[str, Any]:
@@ -118,9 +118,9 @@ def _cli() -> None:
     parser.add_argument(
         "--sampler",
         type=str,
-        default="nuts",
+        default="collapsed",
         choices=["nuts", "collapsed", "gibbs"],
-        help="GR-RHS posterior sampler: nuts, collapsed (Gaussian only), or gibbs (Gaussian only). Default is nuts.",
+        help="GR-RHS posterior sampler: nuts, collapsed (Gaussian only), or gibbs (Gaussian only). Default is collapsed.",
     )
     args = parser.parse_args()
     exp_key = cli_choice_to_key(args.experiment)

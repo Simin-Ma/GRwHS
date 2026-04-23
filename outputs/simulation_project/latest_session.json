@@ -1,6 +1,6 @@
 {
-  "timestamp_utc": "2026-04-23T15:53:06.756949+00:00",
-  "run_label": "cli_exp5",
+  "timestamp_utc": "2026-04-23T16:21:36.164514+00:00",
+  "run_label": "cli_exp4",
   "mode": "explicit",
-  "save_dir": "outputs\\simulation_project\\quick_exp5_nuts_check"
+  "save_dir": "outputs\\simulation_project\\adhoc\\exp4_light_conv_retry0_20260423_182024"
 }
