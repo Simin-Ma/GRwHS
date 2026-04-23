@@ -33,7 +33,7 @@ _EXP4_DEFAULT_WARMUP = 400
 _EXP4_DEFAULT_POST_DRAWS = 400
 _EXP4_DEFAULT_MAX_CONV_RETRIES = 1
 _EXP5_DEFAULT_MAX_CONV_RETRIES = 5
-_DEFAULT_REPEATS = {"exp1": 500, "exp2": 100, "exp3": 100, "exp3c": 30, "exp3d": 100, "exp4": 30, "exp5": 20}
+_DEFAULT_REPEATS = {"exp1": 500, "exp2": 100, "exp3": 100, "exp3c": 30, "exp3d": 100, "exp4": 12, "exp5": 20}
 
 # ---------------------------------------------------------------------------
 # Runtime-default helpers
