@@ -25,3 +25,8 @@
 {"timestamp_utc": "2026-04-23T17:22:44.092171+00:00", "run_label": "cli_all", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_172244Z_cli_all"}
 {"timestamp_utc": "2026-04-23T17:23:05.420369+00:00", "run_label": "cli_all", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_172305Z_cli_all"}
 {"timestamp_utc": "2026-04-23T17:29:12.878359+00:00", "run_label": "cli_exp5", "mode": "auto_session", "save_dir": "outputs\\simulation_project\\sessions\\20260423_172912Z_cli_exp5"}
+{"timestamp_utc": "2026-04-23T17:31:35.473903+00:00", "run_label": "cli_exp1", "mode": "explicit", "save_dir": "outputs\\simulation_project\\smoke_sep\\exp1"}
+{"timestamp_utc": "2026-04-23T17:31:35.474188+00:00", "run_label": "cli_exp2", "mode": "explicit", "save_dir": "outputs\\simulation_project\\smoke_sep\\exp2"}
+{"timestamp_utc": "2026-04-23T17:31:35.481890+00:00", "run_label": "cli_exp4", "mode": "explicit", "save_dir": "outputs\\simulation_project\\smoke_sep\\exp4"}
+{"timestamp_utc": "2026-04-23T17:31:35.481839+00:00", "run_label": "cli_exp3a", "mode": "explicit", "save_dir": "outputs\\simulation_project\\smoke_sep\\exp3a"}
+{"timestamp_utc": "2026-04-23T17:31:35.483824+00:00", "run_label": "cli_exp5", "mode": "explicit", "save_dir": "outputs\\simulation_project\\smoke_sep\\exp5"}
