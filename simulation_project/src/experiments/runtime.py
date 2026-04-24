@@ -337,12 +337,19 @@ def _parallel_rows(
     prefer_process: bool = False,
     process_fallback: str = "thread",
     progress_desc: str | None = None,
+    on_task_done=None,
 ) -> list[Any]:
     if len(tasks) == 0:
         return []
     workers = _resolve_workers(n_jobs=n_jobs, n_tasks=len(tasks))
     if workers <= 1:
-        return [worker(t) for t in tqdm(tasks, total=len(tasks), desc=progress_desc or "Running", leave=True)]
+        out_serial: list[Any] = []
+        for t in tqdm(tasks, total=len(tasks), desc=progress_desc or "Running", leave=True):
+            res = worker(t)
+            out_serial.append(res)
+            if on_task_done is not None:
+                on_task_done(t, res)
+        return out_serial
     out: list[Any] = [None] * len(tasks)
     done: list[bool] = [False] * len(tasks)
     fut_map: dict[Any, int] = {}
@@ -364,6 +371,8 @@ def _parallel_rows(
                 idx = fut_map[fut]
                 out[idx] = fut.result()
                 done[idx] = True
+                if on_task_done is not None:
+                    on_task_done(tasks[idx], out[idx])
     except Exception as exc:
         if use_process:
             pending_idxs = [i for i, ok in enumerate(done) if not ok]
@@ -378,10 +387,17 @@ def _parallel_rows(
                             loc = tfut_map[fut]
                             out[pending_idxs[loc]] = fut.result()
                             done[pending_idxs[loc]] = True
+                            if on_task_done is not None:
+                                on_task_done(pending_tasks[loc], out[pending_idxs[loc]])
             elif mode == "serial":
                 print(f"[WARN] Process pool failed ({type(exc).__name__}: {exc}). Falling back to serial execution.")
                 if pending_tasks:
-                    serial_out = [worker(t) for t in tqdm(pending_tasks, total=len(pending_tasks), desc=(progress_desc or "Running") + " [serial]", leave=True)]
+                    serial_out: list[Any] = []
+                    for t in tqdm(pending_tasks, total=len(pending_tasks), desc=(progress_desc or "Running") + " [serial]", leave=True):
+                        res = worker(t)
+                        serial_out.append(res)
+                        if on_task_done is not None:
+                            on_task_done(t, res)
                     for loc, row in enumerate(serial_out):
                         out[pending_idxs[loc]] = row
                         done[pending_idxs[loc]] = True

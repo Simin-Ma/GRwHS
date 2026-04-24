@@ -37,8 +37,8 @@ Wrapper entrypoint:
 
 GIGG is ported from the CRAN R package. The active implementation lives at
 `simulation_project/src/core/models/gigg_regression.py`, replacing all prior `grrhs`-path
-references. Pipeline wrapper: `simulation_project/src/fit_gigg.py` (returns unified
-`FitResult` objects for experiment runners).
+references. Pipeline wrapper: `simulation_project/src/experiments/methods/fit_gigg.py`
+(returns unified `FitResult` objects for experiment runners).
 
 Sanity check:
 

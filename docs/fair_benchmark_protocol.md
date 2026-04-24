@@ -4,7 +4,9 @@ This document now tracks the fairness contract for the **single active simulatio
 
 ## Active Scope
 
-All benchmark runs should use `simulation_project/src/run_experiment.py` only.
+All benchmark runs should use the unified experiment CLI, preferably
+`python -m simulation_project.src.run_experiment` (or the thin wrapper
+`scripts/run_simulation.py`, which delegates to the same entrypoint).
 
 ## Core Fairness Rules
 

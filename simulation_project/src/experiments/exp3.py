@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Sequence
 
@@ -630,6 +632,219 @@ def run_exp3_linear_benchmark(
 
     n_data_batches = len(settings) * int(repeats)
     n_method_evals = n_data_batches * len(methods_use)
+    setting_rows_by_id: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    setting_progress_path = out_dir / "setting_progress.jsonl"
+    bayes_tasks_expected_by_setting: dict[int, int] = defaultdict(int)
+    bayes_tasks_done_by_setting: dict[int, int] = defaultdict(int)
+    tasks_expected_by_setting: dict[int, int] = defaultdict(int)
+    tasks_done_by_setting: dict[int, int] = defaultdict(int)
+    bayes_settings_completed: set[int] = set()
+    settings_completed: set[int] = set()
+    settings_meta: dict[int, dict[str, Any]] = {}
+
+    for (sid_v, signal_v, gc_v, block_v, env_v, dt_v, rho_v, rhob_v, snr_v, bxi_v) in settings:
+        settings_meta[int(sid_v)] = {
+            "signal": str(signal_v),
+            "group_config": str(gc_v["name"]),
+            "env_id": str(env_v),
+            "boundary_xi_ratio": float(bxi_v),
+        }
+    for task in bayes_tasks:
+        bayes_tasks_expected_by_setting[int(task["setting_id"])] += 1
+        tasks_expected_by_setting[int(task["setting_id"])] += 1
+    for task in classical_tasks:
+        tasks_expected_by_setting[int(task["setting_id"])] += 1
+
+    def _summarize_completed_setting(sid_local: int) -> dict[str, Any]:
+        rows_local = list(setting_rows_by_id.get(sid_local, []))
+        raw_local = pd.DataFrame(rows_local)
+        methods_present = sorted(set(raw_local["method"].astype(str).tolist())) if not raw_local.empty and "method" in raw_local.columns else []
+        counts_local = pd.DataFrame()
+        paired_local = pd.DataFrame()
+        paired_stats_local = pd.DataFrame()
+        metric_local = pd.DataFrame()
+        common_reps = 0
+
+        if not raw_local.empty:
+            counts_local = raw_local.groupby("method", as_index=False).agg(
+                n_reps_total=("replicate_id", "count"),
+                n_reps_ok=("status", lambda s: int((s == "ok").sum())),
+                n_reps_converged=("converged", lambda s: int(s.fillna(False).astype(bool).sum())),
+            )
+            paired_local, paired_stats_local = _paired_converged_subset(
+                raw_local,
+                group_cols=base_keys,
+                method_col="method",
+                replicate_col="replicate_id",
+                converged_col="converged",
+                required_cols=["mse_null", "mse_signal", "mse_overall", "lpd_test"],
+                method_levels=None,
+            )
+            if not paired_stats_local.empty and "n_common_replicates" in paired_stats_local.columns:
+                common_reps = int(paired_stats_local["n_common_replicates"].iloc[0])
+            if not paired_local.empty:
+                metric_local = paired_local.groupby("method", as_index=False).agg(
+                    mse_null=("mse_null", "mean"),
+                    mse_signal=("mse_signal", "mean"),
+                    mse_overall=("mse_overall", "mean"),
+                    lpd_test=("lpd_test", "mean"),
+                    coverage_95=("coverage_95", "mean"),
+                    avg_ci_length=("avg_ci_length", "mean"),
+                    kappa_null_mean=("kappa_null_mean", "mean"),
+                    kappa_signal_mean=("kappa_signal_mean", "mean"),
+                    kappa_null_prob_gt_u0=("kappa_null_prob_gt_u0", "mean"),
+                    kappa_signal_prob_gt_u0=("kappa_signal_prob_gt_u0", "mean"),
+                )
+                pair_counts_local = paired_local.groupby("method", as_index=False).agg(n_reps_paired=("replicate_id", "nunique"))
+                metric_local = metric_local.merge(pair_counts_local, on="method", how="left")
+            else:
+                metric_local = counts_local.copy()
+                metric_local["n_reps_paired"] = 0
+
+        method_rows: list[dict[str, Any]] = []
+        if not counts_local.empty:
+            counts_lookup = {str(r["method"]): r for r in counts_local.to_dict(orient="records")}
+            metric_lookup = {str(r["method"]): r for r in metric_local.to_dict(orient="records")} if not metric_local.empty else {}
+            for method_name in methods_present:
+                c_row = counts_lookup.get(method_name, {})
+                m_row = metric_lookup.get(method_name, {})
+                method_rows.append({
+                    "method": method_name,
+                    "method_label": method_result_label(method_name),
+                    "n_reps_total": int(c_row.get("n_reps_total", 0) or 0),
+                    "n_reps_ok": int(c_row.get("n_reps_ok", 0) or 0),
+                    "n_reps_converged": int(c_row.get("n_reps_converged", 0) or 0),
+                    "n_reps_paired": int(m_row.get("n_reps_paired", 0) or 0),
+                    "mse_overall": float(m_row.get("mse_overall", float("nan"))),
+                    "mse_null": float(m_row.get("mse_null", float("nan"))),
+                    "mse_signal": float(m_row.get("mse_signal", float("nan"))),
+                    "lpd_test": float(m_row.get("lpd_test", float("nan"))),
+                    "coverage_95": float(m_row.get("coverage_95", float("nan"))),
+                    "avg_ci_length": float(m_row.get("avg_ci_length", float("nan"))),
+                    "kappa_null_mean": float(m_row.get("kappa_null_mean", float("nan"))),
+                    "kappa_signal_mean": float(m_row.get("kappa_signal_mean", float("nan"))),
+                    "kappa_null_prob_gt_u0": float(m_row.get("kappa_null_prob_gt_u0", float("nan"))),
+                    "kappa_signal_prob_gt_u0": float(m_row.get("kappa_signal_prob_gt_u0", float("nan"))),
+                })
+
+        ranked_rows = [r for r in method_rows if np.isfinite(float(r.get("mse_overall", float("nan"))))]
+        ranked_rows = sorted(ranked_rows, key=lambda r: float(r["mse_overall"]))
+        best_method = ranked_rows[0]["method"] if ranked_rows else None
+
+        gr_row = next((r for r in method_rows if r["method"] == "GR_RHS"), None)
+        rhs_row = next((r for r in method_rows if r["method"] == "RHS"), None)
+        comparison: dict[str, Any] = {}
+        if gr_row is not None and rhs_row is not None:
+            gr_mse = float(gr_row.get("mse_overall", float("nan")))
+            rhs_mse = float(rhs_row.get("mse_overall", float("nan")))
+            gr_lpd = float(gr_row.get("lpd_test", float("nan")))
+            rhs_lpd = float(rhs_row.get("lpd_test", float("nan")))
+            comparison = {
+                "gr_rhs_vs_rhs_mse_diff": gr_mse - rhs_mse if np.isfinite(gr_mse) and np.isfinite(rhs_mse) else float("nan"),
+                "gr_rhs_vs_rhs_lpd_diff": gr_lpd - rhs_lpd if np.isfinite(gr_lpd) and np.isfinite(rhs_lpd) else float("nan"),
+            }
+
+        return {
+            "setting_id": int(sid_local),
+            "meta": dict(settings_meta.get(sid_local, {})),
+            "n_methods_present": int(len(method_rows)),
+            "common_paired_reps": int(common_reps),
+            "best_method_by_mse": best_method,
+            "methods": method_rows,
+            "comparison": comparison,
+        }
+
+    def _log_completed_setting_analysis(summary_obj: dict[str, Any]) -> None:
+        meta = dict(summary_obj.get("meta", {}))
+        method_rows = list(summary_obj.get("methods", []))
+        ranked_rows = [r for r in method_rows if np.isfinite(float(r.get("mse_overall", float("nan"))))]
+        ranked_rows = sorted(ranked_rows, key=lambda r: float(r["mse_overall"]))
+        lead = (
+            f"Exp3 analysis: setting_id={int(summary_obj.get('setting_id', -1))} "
+            f"signal={str(meta.get('signal', '?'))} group={str(meta.get('group_config', '?'))} "
+            f"env={str(meta.get('env_id', '?'))} boundary_xi_ratio={float(meta.get('boundary_xi_ratio', float('nan'))):.3f} "
+            f"paired_reps={int(summary_obj.get('common_paired_reps', 0))}"
+        )
+        if ranked_rows:
+            best = ranked_rows[0]
+            lead += f" best_mse={best['method']}({float(best['mse_overall']):.5f})"
+        log.info(lead)
+
+        if ranked_rows:
+            detail = " | ".join(
+                f"{r['method']} mse={float(r['mse_overall']):.5f}, lpd={float(r.get('lpd_test', float('nan'))):.5f}, paired={int(r.get('n_reps_paired', 0))}"
+                for r in ranked_rows
+            )
+            log.info("Exp3 analysis detail: %s", detail)
+        else:
+            fallback = " | ".join(
+                f"{r['method']} ok={int(r.get('n_reps_ok', 0))}/{int(r.get('n_reps_total', 0))}, conv={int(r.get('n_reps_converged', 0))}"
+                for r in method_rows
+            )
+            log.info("Exp3 analysis detail: no paired-converged summary yet; %s", fallback or "no method rows")
+
+        gr_row = next((r for r in method_rows if r["method"] == "GR_RHS"), None)
+        if gr_row is not None and np.isfinite(float(gr_row.get("kappa_null_mean", float("nan")))) and np.isfinite(float(gr_row.get("kappa_signal_mean", float("nan")))):
+            log.info(
+                "Exp3 analysis GR_RHS kappa: null_mean=%.4f signal_mean=%.4f prob_gt_u0(null)=%.4f prob_gt_u0(signal)=%.4f",
+                float(gr_row.get("kappa_null_mean", float("nan"))),
+                float(gr_row.get("kappa_signal_mean", float("nan"))),
+                float(gr_row.get("kappa_null_prob_gt_u0", float("nan"))),
+                float(gr_row.get("kappa_signal_prob_gt_u0", float("nan"))),
+            )
+
+        comparison = dict(summary_obj.get("comparison", {}))
+        mse_diff = float(comparison.get("gr_rhs_vs_rhs_mse_diff", float("nan")))
+        lpd_diff = float(comparison.get("gr_rhs_vs_rhs_lpd_diff", float("nan")))
+        if np.isfinite(mse_diff) or np.isfinite(lpd_diff):
+            log.info(
+                "Exp3 analysis GR_RHS vs RHS: delta_mse=%.5f delta_lpd=%.5f",
+                mse_diff,
+                lpd_diff,
+            )
+
+        with setting_progress_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(summary_obj, ensure_ascii=False) + "\n")
+
+    def _log_setting_progress(task: dict[str, Any], _result: Any) -> None:
+        sid_local = int(task["setting_id"])
+        setting_rows_by_id[sid_local].extend(list(_result or []))
+        methods_local = [str(m) for m in task.get("methods", [])]
+        if methods_local and all(_is_bayesian_method(m) for m in methods_local):
+            bayes_tasks_done_by_setting[sid_local] += 1
+            bayes_expected = int(bayes_tasks_expected_by_setting.get(sid_local, 0))
+            bayes_done = int(bayes_tasks_done_by_setting[sid_local])
+            if bayes_expected > 0 and bayes_done >= bayes_expected and sid_local not in bayes_settings_completed:
+                bayes_settings_completed.add(sid_local)
+                meta = settings_meta.get(sid_local, {})
+                log.info(
+                    "Exp3 progress: bayes-complete settings %d/%d (setting_id=%d, signal=%s, group=%s, env=%s, boundary_xi_ratio=%.3f)",
+                    len(bayes_settings_completed),
+                    len(settings),
+                    sid_local,
+                    str(meta.get("signal", "?")),
+                    str(meta.get("group_config", "?")),
+                    str(meta.get("env_id", "?")),
+                    float(meta.get("boundary_xi_ratio", float("nan"))),
+                )
+        tasks_done_by_setting[sid_local] += 1
+        expected = int(tasks_expected_by_setting.get(sid_local, 0))
+        done = int(tasks_done_by_setting[sid_local])
+        if expected <= 0 or done < expected or sid_local in settings_completed:
+            return
+        settings_completed.add(sid_local)
+        meta = settings_meta.get(sid_local, {})
+        log.info(
+            "Exp3 progress: completed settings %d/%d (setting_id=%d, signal=%s, group=%s, env=%s, boundary_xi_ratio=%.3f)",
+            len(settings_completed),
+            len(settings),
+            sid_local,
+            str(meta.get("signal", "?")),
+            str(meta.get("group_config", "?")),
+            str(meta.get("env_id", "?")),
+            float(meta.get("boundary_xi_ratio", float("nan"))),
+        )
+        _log_completed_setting_analysis(_summarize_completed_setting(sid_local))
 
     log.info(
         "Exp3[%s]: %d settings x %d repeats = %d data batches; %d methods => %d method-evals; "
@@ -655,6 +870,7 @@ def run_exp3_linear_benchmark(
             prefer_process=True,
             process_fallback="serial",
             progress_desc="Exp3 Linear Benchmark (Bayes)",
+            on_task_done=_log_setting_progress,
         )
     if classical_tasks:
         chunks_classic = _parallel_rows(
@@ -663,6 +879,7 @@ def run_exp3_linear_benchmark(
             n_jobs=n_jobs,
             prefer_process=False,
             progress_desc="Exp3 Linear Benchmark (Classical)",
+            on_task_done=_log_setting_progress,
         )
 
     rows: list[dict] = []
