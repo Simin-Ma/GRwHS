@@ -1,7 +1,0 @@
-p0_true,variant,mode,backend,status,converged,fit_attempts,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error
-30,calibrated,baseline,nuts,error,False,2,3.671229099985794,721460.875,1.0006253908703215,1.0,ConvergenceError: GR_RHS did not converge after 2 attempt(s)
-30,calibrated,no_ag,nuts,error,False,2,2.9589413000066997,10938008.0,1.0006253908696467,1.0,ConvergenceError: GR_RHS did not converge after 2 attempt(s)
-30,fixed_10x,baseline,nuts,ok,True,1,7.556562900004792,1.0071150064468384,253.09246134833413,0.0,
-30,fixed_10x,no_ag,nuts,error,False,2,3.0323124999995343,3363606.25,1.0006253908693439,1.0,ConvergenceError: GR_RHS did not converge after 2 attempt(s)
-30,oracle,baseline,nuts,error,False,2,3.22608800001035,2966938.25,1.0006253908692933,1.0,ConvergenceError: GR_RHS did not converge after 2 attempt(s)
-30,oracle,no_ag,nuts,error,False,2,3.1575830999936443,5626566.5,1.0006253908692933,1.0,ConvergenceError: GR_RHS did not converge after 2 attempt(s)
