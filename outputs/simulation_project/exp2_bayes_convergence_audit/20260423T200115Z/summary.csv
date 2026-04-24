@@ -1,8 +1,0 @@
-setting_name,method,status,converged,fit_attempts,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error,chains,draws_per_chain,max_rhat_pq,min_ess_pq,total_divergences,bridge_ratio_mean,bridge_ratio_max,bridge_ratio_violations
-exp2_default_main,GR_RHS,ok,True,2,138.01980840000033,1.0026441812515259,1001.5169036843248,0.00125,,,,1.0026441812515259,1001.5169036843248,5,0.11745319151096675,0.1657936250011248,0
-exp2_default_main,RHS,ok,True,2,715.1793160000088,1.0078928489759704,471.8889945630792,0.0,,,,,,0,nan,nan,nan
-exp2_default_main,GIGG_MMLE,error,False,1,199.46849870000733,1.2807066703094767,4733.377957783182,nan,ConvergenceError: GIGG_MMLE did not converge after 1 attempt(s),,,,,,nan,nan,nan
-exp2_default_main,GIGG_b_small,ok,True,1,182.48304179999104,1.0011593651549915,5605.69052942232,nan,,,,,,,nan,nan,nan
-exp2_default_main,GIGG_GHS,ok,True,1,166.5482922999945,1.0009155871774844,5530.051773835664,nan,,,,,,,nan,nan,nan
-exp2_default_main,GIGG_b_large,ok,True,1,185.00425440000254,1.0008234196210566,5220.164776886947,nan,,,,,,,nan,nan,nan
-exp2_default_main,GHS_plus,ok,True,1,10.589297700003954,1.0023179565493527,2469.1601747061336,nan,,,,,,,nan,nan,nan

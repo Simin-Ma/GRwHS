@@ -1,2 +1,0 @@
-run_name,experiment,status,duration_sec,params,outputs,error
-run_001,all,dry_run,3.00002284348011e-07,"{""enforce_bayes_convergence"": true, ""exp3_gigg_mode"": ""stable"", ""n_jobs"": 1, ""sampler_backend"": ""nuts"", ""save_dir"": ""outputs\\simulation_project\\sweeps\\exp1_to_exp5\\20260423_161152Z\\runs\\run_001"", ""seed"": 20260415, ""until_bayes_converged"": true}",{},

@@ -1,5 +1,0 @@
-p0_true,replicate_id,variant,method_type,backend,status,converged,fit_attempts,tau0_oracle,runtime_seconds,rhat_max,bulk_ess_min,divergence_ratio,error
-30,1,calibrated,GR_RHS,nuts,error,False,2,0.15,7.778620500001125,1567272.5,1.0006253908712908,1.0,ConvergenceError: GR_RHS did not converge after 2 attempt(s)
-30,1,fixed_10x,GR_RHS,nuts,error,False,2,0.15,6.728519600001164,2136415.25,1.0006253908698652,1.0,ConvergenceError: GR_RHS did not converge after 2 attempt(s)
-30,1,oracle,GR_RHS,nuts,error,False,2,0.15,7.165706300002057,1910524.125,1.0006253908729437,1.0,ConvergenceError: GR_RHS did not converge after 2 attempt(s)
-30,1,RHS_oracle,RHS,nuts,error,False,2,0.15,32.357984800008126,1.0185124921428725,243.45293423021772,0.0,ConvergenceError: RHS did not converge after 2 attempt(s)
