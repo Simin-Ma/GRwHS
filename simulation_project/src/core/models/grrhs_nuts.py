@@ -1013,6 +1013,7 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
     adaptive_burnin: bool = True
     phase_a_max_iters: int = 400
     phase_b_max_iters: int = 300
+    phase_a_hyper_only_iters: int = 120
     min_phase_a_iters: int = 100
     min_phase_b_iters: int = 100
     geometry_window: int = 100
@@ -1038,15 +1039,108 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         curr = vals[-w:]
         if (not np.all(np.isfinite(prev))) or (not np.all(np.isfinite(curr))):
             return False
-        prev_mean = float(np.mean(prev))
-        curr_mean = float(np.mean(curr))
-        scale = max(abs(prev_mean), abs(curr_mean), 1.0)
-        prev_sd = float(np.std(prev))
-        curr_sd = float(np.std(curr))
-        mean_ok = abs(curr_mean - prev_mean) <= float(tol) * scale
-        sd_ok = abs(curr_sd - prev_sd) <= float(tol) * max(prev_sd, curr_sd, 1.0)
-        trend = abs(float(curr[-1] - curr[0])) <= float(tol) * scale * max(1.0, math.sqrt(float(w)))
-        return bool(mean_ok and sd_ok and trend)
+        prev_med = float(np.median(prev))
+        curr_med = float(np.median(curr))
+        scale = max(abs(prev_med), abs(curr_med), 1.0)
+
+        prev_mad = float(np.median(np.abs(prev - prev_med)))
+        curr_mad = float(np.median(np.abs(curr - curr_med)))
+        prev_iqr = float(np.quantile(prev, 0.75) - np.quantile(prev, 0.25))
+        curr_iqr = float(np.quantile(curr, 0.75) - np.quantile(curr, 0.25))
+
+        center_ok = abs(curr_med - prev_med) <= float(tol) * scale
+        mad_ok = abs(curr_mad - prev_mad) <= float(tol) * max(prev_mad, curr_mad, 1.0)
+        iqr_ok = abs(curr_iqr - prev_iqr) <= float(tol) * max(prev_iqr, curr_iqr, 1.0)
+
+        prev_half_1 = prev[: max(2, w // 2)]
+        prev_half_2 = prev[-max(2, w // 2) :]
+        curr_half_1 = curr[: max(2, w // 2)]
+        curr_half_2 = curr[-max(2, w // 2) :]
+        prev_shift = abs(float(np.mean(prev_half_2) - np.mean(prev_half_1)))
+        curr_shift = abs(float(np.mean(curr_half_2) - np.mean(curr_half_1)))
+        trend_ok = max(prev_shift, curr_shift) <= float(tol) * scale * 1.25
+        spread_ok = bool(mad_ok or iqr_ok)
+        return bool(center_ok and spread_ok and trend_ok)
+
+    def _phase_a_ready(self, traces: Dict[str, List[float]]) -> tuple[bool, Dict[str, bool]]:
+        log_tau_ok = self._stable_window(
+            traces["log_tau"],
+            int(self.geometry_window),
+            float(self.geometry_tol) * 1.75,
+        )
+        mean_kappa_ok = self._stable_window(
+            traces["mean_kappa"],
+            int(self.geometry_window),
+            float(self.geometry_tol),
+        )
+        mean_log_prior_ok = self._stable_window(
+            traces["mean_log_prior_var"],
+            int(self.geometry_window),
+            float(self.geometry_tol) * 1.15,
+        )
+        sd_log_prior_ok = self._stable_window(
+            traces["sd_log_prior_var"],
+            int(self.geometry_window),
+            float(self.geometry_tol) * 1.35,
+        )
+        prior_var_ok = bool(mean_log_prior_ok or sd_log_prior_ok)
+        median_group_norm_ok = self._stable_window(
+            traces["median_group_norm"],
+            int(self.geometry_window),
+            float(self.geometry_tol) * 1.15,
+        )
+        checks = {
+            "log_tau": bool(log_tau_ok),
+            "mean_kappa": bool(mean_kappa_ok),
+            "mean_log_prior_var": bool(mean_log_prior_ok),
+            "sd_log_prior_var": bool(sd_log_prior_ok),
+            "prior_var_ok": bool(prior_var_ok),
+            "median_group_norm": bool(median_group_norm_ok),
+        }
+        core_ok = bool(checks["mean_kappa"] and checks["prior_var_ok"])
+        support_ok = bool(checks["median_group_norm"] or checks["log_tau"])
+        score = int(checks["log_tau"]) + int(checks["mean_kappa"]) + int(checks["prior_var_ok"]) + int(checks["median_group_norm"])
+        ready = bool(core_ok and support_ok and score >= 3)
+        return ready, checks
+
+    def _phase_b_ready(self, traces: Dict[str, List[float]]) -> tuple[bool, Dict[str, bool]]:
+        beta_norm_ok = self._stable_window(
+            traces["beta_norm"],
+            int(self.transition_window),
+            float(self.transition_tol),
+        )
+        top_group_norm_ok = self._stable_window(
+            traces["top_group_norm"],
+            int(self.transition_window),
+            float(self.transition_tol) * 1.10,
+        )
+        resid_norm_ok = self._stable_window(
+            traces["resid_norm"],
+            int(self.transition_window),
+            float(self.transition_tol) * 1.10,
+        )
+        log_tau_ok = self._stable_window(
+            traces["log_tau"],
+            int(self.transition_window),
+            float(self.transition_tol) * 1.35,
+        )
+        mean_kappa_ok = self._stable_window(
+            traces["mean_kappa"],
+            int(self.transition_window),
+            float(self.transition_tol) * 1.15,
+        )
+        checks = {
+            "beta_norm": bool(beta_norm_ok),
+            "top_group_norm": bool(top_group_norm_ok),
+            "resid_norm": bool(resid_norm_ok),
+            "log_tau": bool(log_tau_ok),
+            "mean_kappa": bool(mean_kappa_ok),
+        }
+        core_ok = bool(checks["beta_norm"] and checks["resid_norm"])
+        support_ok = bool(checks["top_group_norm"] or checks["log_tau"] or checks["mean_kappa"])
+        score = sum(bool(v) for v in checks.values())
+        ready = bool(core_ok and support_ok and score >= 3)
+        return ready, checks
 
     def _sample_chain(
         self,
@@ -1110,22 +1204,25 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
 
         traces: Dict[str, List[float]] = {
             "log_tau": [],
-            "mean_log_lambda": [],
-            "sd_log_lambda": [],
-            "mean_logit_kappa": [],
-            "max_abs_group_logit_kappa": [],
+            "mean_kappa": [],
+            "mean_log_prior_var": [],
+            "sd_log_prior_var": [],
+            "median_group_norm": [],
             "beta_norm": [],
             "top_group_norm": [],
             "resid_norm": [],
         }
 
-        phase_a_done = not bool(self.adaptive_burnin)
-        phase_b_done = not bool(self.adaptive_burnin)
+        skip_adaptive = bool(self.adaptive_burnin and int(burnin) <= 0 and initial_state is not None)
+        phase_a_done = (not bool(self.adaptive_burnin)) or bool(skip_adaptive)
+        phase_b_done = (not bool(self.adaptive_burnin)) or bool(skip_adaptive)
         phase_a_iters = 0
         phase_b_iters = 0
         burnin_total = 0
         total_iters = 0
         warmup_warning = ""
+        phase_a_checks_last: Dict[str, bool] = {}
+        phase_b_checks_last: Dict[str, bool] = {}
 
         max_total = int(max(
             sample_target * int(self.thin) + 1,
@@ -1147,19 +1244,27 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
             sigma2 = math.exp(2.0 * log_sigma)
             lam2 = lam ** 2
             kappa_j = kappa[group_id]
+            hyper_only_phase = bool(
+                (not phase_a_done)
+                and bool(self.adaptive_burnin)
+                and phase_a_iters < int(max(0, self.phase_a_hyper_only_iters))
+            )
 
-            v = self._v_arr(sigma2, tau2, lam2, kappa_j, self.jitter)
-            if n < p:
-                beta = beta_sample_woodbury(X, y, sigma2, v, rng, jitter=self.jitter)
+            if not hyper_only_phase:
+                v = self._v_arr(sigma2, tau2, lam2, kappa_j, self.jitter)
+                if n < p:
+                    beta = beta_sample_woodbury(X, y, sigma2, v, rng, jitter=self.jitter)
+                else:
+                    beta = beta_sample_cholesky(XtX, Xty, sigma2, v, rng, jitter=self.jitter)
+                Xbeta = X @ beta
+
+                def _lc_s(r: float) -> float:
+                    return self._lc_log_sigma(r, beta, y, Xbeta, tau2, lam2, kappa_j)
+
+                log_sigma = slice_sample_1d(_lc_s, log_sigma, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
+                sigma2 = math.exp(2.0 * log_sigma)
             else:
-                beta = beta_sample_cholesky(XtX, Xty, sigma2, v, rng, jitter=self.jitter)
-            Xbeta = X @ beta
-
-            def _lc_s(r: float) -> float:
-                return self._lc_log_sigma(r, beta, y, Xbeta, tau2, lam2, kappa_j)
-
-            log_sigma = slice_sample_1d(_lc_s, log_sigma, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
-            sigma2 = math.exp(2.0 * log_sigma)
+                Xbeta = X @ beta
 
             tau_scale = float(tau0_eff) * math.sqrt(max(sigma2, self.jitter))
 
@@ -1195,15 +1300,17 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                     logit_kappa[g] = slice_sample_1d(_lc_kg, logit_kappa[g], rng, width=self.slice_width_logit, max_steps=self.slice_max_steps)
                 kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
 
-            lam_log = np.log(np.maximum(lam, self.jitter))
             group_norms = self._group_norms(beta, groups)
             top_group_norm = float(np.max(group_norms)) if group_norms.size else 0.0
+            median_group_norm = float(np.median(group_norms)) if group_norms.size else 0.0
             resid_norm = float(np.linalg.norm(y - X @ beta) / math.sqrt(max(n, 1)))
+            prior_var = self._v_arr(sigma2, tau2, lam2, kappa[group_id], self.jitter)
+            log_prior_var = np.log(np.maximum(prior_var, self.jitter))
             traces["log_tau"].append(float(log_tau))
-            traces["mean_log_lambda"].append(float(np.mean(lam_log)))
-            traces["sd_log_lambda"].append(float(np.std(lam_log)))
-            traces["mean_logit_kappa"].append(float(np.mean(logit_kappa)))
-            traces["max_abs_group_logit_kappa"].append(float(np.max(np.abs(logit_kappa))) if logit_kappa.size else 0.0)
+            traces["mean_kappa"].append(float(np.mean(kappa)))
+            traces["mean_log_prior_var"].append(float(np.mean(log_prior_var)))
+            traces["sd_log_prior_var"].append(float(np.std(log_prior_var)))
+            traces["median_group_norm"].append(median_group_norm)
             traces["beta_norm"].append(float(np.linalg.norm(beta)))
             traces["top_group_norm"].append(top_group_norm)
             traces["resid_norm"].append(resid_norm)
@@ -1212,14 +1319,10 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                 phase_a_iters += 1
                 burnin_total += 1
                 if phase_a_iters >= int(self.min_phase_a_iters):
-                    phase_a_done = bool(
-                        self._stable_window(traces["log_tau"], int(self.geometry_window), float(self.geometry_tol))
-                        and self._stable_window(traces["mean_log_lambda"], int(self.geometry_window), float(self.geometry_tol))
-                        and self._stable_window(traces["sd_log_lambda"], int(self.geometry_window), float(self.geometry_tol))
-                        and self._stable_window(traces["mean_logit_kappa"], int(self.geometry_window), float(self.geometry_tol))
-                        and self._stable_window(traces["max_abs_group_logit_kappa"], int(self.geometry_window), float(self.geometry_tol))
-                    )
+                    phase_a_done, phase_a_checks_last = self._phase_a_ready(traces)
                 if (not phase_a_done) and phase_a_iters >= int(self.phase_a_max_iters):
+                    if not phase_a_checks_last:
+                        _ready, phase_a_checks_last = self._phase_a_ready(traces)
                     phase_a_done = True
                     warmup_warning = "geometry_not_stable"
                 continue
@@ -1228,13 +1331,10 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                 phase_b_iters += 1
                 burnin_total += 1
                 if phase_b_iters >= int(self.min_phase_b_iters):
-                    phase_b_done = bool(
-                        self._stable_window(traces["beta_norm"], int(self.transition_window), float(self.transition_tol))
-                        and self._stable_window(traces["top_group_norm"], int(self.transition_window), float(self.transition_tol))
-                        and self._stable_window(traces["resid_norm"], int(self.transition_window), float(self.transition_tol))
-                        and self._stable_window(traces["log_tau"], int(self.transition_window), float(self.transition_tol))
-                    )
+                    phase_b_done, phase_b_checks_last = self._phase_b_ready(traces)
                 if (not phase_b_done) and phase_b_iters >= int(self.phase_b_max_iters):
+                    if not phase_b_checks_last:
+                        _ready, phase_b_checks_last = self._phase_b_ready(traces)
                     phase_b_done = True
                     if not warmup_warning:
                         warmup_warning = "transition_not_stable"
@@ -1275,8 +1375,19 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                 "phase_a_iters": int(phase_a_iters),
                 "phase_b_iters": int(phase_b_iters),
                 "actual_burnin": int(burnin_total),
-                "phase_a_converged": bool(phase_a_iters < int(self.phase_a_max_iters) or warmup_warning != "geometry_not_stable"),
-                "phase_b_converged": bool(phase_b_iters < int(self.phase_b_max_iters) or warmup_warning not in {"transition_not_stable"}),
+                "phase_a_converged": bool(skip_adaptive or phase_a_iters < int(self.phase_a_max_iters) or warmup_warning != "geometry_not_stable"),
+                "phase_b_converged": bool(skip_adaptive or phase_b_iters < int(self.phase_b_max_iters) or warmup_warning not in {"transition_not_stable"}),
+                "phase_a_hyper_only_iters": int(min(phase_a_iters, int(max(0, self.phase_a_hyper_only_iters)))),
+                "phase_a_checks": dict(phase_a_checks_last),
+                "phase_a_score": int(
+                    bool(phase_a_checks_last.get("log_tau"))
+                    + bool(phase_a_checks_last.get("mean_kappa"))
+                    + bool(phase_a_checks_last.get("prior_var_ok"))
+                    + bool(phase_a_checks_last.get("median_group_norm"))
+                ) if phase_a_checks_last else 0,
+                "phase_b_checks": dict(phase_b_checks_last),
+                "phase_b_score": int(sum(bool(v) for v in phase_b_checks_last.values())) if phase_b_checks_last else 0,
+                "resume_no_burnin_used": bool(skip_adaptive),
                 "warmup_warning": str(warmup_warning),
                 "total_iters": int(total_iters),
             },
@@ -1291,6 +1402,15 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         super().fit(X, y, groups=groups)
         self.sampler_diagnostics_["backend"] = "simcore_gibbs_staged"
         self.sampler_diagnostics_["adaptive_burnin"] = bool(self.adaptive_burnin)
+        self.sampler_diagnostics_["phase_a_max_iters"] = int(self.phase_a_max_iters)
+        self.sampler_diagnostics_["phase_b_max_iters"] = int(self.phase_b_max_iters)
+        self.sampler_diagnostics_["phase_a_hyper_only_iters"] = int(self.phase_a_hyper_only_iters)
+        self.sampler_diagnostics_["min_phase_a_iters"] = int(self.min_phase_a_iters)
+        self.sampler_diagnostics_["min_phase_b_iters"] = int(self.min_phase_b_iters)
+        self.sampler_diagnostics_["geometry_window"] = int(self.geometry_window)
+        self.sampler_diagnostics_["transition_window"] = int(self.transition_window)
+        self.sampler_diagnostics_["geometry_tol"] = float(self.geometry_tol)
+        self.sampler_diagnostics_["transition_tol"] = float(self.transition_tol)
         if isinstance(self.chain_phase_infos_, list) and self.chain_phase_infos_:
             self.sampler_diagnostics_["warmup_warning"] = next(
                 (str(info.get("warmup_warning", "")) for info in self.chain_phase_infos_ if str(info.get("warmup_warning", "")).strip()),

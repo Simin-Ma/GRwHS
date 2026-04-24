@@ -335,9 +335,20 @@ def _build_gibbs_staged(
     progress_bar: bool,
     initial_chain_states: list[dict[str, Any]] | None = None,
     resume_no_burnin: bool = False,
+    hard_design: bool = False,
 ) -> GRRHS_Gibbs_Staged:
-    total_iters = int(max(4, int(sampler.warmup) + int(sampler.post_warmup_draws)))
-    burnin = int(max(0, min(int(sampler.warmup), total_iters - 1)))
+    warmup = max(40, int(sampler.warmup))
+    draws = max(20, int(sampler.post_warmup_draws))
+    hard_mult = 1.6 if bool(hard_design) else 1.25
+    phase_a_max = int(max(140, round(warmup * 1.10 * hard_mult)))
+    phase_b_max = int(max(80, round(warmup * 0.45 * hard_mult)))
+    phase_a_hyper_only = int(max(40, min(220, round(phase_a_max * 0.40))))
+    min_phase_a = int(max(50, min(180, round(phase_a_max * 0.50))))
+    min_phase_b = int(max(30, min(120, round(phase_b_max * 0.50))))
+    geometry_window = int(max(16, min(80, round(min_phase_a * 0.55))))
+    transition_window = int(max(16, min(70, round(min_phase_b * 0.55))))
+    total_iters = int(max(4, phase_a_max + phase_b_max + draws))
+    burnin = int(max(0, min(phase_a_max + phase_b_max, total_iters - 1)))
     return GRRHS_Gibbs_Staged(
         alpha_kappa=float(alpha_kappa),
         beta_kappa=float(beta_kappa),
@@ -357,6 +368,15 @@ def _build_gibbs_staged(
         seed=int(seed),
         initial_chain_states=initial_chain_states,
         resume_no_burnin=bool(resume_no_burnin),
+        phase_a_max_iters=int(phase_a_max),
+        phase_b_max_iters=int(phase_b_max),
+        phase_a_hyper_only_iters=int(phase_a_hyper_only),
+        min_phase_a_iters=int(min_phase_a),
+        min_phase_b_iters=int(min_phase_b),
+        geometry_window=int(geometry_window),
+        transition_window=int(transition_window),
+        geometry_tol=0.075 if not bool(hard_design) else 0.095,
+        transition_tol=0.09 if not bool(hard_design) else 0.11,
     )
 
 
@@ -482,6 +502,7 @@ def fit_gr_rhs(
                 progress_bar=bool(progress_bar),
                 initial_chain_states=init_states,
                 resume_no_burnin=bool(init_states),
+                hard_design=bool(design_profile.get("hard_design", False)),
             )
 
         if backend_name == "gibbs_staged":
@@ -540,6 +561,18 @@ def fit_gr_rhs(
             "hard_design": bool(design_profile.get("hard_design", False)),
             "design_profile": design_profile,
         }
+        sampler_diag = diagnostics.get("sampler_diagnostics")
+        if backend_name == "gibbs_staged" and isinstance(sampler_diag, dict):
+            diagnostics["sampling_strategy"]["staged_defaults"] = {
+                "phase_a_max_iters": sampler_diag.get("phase_a_max_iters"),
+                "phase_b_max_iters": sampler_diag.get("phase_b_max_iters"),
+                "min_phase_a_iters": sampler_diag.get("min_phase_a_iters"),
+                "min_phase_b_iters": sampler_diag.get("min_phase_b_iters"),
+                "geometry_window": sampler_diag.get("geometry_window"),
+                "transition_window": sampler_diag.get("transition_window"),
+                "geometry_tol": sampler_diag.get("geometry_tol"),
+                "transition_tol": sampler_diag.get("transition_tol"),
+            }
 
         return FitResult(
             method="GR_RHS",
