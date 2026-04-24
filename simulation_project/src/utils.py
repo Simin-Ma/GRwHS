@@ -344,3 +344,41 @@ def method_result_label(name: str) -> str:
         "RHS_oracle": "RHS_oracle [stan_rstanarm_hs]",
     }
     return mapping.get(name, method_display_name(name))
+
+
+def _progress_format_value(value: Any) -> str:
+    if value is None:
+        return "NA"
+    if isinstance(value, (bool, np.bool_)):
+        return "True" if bool(value) else "False"
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)):
+        val = float(value)
+        if not np.isfinite(val):
+            return "nan"
+        return f"{val:.5f}"
+    text = str(value).strip()
+    return text or "NA"
+
+
+def print_experiment_result(
+    exp_name: str,
+    row: Mapping[str, Any],
+    *,
+    context_keys: Sequence[str] | None = None,
+    metric_keys: Sequence[str] | None = None,
+) -> None:
+    ctx_keys = [str(k) for k in (context_keys or [])]
+    metric_keys_use = [str(k) for k in (metric_keys or [])]
+    parts: list[str] = [f"[{str(exp_name)}]"]
+    for key in ctx_keys:
+        if key in row:
+            parts.append(f"{key}={_progress_format_value(row.get(key))}")
+    for key in ("status", "converged", "fit_attempts", "runtime_seconds"):
+        if key in row and key not in set(ctx_keys):
+            parts.append(f"{key}={_progress_format_value(row.get(key))}")
+    for key in metric_keys_use:
+        if key in row:
+            parts.append(f"{key}={_progress_format_value(row.get(key))}")
+    print(" ".join(parts), flush=True)

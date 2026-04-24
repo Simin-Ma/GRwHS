@@ -26,6 +26,7 @@ from ..utils import (
     ensure_dir,
     experiment_seed,
     load_pandas,
+    print_experiment_result,
     save_dataframe,
     save_json,
     setup_logger,
@@ -200,7 +201,7 @@ def _exp5_worker(
                 null_idx = np.where(labels == 0)[0]
                 if null_idx.size > 0 and kd.shape[-1] >= n_groups:
                     kappa_null_prob_gt_0_1 = float(np.mean(kd[:, null_idx] > 0.1))
-        return {
+        row = {
             "setting_id": int(sid),
             "replicate_id": int(r),
             "prior_id": pid,
@@ -226,6 +227,14 @@ def _exp5_worker(
                 signal_group_mask=(labels == 1),
             ),
         }
+        row["prior_key"] = _prior_key(alpha_k, beta_k)
+        print_experiment_result(
+            "Exp5",
+            row,
+            context_keys=["setting_id", "replicate_id", "prior_key"],
+            metric_keys=["mse_null", "mse_signal", "group_auroc"],
+        )
+        return row
 
     # Keep priors sequential within a replicate. NumPyro/JAX sampling has shown
     # instability under same-process threaded prior comparisons in Exp5.

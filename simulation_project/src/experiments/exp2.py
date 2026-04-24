@@ -26,6 +26,7 @@ from ..utils import (
     experiment_seed,
     load_pandas,
     method_result_label,
+    print_experiment_result,
     save_dataframe,
     save_json,
     setup_logger,
@@ -143,6 +144,12 @@ def _exp2_worker(
             **bridge_diag,
             **metrics,
         })
+        print_experiment_result(
+            "Exp2",
+            rep_rows[-1],
+            context_keys=["replicate_id", "method"],
+            metric_keys=["mse_overall", "mse_null", "mse_signal", "group_auroc"],
+        )
         if method == "GR_RHS" and res.beta_mean is not None:
             kmeans = _kappa_group_means(res, n_groups)
             kprobs = _kappa_group_prob_gt(res, n_groups, threshold=0.5)

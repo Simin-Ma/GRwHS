@@ -30,6 +30,7 @@ from ..utils import (
     experiment_seed,
     load_pandas,
     method_result_label,
+    print_experiment_result,
     save_dataframe,
     save_json,
     setup_logger,
@@ -412,6 +413,12 @@ def _exp3_worker(
             **bridge_diag,
             **metrics,
         })
+        print_experiment_result(
+            "Exp3",
+            out_rows[-1],
+            context_keys=["setting_id", "replicate_id", "method", "signal", "group_config", "env_id"],
+            metric_keys=["mse_overall", "mse_null", "mse_signal", "lpd_test", "group_auroc"],
+        )
     return out_rows
 
 

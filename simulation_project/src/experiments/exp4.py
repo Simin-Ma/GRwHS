@@ -27,6 +27,7 @@ from ..utils import (
     experiment_seed,
     load_pandas,
     method_result_label,
+    print_experiment_result,
     rhs_style_tau0,
     save_dataframe,
     save_json,
@@ -141,7 +142,7 @@ def _exp4_worker(
                 kms = np.array(km)
                 kappa_null_mean = float(np.nanmean(kms[~group_has_signal])) if np.any(~group_has_signal) else float("nan")
                 kappa_signal_mean = float(np.nanmean(kms[group_has_signal])) if np.any(group_has_signal) else float("nan")
-        return {
+        row = {
             "p0_true": int(p0_true),
             "s_true_active_coeff": int(p0_true),
             "g_true_active": int(g_true_active),
@@ -170,6 +171,13 @@ def _exp4_worker(
             ),
             **mse_metrics,
         }
+        print_experiment_result(
+            "Exp4",
+            row,
+            context_keys=["p0_true", "replicate_id", "variant", "method_type"],
+            metric_keys=["mse_overall", "mse_null", "mse_signal", "tau_ratio_to_oracle"],
+        )
+        return row
 
     variant_items = list(variants.items())
     workers = max(1, min(int(method_jobs), len(variant_items)))
