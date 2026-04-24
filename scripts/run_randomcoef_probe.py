@@ -71,6 +71,9 @@ def _single_replicate(
     seed: int,
     sampler: SamplerConfig,
     enforce_bayes_convergence: bool,
+    max_convergence_retries: int,
+    grrhs_kwargs: dict[str, Any] | None,
+    gigg_config: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     rng = np.random.default_rng(int(seed))
     beta0 = _build_random_beta(
@@ -100,10 +103,11 @@ def _single_replicate(
         p0=int(np.sum(np.abs(beta0) > 1e-12)),
         p0_groups=int(len(active_groups)),
         sampler=sampler,
+        grrhs_kwargs=dict(grrhs_kwargs or {}),
         methods=methods,
-        gigg_config={},
+        gigg_config=dict(gigg_config or {}),
         enforce_bayes_convergence=bool(enforce_bayes_convergence),
-        max_convergence_retries=0,
+        max_convergence_retries=int(max_convergence_retries),
         method_jobs=1,
     )
 
@@ -151,9 +155,19 @@ def main() -> None:
     parser.add_argument("--rho-between", type=float, default=0.2)
     parser.add_argument("--coef-mode", choices=["gaussian", "mixed"], default="mixed")
     parser.add_argument("--signal-scale", type=float, default=0.45)
-    parser.add_argument("--methods", type=str, default="GIGG_MMLE,GIGG_GHS,RHS,GHS_plus,OLS,LASSO_CV")
+    parser.add_argument("--methods", type=str, default="GR_RHS,GIGG_MMLE,GIGG_GHS,RHS,GHS_plus,OLS,LASSO_CV")
     parser.add_argument("--seed", type=int, default=MASTER_SEED + 9000)
     parser.add_argument("--save-dir", type=str, default="outputs/randomcoef_probe")
+    parser.add_argument("--chains", type=int, default=2)
+    parser.add_argument("--warmup", type=int, default=250)
+    parser.add_argument("--draws", type=int, default=250)
+    parser.add_argument("--ess-threshold", type=float, default=100.0)
+    parser.add_argument("--max-convergence-retries", type=int, default=0)
+    parser.add_argument("--grrhs-backend", choices=["gibbs_staged", "nuts"], default="gibbs_staged")
+    parser.add_argument("--grrhs-tau-target", choices=["coefficients", "groups"], default="coefficients")
+    parser.add_argument("--gigg-q-constraint-mode", choices=["hard", "soft", "none"], default="hard")
+    parser.add_argument("--gigg-b-max", type=float, default=4.0)
+    parser.add_argument("--gigg-mmle-step-size", type=float, default=1.0)
     parser.add_argument("--no-enforce-bayes-convergence", action="store_true")
     args = parser.parse_args()
 
@@ -166,7 +180,22 @@ def main() -> None:
 
     methods = [m.strip() for m in str(args.methods).split(",") if m.strip()]
     active_groups = [0, 1]
-    sampler = SamplerConfig(chains=2, warmup=250, post_warmup_draws=250, ess_threshold=100.0)
+    sampler = SamplerConfig(
+        chains=int(args.chains),
+        warmup=int(args.warmup),
+        post_warmup_draws=int(args.draws),
+        ess_threshold=float(args.ess_threshold),
+    )
+    grrhs_kwargs = {
+        "tau_target": str(args.grrhs_tau_target),
+        "sampler_backend": str(args.grrhs_backend),
+        "progress_bar": False,
+    }
+    gigg_config = {
+        "q_constraint_mode": str(args.gigg_q_constraint_mode),
+        "b_max": float(args.gigg_b_max),
+        "mmle_step_size": float(args.gigg_mmle_step_size),
+    }
 
     out_dir = ensure_dir(Path(args.save_dir) / f"{args.scenario}_{args.coef_mode}")
     raw_rows: list[dict[str, Any]] = []
@@ -186,6 +215,9 @@ def main() -> None:
             seed=rep_seed,
             sampler=sampler,
             enforce_bayes_convergence=not bool(args.no_enforce_bayes_convergence),
+            max_convergence_retries=int(args.max_convergence_retries),
+            grrhs_kwargs=grrhs_kwargs,
+            gigg_config=gigg_config,
         )
         for row in rep_rows:
             row["replicate_id"] = int(rep)
@@ -228,6 +260,15 @@ def main() -> None:
         "target_snr": float(args.target_snr),
         "signal_scale": float(args.signal_scale),
         "methods": list(methods),
+        "sampler": {
+            "chains": int(args.chains),
+            "warmup": int(args.warmup),
+            "draws": int(args.draws),
+            "ess_threshold": float(args.ess_threshold),
+        },
+        "max_convergence_retries": int(args.max_convergence_retries),
+        "grrhs_kwargs": grrhs_kwargs,
+        "gigg_config": gigg_config,
         "raw_results": str(raw_path),
         "summary": str(summary_path),
     }

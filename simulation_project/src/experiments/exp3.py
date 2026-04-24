@@ -26,6 +26,7 @@ from .runtime import (
 )
 from ..utils import (
     MASTER_SEED,
+    SamplerConfig,
     ensure_dir,
     experiment_seed,
     load_pandas,
@@ -478,6 +479,7 @@ def run_exp3_linear_benchmark(
     n_train: int = 100,
     n_test: int = 30,
     grrhs_extra_kwargs: dict | None = None,
+    sampler_overrides: dict[str, Any] | None = None,
     gigg_mode: str = "paper_ref",
     heavy_methods_anchor_only: bool = False,
     result_dir_name: str = "exp3_linear_benchmark",
@@ -502,6 +504,10 @@ def run_exp3_linear_benchmark(
 
     gigg_mode:
       paper_ref: strict gigg-master-aligned reference mode.
+
+    sampler_overrides:
+      Optional overrides for SamplerConfig fields such as chains, warmup,
+      post_warmup_draws, adapt_delta, and max_treedepth.
     """
     pd = load_pandas()
     produced: set[Path] = set()
@@ -516,6 +522,9 @@ def run_exp3_linear_benchmark(
     log_path = str(base / "logs" / f"{out_name}.log")
 
     sampler = _sampler_for_standard()
+    if sampler_overrides:
+        sampler = SamplerConfig(**{**sampler.__dict__, **dict(sampler_overrides)})
+    log.info("Exp3 sampler config: %s", sampler)
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     _exp3_methods = ["GR_RHS", "GHS_plus", "GIGG_MMLE", "RHS", "LASSO_CV", "OLS"]

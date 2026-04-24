@@ -1171,7 +1171,6 @@ class GIGGRegression:
         rng = self.rng_
         group_arrays = [np.asarray(idxs, dtype=int) for idxs in normalised_groups]
         group_order = np.arange(G, dtype=int)
-
         lambda_sq = np.ones(p, dtype=float)
         gamma_sq = np.ones(G, dtype=float)
         eta = np.ones(G, dtype=float)
@@ -1295,7 +1294,6 @@ class GIGGRegression:
                         except Exception:
                             draw = lambda_sq[j]
                         lambda_sq[j] = max(float(draw), self.jitter)
-
             eta.fill(1.0)
             nu_scale = _clip_positive_scalar(1.0 / _clip_positive_scalar(tau_sq, floor=self.jitter) + 1.0 / _clip_positive_scalar(sigma_sq, floor=self.jitter), floor=self.jitter)
             try:
