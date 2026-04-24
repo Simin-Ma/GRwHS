@@ -51,6 +51,14 @@ def _pass_flag(ok: bool) -> str:
     return "PASS" if ok else "FAIL"
 
 
+def _method_label(name: str) -> str:
+    mapping = {
+        "RHS": "RHS [stan_rstanarm_hs]",
+        "RHS_oracle": "RHS_oracle [stan_rstanarm_hs]",
+    }
+    return mapping.get(name, name)
+
+
 def _safe_print(text: str) -> None:
     try:
         print(text)
@@ -94,6 +102,7 @@ def _compute_diag_rows(rows: list[dict], *, exp_key: str, method_col: str, bayes
             {
                 "experiment": str(exp_key),
                 "method": str(m),
+                "method_label": _method_label(str(m)),
                 "n_total": int(n_total),
                 "n_converged_ok": int(len(conv_ok)),
                 "convergence_rate": float(len(conv_ok) / max(n_total, 1)),
@@ -256,8 +265,8 @@ def analyze_exp2(results_dir: Path) -> dict[str, Any]:
         "gr_rhs_lpd_rank": gr_lpd_rank,
     }
 
-    mse_table  = "    " + "  ".join(f"{m}: {v:.4f}" for m, v in mse_rank)
-    auroc_table = "    " + "  ".join(f"{m}: {v:.3f}" for m, v in auroc_rank)
+    mse_table  = "    " + "  ".join(f"{_method_label(m)}: {v:.4f}" for m, v in mse_rank)
+    auroc_table = "    " + "  ".join(f"{_method_label(m)}: {v:.3f}" for m, v in auroc_rank)
     gr_mse_str   = f"{gr_mse:.4f} (rank {gr_mse_rank}/{n_methods})" if gr_mse_rank else "not found in results"
     gr_auroc_str = f"{gr_auroc:.3f} (rank {gr_auroc_rank}/{n_methods})" if gr_auroc_rank else "not found"
     gr_lpd_str   = f"{gr_lpd:.3f} (rank {gr_lpd_rank}/{n_methods})" if gr_lpd_rank else "not found"
@@ -265,7 +274,8 @@ def analyze_exp2(results_dir: Path) -> dict[str, Any]:
     findings.append(
         f"  MSE ranking (lower=better):\n{mse_table}\n"
         f"  AUROC ranking (higher=better):\n{auroc_table}\n"
-        f"  GR_RHS -- MSE: {gr_mse_str}   AUROC: {gr_auroc_str}   {lpd_metric}: {gr_lpd_str}"
+        f"  GR_RHS -- MSE: {gr_mse_str}   AUROC: {gr_auroc_str}   {lpd_metric}: {gr_lpd_str}\n"
+        "  RHS in this report denotes the unified Stan/HMC rstanarm-style baseline."
     )
     return {"metrics": metrics, "findings": findings}
 
@@ -310,10 +320,12 @@ def analyze_exp3(results_dir: Path) -> dict[str, Any]:
     metrics["per_signal"] = per_signal
     metrics["all_methods_in_summary"] = all_methods
 
-    lines = [f"  Methods present in summary: {all_methods}"]
+    lines = [f"  Methods present in summary: {[_method_label(m) for m in all_methods]}"]
     missing = [m for m in ["GR_RHS", "RHS"] if m not in all_methods]
     if missing:
-        lines.append(f"  NOTE: {missing} absent from summary (likely did not converge -- check logs)")
+        lines.append(
+            f"  NOTE: {[_method_label(m) for m in missing]} absent from summary (likely did not converge -- check logs)"
+        )
 
     for sig, dat in per_signal.items():
         mse_rank = dat["mse_rank"]
@@ -321,7 +333,7 @@ def analyze_exp3(results_dir: Path) -> dict[str, Any]:
         gr_mse   = next((v for m, v in mse_rank if m == "GR_RHS"), float("nan"))
         best_m, best_v = mse_rank[0] if mse_rank else ("?", float("nan"))
         n_m = len(mse_rank)
-        detail = "    ".join(f"{m}: {v:.5f}" for m, v in mse_rank)
+        detail = "    ".join(f"{_method_label(m)}: {v:.5f}" for m, v in mse_rank)
 
         if gr_rank is not None:
             rel = (gr_mse / best_v - 1) * 100 if best_v > 1e-12 else float("nan")
@@ -403,7 +415,10 @@ def analyze_exp4(results_dir: Path) -> dict[str, Any]:
 
     metrics["per_p0"] = {str(k): v for k, v in per_p0.items()}
 
-    lines = ["  p0 = true number of active coefficients (not active groups)"]
+    lines = [
+        "  p0 = true number of active coefficients (not active groups)",
+        "  RHS_oracle [stan_rstanarm_hs] denotes the unified Stan/HMC rstanarm-style RHS baseline with oracle p0.",
+    ]
     for p0, dat in per_p0.items():
         calib_mse = dat["mse_mean"].get("calibrated", float("nan"))
         calib_sem = dat["mse_sem"].get("calibrated", float("nan"))
@@ -600,6 +615,7 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
     diag_fields = [
         "experiment",
         "method",
+        "method_label",
         "n_total",
         "n_converged_ok",
         "convergence_rate",
@@ -619,5 +635,3 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
         json.dump(all_metrics, f, indent=2)
 
     return all_metrics
-
-

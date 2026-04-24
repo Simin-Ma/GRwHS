@@ -4,10 +4,24 @@ This note summarizes the Bayesian backends now used by the consolidated simulati
 
 ## Runtime Modules
 
-- GR-RHS staged Gibbs / NUTS: `simulation_project/src/core/models/grrhs_nuts.py`
+- GR-RHS staged Gibbs: `simulation_project/src/core/models/grrhs_nuts.py`
 - RHS baseline: `simulation_project/src/core/models/baselines/models.py`
 - GIGG: `simulation_project/src/core/models/gigg_regression.py`
 - Grouped Horseshoe+: `simulation_project/src/core/models/baselines/grouped_horseshoe.py`
+
+RHS is now a single Stan/HMC implementation aligned with `rstanarm::hs()`.
+The active Stan files are:
+
+- `simulation_project/src/core/models/baselines/stan/rhs_gaussian_regression.stan`
+- `simulation_project/src/core/models/baselines/stan/rhs_logistic_regression.stan`
+
+There is no separate NumPyro fallback implementation for RHS in the baseline path.
+Defaults are aligned to the `rstanarm` regularized horseshoe interface:
+
+- `global_df = 1`
+- `local_df = 1`
+- `slab_df = 4`
+- `slab_scale = 2.5`
 
 Grouped Horseshoe+ in this repository corresponds to the Xu et al. (2016)
 hierarchical Bayesian grouped horseshoe (HBGHS) Gaussian Gibbs sampler.

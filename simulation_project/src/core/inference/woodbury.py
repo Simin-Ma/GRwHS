@@ -78,3 +78,40 @@ def beta_sample_cholesky(
     noise = solve_triangular(chol, z, lower=lower, check_finite=False)
     return mean + noise
 
+
+def beta_sample_block_cholesky(
+    Xg: np.ndarray,
+    residual_without_g: np.ndarray,
+    sigma2: float,
+    prior_var_g: np.ndarray,
+    rng: Generator,
+    *,
+    jitter: float = 1e-10,
+) -> np.ndarray:
+    """Sample a coefficient block beta_g from its exact Gaussian conditional.
+
+    Conditional posterior for a block g:
+      beta_g | beta_-g, y ~ N(m_g, Q_g^{-1})
+      Q_g = X_g^T X_g / sigma2 + diag(1 / prior_var_g)
+      m_g = Q_g^{-1} X_g^T (y - X_-g beta_-g) / sigma2
+
+    This is useful for interwoven/block-refresh moves that improve coupling
+    between strong signal groups and hierarchical shrinkage parameters.
+    """
+    from scipy.linalg import cho_factor, cho_solve, solve_triangular
+
+    Xg_arr = np.asarray(Xg, dtype=float)
+    resid_arr = np.asarray(residual_without_g, dtype=float).reshape(-1)
+    prior = np.maximum(np.asarray(prior_var_g, dtype=float).reshape(-1), jitter)
+    sigma2_use = float(max(sigma2, jitter))
+
+    XtX_g = Xg_arr.T @ Xg_arr
+    Xty_g = Xg_arr.T @ resid_arr
+    precision = XtX_g / sigma2_use + np.diag(1.0 / prior)
+    np.fill_diagonal(precision, precision.diagonal() + jitter)
+    chol, lower = cho_factor(precision, lower=True, check_finite=False)
+    mean = cho_solve((chol, lower), Xty_g / sigma2_use, check_finite=False)
+    z = rng.standard_normal(int(prior.shape[0]))
+    noise = solve_triangular(chol, z, lower=lower, check_finite=False)
+    return mean + noise
+

@@ -26,6 +26,7 @@ from ..utils import (
     ensure_dir,
     experiment_seed,
     load_pandas,
+    method_result_label,
     rhs_style_tau0,
     save_dataframe,
     save_json,
@@ -106,7 +107,7 @@ def _exp4_worker(
                 enforce_bayes_convergence=bool(enforce_conv),
                 continue_on_retry=True,
             )
-        else:  # RHS baseline
+        else:  # RHS baseline, now unified as the single Stan/HMC rstanarm-style implementation
             res = _fit_with_convergence_retry(
                 lambda st, att, _resume=None, _s_val=s: fit_rhs(
                     X,
@@ -149,6 +150,8 @@ def _exp4_worker(
             "replicate_id": r,
             "variant": vname,
             "method_type": method,
+            "variant_label": method_result_label(vname),
+            "method_type_label": method_result_label(method),
             "status": res.status,
             "converged": bool(res.converged),
             "fit_attempts": _attempts_used(res),
@@ -208,14 +211,15 @@ def run_exp4_variant_ablation(
     Variants:
       calibrated: auto_calibrate=True  (0415 formula with estimated p0)
       fixed_10x:  tau0 * 10  (over-permissive, nulls not shrunk enough)
-      RHS_oracle: standard RHS with oracle p0 (baseline without kappa_g layer)
+      RHS_oracle: unified Stan/HMC RHS with oracle p0 (baseline without kappa_g layer)
       oracle:     optional; enable with include_oracle=True for full ablation
 
     Note: p0 here denotes active coefficients (sparsity in coefficients).
     DGP defaults: p=50 (5 groups of 10), n=100, rho_within=0.8, rho_between=0.2.
     Default: p0 in {5, 15, 30}, include_oracle=True, repeats=10, retries=1.
-    Sampler protocol: use the default GR-RHS backend routing from fit_gr_rhs
-    (Gaussian -> staged Gibbs; logistic -> NUTS).
+    Sampler protocol:
+      GR-RHS uses the default routing from fit_gr_rhs.
+      RHS_oracle uses the single Stan/HMC RHS baseline from fit_rhs.
     """
     pd = load_pandas()
     produced: set[Path] = set()
@@ -293,6 +297,11 @@ def run_exp4_variant_ablation(
         rows.extend(chunk)
 
     raw = pd.DataFrame(rows)
+    if not raw.empty:
+        if "variant" in raw.columns:
+            raw["variant_label"] = raw["variant"].map(method_result_label)
+        if "method_type" in raw.columns:
+            raw["method_type_label"] = raw["method_type"].map(method_result_label)
     valid_mask = raw["converged"].fillna(False).astype(bool) & raw["status"].astype(str).str.lower().eq("ok")
     summary = raw.loc[valid_mask].groupby(["p0_true", "variant"], as_index=False).agg(
         mse_null=("mse_null", "mean"),
@@ -307,6 +316,7 @@ def run_exp4_variant_ablation(
         g_true_active_mean=("g_true_active", "mean"),
         n_effective=("converged", "sum"),
     )
+    summary["variant_label"] = summary["variant"].map(method_result_label)
     summary["mse_overall_sem"] = summary["mse_overall_std"] / np.sqrt(np.maximum(summary["n_effective"], 1))
     summary["kappa_gap"] = summary["kappa_signal_mean"] - summary["kappa_null_mean"]
 

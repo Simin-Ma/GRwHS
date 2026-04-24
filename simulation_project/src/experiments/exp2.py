@@ -25,6 +25,7 @@ from ..utils import (
     ensure_dir,
     experiment_seed,
     load_pandas,
+    method_result_label,
     save_dataframe,
     save_json,
     setup_logger,
@@ -280,6 +281,8 @@ def run_exp2_group_separation(
         kappa_rows.extend(kappa_chunk)
 
     raw = pd.DataFrame(rep_rows)
+    if not raw.empty and "method" in raw.columns:
+        raw["method_label"] = raw["method"].map(method_result_label)
     kappa_df = pd.DataFrame(kappa_rows)
 
     # Summary: paired-converged across methods
@@ -344,6 +347,7 @@ def run_exp2_group_separation(
             lpd_test_plugin_std=("lpd_test_plugin", "std"),
         )
         summary_df = summary_df.merge(lpd_plugin, on="method", how="left")
+    summary_df["method_label"] = summary_df["method"].map(method_result_label)
 
     paired_delta_rows: list[dict[str, Any]] = []
     for metric in [
@@ -373,6 +377,7 @@ def run_exp2_group_separation(
             {
                 "metric": metric,
                 "contrast": "GR_RHS - RHS",
+                "contrast_label": "GR_RHS - RHS [stan_rstanarm_hs]",
                 "mean_diff": mean_v,
                 "std_diff": sd_v,
                 "se_diff": se_v,

@@ -27,6 +27,7 @@ from ..utils import (
     ensure_dir,
     experiment_seed,
     load_pandas,
+    method_result_label,
     save_dataframe,
     save_json,
     setup_logger,
@@ -669,6 +670,8 @@ def run_exp3_linear_benchmark(
         rows.extend(chunk)
 
     raw = pd.DataFrame(rows)
+    if not raw.empty and "method" in raw.columns:
+        raw["method_label"] = raw["method"].map(method_result_label)
 
     base_keys = [
         "gigg_mode",
@@ -738,6 +741,7 @@ def run_exp3_linear_benchmark(
     pair_counts = paired_raw.groupby(group_keys, as_index=False).agg(n_reps_paired=("replicate_id", "nunique"))
     agg_df = agg_df.merge(pair_counts, on=group_keys, how="left")
     agg_df["n_reps"] = agg_df["n_reps_paired"].fillna(0).astype(int)
+    agg_df["method_label"] = agg_df["method"].map(method_result_label)
 
     delta_rows: list[dict[str, Any]] = []
     baseline_method = "RHS"
@@ -766,6 +770,8 @@ def run_exp3_linear_benchmark(
                 row = {
                     "method": str(m),
                     "baseline_method": baseline_method,
+                    "method_label": method_result_label(str(m)),
+                    "baseline_method_label": method_result_label(baseline_method),
                     "metric": metric,
                     "mean_diff": mean_v,
                     "std_diff": sd_v,

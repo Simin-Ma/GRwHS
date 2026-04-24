@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 
 from simulation_project.src.core.diagnostics.convergence import summarize_convergence
+from pathlib import Path
+
 from simulation_project.src.core.models.baselines import GroupedHorseshoePlus, RegularizedHorseshoeRegression
 from simulation_project.src.core.models.gigg_regression import GIGGRegression
 from simulation_project.src.core.models.grrhs_nuts import GRRHS_NUTS, _normalize_init_params, _should_use_median_init
@@ -13,6 +15,17 @@ def test_core_models_importable() -> None:
     assert GIGGRegression is not None
     assert RegularizedHorseshoeRegression is not None
     assert GroupedHorseshoePlus is not None
+
+
+def test_rhs_defaults_match_stan_only_rstanarm_aligned_path() -> None:
+    model = RegularizedHorseshoeRegression()
+    assert model.backend == "stan"
+    assert model.scale_global == 0.01
+    assert model.nu_global == 1.0
+    assert model.nu_local == 1.0
+    assert model.slab_df == 4.0
+    assert model.slab_scale == 2.5
+    assert Path(model._default_stan_file()).exists()
 
 
 def test_nuts_resume_disables_init_to_median_when_init_params_present() -> None:

@@ -16,7 +16,7 @@ from ...utils import (
     rhs_style_tau0,
 )
 
-_SIMULATION_RHS_BACKEND = "numpyro"
+_SIMULATION_RHS_BACKEND = "stan"
 
 
 def _build_rhs(
@@ -32,12 +32,18 @@ def _build_rhs(
     max_treedepth: int,
     progress_bar: bool,
 ) -> RegularizedHorseshoeRegression:
+    """Build the single project RHS baseline aligned with rstanarm::hs()."""
+
     likelihood = "logistic" if str(task).lower() == "logistic" else "gaussian"
     tau0 = rhs_style_tau0(n=n, p=p, p0=p0)
     if likelihood == "logistic":
         tau0 *= float(pseudo_sigma)
     return RegularizedHorseshoeRegression(
         scale_global=float(tau0),
+        nu_global=1.0,
+        nu_local=1.0,
+        slab_scale=2.5,
+        slab_df=4.0,
         likelihood=likelihood,
         backend=_SIMULATION_RHS_BACKEND,
         num_warmup=int(sampler.warmup),
@@ -45,7 +51,6 @@ def _build_rhs(
         num_chains=int(sampler.chains),
         target_accept_prob=float(adapt_delta),
         max_tree_depth=int(max_treedepth),
-        chain_method="sequential",
         progress_bar=bool(progress_bar),
         seed=int(seed),
     )
@@ -62,6 +67,8 @@ def fit_rhs(
     sampler: SamplerConfig,
     progress_bar: bool = True,
 ) -> FitResult:
+    """Fit the single Stan/HMC RHS baseline used throughout the simulation pipeline."""
+
     tracked = ["beta", "tau", "lambda", "c"]
     n, p = int(X.shape[0]), int(X.shape[1])
 
@@ -96,6 +103,14 @@ def fit_rhs(
             beta_draws=beta_draws,
             config=sampler,
         )
+        details = dict(details or {})
+        details["rhs_impl"] = "stan_rstanarm_hs"
+        details["rhs_defaults"] = {
+            "global_df": 1.0,
+            "local_df": 1.0,
+            "slab_df": 4.0,
+            "slab_scale": 2.5,
+        }
 
         if np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
             strict = _build_rhs(
@@ -124,6 +139,14 @@ def fit_rhs(
                 beta_draws=beta_draws,
                 config=sampler,
             )
+            details = dict(details or {})
+            details["rhs_impl"] = "stan_rstanarm_hs"
+            details["rhs_defaults"] = {
+                "global_df": 1.0,
+                "local_df": 1.0,
+                "slab_df": 4.0,
+                "slab_scale": 2.5,
+            }
             runtime += runtime2
 
         return FitResult(

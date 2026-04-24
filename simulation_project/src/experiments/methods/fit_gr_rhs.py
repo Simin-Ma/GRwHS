@@ -434,11 +434,14 @@ def fit_gr_rhs(
         if warm_mode not in {"ridge", "none"}:
             warm_mode = "ridge"
         task_name = str(task).strip().lower()
-        backend_name = str(sampler_backend or ("gibbs_staged" if task_name != "logistic" else "nuts")).strip().lower()
+        backend_name = str(sampler_backend or "gibbs_staged").strip().lower()
         if backend_name not in {"nuts", "gibbs_staged"}:
-            backend_name = "gibbs_staged" if task_name != "logistic" else "nuts"
-        if task_name == "logistic":
-            backend_name = "nuts"
+            backend_name = "gibbs_staged"
+        if task_name == "logistic" and backend_name == "gibbs_staged":
+            raise NotImplementedError(
+                "GR_RHS staged Gibbs is currently implemented for Gaussian likelihood only; "
+                "logistic Gibbs is not yet available."
+            )
         ridge_init = None
         if warm_mode == "ridge":
             ridge_init = _ridge_init_params(

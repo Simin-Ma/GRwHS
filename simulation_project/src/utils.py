@@ -336,3 +336,11 @@ def method_display_name(name: str) -> str:
         "GR_RHS_no_kappa": "GR-RHS (no kappa)",
     }
     return mapping.get(name, name)
+
+
+def method_result_label(name: str) -> str:
+    mapping = {
+        "RHS": "RHS [stan_rstanarm_hs]",
+        "RHS_oracle": "RHS_oracle [stan_rstanarm_hs]",
+    }
+    return mapping.get(name, method_display_name(name))

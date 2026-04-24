@@ -46,6 +46,9 @@ def test_grrhs_gibbs_staged_phase_diagnostics_present() -> None:
         assert "phase_b_iters" in info
         assert "actual_burnin" in info
         assert "resume_no_burnin_used" in info
+        assert "block_refresh_count" in info
+        assert "block_refresh_steps" in info
+        assert "block_refresh_group_histogram" in info
 
 
 def test_grrhs_gibbs_staged_resume_no_burnin_skips_phases() -> None:
@@ -151,3 +154,24 @@ def test_fit_gr_rhs_gaussian_staged_gibbs_small_problem_not_clearly_worse_than_n
     assert np.isfinite(mse_staged)
     assert np.isfinite(mse_nuts)
     assert mse_staged <= max(0.75, 2.5 * mse_nuts + 1e-8)
+
+
+def test_fit_gr_rhs_logistic_does_not_silently_route_to_nuts() -> None:
+    X, _y, groups, _beta_true = _tiny_gaussian_problem(seed=5)
+    rng = np.random.default_rng(5)
+    y = rng.binomial(1, 0.5, size=X.shape[0]).astype(float)
+    sampler = SamplerConfig(chains=2, warmup=20, post_warmup_draws=20)
+
+    out = fit_gr_rhs(
+        X,
+        y,
+        groups,
+        task="logistic",
+        seed=101,
+        p0=2,
+        sampler=sampler,
+        progress_bar=False,
+    )
+
+    assert out.status == "error"
+    assert "logistic gibbs" in str(out.error).lower() or "gaussian likelihood only" in str(out.error).lower()

@@ -28,9 +28,15 @@ Common CLI args:
 - `--exp3-gigg-mode {paper_ref}`
 
 `--profile` is intentionally unsupported.
-`GR_RHS` now routes by likelihood:
-- `gaussian -> staged_gibbs`
-- `logistic -> nuts`
+`GR_RHS` now uses a single staged Gibbs identity:
+- default backend: `staged_gibbs`
+- current implemented likelihood: `gaussian`
+- `logistic` is not auto-routed to `NUTS`; Gibbs-logistic remains unimplemented
+
+`RHS` now uses a single Stan/HMC implementation aligned with `rstanarm::hs()`:
+- backend: `stan`
+- implemented likelihoods: `gaussian`, `logistic`
+- default hyperparameters: `global_df=1`, `local_df=1`, `slab_df=4`, `slab_scale=2.5`
 
 `GHS_plus` uses its own paper-aligned Gaussian Gibbs backend.
 

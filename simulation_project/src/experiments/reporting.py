@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
+from ..utils import method_result_label
 
 from .schemas import RunManifest
 from ..utils import ensure_dir, load_pandas
@@ -172,8 +173,13 @@ def _build_run_summary_table(exp_key: str, results_dir: Path):
                 )
                 cdf["converged_rate"] = cdf["n_converged"] / cdf["n_rows"].clip(lower=1)
                 compact = cdf.merge(compact, on="method", how="left")
+                compact["method_label"] = compact["method"].map(method_result_label)
         except Exception as exc:
             compact["parse_warning_raw_results"] = f"{type(exc).__name__}: {exc}"
+    elif "method" in set(compact.columns):
+        compact["method_label"] = compact["method"].map(method_result_label)
+    elif "variant" in set(compact.columns):
+        compact["variant_label"] = compact["variant"].map(method_result_label)
 
     if "mse_overall" in set(compact.columns):
         compact = compact.sort_values(["mse_overall"], ascending=True, kind="stable")
