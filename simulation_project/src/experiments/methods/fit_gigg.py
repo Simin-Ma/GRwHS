@@ -83,14 +83,18 @@ def fit_gigg_mmle(
     iter_floor: int = _DEFAULT_GIGG_ITER_FLOOR,
     iter_cap: int = _DEFAULT_GIGG_ITER_CAP,
     btrick: bool = False,
-    mmle_burnin_only: bool = True,
-    init_strategy: str = "ridge",
+    mmle_burnin_only: bool = False,
+    init_strategy: str = "zero",
     init_ridge: float = 1.0,
-    init_scale_blend: float = 0.5,
+    init_scale_blend: float = 0.0,
     randomize_group_order: bool = False,
     lambda_vectorized_update: bool = False,
     extra_beta_refresh_prob: float = 0.0,
     mmle_step_size: float = 1.0,
+    mmle_update_every: int = 1,
+    mmle_window: int = 1,
+    lambda_constraint_mode: str = "none",
+    q_constraint_mode: str = "hard",
     no_retry: bool = False,
     progress_bar: bool = True,
 ) -> FitResult:
@@ -122,6 +126,7 @@ def fit_gigg_mmle(
         iter_floor=iter_floor,
         iter_cap=iter_cap,
     )
+    groups_use = as_int_groups(groups)
 
     try:
         model = GIGGRegression(
@@ -133,7 +138,6 @@ def fit_gigg_mmle(
             num_chains=int(sampler.chains),
             fit_intercept=False,
             store_lambda=True,
-            # a_g = 1/n enforced inside GIGGRegression when force_a_1_over_n=True (default)
             tau_sq_init=float(tau0 ** 2),
             btrick=bool(btrick),
             stable_solve=True,
@@ -145,10 +149,25 @@ def fit_gigg_mmle(
             lambda_vectorized_update=bool(lambda_vectorized_update),
             extra_beta_refresh_prob=float(extra_beta_refresh_prob),
             mmle_step_size=float(mmle_step_size),
+            mmle_update_every=int(mmle_update_every),
+            mmle_window=int(mmle_window),
+            lambda_constraint_mode=str(lambda_constraint_mode),
+            q_constraint_mode=str(q_constraint_mode),
             progress_bar=bool(progress_bar),
         )
-        model, runtime = timed_call(model.fit, X, y, groups=as_int_groups(groups))
-        return _extract_and_diagnose(model, "GIGG_MMLE", sampler, runtime)
+        model, runtime = timed_call(model.fit, X, y, groups=groups_use, method="mmle")
+        result = _extract_and_diagnose(model, "GIGG_MMLE", sampler, runtime)
+        diag = dict(result.diagnostics or {})
+        b_hat = getattr(model, "b_mean_", None)
+        if b_hat is not None:
+            diag["mmle_estimate"] = {
+                "q_estimate": np.asarray(b_hat, dtype=float).reshape(-1).tolist(),
+                "a_estimate": (np.full(len(groups_use), 1.0 / max(int(n), 1), dtype=float)).tolist(),
+            }
+        result.diagnostics = diag
+        result.group_scale_draws = None if result.group_scale_draws is None else np.asarray(result.group_scale_draws, dtype=float)
+        result.method = "GIGG_MMLE"
+        return result
     except Exception as exc:
         return fit_error_result("GIGG_MMLE", f"{type(exc).__name__}: {exc}")
 
@@ -171,12 +190,14 @@ def fit_gigg_fixed(
     iter_floor: int = _DEFAULT_GIGG_ITER_FLOOR,
     iter_cap: int = _DEFAULT_GIGG_ITER_CAP,
     btrick: bool = False,
-    init_strategy: str = "ridge",
+    init_strategy: str = "zero",
     init_ridge: float = 1.0,
-    init_scale_blend: float = 0.5,
+    init_scale_blend: float = 0.0,
     randomize_group_order: bool = False,
     lambda_vectorized_update: bool = False,
     extra_beta_refresh_prob: float = 0.0,
+    lambda_constraint_mode: str = "none",
+    q_constraint_mode: str = "hard",
     no_retry: bool = False,
     progress_bar: bool = True,
 ) -> FitResult:
@@ -230,6 +251,8 @@ def fit_gigg_fixed(
             randomize_group_order=bool(randomize_group_order),
             lambda_vectorized_update=bool(lambda_vectorized_update),
             extra_beta_refresh_prob=float(extra_beta_refresh_prob),
+            lambda_constraint_mode=str(lambda_constraint_mode),
+            q_constraint_mode=str(q_constraint_mode),
             progress_bar=bool(progress_bar),
         )
         a_arr = [a_fixed] * n_groups

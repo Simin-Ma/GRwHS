@@ -145,6 +145,11 @@ def _gigg_config_default(*, profile: str = "default") -> dict[str, Any]:
         "iter_cap": int(iter_cap),
         "btrick": False,
         "mmle_burnin_only": True,
+        "mmle_step_size": 0.2,
+        "mmle_update_every": 25,
+        "mmle_window": 100,
+        "lambda_constraint_mode": "soft",
+        "q_constraint_mode": "soft",
         "no_retry": True,
     }
 def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:

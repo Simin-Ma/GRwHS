@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Sequence
 
@@ -110,7 +109,7 @@ def _exp5_screen_prior_worker(
         bayes_min_chains=int(bayes_min_chains),
         max_convergence_retries=max_retries,
         enforce_bayes_convergence=bool(enforce_conv),
-        continue_on_retry=True,
+        continue_on_retry=False,
     )
     return {
         "setting_id": int(sid),
@@ -172,7 +171,7 @@ def _exp5_worker(
             bayes_min_chains=int(bayes_min_chains),
             max_convergence_retries=max_retries,
             enforce_bayes_convergence=bool(enforce_conv),
-            continue_on_retry=True,
+            continue_on_retry=False,
         )
         beta_mean = _finite_beta_mean(res.beta_mean)
         is_valid = beta_mean is not None
@@ -228,18 +227,11 @@ def _exp5_worker(
             ),
         }
 
+    # Keep priors sequential within a replicate. NumPyro/JAX sampling has shown
+    # instability under same-process threaded prior comparisons in Exp5.
+    _ = int(method_jobs)
     prior_items = list(enumerate(prior_grid, start=1))
-    workers = max(1, min(int(method_jobs), len(prior_items)))
-    if workers <= 1 or len(prior_items) <= 1:
-        return [_fit_prior(item) for item in prior_items]
-
-    done: dict[int, dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        fut_map = {ex.submit(_fit_prior, item): int(item[0]) for item in prior_items}
-        for fut in as_completed(fut_map):
-            row = fut.result()
-            done[int(row["prior_id"])] = row
-    return [done[int(pid)] for pid, _ in prior_items]
+    return [_fit_prior(item) for item in prior_items]
 
 
 def run_exp5_prior_sensitivity(

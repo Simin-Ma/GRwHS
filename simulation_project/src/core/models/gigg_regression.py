@@ -613,6 +613,8 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         mmle_tol_scale=float(payload.get("mmle_tol_scale", 1e-4)),
         mmle_max_iters=int(payload.get("mmle_max_iters", 50000)),
         mmle_step_size=float(payload.get("mmle_step_size", 1.0)),
+        mmle_update_every=int(payload.get("mmle_update_every", 1)),
+        mmle_window=int(payload.get("mmle_window", 1)),
         fit_intercept=bool(payload.get("fit_intercept", True)),
         store_lambda=bool(payload["store_lambda"]),
         btrick=bool(payload["btrick"]),
@@ -623,7 +625,8 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         randomize_group_order=bool(payload.get("randomize_group_order", False)),
         lambda_vectorized_update=bool(payload.get("lambda_vectorized_update", False)),
         extra_beta_refresh_prob=float(payload.get("extra_beta_refresh_prob", 0.0)),
-        lambda_constraint_mode=str(payload.get("lambda_constraint_mode", "hard")),
+        lambda_constraint_mode=str(payload.get("lambda_constraint_mode", "soft")),
+        q_constraint_mode=str(payload.get("q_constraint_mode", "soft")),
         lambda_cap=float(payload.get("lambda_cap", _POS_CAP)),
         lambda_soft_cap=float(payload.get("lambda_soft_cap", payload.get("lambda_cap", _POS_CAP))),
         progress_bar=bool(payload.get("progress_bar", False)),
@@ -665,13 +668,13 @@ class GIGGRegression:
     n_burn_in: int = 500
     n_samples: int = 1000
     n_thin: int = 1
-    jitter: float = 1e-8
+    jitter: float = 1e-7
     seed: int = 0
     num_chains: int = 1
     a_value: Optional[float] = None
     a_fixed_default: float = 0.5
     b_init: float = 0.5
-    b_floor: float = 1e-3
+    b_floor: float = 1e-12
     b_max: float = 4.0
     tau_sq_init: float = 1.0
     sigma_sq_init: float = 1.0
@@ -679,24 +682,27 @@ class GIGGRegression:
     sigma_scale: Optional[float] = None
     mmle_enabled: Optional[bool] = None
     mmle_update: str = "paper_lambda_only"
-    mmle_burnin_only: bool = True
+    mmle_burnin_only: bool = False
     force_a_1_over_n: bool = True
     share_group_hyper: bool = False
     mmle_samp_size: int = 1000
     mmle_tol_scale: float = 1e-4
     mmle_max_iters: int = 50000
     mmle_step_size: float = 1.0
+    mmle_update_every: int = 1
+    mmle_window: int = 1
     fit_intercept: bool = True
     store_lambda: bool = True
     btrick: bool = False
     stable_solve: bool = True
-    init_strategy: str = "ridge"  # one of {"ridge", "zero"}
+    init_strategy: str = "zero"  # original R package starts alpha/beta at zero by default
     init_ridge: float = 1.0
-    init_scale_blend: float = 0.5
+    init_scale_blend: float = 0.0
     randomize_group_order: bool = False
     lambda_vectorized_update: bool = False
     extra_beta_refresh_prob: float = 0.0
-    lambda_constraint_mode: str = "hard"  # one of {"hard", "soft", "none"}
+    lambda_constraint_mode: str = "none"  # original R sampler does not cap lambda_sq
+    q_constraint_mode: str = "hard"  # original R MMLE uses an explicit q <= 4 cap
     lambda_cap: float = _POS_CAP
     lambda_soft_cap: float = _POS_CAP
     progress_bar: bool = True
@@ -754,11 +760,17 @@ class GIGGRegression:
         self.init_ridge = float(max(self.init_ridge, 0.0))
         self.init_scale_blend = float(min(max(self.init_scale_blend, 0.0), 1.0))
         self.mmle_step_size = float(min(max(self.mmle_step_size, 0.0), 1.0))
+        self.mmle_update_every = int(max(1, self.mmle_update_every))
+        self.mmle_window = int(max(1, self.mmle_window))
         self.extra_beta_refresh_prob = float(min(max(self.extra_beta_refresh_prob, 0.0), 1.0))
         mode = str(self.lambda_constraint_mode).strip().lower()
         if mode not in {"hard", "soft", "none"}:
             raise ValueError("lambda_constraint_mode must be one of {'hard','soft','none'}.")
         self.lambda_constraint_mode = mode
+        q_mode = str(self.q_constraint_mode).strip().lower()
+        if q_mode not in {"hard", "soft", "none"}:
+            raise ValueError("q_constraint_mode must be one of {'hard','soft','none'}.")
+        self.q_constraint_mode = q_mode
         self.lambda_cap = float(max(self.lambda_cap, self.jitter * 10.0))
         self.lambda_soft_cap = float(max(self.lambda_soft_cap, self.jitter * 10.0))
         self.burnin = self.n_burn_in
@@ -782,6 +794,29 @@ class GIGGRegression:
         if self.lambda_constraint_mode == "soft":
             return _soft_cap_positive_array(values, floor=floor, cap=self.lambda_soft_cap)
         return _clip_positive_array(values, floor=floor, cap=self.lambda_cap)
+
+    def _stabilize_q_scalar(self, value: float) -> float:
+        floor = max(self.b_floor, self.jitter)
+        cap = max(self.b_max, floor + 1e-12)
+        if self.q_constraint_mode == "none":
+            val = float(value)
+            if not np.isfinite(val):
+                return float(floor)
+            return float(np.maximum(val, floor))
+        if self.q_constraint_mode == "soft":
+            return _soft_cap_positive_scalar(value, floor=floor, cap=cap)
+        return _clip_positive_scalar(value, floor=floor, cap=cap)
+
+    def _stabilize_q_array(self, values: np.ndarray) -> np.ndarray:
+        floor = max(self.b_floor, self.jitter)
+        cap = max(self.b_max, floor + 1e-12)
+        if self.q_constraint_mode == "none":
+            arr = np.asarray(values, dtype=float)
+            arr = np.where(np.isfinite(arr), arr, floor)
+            return np.maximum(arr, floor)
+        if self.q_constraint_mode == "soft":
+            return _soft_cap_positive_array(values, floor=floor, cap=cap)
+        return _clip_positive_array(values, floor=floor, cap=cap)
 
     def _ridge_initial_state(
         self,
@@ -928,6 +963,8 @@ class GIGGRegression:
                         "mmle_tol_scale": self.mmle_tol_scale,
                         "mmle_max_iters": self.mmle_max_iters,
                         "mmle_step_size": self.mmle_step_size,
+                        "mmle_update_every": self.mmle_update_every,
+                        "mmle_window": self.mmle_window,
                         "fit_intercept": self.fit_intercept,
                         "store_lambda": self.store_lambda,
                         "btrick": self.btrick,
@@ -939,6 +976,7 @@ class GIGGRegression:
                         "lambda_vectorized_update": self.lambda_vectorized_update,
                         "extra_beta_refresh_prob": self.extra_beta_refresh_prob,
                         "lambda_constraint_mode": self.lambda_constraint_mode,
+                        "q_constraint_mode": self.q_constraint_mode,
                         "lambda_cap": self.lambda_cap,
                         "lambda_soft_cap": self.lambda_soft_cap,
                         "progress_bar": bool(self.progress_bar),
@@ -1188,28 +1226,13 @@ class GIGGRegression:
         group_arrays = [np.asarray(idxs, dtype=int) for idxs in normalised_groups]
         group_order = np.arange(G, dtype=int)
 
-        beta2 = np.minimum(beta**2, _POS_CAP)
-        abs_beta = np.abs(beta)
-        ref = float(np.median(abs_beta[abs_beta > self.jitter])) if np.any(abs_beta > self.jitter) else 1.0
-        ref = max(ref, self.jitter)
-        lambda_seed = 1.0 + (abs_beta / ref)
-        lambda_sq = self._stabilize_lambda_array(lambda_seed)
+        lambda_sq = np.ones(p, dtype=float)
         gamma_sq = np.ones(G, dtype=float)
-        for gid, idxs in enumerate(group_arrays):
-            idxs_arr = np.asarray(idxs, dtype=int)
-            group_energy = float(np.mean(beta2[idxs_arr])) if idxs_arr.size > 0 else 0.0
-            gamma_sq[gid] = _clip_positive_scalar(group_energy + self.jitter, floor=self.jitter, cap=_POS_CAP)
-        gamma_sq = _clip_positive_array(gamma_sq, floor=self.jitter)
-        gamma_expand = gamma_sq[group_id]
-        denom_local = _clip_positive_array(gamma_expand * lambda_sq, floor=self.jitter)
-        tau_empirical = _clip_positive_scalar(float(np.median(beta2 / denom_local)), floor=self.jitter)
-        resid_seed = y_arr - X @ beta - (C_arr @ alpha if k > 0 else 0.0)
-        sigma_empirical = _clip_positive_scalar(float(np.mean(np.minimum(resid_seed**2, _POS_CAP))), floor=self.jitter)
         eta = np.ones(G, dtype=float)
         p_vec = _clip_positive_array(a_vec, floor=self.jitter, cap=_POS_CAP)
-        q_vec = _clip_positive_array(b_vec, floor=self.b_floor, cap=self.b_max)
-        tau_sq = _clip_positive_scalar((1.0 - self.init_scale_blend) * float(self.tau_sq_init) + self.init_scale_blend * tau_empirical, floor=self.jitter)
-        sigma_sq = _clip_positive_scalar((1.0 - self.init_scale_blend) * float(self.sigma_sq_init) + self.init_scale_blend * sigma_empirical, floor=self.jitter)
+        q_vec = self._stabilize_q_array(b_vec)
+        tau_sq = _clip_positive_scalar(float(self.tau_sq_init), floor=self.jitter)
+        sigma_sq = _clip_positive_scalar(float(self.sigma_sq_init), floor=self.jitter)
         nu = 1.0
 
         CtC = C_arr.T @ C_arr if k > 0 else None
@@ -1225,24 +1248,25 @@ class GIGGRegression:
         lambda_draws = np.zeros((kept, p), dtype=float) if self.store_lambda else None
         b_draws = np.zeros((kept, G), dtype=float)
         keep_idx = 0
+        mmle_window_size = int(max(1, self.mmle_window))
+        lambda_mmle_window = np.zeros((mmle_window_size, p), dtype=float)
+        lambda_mmle_seen = 0
 
         def _gibbs_step() -> None:
             nonlocal alpha, beta, lambda_sq, gamma_sq, tau_sq, sigma_sq, nu
             if k > 0:
                 resid_alpha = y_arr - X @ beta
                 if self.stable_solve:
-                    precision_alpha = CtC + np.eye(k, dtype=float) * max(self.jitter, 0.0)
-                    mean_alpha = _chol_solve(precision_alpha, C_arr.T @ resid_alpha)
-                    noise_alpha = _chol_solve(precision_alpha, rng.normal(size=k))
+                    mean_alpha = _chol_solve(CtC, C_arr.T @ resid_alpha)
+                    noise_alpha = _chol_solve(CtC, rng.normal(size=k))
                     alpha = mean_alpha + math.sqrt(sigma_sq) * noise_alpha
                 else:
-                    precision_alpha = CtC + np.eye(k, dtype=float) * max(self.jitter, 0.0)
-                    cov_alpha = np.linalg.pinv(precision_alpha)
+                    cov_alpha = np.linalg.inv(CtC)
                     mean_alpha = cov_alpha @ (C_arr.T @ resid_alpha)
                     alpha = mean_alpha + math.sqrt(sigma_sq) * (np.linalg.cholesky(cov_alpha) @ rng.normal(size=k))
 
             y_tilde = y_arr - (C_arr @ alpha if k > 0 else 0.0)
-            local_scale = _clip_positive_array(tau_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
+            local_scale = np.maximum(tau_sq * gamma_sq[group_id] * lambda_sq, self.jitter)
             if self.btrick:
                 beta = self._draw_beta_btrick(
                     X=X,
@@ -1260,9 +1284,9 @@ class GIGGRegression:
                     rng=rng,
                 )
 
-            gl_param_expand_diag_inv = _clip_positive_array(1.0 / local_scale, floor=self.jitter)
+            gl_param_expand_diag_inv = np.maximum(1.0 / np.maximum(local_scale, self.jitter), self.jitter)
             tau_rate = _clip_positive_scalar(
-                0.5 * tau_sq * float(np.sum(np.minimum(beta**2, _POS_CAP) * gl_param_expand_diag_inv))
+                0.5 * tau_sq * float(np.sum((beta**2) * gl_param_expand_diag_inv))
                 + 1.0 / _clip_positive_scalar(nu, floor=self.jitter),
                 floor=self.jitter,
             )
@@ -1281,15 +1305,12 @@ class GIGGRegression:
                 sigma_sq = scale_sigma / max(sigma_shape + 1.0, 1.0)
             sigma_sq = _clip_positive_scalar(sigma_sq, floor=self.jitter)
 
-            if self.randomize_group_order and G > 1:
-                gid_iter = rng.permutation(group_order)
-            else:
-                gid_iter = group_order
+            gid_iter = group_order
 
             for gid in gid_iter:
                 idxs = group_arrays[int(gid)]
                 psi = _clip_positive_scalar(
-                    float(np.sum(np.minimum(beta[idxs] ** 2, _POS_CAP) / _clip_positive_array(lambda_sq[idxs], floor=self.jitter)))
+                    float(np.sum((beta[idxs] ** 2) / np.maximum(lambda_sq[idxs], self.jitter)))
                     / _clip_positive_scalar(tau_sq, floor=self.jitter),
                     floor=self.jitter,
                 )
@@ -1312,28 +1333,25 @@ class GIGGRegression:
                         rng=rng,
                     )
                     gamma_draw = 1.0 / _clip_positive_scalar(float(inv_draw), floor=self.jitter)
-                gamma_sq[gid] = _clip_positive_scalar(float(gamma_draw), floor=self.jitter)
+                gamma_sq[gid] = max(float(gamma_draw), self.jitter)
 
                 lam_shape = max(float(q_vec[gid]) + 0.5, 1e-6)
                 lam_denom = _clip_positive_scalar(2.0 * tau_sq * gamma_sq[gid], floor=self.jitter)
-                lam_scale_vec = _clip_positive_array(
-                    float(eta[gid]) + np.minimum(beta[idxs] ** 2, _POS_CAP) / lam_denom,
-                    floor=self.jitter,
-                )
+                lam_scale_vec = np.maximum(float(eta[gid]) + (beta[idxs] ** 2) / lam_denom, self.jitter)
                 if self.lambda_vectorized_update:
                     try:
                         draw_vec = _sample_invgamma_vector(lam_shape, lam_scale_vec, rng, floor=self.jitter)
                     except Exception:
                         draw_vec = lambda_sq[idxs]
-                    lambda_sq[idxs] = self._stabilize_lambda_array(draw_vec)
+                    lambda_sq[idxs] = np.maximum(np.asarray(draw_vec, dtype=float), self.jitter)
                 else:
                     for j in idxs:
-                        lam_scale = _clip_positive_scalar(float(eta[gid]) + min(float(beta[j] ** 2), _POS_CAP) / lam_denom, floor=self.jitter)
+                        lam_scale = _clip_positive_scalar(float(eta[gid]) + float(beta[j] ** 2) / lam_denom, floor=self.jitter)
                         try:
                             draw = _sample_invgamma_scalar(lam_shape, lam_scale, rng, floor=self.jitter)
                         except Exception:
                             draw = lambda_sq[j]
-                        lambda_sq[j] = self._stabilize_lambda_scalar(float(draw))
+                        lambda_sq[j] = max(float(draw), self.jitter)
 
             eta.fill(1.0)
             nu_scale = _clip_positive_scalar(1.0 / _clip_positive_scalar(tau_sq, floor=self.jitter) + 1.0 / _clip_positive_scalar(sigma_sq, floor=self.jitter), floor=self.jitter)
@@ -1343,80 +1361,26 @@ class GIGGRegression:
                 nu = nu_scale / 2.0
             nu = _clip_positive_scalar(nu, floor=self.jitter)
 
-            lambda_sq = self._stabilize_lambda_array(lambda_sq)
-            gamma_sq = _clip_positive_array(gamma_sq, floor=self.jitter)
+            lambda_sq = np.maximum(lambda_sq, self.jitter)
+            gamma_sq = np.maximum(gamma_sq, self.jitter)
             p_vec[:] = _clip_positive_array(p_vec, floor=self.jitter, cap=_POS_CAP)
-            q_vec[:] = _clip_positive_array(q_vec, floor=self.b_floor, cap=self.b_max)
-
-            # Extra beta block refresh improves mixing for strongly coupled beta/lambda/gamma states.
-            if self.extra_beta_refresh_prob > 0.0 and float(rng.random()) < float(self.extra_beta_refresh_prob):
-                y_tilde_refresh = y_arr - (C_arr @ alpha if k > 0 else 0.0)
-                local_scale_refresh = _clip_positive_array(tau_sq * gamma_sq[group_id] * lambda_sq, floor=self.jitter)
-                if self.btrick:
-                    beta = self._draw_beta_btrick(
-                        X=X,
-                        y_tilde=y_tilde_refresh,
-                        sigma_sq=sigma_sq,
-                        local_scale=local_scale_refresh,
-                        rng=rng,
-                    )
-                else:
-                    beta = self._draw_beta_standard(
-                        X=X,
-                        y_tilde=y_tilde_refresh,
-                        sigma_sq=sigma_sq,
-                        local_scale=local_scale_refresh,
-                        rng=rng,
-                    )
+            q_vec[:] = self._stabilize_q_array(q_vec)
 
         burnin_iter = range(self.n_burn_in)
-        mmle_step = float(self.mmle_step_size)
         if _progress is not None:
             burnin_iter = _progress(burnin_iter, total=int(self.n_burn_in), desc="GIGG burn-in")
-        for _ in burnin_iter:
+        for burnin_idx in burnin_iter:
             _gibbs_step()
-            if method_eff == "mmle" and self.mmle_burnin_only:
-                if self.share_group_hyper:
-                    mean_targets = []
-                    for idxs in group_arrays:
-                        mean_targets.append(-float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter)))))
-                    try:
-                        shared_q = _digamma_inv(float(np.mean(mean_targets)))
-                    except Exception:
-                        shared_q = float(np.mean(q_vec))
-                    q_target = min(max(float(shared_q), self.b_floor), self.b_max)
-                    if mmle_step < 1.0:
-                        q_vec[:] = (1.0 - mmle_step) * q_vec + mmle_step * q_target
-                    else:
-                        q_vec[:] = q_target
-                else:
-                    for gid, idxs in enumerate(group_arrays):
-                        target = -float(np.mean(np.log(np.maximum(lambda_sq[idxs], self.jitter))))
-                        try:
-                            q_est = _digamma_inv(target)
-                        except Exception:
-                            q_est = float(q_vec[gid])
-                        q_target = min(max(float(q_est), self.b_floor), self.b_max)
-                        if mmle_step < 1.0:
-                            q_vec[gid] = (1.0 - mmle_step) * q_vec[gid] + mmle_step * q_target
-                        else:
-                            q_vec[gid] = q_target
-                if self.force_a_1_over_n:
-                    p_vec[:] = _clip_positive_array(
-                        np.full(G, 1.0 / max(float(n), 1.0), dtype=float),
-                        floor=self.jitter,
-                        cap=_POS_CAP,
-                    )
-                else:
-                    p_vec[:] = _clip_positive_array(a_vec, floor=self.jitter, cap=_POS_CAP)
-                q_vec[:] = _clip_positive_array(q_vec, floor=self.b_floor, cap=self.b_max)
+            lambda_mmle_window[lambda_mmle_seen % max(1, self.mmle_samp_size)] = lambda_sq if lambda_mmle_window.shape[0] == max(1, self.mmle_samp_size) else lambda_sq
+            lambda_mmle_seen += 1
 
-        if method_eff == "mmle" and (not self.mmle_burnin_only):
-            mmle_samp_size = max(20, int(self.mmle_samp_size))
+        if method_eff == "mmle":
+            mmle_samp_size = int(max(1, self.mmle_samp_size))
             terminate_mmle = float(self.mmle_tol_scale) * float(G)
             delta_mmle = float("inf")
             mmle_cnt = 0
             lambda_mmle_store = np.zeros((mmle_samp_size, p), dtype=float)
+            eta_mmle_store = np.ones((mmle_samp_size, G), dtype=float)
             max_mmle_iters = max(1, int(self.mmle_max_iters))
             mmle_iter = range(max_mmle_iters)
             if _progress is not None:
@@ -1424,37 +1388,22 @@ class GIGGRegression:
             for _ in mmle_iter:
                 _gibbs_step()
                 lambda_mmle_store[mmle_cnt % mmle_samp_size] = lambda_sq
+                eta_mmle_store[mmle_cnt % mmle_samp_size] = eta
                 mmle_cnt += 1
                 if mmle_cnt % mmle_samp_size == 0:
                     q_new = q_vec.copy()
-                    if self.force_a_1_over_n:
-                        p_new = np.full(G, 1.0 / max(float(n), 1.0), dtype=float)
-                    else:
-                        p_new = a_vec.copy()
-                    if self.share_group_hyper:
-                        mean_targets = []
-                        for idxs in group_arrays:
-                            mean_targets.append(-float(np.mean(np.log(np.maximum(lambda_mmle_store[:, idxs], self.jitter)))))
+                    p_new = np.full(G, 1.0 / max(float(n), 1.0), dtype=float)
+                    for gid, idxs in enumerate(group_arrays):
+                        overflow_check = float(np.mean(np.log(np.maximum(eta_mmle_store[:, gid], self.jitter))))
+                        overflow_check -= float(np.mean(np.log(np.maximum(lambda_mmle_store[:, idxs], self.jitter))))
                         try:
-                            shared_q = _digamma_inv(float(np.mean(mean_targets)))
+                            est = _digamma_inv(overflow_check)
                         except Exception:
-                            shared_q = float(np.mean(q_vec))
-                        q_new[:] = min(max(float(shared_q), self.b_floor), self.b_max)
-                    else:
-                        for gid, idxs in enumerate(group_arrays):
-                            target = -float(np.mean(np.log(np.maximum(lambda_mmle_store[:, idxs], self.jitter))))
-                            try:
-                                est = _digamma_inv(target)
-                            except Exception:
-                                est = float(q_vec[gid])
-                            q_new[gid] = min(max(float(est), self.b_floor), self.b_max)
-                    if mmle_step < 1.0:
-                        q_next = (1.0 - mmle_step) * q_vec + mmle_step * q_new
-                    else:
-                        q_next = q_new
-                    delta_mmle = float(np.sum((q_next - q_vec) ** 2 + (p_new - p_vec) ** 2))
-                    q_vec[:] = _clip_positive_array(q_next, floor=self.b_floor, cap=self.b_max)
-                    p_vec[:] = _clip_positive_array(p_new, floor=self.jitter, cap=_POS_CAP)
+                            est = float(q_vec[gid])
+                        q_new[gid] = min(max(float(est), self.b_floor), self.b_max)
+                    delta_mmle = float(np.sum((q_new - q_vec) ** 2 + (p_new - p_vec) ** 2))
+                    q_vec[:] = self._stabilize_q_array(q_new)
+                    p_vec[:] = p_new
                     if delta_mmle < terminate_mmle:
                         break
 
@@ -1485,8 +1434,7 @@ class GIGGRegression:
         self.sigma_samples_ = None if self.sigma2_samples_ is None else np.sqrt(np.maximum(self.sigma2_samples_, self.jitter))
         self.gamma_samples_ = None if self.gamma2_samples_ is None else np.sqrt(np.maximum(self.gamma2_samples_, self.jitter))
         self.lambda_samples_ = lambda_draws if lambda_draws is not None else None
-        expose_b = not (method_eff == "mmle" and (not self.mmle_burnin_only))
-        self.b_samples_ = b_draws if (kept and expose_b) else None
+        self.b_samples_ = b_draws if kept else None
         self.coef_mean_ = coef_draws.mean(axis=0) if kept else beta
         self.alpha_mean_ = None if alpha_draws is None else alpha_draws.mean(axis=0)
         self.b_mean_ = b_draws.mean(axis=0) if kept else q_vec.copy()

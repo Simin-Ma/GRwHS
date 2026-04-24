@@ -286,7 +286,11 @@ def _exp3_worker(
                 gigg_config["extra_beta_refresh_prob"] = max(float(gigg_config.get("extra_beta_refresh_prob", 0.0)), 0.08)
                 gigg_config["init_scale_blend"] = max(float(gigg_config.get("init_scale_blend", 0.5)), 0.65)
                 # Damped MMLE updates reduce q_g oscillation in difficult correlated regimes.
-                gigg_config["mmle_step_size"] = min(max(float(gigg_config.get("mmle_step_size", 0.6)), 0.0), 1.0)
+                gigg_config["mmle_step_size"] = min(max(float(gigg_config.get("mmle_step_size", 0.2)), 0.0), 1.0)
+                gigg_config["mmle_update_every"] = max(1, int(gigg_config.get("mmle_update_every", 25)))
+                gigg_config["mmle_window"] = max(10, int(gigg_config.get("mmle_window", 100)))
+                gigg_config["lambda_constraint_mode"] = str(gigg_config.get("lambda_constraint_mode", "soft"))
+                gigg_config["q_constraint_mode"] = str(gigg_config.get("q_constraint_mode", "soft"))
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
