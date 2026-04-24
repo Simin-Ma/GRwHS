@@ -5,12 +5,10 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.core.models.grrhs_nuts import GRRHS_NUTS, GRRHS_CollapsedNUTS, GRRHS_Gibbs
+from simulation_project.src.core.models.grrhs_nuts import GRRHS_NUTS
 
 from .helpers import as_int_groups, fit_error_result
 from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
-
-BACKENDS = ("nuts", "collapsed", "gibbs")
 
 
 def _clone_numeric_dict(obj: dict[str, Any] | None) -> dict[str, np.ndarray] | None:
@@ -29,60 +27,24 @@ def _clone_numeric_dict(obj: dict[str, Any] | None) -> dict[str, np.ndarray] | N
     return out or None
 
 
-def _clone_chain_states(states: Any) -> list[dict[str, Any]] | None:
-    if not isinstance(states, list) or not states:
-        return None
-    out: list[dict[str, Any]] = []
-    for item in states:
-        if not isinstance(item, dict):
-            continue
-        cur: dict[str, Any] = {}
-        for key, val in item.items():
-            if isinstance(val, np.ndarray):
-                cur[str(key)] = np.asarray(val, dtype=float).copy()
-            elif isinstance(val, (list, tuple)):
-                cur[str(key)] = np.asarray(val, dtype=float).copy()
-            elif isinstance(val, (float, int, np.floating, np.integer)):
-                cur[str(key)] = float(val)
-        if cur:
-            out.append(cur)
-    return out or None
-
-
-def _resume_payload_for_backend(
+def _resume_init_params(
     retry_resume_payload: dict[str, Any] | None,
-    *,
-    backend: str,
-) -> tuple[dict[str, np.ndarray] | None, list[dict[str, Any]] | None]:
+) -> dict[str, np.ndarray] | None:
     if not isinstance(retry_resume_payload, dict):
-        return None, None
-    source_backend = str(retry_resume_payload.get("backend", "")).strip().lower()
-    if source_backend != str(backend).strip().lower():
-        return None, None
-    init_params = _clone_numeric_dict(retry_resume_payload.get("init_params"))
-    chain_states = _clone_chain_states(retry_resume_payload.get("chain_states"))
-    return init_params, chain_states
+        return None
+    return _clone_numeric_dict(retry_resume_payload.get("init_params"))
 
 
-def _extract_retry_resume_payload(*, model: Any, backend: str) -> dict[str, Any] | None:
-    b = str(backend).strip().lower()
-    if b in {"nuts", "collapsed"}:
-        init_params = _clone_numeric_dict(getattr(model, "last_init_params_", None))
-        if init_params:
-            return {"backend": b, "init_params": init_params}
-        return None
-    if b == "gibbs":
-        states = _clone_chain_states(getattr(model, "chain_last_states_", None))
-        if states:
-            return {"backend": b, "chain_states": states}
-        return None
+def _extract_retry_resume_payload(*, model: Any) -> dict[str, Any] | None:
+    init_params = _clone_numeric_dict(getattr(model, "last_init_params_", None))
+    if init_params:
+        return {"backend": "nuts", "init_params": init_params}
     return None
 
 
-def _filter_init_params_for_backend(
+def _filter_nuts_init_params(
     init_params: dict[str, np.ndarray] | None,
     *,
-    backend: str,
     task: str,
     use_local_scale: bool,
     shared_kappa: bool,
@@ -93,7 +55,7 @@ def _filter_init_params_for_backend(
     allowed = {"tau"}
     if gaussian:
         allowed.add("sigma")
-    if str(backend).strip().lower() == "nuts" and gaussian:
+    if gaussian:
         allowed.add("beta_raw")
     if bool(use_local_scale):
         allowed.add("lambda")
@@ -285,28 +247,6 @@ def _design_hardness_profile(
     }
 
 
-def _rescue_backend_for_attempt(
-    preferred_backend: str,
-    *,
-    attempt: int,
-    design_profile: dict[str, float | bool | str],
-) -> str:
-    backend = str(preferred_backend).strip().lower()
-    if backend not in BACKENDS:
-        return "nuts"
-    if not bool(design_profile.get("hard_design", False)):
-        return backend
-    if not bool(design_profile.get("gaussian", False)):
-        return backend
-    if attempt <= 0:
-        return backend
-    if backend == "nuts":
-        return "collapsed" if attempt == 1 else "gibbs"
-    if backend == "collapsed":
-        return "collapsed" if attempt == 1 else "gibbs"
-    return "gibbs"
-
-
 def _build_nuts(
     *,
     task: str,
@@ -354,112 +294,6 @@ def _build_nuts(
     )
 
 
-def _build_collapsed(
-    *,
-    task: str,
-    seed: int,
-    p0: int,
-    alpha_kappa: float,
-    beta_kappa: float,
-    use_local_scale: bool,
-    shared_kappa: bool,
-    auto_calibrate_tau: bool,
-    tau0: float | None,
-    tau_target: str,
-    sigma_reference: float,
-    sampler: SamplerConfig,
-    adapt_delta: float,
-    max_treedepth: int,
-    progress_bar: bool,
-    init_params: dict[str, np.ndarray] | None = None,
-    resume_no_warmup: bool = False,
-) -> GRRHS_CollapsedNUTS:
-    if str(task).lower() == "logistic":
-        raise ValueError("GRRHS_CollapsedNUTS does not support logistic likelihood")
-    return GRRHS_CollapsedNUTS(
-        alpha_kappa=float(alpha_kappa),
-        beta_kappa=float(beta_kappa),
-        eta=1.0,
-        p0=int(max(p0, 1)),
-        tau0=None if tau0 is None else float(tau0),
-        auto_calibrate_tau=bool(auto_calibrate_tau),
-        tau_target=str(tau_target),
-        sigma_reference=float(sigma_reference),
-        use_local_scale=bool(use_local_scale),
-        shared_kappa=bool(shared_kappa),
-        num_warmup=int(sampler.warmup),
-        num_samples=int(sampler.post_warmup_draws),
-        num_chains=int(sampler.chains),
-        target_accept_prob=float(adapt_delta),
-        max_tree_depth=int(max_treedepth),
-        dense_mass=False,
-        chain_method="sequential",
-        progress_bar=bool(progress_bar),
-        seed=int(seed),
-        beta_draws_per_sample=1,
-        sigma_jitter=1e-6,
-        init_params=_clone_numeric_dict(init_params),
-        resume_no_warmup=bool(resume_no_warmup),
-    )
-
-
-def _build_gibbs(
-    *,
-    task: str,
-    seed: int,
-    p0: int,
-    alpha_kappa: float,
-    beta_kappa: float,
-    use_local_scale: bool,
-    shared_kappa: bool,
-    auto_calibrate_tau: bool,
-    tau0: float | None,
-    tau_target: str,
-    sigma_reference: float,
-    sampler: SamplerConfig,
-    progress_bar: bool,
-    initial_chain_states: list[dict[str, Any]] | None = None,
-    resume_no_burnin: bool = False,
-) -> GRRHS_Gibbs:
-    if str(task).lower() == "logistic":
-        raise ValueError("GRRHS_Gibbs does not support logistic likelihood")
-    burnin = int(sampler.warmup)
-    kept = int(sampler.post_warmup_draws)
-    return GRRHS_Gibbs(
-        alpha_kappa=float(alpha_kappa),
-        beta_kappa=float(beta_kappa),
-        eta=0.5,
-        p0=int(max(p0, 1)),
-        tau0=None if tau0 is None else float(tau0),
-        auto_calibrate_tau=bool(auto_calibrate_tau),
-        tau_target=str(tau_target),
-        sigma_reference=float(sigma_reference),
-        use_local_scale=bool(use_local_scale),
-        shared_kappa=bool(shared_kappa),
-        iters=burnin + kept,
-        burnin=burnin,
-        thin=1,
-        num_chains=int(sampler.chains),
-        seed=int(seed),
-        progress_bar=bool(progress_bar),
-        initial_chain_states=_clone_chain_states(initial_chain_states),
-        resume_no_burnin=bool(resume_no_burnin),
-    )
-
-
-def _build_model(backend: str, **kwargs):
-    b = str(backend).strip().lower()
-    if b == "nuts":
-        return _build_nuts(**kwargs)
-    if b == "collapsed":
-        return _build_collapsed(**kwargs)
-    if b == "gibbs":
-        # Gibbs has no NUTS-specific params
-        gibbs_keys = {k for k in kwargs if k not in ("adapt_delta", "max_treedepth")}
-        return _build_gibbs(**{k: v for k, v in kwargs.items() if k in gibbs_keys})
-    raise ValueError(f"unknown sampler backend: {backend!r}; expected one of {BACKENDS}")
-
-
 def fit_gr_rhs(
     X: np.ndarray,
     y: np.ndarray,
@@ -476,14 +310,12 @@ def fit_gr_rhs(
     auto_calibrate_tau: bool = True,
     tau0: float | None = None,
     tau_target: str = "coefficients",
-    backend: str = "nuts",
     progress_bar: bool = True,
     retry_resume_payload: dict[str, Any] | None = None,
     retry_attempt: int = 0,
     warm_start_strategy: str = "ridge",
 ) -> FitResult:
     tracked = ["beta", "tau", "kappa"]
-    b = str(backend).strip().lower()
     groups_use = as_int_groups(groups)
 
     common_kwargs = dict(
@@ -511,11 +343,6 @@ def fit_gr_rhs(
             task=task,
             tau_target=tau_target,
         )
-        backend_use = _rescue_backend_for_attempt(
-            b,
-            attempt=int(max(retry_attempt, 0)),
-            design_profile=design_profile,
-        )
         warm_mode = str(warm_start_strategy).strip().lower()
         if warm_mode not in {"ridge", "none"}:
             warm_mode = "ridge"
@@ -536,7 +363,6 @@ def fit_gr_rhs(
             )
 
         def _make(
-            backend_name: str,
             seed_: int,
             adapt_delta: float,
             max_treedepth: int,
@@ -545,38 +371,32 @@ def fit_gr_rhs(
             kw = dict(common_kwargs)
             kw["sigma_reference"] = pseudo_sigma
             kw["seed"] = seed_
-            init_params, chain_states = _resume_payload_for_backend(resume_payload, backend=backend_name)
-            if backend_name in ("nuts", "collapsed"):
-                kw["adapt_delta"] = adapt_delta
-                kw["max_treedepth"] = max_treedepth
-                warm_init = init_params
-                if warm_init is None:
-                    warm_init = _expand_manual_init_params_for_chains(
-                        _clone_numeric_dict(ridge_init),
-                        num_chains=int(sampler.chains),
-                    )
-                kw["init_params"] = _filter_init_params_for_backend(
-                    warm_init,
-                    backend=backend_name,
-                    task=task,
-                    use_local_scale=use_local_scale,
-                    shared_kappa=shared_kappa,
+            kw["adapt_delta"] = adapt_delta
+            kw["max_treedepth"] = max_treedepth
+            init_params = _resume_init_params(resume_payload)
+            warm_init = init_params
+            if warm_init is None:
+                warm_init = _expand_manual_init_params_for_chains(
+                    _clone_numeric_dict(ridge_init),
+                    num_chains=int(sampler.chains),
                 )
-                kw["resume_no_warmup"] = bool(init_params)
-            elif backend_name == "gibbs":
-                kw["initial_chain_states"] = chain_states
-                kw["resume_no_burnin"] = bool(chain_states)
-            return _build_model(backend_name, **kw)
+            kw["init_params"] = _filter_nuts_init_params(
+                warm_init,
+                task=task,
+                use_local_scale=use_local_scale,
+                shared_kappa=shared_kappa,
+            )
+            kw["resume_no_warmup"] = bool(init_params)
+            return _build_nuts(**kw)
 
         model = _make(
-            backend_use,
             seed,
             float(sampler.adapt_delta),
             int(sampler.max_treedepth),
             resume_payload=retry_resume_payload,
         )
         model, runtime = timed_call(model.fit, X, y, groups=groups_use)
-        resume_payload_out = _extract_retry_resume_payload(model=model, backend=backend_use)
+        resume_payload_out = _extract_retry_resume_payload(model=model)
         beta_draws = getattr(model, "coef_samples_", None)
         beta_mean = getattr(model, "coef_mean_", None)
         tau_draws = getattr(model, "tau_samples_", None)
@@ -589,17 +409,16 @@ def fit_gr_rhs(
             config=sampler,
         )
 
-        # Auto-retry with stricter NUTS settings (only meaningful for gradient-based samplers)
-        if backend_use in ("nuts", "collapsed") and np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
+        # Retry the same NUTS design with stricter adaptation when divergences are high.
+        if np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
             strict = _make(
-                backend_use,
                 seed + 999,
                 float(sampler.strict_adapt_delta),
                 int(sampler.strict_max_treedepth),
                 resume_payload=resume_payload_out,
             )
             strict, runtime2 = timed_call(strict.fit, X, y, groups=groups_use)
-            resume_payload_out = _extract_retry_resume_payload(model=strict, backend=backend_use)
+            resume_payload_out = _extract_retry_resume_payload(model=strict)
             beta_draws = getattr(strict, "coef_samples_", None)
             beta_mean = getattr(strict, "coef_mean_", None)
             tau_draws = getattr(strict, "tau_samples_", None)
@@ -616,11 +435,12 @@ def fit_gr_rhs(
         if resume_payload_out is not None:
             diagnostics["retry_resume_payload"] = resume_payload_out
         diagnostics["sampling_strategy"] = {
-            "requested_backend": str(b),
-            "backend_used": str(backend_use),
+            "requested_backend": "nuts",
+            "backend_used": "nuts",
             "retry_attempt": int(max(retry_attempt, 0)),
             "warm_start_strategy": str(warm_mode),
             "hard_design": bool(design_profile.get("hard_design", False)),
+            "backend_auto_switched": False,
             "design_profile": design_profile,
         }
 

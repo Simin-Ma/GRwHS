@@ -194,7 +194,7 @@ def _summarize_null_panel(null_rows: list[dict[str, Any]]) -> tuple[list[dict[st
 
 
 def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
-    sid, pg, r, seed, alpha_kappa, beta_kappa, tail_eps, sampler, backend, retry_limit, enforce_convergence = task
+    sid, pg, r, seed, alpha_kappa, beta_kappa, tail_eps, sampler, retry_limit, enforce_convergence = task
     from .methods.fit_gr_rhs import fit_gr_rhs
 
     s = experiment_seed(1, int(sid), int(r), master_seed=int(seed) + 7_000_000)
@@ -203,7 +203,7 @@ def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
     groups = [list(range(int(pg)))]
 
     res = _fit_with_convergence_retry(
-        lambda st, att, _resume=None, _s=s, _be=str(backend), _ak=alpha_kappa, _bk=beta_kappa: fit_gr_rhs(
+        lambda st, att, _resume=None, _s=s, _ak=alpha_kappa, _bk=beta_kappa: fit_gr_rhs(
             X,
             y,
             groups,
@@ -216,7 +216,6 @@ def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
             use_local_scale=True,
             shared_kappa=False,
             tau_target="groups",
-            backend=str(_be),
             progress_bar=False,
             retry_resume_payload=_resume,
             retry_attempt=int(att),
@@ -382,7 +381,6 @@ def run_exp1_kappa_profile_regimes(
     include_full_null_curve: bool = False,
     full_null_repeats: int | None = None,
     full_null_pg_list: Sequence[int] | None = None,
-    full_null_backend: str = "nuts",
     full_null_max_convergence_retries: int = 1,
     full_null_enforce_convergence: bool = True,
 ) -> Dict[str, str]:
@@ -440,12 +438,7 @@ def run_exp1_kappa_profile_regimes(
         full_sampler = _sampler_for_standard(experiment="exp1_full_overlay")
         full_reps = int(full_null_repeats) if full_null_repeats is not None else int(min(20, int(repeats)))
         full_pg = list(full_null_pg_list or [20, 50, 100, 200, 500])
-        log.info(
-            "Exp1 Panel A full overlay: pg=%s, repeats=%d, backend=%s",
-            full_pg,
-            full_reps,
-            str(full_null_backend),
-        )
+        log.info("Exp1 Panel A full overlay: pg=%s, repeats=%d", full_pg, full_reps)
         full_tasks: list[tuple] = []
         for sid, pg in enumerate(full_pg, start=10_001):
             for r in range(1, full_reps + 1):
@@ -459,7 +452,6 @@ def run_exp1_kappa_profile_regimes(
                         float(beta_kappa),
                         float(tail_eps),
                         full_sampler,
-                        str(full_null_backend),
                         int(full_null_max_convergence_retries),
                         bool(full_null_enforce_convergence),
                     )
@@ -596,7 +588,6 @@ def run_exp1_kappa_profile_regimes(
                 "fit_range_pg": [20, 500],
                 "ci_contains_theory": bool(_full_ci_contains),
                 "pass": bool(_full_ci_contains and _full_pass_est),
-                "backend": str(full_null_backend),
                 "repeats": int(full_reps),
             },
             out_dir / "null_slope_check_full.json",

@@ -15,7 +15,6 @@ class RunCommonConfig:
     enforce_bayes_convergence: bool
     max_convergence_retries: int | None
     until_bayes_converged: bool
-    sampler_backend: str
 
     def as_kwargs(self) -> dict[str, Any]:
         return {
@@ -28,7 +27,6 @@ class RunCommonConfig:
             "enforce_bayes_convergence": bool(self.enforce_bayes_convergence),
             "max_convergence_retries": self.max_convergence_retries,
             "until_bayes_converged": bool(self.until_bayes_converged),
-            "sampler_backend": str(self.sampler_backend),
         }
 
 

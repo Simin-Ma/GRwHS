@@ -26,7 +26,6 @@ Common CLI args:
 - `--max-convergence-retries <int>`
 - `--until-bayes-converged`
 - `--exp3-gigg-mode {paper_ref}`
-- `--sampler {nuts,collapsed,gibbs}`
 
 `--profile` is intentionally unsupported.
 Default sampler backend is `nuts`.
@@ -92,8 +91,7 @@ Preset behavior for `--preset paper_laptop`:
 - `exp4=10`
 - `exp5=10`
 - default `--n-jobs 2 --method-jobs 2`
-- default sampler backend `nuts`
-- `Exp4` ignores the generic sampler default and always uses `collapsed`
+- `Exp4` uses the same `nuts` GR-RHS sampler as the rest of the official protocol
 - `Exp3` heavy methods (`GIGG_MMLE`, `GHS_plus`) restricted to anchor settings in `exp3a/3b`
 - `Exp3` heavy methods use reduced laptop budgets under the preset
 - run-level analysis is skipped by default
@@ -195,7 +193,6 @@ python -m simulation_project.src.run_experiment --experiment 3d --preset paper_l
 - `p0_list=[5,15,30]`
 - `include_oracle=True`
 - DGP default correlation: `rho_within=0.8`, `rho_between=0.2`
-- sampler routing default: all `Exp4` settings use `collapsed`
 
 Run:
 

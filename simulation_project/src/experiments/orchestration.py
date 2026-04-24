@@ -14,7 +14,6 @@ from .runtime import (
     EXP3_GIGG_MODES,
     _default_repeats,
     _normalize_exp3_gigg_mode,
-    _resolve_sampler_backend_for_experiment,
 )
 from ..output_layout import resolve_analysis_dir, resolve_run_save_dir
 from ..utils import MASTER_SEED, save_json
@@ -43,7 +42,6 @@ def _preset_overrides_for_experiment(exp_key: str, preset: str) -> dict[str, Any
     common: dict[str, Any] = {
         "n_jobs": 2,
         "method_jobs": 2,
-        "sampler_backend": "nuts",
         "skip_run_analysis": True,
         "archive_artifacts": False,
     }
@@ -74,7 +72,6 @@ def run_all_experiments(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    sampler_backend: str = "nuts",
     exp3_gigg_mode: str = "paper_ref",
     skip_analysis: bool = False,
     archive_artifacts: bool = True,
@@ -85,7 +82,6 @@ def run_all_experiments(
     preset_overrides = _preset_overrides_for_experiment("all", preset)
     n_jobs = int(preset_overrides.get("n_jobs", n_jobs))
     method_jobs = int(preset_overrides.get("method_jobs", method_jobs))
-    sampler_backend = str(preset_overrides.get("sampler_backend", sampler_backend))
     skip_analysis = bool(skip_analysis) or bool(preset_overrides.get("skip_run_analysis", False))
     archive_artifacts = bool(archive_artifacts) and bool(preset_overrides.get("archive_artifacts", True))
     all_parallel_jobs = int(preset_overrides.get("all_parallel_jobs", all_parallel_jobs))
@@ -100,7 +96,6 @@ def run_all_experiments(
         enforce_bayes_convergence=bool(enforce_bayes_convergence),
         max_convergence_retries=max_convergence_retries,
         until_bayes_converged=bool(until_bayes_converged),
-        sampler_backend=str(sampler_backend),
     )
 
     out: Dict[str, Any] = {}
@@ -246,24 +241,15 @@ def _cli() -> None:
         choices=list(EXP3_GIGG_MODES),
         help="Exp3 GIGG mode. Only paper_ref is supported; it matches the gigg-master reference path.",
     )
-    parser.add_argument(
-        "--sampler",
-        type=str,
-        default="nuts",
-        choices=["nuts", "collapsed", "gibbs"],
-        help="GR-RHS posterior sampler: nuts, collapsed (Gaussian only), or gibbs (Gaussian only). Default is nuts.",
-    )
     args = parser.parse_args()
     exp_key = cli_choice_to_key(args.experiment)
     preset_overrides = _preset_overrides_for_experiment(exp_key, args.preset)
     n_jobs_use = int(preset_overrides.get("n_jobs", args.n_jobs))
     method_jobs_use = int(preset_overrides.get("method_jobs", args.method_jobs))
     repeats_use = args.repeats if args.repeats is not None else preset_overrides.get("repeats")
-    sampler_backend_arg = str(preset_overrides.get("sampler_backend", args.sampler))
     exp3_gigg_mode_name = _normalize_exp3_gigg_mode(args.exp3_gigg_mode)
     enforce_conv = not bool(args.no_enforce_bayes_convergence)
     until_conv = bool(args.until_bayes_converged) or (enforce_conv and args.max_convergence_retries is None)
-    sampler_backend_cli = _resolve_sampler_backend_for_experiment(exp_key, sampler_backend_arg)
     if exp_key == "analysis":
         save_dir_resolved = resolve_analysis_dir(args.save_dir, workspace=args.workspace)
     else:
@@ -282,7 +268,6 @@ def _cli() -> None:
         enforce_bayes_convergence=enforce_conv,
         max_convergence_retries=args.max_convergence_retries,
         until_bayes_converged=until_conv,
-        sampler_backend=sampler_backend_cli,
     )
     reps = repeats_use
 

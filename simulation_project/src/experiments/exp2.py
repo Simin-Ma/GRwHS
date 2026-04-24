@@ -179,7 +179,6 @@ def run_exp2_group_separation(
     rho_within: float = 0.8,
     rho_between: float = 0.2,
     sigma2: float = 1.0,
-    sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
     Exp2: Toy-example group separation (Theorem 3.34), single-default protocol.
@@ -247,7 +246,7 @@ def run_exp2_group_separation(
         [round(v, 3) for v in mu],
     )
 
-    grrhs_kw = {"backend": str(sampler_backend), "tau_target": "groups", "progress_bar": False}
+    grrhs_kw = {"tau_target": "groups", "progress_bar": False}
     tasks: list[tuple] = []
     for r in range(1, int(repeats) + 1):
         tasks.append(

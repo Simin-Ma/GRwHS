@@ -432,7 +432,6 @@ def run_exp3_linear_benchmark(
     until_bayes_converged: bool = True,
     n_train: int = 100,
     n_test: int = 30,
-    sampler_backend: str = "nuts",
     grrhs_extra_kwargs: dict | None = None,
     gigg_mode: str = "paper_ref",
     heavy_methods_anchor_only: bool = False,
@@ -578,7 +577,7 @@ def run_exp3_linear_benchmark(
                         )
                     )
 
-    grrhs_kw: dict = {"backend": str(sampler_backend), "tau_target": "groups"}
+    grrhs_kw: dict = {"tau_target": "groups"}
     if grrhs_extra_kwargs:
         grrhs_kw.update(grrhs_extra_kwargs)
     bayes_tasks: list[dict[str, Any]] = []

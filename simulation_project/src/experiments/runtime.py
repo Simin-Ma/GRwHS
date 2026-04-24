@@ -228,12 +228,6 @@ def _resolve_convergence_retry_limit(
     return _default_convergence_retries()
 
 
-def _resolve_sampler_backend_for_experiment(exp: str, sampler_backend: str) -> str:
-    _ = str(exp).strip().lower()
-    backend = str(sampler_backend).strip().lower()
-    return backend
-
-
 def _retry_budget_from_limit(max_convergence_retries: int) -> tuple[int, bool]:
     retry_raw = int(max_convergence_retries)
     if retry_raw >= 0:

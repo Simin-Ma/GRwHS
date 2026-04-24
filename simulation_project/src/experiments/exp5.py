@@ -69,12 +69,12 @@ def _screen_sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
 
 
 def _exp5_screen_prior_worker(
-    task: tuple[int, list[int], list[float], int, SamplerConfig, float, float, int, bool, int, str]
+    task: tuple[int, list[int], list[float], int, SamplerConfig, float, float, int, bool, int]
 ) -> dict[str, Any]:
     from .dgp.grouped_linear import generate_heterogeneity_dataset
     from .methods.fit_gr_rhs import fit_gr_rhs
 
-    sid, group_sizes, mu, seed, sampler, alpha_k, beta_k, bayes_min_chains, enforce_conv, max_retries, backend = task
+    sid, group_sizes, mu, seed, sampler, alpha_k, beta_k, bayes_min_chains, enforce_conv, max_retries = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     p0_signal_groups = int(np.sum(labels))
     s = experiment_seed(5, int(sid), 1, master_seed=seed)
@@ -88,7 +88,7 @@ def _exp5_screen_prior_worker(
         seed=s,
     )
     res = _fit_with_convergence_retry(
-        lambda st, att, _resume=None, _a=alpha_k, _b=beta_k, _s=s, _be=backend: fit_gr_rhs(
+        lambda st, att, _resume=None, _a=alpha_k, _b=beta_k, _s=s: fit_gr_rhs(
             ds["X"],
             ds["y"],
             ds["groups"],
@@ -101,7 +101,6 @@ def _exp5_screen_prior_worker(
             use_local_scale=True,
             shared_kappa=False,
             tau_target="groups",
-            backend=_be,
             retry_resume_payload=_resume,
             retry_attempt=int(att),
         ),
@@ -126,13 +125,13 @@ def _exp5_screen_prior_worker(
 
 
 def _exp5_worker(
-    task: tuple[int, int, list[int], list[float], int, SamplerConfig, list[tuple[float, float]], int, int, bool, int, str]
+    task: tuple[int, int, list[int], list[float], int, SamplerConfig, list[tuple[float, float]], int, int, bool, int]
 ) -> list[dict[str, Any]]:
     from .dgp.grouped_linear import generate_heterogeneity_dataset
     from .methods.fit_gr_rhs import fit_gr_rhs
     from .analysis.metrics import group_auroc, group_l2_score
 
-    sid, r, group_sizes, mu, seed, sampler, prior_grid, bayes_min_chains, method_jobs, enforce_conv, max_retries, backend = task
+    sid, r, group_sizes, mu, seed, sampler, prior_grid, bayes_min_chains, method_jobs, enforce_conv, max_retries = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     p0_signal_groups = int(np.sum(labels))
     s = experiment_seed(5, int(sid), r, master_seed=seed)
@@ -151,7 +150,7 @@ def _exp5_worker(
         pid, prior_vals = item
         alpha_k, beta_k = prior_vals
         res = _fit_with_convergence_retry(
-            lambda st, att, _resume=None, _a=alpha_k, _b=beta_k, _s=s, _pid=pid, _be=backend: fit_gr_rhs(
+            lambda st, att, _resume=None, _a=alpha_k, _b=beta_k, _s=s, _pid=pid: fit_gr_rhs(
                 ds["X"],
                 ds["y"],
                 ds["groups"],
@@ -164,7 +163,6 @@ def _exp5_worker(
                 use_local_scale=True,
                 shared_kappa=False,
                 tau_target="groups",
-                backend=_be,
                 retry_resume_payload=_resume,
                 retry_attempt=int(att),
             ),
@@ -250,7 +248,6 @@ def run_exp5_prior_sensitivity(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    sampler_backend: str = "nuts",
     screen_priors: bool = True,
     screen_min_successes: int | None = None,
     screen_max_retries: int = 1,
@@ -302,7 +299,7 @@ def run_exp5_prior_sensitivity(
     retained_priors = list(priors)
     default_prior = tuple(float(v) for v in priors[0]) if priors else None
     if bool(screen_priors) and len(priors) > 1:
-        screen_tasks: list[tuple[int, list[int], list[float], int, SamplerConfig, float, float, int, bool, int, str]] = []
+        screen_tasks: list[tuple[int, list[int], list[float], int, SamplerConfig, float, float, int, bool, int]] = []
         for scen_id, grp_sizes, mu in scenarios:
             for alpha_k, beta_k in priors:
                 screen_tasks.append(
@@ -317,7 +314,6 @@ def run_exp5_prior_sensitivity(
                         int(bayes_min_chains_use),
                         bool(enforce_bayes_convergence),
                         int(max(0, screen_max_retries)),
-                        str(sampler_backend),
                     )
                 )
         screen_rows = _parallel_rows(
@@ -379,7 +375,7 @@ def run_exp5_prior_sensitivity(
     tasks: list[tuple] = []
     for scen_id, grp_sizes, mu in scenarios:
         for r in range(1, int(repeats) + 1):
-            tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, retained_priors, int(bayes_min_chains_use), int(method_jobs), bool(enforce_bayes_convergence), int(retry_limit), str(sampler_backend)))
+            tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, retained_priors, int(bayes_min_chains_use), int(method_jobs), bool(enforce_bayes_convergence), int(retry_limit)))
 
     log.info("Exp5: %d scenarios x %d repeats x %d retained priors = %d task-rows", len(scenarios), repeats, len(retained_priors), len(tasks) * len(retained_priors))
     all_chunks = _parallel_rows(tasks, _exp5_worker, n_jobs=n_jobs, prefer_process=True, process_fallback="serial", progress_desc="Exp5 Prior Sensitivity")

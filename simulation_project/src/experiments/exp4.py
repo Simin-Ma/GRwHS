@@ -16,7 +16,6 @@ from .runtime import (
     bayes_rhat_threshold_default,
     _parallel_rows,
     _resolve_convergence_retry_limit,
-    _resolve_sampler_backend_for_experiment,
     _result_diag_fields,
     _sampler_for_exp4,
     _sampler_for_standard,
@@ -50,13 +49,13 @@ def _smoke_sampler_for_exp4(base: SamplerConfig) -> SamplerConfig:
 
 
 def _exp4_worker(
-    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], int, int, bool, int, int, str]
+    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], int, int, bool, int, int]
 ) -> list[dict[str, Any]]:
     from .methods.fit_gr_rhs import fit_gr_rhs
     from .methods.fit_rhs import fit_rhs
     from ..utils import canonical_groups, sample_correlated_design
 
-    p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, method_jobs, enforce_conv, max_retries, n, backend = task
+    p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, method_jobs, enforce_conv, max_retries, n = task
     p = int(sum(group_sizes))
     s = experiment_seed(4, int(p0_true), r, master_seed=seed)
 
@@ -83,7 +82,7 @@ def _exp4_worker(
         method = str(spec["method"])
         if method == "GR_RHS":
             res = _fit_with_convergence_retry(
-                lambda st, att, _resume=None, _s=spec, _s_val=s, _vn=vname, _be=backend: fit_gr_rhs(
+                lambda st, att, _resume=None, _s=spec, _s_val=s, _vn=vname: fit_gr_rhs(
                     X,
                     y,
                     groups,
@@ -97,8 +96,8 @@ def _exp4_worker(
                     beta_kappa=float(_s.get("beta_kappa", 1.0)),
                     use_local_scale=bool(_s.get("use_local_scale", True)),
                     shared_kappa=bool(_s.get("shared_kappa", False)),
-                    backend=_be,
                     retry_resume_payload=_resume,
+                    retry_attempt=int(att),
                 ),
                 method="GR_RHS",
                 sampler=sampler,
@@ -198,7 +197,6 @@ def run_exp4_variant_ablation(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
-    sampler_backend: str = "nuts",
 ) -> Dict[str, str]:
     """
     Exp4: GR-RHS variant ablation - tau calibration strategies.
@@ -216,7 +214,7 @@ def run_exp4_variant_ablation(
     Note: p0 here denotes active coefficients (sparsity in coefficients).
     DGP defaults: p=50 (5 groups of 10), n=100, rho_within=0.8, rho_between=0.2.
     Default: p0 in {5, 15, 30}, include_oracle=True, repeats=10, retries=1.
-    Sampler routing default: Exp4 always uses collapsed for all p0 values.
+    Sampler protocol: use the same GR-RHS NUTS backend as the rest of the suite.
     """
     pd = load_pandas()
     produced: set[Path] = set()
@@ -237,8 +235,6 @@ def run_exp4_variant_ablation(
         _EXP4_DEFAULT_MAX_CONV_RETRIES if max_convergence_retries is None else max_convergence_retries,
         until_bayes_converged=bool(until_bayes_converged),
     )
-    backend_use = _resolve_sampler_backend_for_experiment("exp4", sampler_backend)
-
     group_sizes = [10, 10, 10, 10, 10]
     p = int(sum(group_sizes))
     n = 100
@@ -261,12 +257,6 @@ def run_exp4_variant_ablation(
             }
         return variants
 
-    def _backend_for_p0(p0_true: int) -> str:
-        _ = int(p0_true)
-        # Exp4 now hard-routes to collapsed for all settings to avoid the
-        # unstable NUTS path in this experiment's high-correlation design.
-        return "collapsed"
-
     tasks: list[tuple] = []
     for p0_v in p0_vals:
         variants = _variants_for_p0(int(p0_v))
@@ -284,7 +274,6 @@ def run_exp4_variant_ablation(
                     bool(enforce_bayes_convergence),
                     int(retry_limit),
                     n,
-                    _backend_for_p0(int(p0_v)),
                 )
             )
 
