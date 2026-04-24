@@ -1,6 +1,6 @@
 # Simulation CLI Guide
 
-This guide matches the current single-default simulation protocol (no laptop/full split).
+This guide matches the single full simulation protocol used for paper analysis.
 
 ## 1. Entry Points
 
@@ -18,8 +18,7 @@ Common CLI args:
 - `--repeats <int>`
 - `--n-jobs <int>`
 - `--method-jobs <int>`
-- `--all-parallel-jobs <int>` (used when `--experiment all`)
-- `--preset {default,paper_laptop}`
+- `--all-parallel-jobs <int>`
 - `--skip-analysis`
 - `--no-archive-artifacts`
 - `--no-enforce-bayes-convergence`
@@ -29,34 +28,17 @@ Common CLI args:
 
 Retry semantics:
 - If `--max-convergence-retries` is set to a nonnegative integer, that exact retry budget is used.
-- If `--until-bayes-converged` is enabled and `--max-convergence-retries` is omitted, the runtime now uses a negative sentinel that activates capped "retry until converged" mode.
+- If `--until-bayes-converged` is enabled and `--max-convergence-retries` is omitted, the runtime uses a negative sentinel that activates capped "retry until converged" mode.
 - Shared hard cap for until-converged mode is 12 retries (13 total attempts); `Exp5` keeps a smaller practical cap of 5 retries.
 
 `--profile` is intentionally unsupported.
-`GR_RHS` now uses a single staged Gibbs identity:
-- default backend: `staged_gibbs`
-- current implemented likelihood: `gaussian`
-- `logistic` is not auto-routed to `NUTS`; Gibbs-logistic remains unimplemented
 
-`RHS` now uses a single Stan/HMC implementation aligned with `rstanarm::hs()`:
-- backend: `stan`
-- implemented likelihoods: `gaussian`, `logistic`
-- default hyperparameters: `global_df=1`, `local_df=1`, `slab_df=4`, `slab_scale=2.5`
-
-`GHS_plus` uses its own paper-aligned Gaussian Gibbs backend.
-
-## 2. Default Protocol
+## 2. Full Protocol
 
 Default run:
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment all --n-jobs 2 --method-jobs 2 --all-parallel-jobs 2
-```
-
-Laptop-friendly paper run:
-
-```bash
-python -m simulation_project.src.run_experiment --experiment all --preset paper_laptop
 ```
 
 Default experiment order:
@@ -78,41 +60,10 @@ Default repeats:
 - `exp4=10`
 - `exp5=20`
 
-`exp3c=30` and `exp3d=100` remain available via explicit `--experiment 3c/3d` runs.
+Optional explicit runs:
 
-## 2b. Paper-Laptop Protocol
-
-Recommended main-text experiments on a single laptop:
-
-1. `exp1`
-2. `exp2`
-3. `exp3a`
-4. `exp4`
-
-Recommended appendix/supporting experiments:
-
-1. `exp3b`
-2. `exp5`
-3. `exp3c` and `exp3d` as spot-check stress runs
-
-Preset behavior for `--preset paper_laptop`:
-
-- `exp1=300`
-- `exp2=100`
-- `exp3a=100`
-- `exp3b=24`
-- `exp3c=8`
-- `exp3d=15`
-- `exp4=10`
-- `exp5=10`
-- default `--n-jobs 2 --method-jobs 2`
-- `Exp4` uses the default `GR_RHS` routing: Gaussian fits run with staged Gibbs
-- `Exp3` heavy methods (`GIGG_MMLE`, `GHS_plus`) restricted to anchor settings in `exp3a/3b`
-- `Exp3` heavy methods use reduced laptop budgets under the preset
-- `GHS_plus` keeps the Xu et al. (2016) HBGHS prior defaults:
-  `tau ~ C+(0,1)`, `lambda_g ~ C+(0,1)`, `delta_j ~ C+(0,1)`
-- run-level analysis is skipped by default
-- duplicate artifact archiving is disabled by default
+- `exp3c=30`
+- `exp3d=100`
 
 ## 3. Scientific Credibility Rules
 
@@ -136,7 +87,7 @@ Diagnostics side table is always exported:
 
 ### Exp2 (`group_separation`)
 
-- `group_sizes=[10,10,10,10,10]` (aligned to Exp3 `G10x5`, `p=50`)
+- `group_sizes=[10,10,10,10,10]`
 - `rho_ref=0.8`
 - `xi_ratios=[0.0,1.0,2.0,5.0,10.0]`
 - `n_train=100`, `n_test=30`
@@ -146,7 +97,7 @@ Diagnostics side table is always exported:
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 2 --preset paper_laptop
+python -m simulation_project.src.run_experiment --experiment 2
 ```
 
 ### Exp3a (`main_benchmark`)
@@ -155,56 +106,50 @@ python -m simulation_project.src.run_experiment --experiment 2 --preset paper_la
 - correlation axis: `rho_within=[0.8]`, `rho_between=0.2`, enforced `rw>rb`
 - SNR axis: `[0.2,1.0,5.0]`
 - methods: `GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV`
-- `GHS_plus` is the paper-aligned HBGHS Gaussian Gibbs baseline (Xu et al., 2016)
 
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3a --preset paper_laptop
+python -m simulation_project.src.run_experiment --experiment 3a
 ```
 
 ### Exp3b (`boundary_stress`)
 
 - signal: `boundary`
 - same correlation/SNR axes as Exp3a
-- boundary `xi/xi_crit` grid via `boundary_xi_ratio_list` (default boundary stress grid)
+- boundary `xi/xi_crit` grid via `boundary_xi_ratio_list`
 - same default methods as Exp3a
-- under `paper_laptop`, heavy methods are restricted to anchor settings (`G10x5`, `RW08_SNR10`, default boundary ratio)
-- under `paper_laptop`, `GIGG_MMLE` and `GHS_plus` use reduced per-fit budgets
-- `GHS_plus` still uses the same Xu et al. prior defaults; only the Gibbs iteration budget is reduced
 
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3b --preset paper_laptop
+python -m simulation_project.src.run_experiment --experiment 3b
 ```
 
 ### Exp3c (`highdim_stress`)
 
 - `n_train=200`, `n_test=100`, `p=500`, `group_sizes=[50]*10`
 - signals: `concentrated`, `distributed`
-- correlation axis: `rho_within=[0.8]`, `rho_between=0.2`, enforced `rw>rb`
+- correlation axis: `rho_within=[0.8]`, `rho_between=0.2`
 - SNR axis: `[0.2,1.0,5.0]`
-- same default methods as Exp3a
 
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3c --preset paper_laptop
+python -m simulation_project.src.run_experiment --experiment 3c
 ```
 
 ### Exp3d (`within_group_mixed`)
 
 - signal: `boundary`
 - default group configs: `G10x5`, `CL`, `CS`
-- correlation axis: `rho_within=[0.8]`, `rho_between=0.2`, enforced `rw>rb`
+- correlation axis: `rho_within=[0.8]`, `rho_between=0.2`
 - SNR axis: `[0.2,1.0,5.0]`
-- same default methods as Exp3a
 
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 3d --preset paper_laptop
+python -m simulation_project.src.run_experiment --experiment 3d
 ```
 
 ### Exp4 (`variant_ablation`)
@@ -216,7 +161,7 @@ python -m simulation_project.src.run_experiment --experiment 3d --preset paper_l
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 4 --preset paper_laptop
+python -m simulation_project.src.run_experiment --experiment 4
 ```
 
 ### Exp5 (`prior_sensitivity`)
@@ -226,13 +171,13 @@ python -m simulation_project.src.run_experiment --experiment 4 --preset paper_la
 - default contrast baseline: prior `(0.5,1.0)`
 - default prior grid starts from full sensitivity, then runs a lightweight screening stage before the full paired run
 - default convergence retry budget is `max_convergence_retries=5` for Exp5
-- retry attempts continue from previous sampler state (no cold restart)
+- retry attempts continue from previous sampler state
 - `summary_partial.csv` is exported even when strict paired summary is empty
 
 Run:
 
 ```bash
-python -m simulation_project.src.run_experiment --experiment 5 --preset paper_laptop
+python -m simulation_project.src.run_experiment --experiment 5
 ```
 
 ## 5. Analysis Only
@@ -246,11 +191,5 @@ python -m simulation_project.src.run_experiment --experiment analysis
 ```bash
 python -m simulation_project.src.run_sweep --list
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5
-python -m simulation_project.src.run_sweep --sweep exp1_to_exp5_paper_laptop
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --set n_jobs=2 --set method_jobs=2 --set all_parallel_jobs=2 --set max_convergence_retries=2
 ```
-
-## 7. Optional Quick Utility
-
-`scripts/run_laptop_best_2h.py` remains available as a quick smoke/main acceptance helper.
-It is not the default protocol and does not define the paper-level reference configuration.

@@ -10,11 +10,7 @@ from tqdm.auto import tqdm
 
 from .schemas import RunCommonConfig
 from ..experiment_aliases import CLI_EXPERIMENT_CHOICES, cli_choice_to_key
-from .runtime import (
-    EXP3_GIGG_MODES,
-    _default_repeats,
-    _normalize_exp3_gigg_mode,
-)
+from .runtime import EXP3_GIGG_MODES, _default_repeats, _normalize_exp3_gigg_mode
 from ..output_layout import resolve_analysis_dir, resolve_run_save_dir
 from ..utils import MASTER_SEED, save_json
 from .exp1 import run_exp1_kappa_profile_regimes
@@ -28,38 +24,6 @@ from .exp3 import (
 )
 from .exp4 import run_exp4_variant_ablation
 from .exp5 import run_exp5_prior_sensitivity
-
-PRESET_CHOICES: tuple[str, ...] = ("default", "paper_laptop")
-
-
-def _preset_overrides_for_experiment(exp_key: str, preset: str) -> dict[str, Any]:
-    exp = str(exp_key).strip().lower()
-    name = str(preset).strip().lower()
-    if name == "" or name == "default":
-        return {}
-    if name != "paper_laptop":
-        raise ValueError(f"unknown preset: {preset!r}; expected one of {PRESET_CHOICES}")
-    common: dict[str, Any] = {
-        "n_jobs": 2,
-        "method_jobs": 2,
-        "skip_run_analysis": True,
-        "archive_artifacts": False,
-    }
-    per_exp: dict[str, dict[str, Any]] = {
-        "all": {"all_parallel_jobs": 2},
-        "exp1": {"repeats": 300},
-        "exp2": {"repeats": 100},
-        "exp3": {"repeats": 50, "heavy_methods_anchor_only": True, "gigg_budget_profile": "laptop", "ghs_plus_budget_profile": "laptop"},
-        "exp3a": {"repeats": 100, "heavy_methods_anchor_only": True, "gigg_budget_profile": "laptop", "ghs_plus_budget_profile": "laptop"},
-        "exp3b": {"repeats": 24, "heavy_methods_anchor_only": True, "gigg_budget_profile": "laptop", "ghs_plus_budget_profile": "laptop"},
-        "exp3c": {"repeats": 8, "methods": ["GR_RHS", "RHS", "OLS", "LASSO_CV"]},
-        "exp3d": {"repeats": 15, "methods": ["GR_RHS", "RHS", "OLS", "LASSO_CV"]},
-        "exp4": {"repeats": 10, "max_convergence_retries": 1},
-        "exp5": {"repeats": 10},
-    }
-    out = dict(common)
-    out.update(per_exp.get(exp, {}))
-    return out
 
 
 def run_all_experiments(
@@ -75,20 +39,13 @@ def run_all_experiments(
     exp3_gigg_mode: str = "paper_ref",
     skip_analysis: bool = False,
     archive_artifacts: bool = True,
-    preset: str = "default",
     all_parallel_jobs: int = 1,
 ) -> Dict[str, Any]:
     skip_analysis = bool(skip_analysis) or bool(skip_run_analysis)
-    preset_overrides = _preset_overrides_for_experiment("all", preset)
-    n_jobs = int(preset_overrides.get("n_jobs", n_jobs))
-    method_jobs = int(preset_overrides.get("method_jobs", method_jobs))
-    skip_analysis = bool(skip_analysis) or bool(preset_overrides.get("skip_run_analysis", False))
-    archive_artifacts = bool(archive_artifacts) and bool(preset_overrides.get("archive_artifacts", True))
-    all_parallel_jobs = int(preset_overrides.get("all_parallel_jobs", all_parallel_jobs))
     exp3_gigg_mode_name = _normalize_exp3_gigg_mode(exp3_gigg_mode)
     common_cfg = RunCommonConfig(
-        n_jobs=n_jobs,
-        method_jobs=method_jobs,
+        n_jobs=int(n_jobs),
+        method_jobs=int(method_jobs),
         seed=seed,
         save_dir=save_dir,
         skip_run_analysis=bool(skip_analysis),
@@ -103,10 +60,10 @@ def run_all_experiments(
         (
             "exp1",
             lambda: run_exp1_kappa_profile_regimes(
-                n_jobs=n_jobs,
+                n_jobs=int(n_jobs),
                 seed=seed,
                 save_dir=save_dir,
-                repeats=int(_preset_overrides_for_experiment("exp1", preset).get("repeats", _default_repeats("exp1"))),
+                repeats=int(_default_repeats("exp1")),
                 skip_run_analysis=bool(skip_analysis),
                 archive_artifacts=bool(archive_artifacts),
             ),
@@ -114,45 +71,37 @@ def run_all_experiments(
         (
             "exp2",
             lambda: run_exp2_group_separation(
-                repeats=int(_preset_overrides_for_experiment("exp2", preset).get("repeats", _default_repeats("exp2"))),
+                repeats=int(_default_repeats("exp2")),
                 **common_cfg.as_kwargs(),
             ),
         ),
         (
             "exp3a",
             lambda: run_exp3a_main_benchmark(
-                repeats=int(_preset_overrides_for_experiment("exp3a", preset).get("repeats", _default_repeats("exp3"))),
+                repeats=int(_default_repeats("exp3")),
                 gigg_mode=exp3_gigg_mode_name,
-                heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3a", preset).get("heavy_methods_anchor_only", False)),
-                gigg_budget_profile=str(_preset_overrides_for_experiment("exp3a", preset).get("gigg_budget_profile", "default")),
-                ghs_plus_budget_profile=str(_preset_overrides_for_experiment("exp3a", preset).get("ghs_plus_budget_profile", "default")),
-                methods=_preset_overrides_for_experiment("exp3a", preset).get("methods"),
                 **common_cfg.as_kwargs(),
             ),
         ),
         (
             "exp3b",
             lambda: run_exp3b_boundary_stress(
-                repeats=int(_preset_overrides_for_experiment("exp3b", preset).get("repeats", _default_repeats("exp3"))),
+                repeats=int(_default_repeats("exp3")),
                 gigg_mode=exp3_gigg_mode_name,
-                heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3b", preset).get("heavy_methods_anchor_only", False)),
-                gigg_budget_profile=str(_preset_overrides_for_experiment("exp3b", preset).get("gigg_budget_profile", "default")),
-                ghs_plus_budget_profile=str(_preset_overrides_for_experiment("exp3b", preset).get("ghs_plus_budget_profile", "default")),
-                methods=_preset_overrides_for_experiment("exp3b", preset).get("methods"),
                 **common_cfg.as_kwargs(),
             ),
         ),
         (
             "exp4",
             lambda: run_exp4_variant_ablation(
-                repeats=int(_preset_overrides_for_experiment("exp4", preset).get("repeats", _default_repeats("exp4"))),
+                repeats=int(_default_repeats("exp4")),
                 **common_cfg.as_kwargs(),
             ),
         ),
         (
             "exp5",
             lambda: run_exp5_prior_sensitivity(
-                repeats=int(_preset_overrides_for_experiment("exp5", preset).get("repeats", _default_repeats("exp5"))),
+                repeats=int(_default_repeats("exp5")),
                 **common_cfg.as_kwargs(),
             ),
         ),
@@ -173,9 +122,8 @@ def run_all_experiments(
 
     save_json(
         {
-            "protocol": "single_default",
+            "protocol": "single_full",
             "method_jobs": int(method_jobs),
-            "preset": str(preset),
             "archive_artifacts": bool(archive_artifacts),
             "enforce_bayes_convergence": bool(enforce_bayes_convergence),
             "max_convergence_retries": max_convergence_retries,
@@ -196,7 +144,7 @@ def run_all_experiments(
 def _cli() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the unified simulation pipeline (Exp1, Exp2, Exp3a, Exp3b, Exp4, Exp5), "
+            "Run the unified full simulation pipeline (Exp1, Exp2, Exp3a, Exp3b, Exp4, Exp5), "
             "or run individual experiment entries. "
             "On Windows, process-pool parallelism is allowed from spawn-safe script entrypoints "
             "and disabled only in interactive/non-spawn-safe contexts."
@@ -216,7 +164,6 @@ def _cli() -> None:
     parser.add_argument("--seed", type=int, default=MASTER_SEED)
     parser.add_argument("--repeats", type=int, default=None)
     parser.add_argument("--n-jobs", type=int, default=1)
-    parser.add_argument("--preset", type=str, default="default", choices=list(PRESET_CHOICES))
     parser.add_argument(
         "--method-jobs",
         type=int,
@@ -243,10 +190,9 @@ def _cli() -> None:
     )
     args = parser.parse_args()
     exp_key = cli_choice_to_key(args.experiment)
-    preset_overrides = _preset_overrides_for_experiment(exp_key, args.preset)
-    n_jobs_use = int(preset_overrides.get("n_jobs", args.n_jobs))
-    method_jobs_use = int(preset_overrides.get("method_jobs", args.method_jobs))
-    repeats_use = args.repeats if args.repeats is not None else preset_overrides.get("repeats")
+    n_jobs_use = int(args.n_jobs)
+    method_jobs_use = int(args.method_jobs)
+    repeats_use = args.repeats
     exp3_gigg_mode_name = _normalize_exp3_gigg_mode(args.exp3_gigg_mode)
     enforce_conv = not bool(args.no_enforce_bayes_convergence)
     until_conv = bool(args.until_bayes_converged) or (enforce_conv and args.max_convergence_retries is None)
@@ -263,8 +209,8 @@ def _cli() -> None:
         method_jobs=method_jobs_use,
         seed=args.seed,
         save_dir=str(save_dir_resolved),
-        skip_run_analysis=bool(args.skip_analysis) or bool(preset_overrides.get("skip_run_analysis", False)),
-        archive_artifacts=(not bool(args.no_archive_artifacts)) and bool(preset_overrides.get("archive_artifacts", True)),
+        skip_run_analysis=bool(args.skip_analysis),
+        archive_artifacts=(not bool(args.no_archive_artifacts)),
         enforce_bayes_convergence=enforce_conv,
         max_convergence_retries=args.max_convergence_retries,
         until_bayes_converged=until_conv,
@@ -291,9 +237,8 @@ def _cli() -> None:
         run_all_experiments(
             **common_cfg.as_kwargs(),
             exp3_gigg_mode=exp3_gigg_mode_name,
-            skip_analysis=bool(args.skip_analysis) or bool(preset_overrides.get("skip_run_analysis", False)),
-            preset=str(args.preset),
-            all_parallel_jobs=max(1, int(preset_overrides.get("all_parallel_jobs", args.all_parallel_jobs))),
+            skip_analysis=bool(args.skip_analysis),
+            all_parallel_jobs=max(1, int(args.all_parallel_jobs)),
         )
     elif exp_key == "analysis":
         run_analysis(save_dir=str(save_dir_resolved))
@@ -302,8 +247,8 @@ def _cli() -> None:
             "exp1": {
                 "run": lambda: run_exp1_kappa_profile_regimes(
                     n_jobs=n_jobs_use,
-                    skip_run_analysis=bool(args.skip_analysis) or bool(preset_overrides.get("skip_run_analysis", False)),
-                    archive_artifacts=(not bool(args.no_archive_artifacts)) and bool(preset_overrides.get("archive_artifacts", True)),
+                    skip_run_analysis=bool(args.skip_analysis),
+                    archive_artifacts=(not bool(args.no_archive_artifacts)),
                     seed=args.seed,
                     save_dir=str(save_dir_resolved),
                     repeats=reps or _default_repeats("exp1"),
@@ -325,10 +270,6 @@ def _cli() -> None:
                 "run": lambda: run_exp3_linear_benchmark(
                     repeats=reps or _default_repeats("exp3"),
                     gigg_mode=exp3_gigg_mode_name,
-                    methods=_preset_overrides_for_experiment("exp3", args.preset).get("methods"),
-                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3", args.preset).get("heavy_methods_anchor_only", False)),
-                    gigg_budget_profile=str(_preset_overrides_for_experiment("exp3", args.preset).get("gigg_budget_profile", "default")),
-                    ghs_plus_budget_profile=str(_preset_overrides_for_experiment("exp3", args.preset).get("ghs_plus_budget_profile", "default")),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -339,10 +280,6 @@ def _cli() -> None:
                 "run": lambda: run_exp3a_main_benchmark(
                     repeats=reps or _default_repeats("exp3"),
                     gigg_mode=exp3_gigg_mode_name,
-                    methods=_preset_overrides_for_experiment("exp3a", args.preset).get("methods"),
-                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3a", args.preset).get("heavy_methods_anchor_only", False)),
-                    gigg_budget_profile=str(_preset_overrides_for_experiment("exp3a", args.preset).get("gigg_budget_profile", "default")),
-                    ghs_plus_budget_profile=str(_preset_overrides_for_experiment("exp3a", args.preset).get("ghs_plus_budget_profile", "default")),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -353,10 +290,6 @@ def _cli() -> None:
                 "run": lambda: run_exp3b_boundary_stress(
                     repeats=reps or _default_repeats("exp3"),
                     gigg_mode=exp3_gigg_mode_name,
-                    methods=_preset_overrides_for_experiment("exp3b", args.preset).get("methods"),
-                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3b", args.preset).get("heavy_methods_anchor_only", False)),
-                    gigg_budget_profile=str(_preset_overrides_for_experiment("exp3b", args.preset).get("gigg_budget_profile", "default")),
-                    ghs_plus_budget_profile=str(_preset_overrides_for_experiment("exp3b", args.preset).get("ghs_plus_budget_profile", "default")),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -367,10 +300,6 @@ def _cli() -> None:
                 "run": lambda: run_exp3c_highdim_stress(
                     repeats=reps or _default_repeats("exp3c"),
                     gigg_mode=exp3_gigg_mode_name,
-                    methods=_preset_overrides_for_experiment("exp3c", args.preset).get("methods"),
-                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3c", args.preset).get("heavy_methods_anchor_only", False)),
-                    gigg_budget_profile=str(_preset_overrides_for_experiment("exp3c", args.preset).get("gigg_budget_profile", "default")),
-                    ghs_plus_budget_profile=str(_preset_overrides_for_experiment("exp3c", args.preset).get("ghs_plus_budget_profile", "default")),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -381,10 +310,6 @@ def _cli() -> None:
                 "run": lambda: run_exp3d_within_group_mixed(
                     repeats=reps or _default_repeats("exp3d"),
                     gigg_mode=exp3_gigg_mode_name,
-                    methods=_preset_overrides_for_experiment("exp3d", args.preset).get("methods"),
-                    heavy_methods_anchor_only=bool(_preset_overrides_for_experiment("exp3d", args.preset).get("heavy_methods_anchor_only", False)),
-                    gigg_budget_profile=str(_preset_overrides_for_experiment("exp3d", args.preset).get("gigg_budget_profile", "default")),
-                    ghs_plus_budget_profile=str(_preset_overrides_for_experiment("exp3d", args.preset).get("ghs_plus_budget_profile", "default")),
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
@@ -412,8 +337,9 @@ def _cli() -> None:
         }
         spec = dispatch[exp_key]
         spec["run"]()
-        if not (bool(args.skip_analysis) or bool(preset_overrides.get("skip_run_analysis", False))):
+        if not bool(args.skip_analysis):
             analyzer = spec["analyze"]
             label = str(spec["label"])
             results_subdir = str(spec["results_subdir"])
             _print_exp_analysis(label, analyzer(base / "results" / results_subdir))
+

@@ -18,7 +18,7 @@ from simulation_project.src.experiments import (
 from simulation_project.src.experiments.evaluation import _evaluate_row, _kappa_group_means, _kappa_group_prob_gt
 from simulation_project.src.experiments.fitting import _fit_all_methods, _fit_with_convergence_retry
 from simulation_project.src.experiments.method_registry import MethodRegistry, build_default_method_registry
-from simulation_project.src.experiments.orchestration import _preset_overrides_for_experiment, run_all_experiments
+from simulation_project.src.experiments.orchestration import run_all_experiments
 from simulation_project.src.experiments.methods.helpers import as_int_groups, fit_error_result, scaled_iteration_budget
 from simulation_project.src.experiments.schemas import RunCommonConfig, RunManifest
 from simulation_project.src.output_layout import resolve_analysis_dir, resolve_run_save_dir, resolve_workspace_dir
@@ -203,22 +203,6 @@ def test_fit_with_convergence_retry_passes_resume_payload_when_enabled() -> None
     assert isinstance(seen_payloads[1], dict)
     assert seen_payloads[1].get("backend") == "gibbs"
     assert bool(out.converged)
-
-
-def test_paper_laptop_preset_overrides_core_settings() -> None:
-    exp3a = _preset_overrides_for_experiment("exp3a", "paper_laptop")
-    exp3c = _preset_overrides_for_experiment("exp3c", "paper_laptop")
-    exp5 = _preset_overrides_for_experiment("exp5", "paper_laptop")
-    assert int(exp3a["repeats"]) == 50
-    assert bool(exp3a["heavy_methods_anchor_only"]) is True
-    assert int(exp3a["n_jobs"]) == 2
-    assert exp3a["gigg_budget_profile"] == "laptop"
-    assert exp3a["ghs_plus_budget_profile"] == "laptop"
-    assert exp3a["skip_run_analysis"] is True
-    assert exp3a["archive_artifacts"] is False
-    assert exp3c["methods"] == ["GR_RHS", "RHS", "OLS", "LASSO_CV"]
-    assert exp5["skip_run_analysis"] is True
-    assert exp5["archive_artifacts"] is False
 
 
 def test_exp5_defaults_to_full_sensitivity_and_retry_budget_5(monkeypatch) -> None:

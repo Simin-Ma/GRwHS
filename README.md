@@ -1,7 +1,6 @@
 # GR-RHS Simulation Project
 
-Simulation-first grouped shrinkage experimentation toolkit for comparing GR-RHS against
-baseline Bayesian and frequentist methods.
+Simulation-first grouped shrinkage experimentation toolkit for comparing GR-RHS against baseline Bayesian and frequentist methods.
 
 ## Setup
 
@@ -11,7 +10,7 @@ pip install -e ".[dev]"
 
 ## Active System
 
-All experiments run through the single active pipeline: `simulation_project/`.
+All experiments run through the single full pipeline in `simulation_project/`.
 
 Quick start:
 
@@ -25,34 +24,24 @@ Run all experiments:
 python -m simulation_project.src.run_experiment --experiment all --n-jobs 2 --method-jobs 2 --all-parallel-jobs 2
 ```
 
-Laptop-friendly paper preset:
-
-```bash
-python -m simulation_project.src.run_experiment --experiment all --preset paper_laptop
-```
-
-This preset also skips analysis and disables duplicate artifact archiving by default.
-
-Default output layout is now session-based and centralized under:
+Default output layout is session-based under:
 
 `outputs/simulation_project/sessions/<timestamp>_cli_<experiment>/`
 
-Ordinary experiment outputs are local artifacts only and should not be committed or pushed to `main`.
+Ordinary experiment outputs are local artifacts only and should not be committed.
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
 | `simulation_project/README.md` | Full CLI reference and typical commands |
-| `docs/simulation_cli_guide.md` | Per-experiment command presets and output layout |
+| `docs/simulation_cli_guide.md` | Per-experiment commands and output layout |
 | `docs/fair_benchmark_protocol.md` | Fairness rules for benchmark comparisons |
 | `docs/bayesian_four_models_priors_posteriors_sampling_convergence.md` | Bayesian backend module locations |
 
 ## Method Notes
 
-`GHS_plus` now refers to the Xu et al. (2016) HBGHS baseline with paper-aligned
-Gaussian Gibbs defaults rather than the older project-specific RHS-style `tau0`
-calibration wrapper.
+`GHS_plus` refers to the Xu et al. (2016) HBGHS baseline with paper-aligned Gaussian Gibbs defaults.
 
 ## Active Experiments
 

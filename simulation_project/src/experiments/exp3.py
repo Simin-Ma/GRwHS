@@ -243,7 +243,6 @@ def _exp3_worker(
             raise ValueError("Exp3 task must include at least one method.")
         gigg_config = dict(task["gigg_config"])
         gigg_mode = str(task.get("gigg_mode", "paper_ref"))
-        ghs_plus_profile = str(task.get("ghs_plus_profile", "default"))
         bayes_min_chains = task.get("bayes_min_chains")
         method_jobs = int(task.get("method_jobs", 1))
         enforce_conv = bool(task["enforce_bayes_convergence"])
@@ -256,16 +255,14 @@ def _exp3_worker(
             boundary_xi_ratio = float(_BOUNDARY_XI_RATIO)
             n_train = 100
             method_jobs = 1
-            ghs_plus_profile = "default"
             log_path = None
         elif len(task) == 20:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
             n_train = 100
             method_jobs = 1
-            ghs_plus_profile = "default"
             log_path = None
         else:
-            sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_train, n_test, sampler, methods, gigg_config, bayes_min_chains, method_jobs, ghs_plus_profile, enforce_conv, max_retries, grrhs_kwargs = task
+            sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_train, n_test, sampler, methods, gigg_config, bayes_min_chains, method_jobs, enforce_conv, max_retries, grrhs_kwargs = task
             log_path = None
         methods = [str(m) for m in methods]
         gigg_mode = "paper_ref"
@@ -359,7 +356,6 @@ def _exp3_worker(
         enforce_bayes_convergence=bool(enforce_conv),
         max_convergence_retries=int(max_retries),
         method_jobs=int(method_jobs),
-        ghs_plus_profile=str(ghs_plus_profile),
     )
 
     out_rows: list[dict[str, Any]] = []
@@ -450,8 +446,6 @@ def run_exp3_linear_benchmark(
     grrhs_extra_kwargs: dict | None = None,
     gigg_mode: str = "paper_ref",
     heavy_methods_anchor_only: bool = False,
-    gigg_budget_profile: str = "default",
-    ghs_plus_budget_profile: str = "default",
     result_dir_name: str = "exp3_linear_benchmark",
     exp_key: str = "exp3",
 ) -> Dict[str, str]:
@@ -498,7 +492,7 @@ def run_exp3_linear_benchmark(
     bayes_methods_use = [m for m in methods_use if _is_bayesian_method(m)]
     classical_methods_use = [m for m in methods_use if not _is_bayesian_method(m)]
     gigg_mode_name = _normalize_exp3_gigg_mode(gigg_mode)
-    gigg_cfg = _exp3_gigg_config_for_mode(_gigg_config_default(profile=str(gigg_budget_profile)), gigg_mode=gigg_mode_name)
+    gigg_cfg = _exp3_gigg_config_for_mode(_gigg_config_default(), gigg_mode=gigg_mode_name)
     retry_limit = _resolve_convergence_retry_limit(
         max_convergence_retries,
         until_bayes_converged=bool(until_bayes_converged),
@@ -627,7 +621,6 @@ def run_exp3_linear_benchmark(
                 "sampler": sampler,
                 "gigg_config": dict(gigg_cfg),
                 "gigg_mode": str(gigg_mode_name),
-                "ghs_plus_profile": str(ghs_plus_budget_profile),
                 "bayes_min_chains": int(bayes_min_chains_use),
                 "method_jobs": int(method_jobs),
                 "enforce_bayes_convergence": bool(enforce_bayes_convergence),
@@ -1047,8 +1040,6 @@ def run_exp3_linear_benchmark(
         "bayes_min_chains": int(bayes_min_chains_use),
         "method_jobs": int(method_jobs),
         "heavy_methods_anchor_only": bool(heavy_methods_anchor_only),
-        "gigg_budget_profile": str(gigg_budget_profile),
-        "ghs_plus_budget_profile": str(ghs_plus_budget_profile),
         "n_settings": len(settings),
         "repeats": int(repeats),
         "enforce_bayes_convergence": bool(enforce_bayes_convergence),

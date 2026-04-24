@@ -13,7 +13,6 @@ def test_simulation_cli_help_runs() -> None:
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     assert proc.returncode == 0
     assert "--experiment {all,1,2,3,3a,3b,3c,3d,4,5,analysis}" in proc.stdout
-    assert "--preset {default,paper_laptop}" in proc.stdout
     assert "--skip-analysis" in proc.stdout
     assert "--no-archive-artifacts" in proc.stdout
 

@@ -11,109 +11,17 @@ defaults:
 sweeps:
   exp1_to_exp5:
     experiment: all
-    description: Unified default protocol run (Exp1 -> Exp5 -> analysis).
+    description: Unified full protocol run (Exp1 -> Exp5 -> analysis).
     fixed:
       all_parallel_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: nuts
       exp3_gigg_mode: paper_ref
-
-  exp1_to_exp5_paper_laptop:
-    experiment: all
-    description: Laptop-friendly paper preset for Exp1-Exp5 with anchored heavy methods and reduced repeats.
-    fixed:
-      preset: paper_laptop
-      skip_run_analysis: true
-      archive_artifacts: false
-      enforce_bayes_convergence: true
-      until_bayes_converged: true
-      sampler_backend: nuts
-      exp3_gigg_mode: paper_ref
-      all_parallel_jobs: 2
-
-  exp1_paper_laptop:
-    experiment: exp1
-    description: Paper-laptop main-text Exp1 preset.
-    fixed:
-      repeats: 300
-      n_jobs: 2
-
-  exp2_paper_laptop:
-    experiment: exp2
-    description: Paper-laptop main-text Exp2 preset.
-    fixed:
-      repeats: 100
-      n_jobs: 2
-      method_jobs: 2
-      enforce_bayes_convergence: true
-      until_bayes_converged: true
-      sampler_backend: nuts
-
-  exp3a_paper_laptop:
-    experiment: exp3a
-    description: Paper-laptop main-text Exp3a preset with heavy methods restricted to anchor settings.
-    fixed:
-      repeats: 50
-      n_jobs: 2
-      method_jobs: 2
-      heavy_methods_anchor_only: true
-      gigg_budget_profile: laptop
-      ghs_plus_budget_profile: laptop
-      skip_run_analysis: true
-      archive_artifacts: false
-      enforce_bayes_convergence: true
-      until_bayes_converged: true
-      sampler_backend: nuts
-      gigg_mode: paper_ref
-
-  exp4_paper_laptop:
-    experiment: exp4
-    description: Paper-laptop main-text Exp4 preset (2h minimal config).
-    fixed:
-      repeats: 10
-      n_jobs: 2
-      method_jobs: 2
-      skip_run_analysis: true
-      archive_artifacts: false
-      enforce_bayes_convergence: true
-      max_convergence_retries: 1
-      until_bayes_converged: true
-      sampler_backend: nuts
-
-  exp3b_paper_laptop_appendix:
-    experiment: exp3b
-    description: Paper-laptop appendix Exp3b preset with heavy methods restricted to anchor settings.
-    fixed:
-      repeats: 24
-      n_jobs: 2
-      method_jobs: 2
-      heavy_methods_anchor_only: true
-      gigg_budget_profile: laptop
-      ghs_plus_budget_profile: laptop
-      skip_run_analysis: true
-      archive_artifacts: false
-      enforce_bayes_convergence: true
-      until_bayes_converged: true
-      sampler_backend: nuts
-      gigg_mode: paper_ref
-
-  exp5_paper_laptop_appendix:
-    experiment: exp5
-    description: Paper-laptop appendix Exp5 preset with prior screening enabled.
-    fixed:
-      repeats: 10
-      n_jobs: 2
-      method_jobs: 2
-      skip_run_analysis: true
-      archive_artifacts: false
-      enforce_bayes_convergence: true
-      until_bayes_converged: true
-      sampler_backend: nuts
 
   exp1_default:
     experiment: exp1
-    description: Exp1 default protocol (repeats=500).
+    description: Exp1 full protocol (repeats=500).
     fixed:
       repeats: 500
 

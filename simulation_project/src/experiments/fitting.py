@@ -38,7 +38,6 @@ def _fit_all_methods(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int = 2,
     method_jobs: int = 1,
-    ghs_plus_profile: str = "default",
 ) -> dict[str, FitResult]:
     n = X.shape[0]
     grrhs_kwargs = grrhs_kwargs or {}
@@ -68,7 +67,7 @@ def _fit_all_methods(
             min_gigg_chains = max(2, int(bayes_min_chains) if bayes_min_chains is not None else 0)
             sampler_base = _sampler_for_bayesian_default(sampler_base, min_chains=min_gigg_chains)
         if method == "GHS_plus":
-            sampler_base = _sampler_for_ghs_plus_default(sampler_base, profile=ghs_plus_profile)
+            sampler_base = _sampler_for_ghs_plus_default(sampler_base)
         sampler_try = _scale_sampler_for_retry(sampler_base, attempt)
         gigg_try = _scale_gigg_config_for_retry(gigg_cfg, attempt)
         gigg_mmle_try = dict(gigg_try)
