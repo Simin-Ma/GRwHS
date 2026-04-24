@@ -4,7 +4,7 @@ This note summarizes the Bayesian backends now used by the consolidated simulati
 
 ## Runtime Modules
 
-- GR-RHS NUTS: `simulation_project/src/core/models/grrhs_nuts.py`
+- GR-RHS staged Gibbs / NUTS: `simulation_project/src/core/models/grrhs_nuts.py`
 - RHS baseline: `simulation_project/src/core/models/baselines/models.py`
 - GIGG: `simulation_project/src/core/models/gigg_regression.py`
 - Grouped Horseshoe+: `simulation_project/src/core/models/baselines/grouped_horseshoe.py`

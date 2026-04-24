@@ -28,8 +28,11 @@ Common CLI args:
 - `--exp3-gigg-mode {paper_ref}`
 
 `--profile` is intentionally unsupported.
-Default sampler backend is `nuts` for `GR_RHS`; `GHS_plus` uses its own
-paper-aligned Gaussian Gibbs backend.
+`GR_RHS` now routes by likelihood:
+- `gaussian -> staged_gibbs`
+- `logistic -> nuts`
+
+`GHS_plus` uses its own paper-aligned Gaussian Gibbs backend.
 
 ## 2. Default Protocol
 
@@ -92,7 +95,7 @@ Preset behavior for `--preset paper_laptop`:
 - `exp4=10`
 - `exp5=10`
 - default `--n-jobs 2 --method-jobs 2`
-- `Exp4` uses the same `nuts` GR-RHS sampler as the rest of the official protocol
+- `Exp4` uses the default `GR_RHS` routing: Gaussian fits run with staged Gibbs
 - `Exp3` heavy methods (`GIGG_MMLE`, `GHS_plus`) restricted to anchor settings in `exp3a/3b`
 - `Exp3` heavy methods use reduced laptop budgets under the preset
 - `GHS_plus` keeps the Xu et al. (2016) HBGHS prior defaults:

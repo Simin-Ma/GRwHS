@@ -214,7 +214,8 @@ def run_exp4_variant_ablation(
     Note: p0 here denotes active coefficients (sparsity in coefficients).
     DGP defaults: p=50 (5 groups of 10), n=100, rho_within=0.8, rho_between=0.2.
     Default: p0 in {5, 15, 30}, include_oracle=True, repeats=10, retries=1.
-    Sampler protocol: use the same GR-RHS NUTS backend as the rest of the suite.
+    Sampler protocol: use the default GR-RHS backend routing from fit_gr_rhs
+    (Gaussian -> staged Gibbs; logistic -> NUTS).
     """
     pd = load_pandas()
     produced: set[Path] = set()

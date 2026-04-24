@@ -5,7 +5,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.core.models.grrhs_nuts import GRRHS_NUTS
+from simulation_project.src.core.models.grrhs_nuts import GRRHS_Gibbs_Staged, GRRHS_NUTS
 
 from .helpers import as_int_groups, fit_error_result
 from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
@@ -35,10 +35,35 @@ def _resume_init_params(
     return _clone_numeric_dict(retry_resume_payload.get("init_params"))
 
 
+def _resume_gibbs_states(
+    retry_resume_payload: dict[str, Any] | None,
+) -> list[dict[str, Any]] | None:
+    if not isinstance(retry_resume_payload, dict):
+        return None
+    states = retry_resume_payload.get("chain_last_states")
+    if not isinstance(states, list) or not states:
+        return None
+    out: list[dict[str, Any]] = []
+    for item in states:
+        cloned = _clone_numeric_dict(item if isinstance(item, dict) else None)
+        if cloned:
+            out.append(cloned)
+    return out or None
+
+
 def _extract_retry_resume_payload(*, model: Any) -> dict[str, Any] | None:
     init_params = _clone_numeric_dict(getattr(model, "last_init_params_", None))
     if init_params:
         return {"backend": "nuts", "init_params": init_params}
+    chain_last_states = getattr(model, "chain_last_states_", None)
+    if isinstance(chain_last_states, list) and chain_last_states:
+        payload_states: list[dict[str, Any]] = []
+        for st in chain_last_states:
+            cloned = _clone_numeric_dict(st if isinstance(st, dict) else None)
+            if cloned:
+                payload_states.append(cloned)
+        if payload_states:
+            return {"backend": "gibbs_staged", "chain_last_states": payload_states}
     return None
 
 
@@ -266,7 +291,7 @@ def _build_nuts(
     progress_bar: bool,
     init_params: dict[str, np.ndarray] | None = None,
     resume_no_warmup: bool = False,
-) -> GRRHS_NUTS:
+    ) -> GRRHS_NUTS:
     likelihood = "logistic" if str(task).lower() == "logistic" else "gaussian"
     return GRRHS_NUTS(
         alpha_kappa=float(alpha_kappa),
@@ -294,6 +319,47 @@ def _build_nuts(
     )
 
 
+def _build_gibbs_staged(
+    *,
+    seed: int,
+    p0: int,
+    alpha_kappa: float,
+    beta_kappa: float,
+    use_local_scale: bool,
+    shared_kappa: bool,
+    auto_calibrate_tau: bool,
+    tau0: float | None,
+    tau_target: str,
+    sigma_reference: float,
+    sampler: SamplerConfig,
+    progress_bar: bool,
+    initial_chain_states: list[dict[str, Any]] | None = None,
+    resume_no_burnin: bool = False,
+) -> GRRHS_Gibbs_Staged:
+    total_iters = int(max(4, int(sampler.warmup) + int(sampler.post_warmup_draws)))
+    burnin = int(max(0, min(int(sampler.warmup), total_iters - 1)))
+    return GRRHS_Gibbs_Staged(
+        alpha_kappa=float(alpha_kappa),
+        beta_kappa=float(beta_kappa),
+        eta=1.0,
+        p0=int(max(p0, 1)),
+        tau0=None if tau0 is None else float(tau0),
+        auto_calibrate_tau=bool(auto_calibrate_tau),
+        tau_target=str(tau_target),
+        sigma_reference=float(sigma_reference),
+        use_local_scale=bool(use_local_scale),
+        shared_kappa=bool(shared_kappa),
+        iters=int(total_iters),
+        burnin=int(burnin),
+        thin=1,
+        num_chains=int(sampler.chains),
+        progress_bar=bool(progress_bar),
+        seed=int(seed),
+        initial_chain_states=initial_chain_states,
+        resume_no_burnin=bool(resume_no_burnin),
+    )
+
+
 def fit_gr_rhs(
     X: np.ndarray,
     y: np.ndarray,
@@ -314,6 +380,7 @@ def fit_gr_rhs(
     retry_resume_payload: dict[str, Any] | None = None,
     retry_attempt: int = 0,
     warm_start_strategy: str = "ridge",
+    sampler_backend: str | None = None,
 ) -> FitResult:
     tracked = ["beta", "tau", "kappa"]
     groups_use = as_int_groups(groups)
@@ -346,6 +413,12 @@ def fit_gr_rhs(
         warm_mode = str(warm_start_strategy).strip().lower()
         if warm_mode not in {"ridge", "none"}:
             warm_mode = "ridge"
+        task_name = str(task).strip().lower()
+        backend_name = str(sampler_backend or ("gibbs_staged" if task_name != "logistic" else "nuts")).strip().lower()
+        if backend_name not in {"nuts", "gibbs_staged"}:
+            backend_name = "gibbs_staged" if task_name != "logistic" else "nuts"
+        if task_name == "logistic":
+            backend_name = "nuts"
         ridge_init = None
         if warm_mode == "ridge":
             ridge_init = _ridge_init_params(
@@ -362,7 +435,7 @@ def fit_gr_rhs(
                 use_local_scale=use_local_scale,
             )
 
-        def _make(
+        def _make_nuts(
             seed_: int,
             adapt_delta: float,
             max_treedepth: int,
@@ -389,12 +462,37 @@ def fit_gr_rhs(
             kw["resume_no_warmup"] = bool(init_params)
             return _build_nuts(**kw)
 
-        model = _make(
-            seed,
-            float(sampler.adapt_delta),
-            int(sampler.max_treedepth),
-            resume_payload=retry_resume_payload,
-        )
+        def _make_gibbs(
+            seed_: int,
+            resume_payload: dict[str, Any] | None,
+        ):
+            init_states = _resume_gibbs_states(resume_payload)
+            return _build_gibbs_staged(
+                seed=seed_,
+                p0=p0,
+                alpha_kappa=alpha_kappa,
+                beta_kappa=beta_kappa,
+                use_local_scale=use_local_scale,
+                shared_kappa=shared_kappa,
+                auto_calibrate_tau=auto_calibrate_tau,
+                tau0=tau0,
+                tau_target=tau_target,
+                sigma_reference=float(pseudo_sigma),
+                sampler=sampler,
+                progress_bar=bool(progress_bar),
+                initial_chain_states=init_states,
+                resume_no_burnin=bool(init_states),
+            )
+
+        if backend_name == "gibbs_staged":
+            model = _make_gibbs(seed, resume_payload=retry_resume_payload)
+        else:
+            model = _make_nuts(
+                seed,
+                float(sampler.adapt_delta),
+                int(sampler.max_treedepth),
+                resume_payload=retry_resume_payload,
+            )
         model, runtime = timed_call(model.fit, X, y, groups=groups_use)
         resume_payload_out = _extract_retry_resume_payload(model=model)
         beta_draws = getattr(model, "coef_samples_", None)
@@ -410,31 +508,33 @@ def fit_gr_rhs(
         )
 
         # Retry the same NUTS design with stricter adaptation when divergences are high.
-        if np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
-            strict = _make(
-                seed + 999,
-                float(sampler.strict_adapt_delta),
-                int(sampler.strict_max_treedepth),
-                resume_payload=resume_payload_out,
-            )
-            strict, runtime2 = timed_call(strict.fit, X, y, groups=groups_use)
-            resume_payload_out = _extract_retry_resume_payload(model=strict)
-            beta_draws = getattr(strict, "coef_samples_", None)
-            beta_mean = getattr(strict, "coef_mean_", None)
-            tau_draws = getattr(strict, "tau_samples_", None)
-            kappa_draws = getattr(strict, "kappa_samples_", None)
-            rhat_max, ess_min, div_ratio, converged, details = diagnostics_summary_for_method(
-                model=strict,
-                tracked_params=tracked,
-                beta_draws=beta_draws,
-                config=sampler,
-            )
-            runtime += runtime2
+        if backend_name == "nuts":
+            if np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
+                strict = _make_nuts(
+                    seed + 999,
+                    float(sampler.strict_adapt_delta),
+                    int(sampler.strict_max_treedepth),
+                    resume_payload=resume_payload_out,
+                )
+                strict, runtime2 = timed_call(strict.fit, X, y, groups=groups_use)
+                resume_payload_out = _extract_retry_resume_payload(model=strict)
+                beta_draws = getattr(strict, "coef_samples_", None)
+                beta_mean = getattr(strict, "coef_mean_", None)
+                tau_draws = getattr(strict, "tau_samples_", None)
+                kappa_draws = getattr(strict, "kappa_samples_", None)
+                rhat_max, ess_min, div_ratio, converged, details = diagnostics_summary_for_method(
+                    model=strict,
+                    tracked_params=tracked,
+                    beta_draws=beta_draws,
+                    config=sampler,
+                )
+                runtime += runtime2
 
         diagnostics = dict(details or {})
         if resume_payload_out is not None:
             diagnostics["retry_resume_payload"] = resume_payload_out
         diagnostics["sampling_strategy"] = {
+            "backend": str(backend_name),
             "retry_attempt": int(max(retry_attempt, 0)),
             "warm_start_strategy": str(warm_mode),
             "hard_design": bool(design_profile.get("hard_design", False)),

@@ -626,6 +626,7 @@ class GRRHS_Gibbs:
     group_sizes_: Optional[np.ndarray] = field(default=None, init=False)
     sampler_diagnostics_: Dict[str, Any] = field(default_factory=dict, init=False)
     chain_last_states_: Optional[List[Dict[str, Any]]] = field(default=None, init=False)
+    chain_phase_infos_: Optional[List[Dict[str, Any]]] = field(default=None, init=False)
 
     # ------------------------------------------------------------------ helpers
 
@@ -931,6 +932,7 @@ class GRRHS_Gibbs:
         ]
         runtime_sec = max(time.perf_counter() - start, 1e-12)
         self.chain_last_states_ = [dict(c.get("last_state", {})) for c in all_chains]
+        self.chain_phase_infos_ = [dict(c.get("phase_info", {})) for c in all_chains]
 
         def _stack(key: str) -> np.ndarray:
             arrs = [c[key] for c in all_chains]
@@ -972,6 +974,8 @@ class GRRHS_Gibbs:
             "use_local_scale": bool(self.use_local_scale),
             "tau0_effective": float(tau0_eff),
         }
+        if isinstance(self.chain_phase_infos_, list) and self.chain_phase_infos_:
+            self.sampler_diagnostics_["chain_phase_infos"] = self.chain_phase_infos_
         return self
 
     def predict(self, X: np.ndarray, use_posterior_mean: bool = True) -> np.ndarray:
@@ -995,6 +999,304 @@ class GRRHS_Gibbs:
             "c2_mean": self.c2_mean_,
             "lambda_mean": self.lambda_mean_,
         }
+
+
+@dataclass
+class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
+    """Staged Gaussian Gibbs sampler for GR-RHS.
+
+    Phase A focuses on stabilizing posterior geometry (tau / lambda / kappa).
+    Phase B checks transition stability of beta summaries.
+    Phase C collects stationary draws.
+    """
+
+    adaptive_burnin: bool = True
+    phase_a_max_iters: int = 400
+    phase_b_max_iters: int = 300
+    min_phase_a_iters: int = 100
+    min_phase_b_iters: int = 100
+    geometry_window: int = 100
+    geometry_tol: float = 0.03
+    transition_window: int = 100
+    transition_tol: float = 0.05
+
+    @staticmethod
+    def _group_norms(beta: np.ndarray, groups: List[List[int]]) -> np.ndarray:
+        vals = np.zeros(len(groups), dtype=float)
+        for gid, members in enumerate(groups):
+            idx = np.asarray(members, dtype=int)
+            vals[gid] = float(np.linalg.norm(beta[idx])) if idx.size else 0.0
+        return vals
+
+    @staticmethod
+    def _stable_window(trace: List[float], window: int, tol: float) -> bool:
+        vals = np.asarray(trace, dtype=float)
+        w = int(max(4, window))
+        if vals.size < 2 * w:
+            return False
+        prev = vals[-2 * w : -w]
+        curr = vals[-w:]
+        if (not np.all(np.isfinite(prev))) or (not np.all(np.isfinite(curr))):
+            return False
+        prev_mean = float(np.mean(prev))
+        curr_mean = float(np.mean(curr))
+        scale = max(abs(prev_mean), abs(curr_mean), 1.0)
+        prev_sd = float(np.std(prev))
+        curr_sd = float(np.std(curr))
+        mean_ok = abs(curr_mean - prev_mean) <= float(tol) * scale
+        sd_ok = abs(curr_sd - prev_sd) <= float(tol) * max(prev_sd, curr_sd, 1.0)
+        trend = abs(float(curr[-1] - curr[0])) <= float(tol) * scale * max(1.0, math.sqrt(float(w)))
+        return bool(mean_ok and sd_ok and trend)
+
+    def _sample_chain(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        groups: List[List[int]],
+        group_id: np.ndarray,
+        group_sizes: np.ndarray,
+        tau0_eff: float,
+        seed: int,
+        *,
+        iters: int,
+        burnin: int,
+        initial_state: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, np.ndarray]:
+        rng = default_rng(int(seed))
+        n, p = X.shape
+        G = int(group_sizes.shape[0])
+        XtX = X.T @ X
+        Xty = X.T @ y
+
+        try:
+            beta = np.linalg.solve(XtX + 1e-3 * np.eye(p), Xty)
+        except np.linalg.LinAlgError:
+            beta = np.zeros(p)
+        sigma2 = max(float(np.var(y - X @ beta)), self.jitter)
+        tau = float(tau0_eff)
+        lam = np.ones(p)
+        kappa = np.full(G, float(self.alpha_kappa) / (self.alpha_kappa + self.beta_kappa))
+        log_sigma = 0.5 * math.log(max(sigma2, self.jitter))
+        log_tau = math.log(max(tau, self.jitter))
+        log_lam = np.zeros(p)
+        logit_kappa = np.zeros(G)
+        if isinstance(initial_state, dict):
+            beta = np.asarray(initial_state.get("beta", beta), dtype=float).reshape(-1)
+            if beta.size != p:
+                beta = np.asarray(np.zeros(p), dtype=float)
+            log_sigma = float(initial_state.get("log_sigma", log_sigma))
+            log_tau = float(initial_state.get("log_tau", log_tau))
+            log_lam = np.asarray(initial_state.get("log_lam", log_lam), dtype=float).reshape(-1)
+            if log_lam.size != p:
+                log_lam = np.zeros(p)
+            logit_kappa = np.asarray(initial_state.get("logit_kappa", logit_kappa), dtype=float).reshape(-1)
+            if logit_kappa.size != G:
+                logit_kappa = np.zeros(G)
+            sigma2 = max(float(math.exp(2.0 * log_sigma)), self.jitter)
+            tau = max(float(math.exp(log_tau)), self.jitter)
+            lam = np.maximum(np.exp(log_lam), self.jitter)
+            kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
+
+        sample_target = max(
+            0,
+            (int(max(1, iters)) - int(max(0, min(burnin, max(1, iters) - 1))) + int(self.thin) - 1) // int(self.thin),
+        )
+        beta_draws = np.zeros((sample_target, p))
+        sigma_draws = np.zeros(sample_target)
+        tau_draws = np.zeros(sample_target)
+        lam_draws = np.ones((sample_target, p))
+        kappa_draws = np.zeros((sample_target, G))
+        keep_i = 0
+
+        traces: Dict[str, List[float]] = {
+            "log_tau": [],
+            "mean_log_lambda": [],
+            "sd_log_lambda": [],
+            "mean_logit_kappa": [],
+            "max_abs_group_logit_kappa": [],
+            "beta_norm": [],
+            "top_group_norm": [],
+            "resid_norm": [],
+        }
+
+        phase_a_done = not bool(self.adaptive_burnin)
+        phase_b_done = not bool(self.adaptive_burnin)
+        phase_a_iters = 0
+        phase_b_iters = 0
+        burnin_total = 0
+        total_iters = 0
+        warmup_warning = ""
+
+        max_total = int(max(
+            sample_target * int(self.thin) + 1,
+            int(self.phase_a_max_iters) + int(self.phase_b_max_iters) + sample_target * int(self.thin),
+        ))
+
+        iterator = range(max_total)
+        if bool(self.progress_bar):
+            try:
+                from simulation_project.src.core.utils.logging_utils import progress
+
+                iterator = progress(iterator, total=max_total, desc="GR-RHS Gibbs staged")
+            except Exception:
+                pass
+
+        for _ in iterator:
+            total_iters += 1
+            tau2 = tau ** 2
+            sigma2 = math.exp(2.0 * log_sigma)
+            lam2 = lam ** 2
+            kappa_j = kappa[group_id]
+
+            v = self._v_arr(sigma2, tau2, lam2, kappa_j, self.jitter)
+            if n < p:
+                beta = beta_sample_woodbury(X, y, sigma2, v, rng, jitter=self.jitter)
+            else:
+                beta = beta_sample_cholesky(XtX, Xty, sigma2, v, rng, jitter=self.jitter)
+            Xbeta = X @ beta
+
+            def _lc_s(r: float) -> float:
+                return self._lc_log_sigma(r, beta, y, Xbeta, tau2, lam2, kappa_j)
+
+            log_sigma = slice_sample_1d(_lc_s, log_sigma, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
+            sigma2 = math.exp(2.0 * log_sigma)
+
+            tau_scale = float(tau0_eff) * math.sqrt(max(sigma2, self.jitter))
+
+            def _lc_t(u: float) -> float:
+                return self._lc_log_tau(u, beta, sigma2, lam2, kappa_j, tau_scale)
+
+            log_tau = slice_sample_1d(_lc_t, log_tau, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
+            tau = math.exp(log_tau)
+            tau2 = tau ** 2
+
+            if self.use_local_scale:
+                for j in range(p):
+                    def _lc_lj(s: float, _j: int = j) -> float:
+                        return self._lc_log_lam_j(s, float(beta[_j]), sigma2, tau2, float(kappa_j[_j]))
+
+                    log_lam[j] = slice_sample_1d(_lc_lj, log_lam[j], rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
+                lam = np.exp(log_lam)
+                lam2 = lam ** 2
+
+            if self.shared_kappa:
+                def _lc_ksh(w: float) -> float:
+                    return self._lc_logit_kappa_g(w, beta, sigma2, tau2, lam2)
+
+                logit_kappa[0] = slice_sample_1d(_lc_ksh, logit_kappa[0], rng, width=self.slice_width_logit, max_steps=self.slice_max_steps)
+                kappa[:] = 1.0 / (1.0 + math.exp(-logit_kappa[0]))
+            else:
+                for g, members in enumerate(groups):
+                    idx = np.asarray(members, dtype=int)
+
+                    def _lc_kg(w: float, _idx: np.ndarray = idx) -> float:
+                        return self._lc_logit_kappa_g(w, beta[_idx], sigma2, tau2, lam2[_idx])
+
+                    logit_kappa[g] = slice_sample_1d(_lc_kg, logit_kappa[g], rng, width=self.slice_width_logit, max_steps=self.slice_max_steps)
+                kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
+
+            lam_log = np.log(np.maximum(lam, self.jitter))
+            group_norms = self._group_norms(beta, groups)
+            top_group_norm = float(np.max(group_norms)) if group_norms.size else 0.0
+            resid_norm = float(np.linalg.norm(y - X @ beta) / math.sqrt(max(n, 1)))
+            traces["log_tau"].append(float(log_tau))
+            traces["mean_log_lambda"].append(float(np.mean(lam_log)))
+            traces["sd_log_lambda"].append(float(np.std(lam_log)))
+            traces["mean_logit_kappa"].append(float(np.mean(logit_kappa)))
+            traces["max_abs_group_logit_kappa"].append(float(np.max(np.abs(logit_kappa))) if logit_kappa.size else 0.0)
+            traces["beta_norm"].append(float(np.linalg.norm(beta)))
+            traces["top_group_norm"].append(top_group_norm)
+            traces["resid_norm"].append(resid_norm)
+
+            if not phase_a_done:
+                phase_a_iters += 1
+                burnin_total += 1
+                if phase_a_iters >= int(self.min_phase_a_iters):
+                    phase_a_done = bool(
+                        self._stable_window(traces["log_tau"], int(self.geometry_window), float(self.geometry_tol))
+                        and self._stable_window(traces["mean_log_lambda"], int(self.geometry_window), float(self.geometry_tol))
+                        and self._stable_window(traces["sd_log_lambda"], int(self.geometry_window), float(self.geometry_tol))
+                        and self._stable_window(traces["mean_logit_kappa"], int(self.geometry_window), float(self.geometry_tol))
+                        and self._stable_window(traces["max_abs_group_logit_kappa"], int(self.geometry_window), float(self.geometry_tol))
+                    )
+                if (not phase_a_done) and phase_a_iters >= int(self.phase_a_max_iters):
+                    phase_a_done = True
+                    warmup_warning = "geometry_not_stable"
+                continue
+
+            if not phase_b_done:
+                phase_b_iters += 1
+                burnin_total += 1
+                if phase_b_iters >= int(self.min_phase_b_iters):
+                    phase_b_done = bool(
+                        self._stable_window(traces["beta_norm"], int(self.transition_window), float(self.transition_tol))
+                        and self._stable_window(traces["top_group_norm"], int(self.transition_window), float(self.transition_tol))
+                        and self._stable_window(traces["resid_norm"], int(self.transition_window), float(self.transition_tol))
+                        and self._stable_window(traces["log_tau"], int(self.transition_window), float(self.transition_tol))
+                    )
+                if (not phase_b_done) and phase_b_iters >= int(self.phase_b_max_iters):
+                    phase_b_done = True
+                    if not warmup_warning:
+                        warmup_warning = "transition_not_stable"
+                continue
+
+            stationary_idx = total_iters - burnin_total - 1
+            if stationary_idx >= 0 and stationary_idx % int(self.thin) == 0 and keep_i < sample_target:
+                beta_draws[keep_i] = beta
+                sigma_draws[keep_i] = math.exp(log_sigma)
+                tau_draws[keep_i] = tau
+                lam_draws[keep_i] = lam.copy()
+                kappa_draws[keep_i] = kappa.copy()
+                keep_i += 1
+                if keep_i >= sample_target:
+                    break
+
+        if keep_i < sample_target:
+            beta_draws = beta_draws[:keep_i]
+            sigma_draws = sigma_draws[:keep_i]
+            tau_draws = tau_draws[:keep_i]
+            lam_draws = lam_draws[:keep_i]
+            kappa_draws = kappa_draws[:keep_i]
+
+        return {
+            "beta": beta_draws,
+            "sigma": sigma_draws,
+            "tau": tau_draws,
+            "lambda": lam_draws,
+            "kappa": kappa_draws,
+            "last_state": {
+                "beta": np.asarray(beta, dtype=float).copy(),
+                "log_sigma": float(log_sigma),
+                "log_tau": float(log_tau),
+                "log_lam": np.asarray(log_lam, dtype=float).copy(),
+                "logit_kappa": np.asarray(logit_kappa, dtype=float).copy(),
+            },
+            "phase_info": {
+                "phase_a_iters": int(phase_a_iters),
+                "phase_b_iters": int(phase_b_iters),
+                "actual_burnin": int(burnin_total),
+                "phase_a_converged": bool(phase_a_iters < int(self.phase_a_max_iters) or warmup_warning != "geometry_not_stable"),
+                "phase_b_converged": bool(phase_b_iters < int(self.phase_b_max_iters) or warmup_warning not in {"transition_not_stable"}),
+                "warmup_warning": str(warmup_warning),
+                "total_iters": int(total_iters),
+            },
+        }
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        groups: Optional[List[List[int]]] = None,
+    ) -> "GRRHS_Gibbs_Staged":
+        super().fit(X, y, groups=groups)
+        self.sampler_diagnostics_["backend"] = "simcore_gibbs_staged"
+        self.sampler_diagnostics_["adaptive_burnin"] = bool(self.adaptive_burnin)
+        if isinstance(self.chain_phase_infos_, list) and self.chain_phase_infos_:
+            self.sampler_diagnostics_["warmup_warning"] = next(
+                (str(info.get("warmup_warning", "")) for info in self.chain_phase_infos_ if str(info.get("warmup_warning", "")).strip()),
+                "",
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------
