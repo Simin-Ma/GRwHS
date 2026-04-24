@@ -76,7 +76,6 @@ _PAPER_FIXED_TARGET_R2 = 0.7
 _PAPER_FIXED_TARGET_SNR = _PAPER_FIXED_TARGET_R2 / max(1.0 - _PAPER_FIXED_TARGET_R2, 1e-12)
 _PAPER_RANDOM_GROUP_SIZE = 10
 _PAPER_RANDOM_DISTRIBUTED_BETA = 0.25
-_PAPER_RANDOM_CONCENTRATED_BETA = 5.125
 
 # ---------------------------------------------------------------------------
 # Default group configurations for Exp3 - mirrors GIGG paper Table 1 coverage,
@@ -247,6 +246,29 @@ def _paper_random_exp3_env_points() -> list[dict[str, Any]]:
         }
     ]
 
+
+def _paper_random_concentrated_beta_from_formula(
+    *,
+    group_size: int,
+    rho_within: float,
+    beta_distributed: float = _PAPER_RANDOM_DISTRIBUTED_BETA,
+) -> float:
+    """
+    Match the within-group contribution to beta' Sigma beta between:
+      distributed: beta_g = a * 1_k
+      concentrated: beta_g = (b, 0, ..., 0)
+
+    Under exchangeable Sigma_g = (1-rho) I_k + rho 11',
+    this requires:
+      b^2 = a^2 * [(1-rho)k + rho k^2].
+    """
+    k = int(group_size)
+    if k <= 0:
+        return 0.0
+    rho = float(rho_within)
+    a = float(beta_distributed)
+    return abs(a) * math.sqrt((1.0 - rho) * k + rho * (k ** 2))
+
 def _default_exp3_env_points() -> list[dict[str, Any]]:
     points: list[dict[str, Any]] = []
     for rw in [0.8]:
@@ -310,6 +332,7 @@ def _build_paper_random_beta(
     group_sizes: Sequence[int],
     *,
     rng: np.random.Generator,
+    rho_within: float,
 ) -> np.ndarray:
     from ..utils import canonical_groups
 
@@ -321,7 +344,10 @@ def _build_paper_random_beta(
     def _apply_concentrated(gid: int) -> None:
         idx = np.asarray(groups[gid], dtype=int)
         if idx.size:
-            beta[idx[0]] = float(_PAPER_RANDOM_CONCENTRATED_BETA)
+            beta[idx[0]] = _paper_random_concentrated_beta_from_formula(
+                group_size=int(idx.size),
+                rho_within=float(rho_within),
+            )
 
     def _apply_distributed(gid: int) -> None:
         idx = np.asarray(groups[gid], dtype=int)
@@ -353,6 +379,7 @@ def _build_benchmark_beta(
     boundary_u0: float = _BOUNDARY_U0,
     boundary_xi_ratio: float = _BOUNDARY_XI_RATIO,
     boundary_rho_profile: float | None = None,
+    rho_within: float | None = None,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Construct beta for each benchmark signal structure.
@@ -375,7 +402,9 @@ def _build_benchmark_beta(
 
     if signal == "random_coefficient":
         rng_local = rng if rng is not None else np.random.default_rng(12345)
-        return _build_paper_random_beta(group_sizes, rng=rng_local)
+        if rho_within is None:
+            raise ValueError("rho_within must be provided for random_coefficient signal generation.")
+        return _build_paper_random_beta(group_sizes, rng=rng_local, rho_within=float(rho_within))
 
     if paper_pattern and signal in {"concentrated", "distributed"}:
         if paper_pattern == "one_per_group":
@@ -535,6 +564,7 @@ def _exp3_worker(
         boundary_u0=float(_BOUNDARY_U0),
         boundary_xi_ratio=float(boundary_xi_ratio),
         boundary_rho_profile=boundary_rho_profile if signal == "boundary" else None,
+        rho_within=float(rho_within),
         rng=np.random.default_rng(s + 101),
     )
     p = int(sum(group_sizes))
