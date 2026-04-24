@@ -1248,9 +1248,6 @@ class GIGGRegression:
         lambda_draws = np.zeros((kept, p), dtype=float) if self.store_lambda else None
         b_draws = np.zeros((kept, G), dtype=float)
         keep_idx = 0
-        mmle_window_size = int(max(1, self.mmle_window))
-        lambda_mmle_window = np.zeros((mmle_window_size, p), dtype=float)
-        lambda_mmle_seen = 0
 
         def _gibbs_step() -> None:
             nonlocal alpha, beta, lambda_sq, gamma_sq, tau_sq, sigma_sq, nu
@@ -1371,8 +1368,6 @@ class GIGGRegression:
             burnin_iter = _progress(burnin_iter, total=int(self.n_burn_in), desc="GIGG burn-in")
         for burnin_idx in burnin_iter:
             _gibbs_step()
-            lambda_mmle_window[lambda_mmle_seen % max(1, self.mmle_samp_size)] = lambda_sq if lambda_mmle_window.shape[0] == max(1, self.mmle_samp_size) else lambda_sq
-            lambda_mmle_seen += 1
 
         if method_eff == "mmle":
             mmle_samp_size = int(max(1, self.mmle_samp_size))
