@@ -147,10 +147,13 @@ python -m simulation_project.src.run_experiment --experiment 3c
 
 ### Exp3d (`within_group_mixed`)
 
+- legacy boundary-focused stress variant
+- `within_group_mixed` is a historical experiment key/path, not the current signal definition
 - signal: `boundary`
 - default group configs: `G10x5`, `CL`, `CS`
 - correlation axis: `rho_within=[0.8]`, `rho_between=0.2`
 - SNR axis: `[0.2,1.0,5.0]`
+- this experiment is not part of the paper-aligned fixed/random coefficient redesign
 
 Run:
 

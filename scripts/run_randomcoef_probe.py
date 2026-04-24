@@ -14,47 +14,25 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from simulation_project.src.experiments.analysis.metrics import mse_null_signal_overall
+from simulation_project.src.experiments.exp3 import _build_benchmark_beta
 from simulation_project.src.experiments.fitting import _fit_all_methods
 from simulation_project.src.utils import MASTER_SEED, SamplerConfig, canonical_groups, ensure_dir, sample_correlated_design
-
-
-def _build_random_beta(
-    *,
-    group_sizes: list[int],
-    active_groups: list[int],
-    rng: np.random.Generator,
-    signal_scale: float,
-    mode: str,
-) -> np.ndarray:
-    groups = canonical_groups(group_sizes)
-    beta = np.zeros(sum(group_sizes), dtype=float)
-
-    for gid in active_groups:
-        idx = np.asarray(groups[gid], dtype=int)
-        if str(mode).lower() == "gaussian":
-            draw = rng.normal(loc=0.0, scale=float(signal_scale), size=idx.size)
-        elif str(mode).lower() == "mixed":
-            strong_mask = rng.random(idx.size) < 0.35
-            draw = rng.normal(loc=0.0, scale=float(signal_scale) * 0.35, size=idx.size)
-            if np.any(strong_mask):
-                draw[strong_mask] = rng.normal(
-                    loc=0.0,
-                    scale=float(signal_scale) * 1.25,
-                    size=int(np.sum(strong_mask)),
-                )
-        else:
-            raise ValueError(f"unknown random coefficient mode: {mode!r}")
-
-        if not np.any(np.abs(draw) > 1e-10):
-            draw[0] = float(signal_scale)
-        beta[idx] = draw
-
-    return beta
 
 
 def _sigma2_for_target_snr(beta: np.ndarray, cov_x: np.ndarray, target_snr: float) -> float:
     signal_var = float(beta.T @ cov_x @ beta)
     return max(signal_var / max(float(target_snr), 1e-8), 1e-8)
+
+
+def _count_active_groups(beta: np.ndarray, group_sizes: list[int]) -> int:
+    groups = canonical_groups(group_sizes)
+    return int(
+        sum(
+            1
+            for group in groups
+            if np.any(np.abs(np.asarray(beta, dtype=float)[np.asarray(group, dtype=int)]) > 1e-12)
+        )
+    )
 
 
 def _single_replicate(
@@ -63,10 +41,7 @@ def _single_replicate(
     group_sizes: list[int],
     rho_within: float,
     rho_between: float,
-    active_groups: list[int],
     target_snr: float,
-    signal_scale: float,
-    coef_mode: str,
     methods: list[str],
     seed: int,
     sampler: SamplerConfig,
@@ -76,12 +51,12 @@ def _single_replicate(
     gigg_config: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     rng = np.random.default_rng(int(seed))
-    beta0 = _build_random_beta(
+    beta0 = _build_benchmark_beta(
+        signal="random_coefficient",
         group_sizes=group_sizes,
-        active_groups=active_groups,
+        group_cfg={"paper_random_coefficients": True},
         rng=rng,
-        signal_scale=float(signal_scale),
-        mode=str(coef_mode),
+        rho_within=float(rho_within),
     )
     X, cov_x = sample_correlated_design(
         n=int(n),
@@ -101,7 +76,7 @@ def _single_replicate(
         task="gaussian",
         seed=int(seed),
         p0=int(np.sum(np.abs(beta0) > 1e-12)),
-        p0_groups=int(len(active_groups)),
+        p0_groups=_count_active_groups(beta0, group_sizes),
         sampler=sampler,
         grrhs_kwargs=dict(grrhs_kwargs or {}),
         methods=methods,
@@ -147,14 +122,26 @@ def _single_replicate(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Probe GIGG MMLE on a synthetic random-coefficient grouped regression task.")
+    parser = argparse.ArgumentParser(
+        description="Probe methods on the project paper-style random-coefficient grouped regression task."
+    )
     parser.add_argument("--scenario", choices=["lowdim", "highdim"], default="lowdim")
     parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument("--target-snr", type=float, default=1.0)
+    parser.add_argument("--target-snr", type=float, default=0.7 / 0.3)
     parser.add_argument("--rho-within", type=float, default=0.8)
     parser.add_argument("--rho-between", type=float, default=0.2)
-    parser.add_argument("--coef-mode", choices=["gaussian", "mixed"], default="mixed")
-    parser.add_argument("--signal-scale", type=float, default=0.45)
+    parser.add_argument(
+        "--coef-mode",
+        choices=["paper", "gaussian", "mixed"],
+        default="paper",
+        help="Deprecated compatibility flag. The probe always uses the paper random-coefficient generator.",
+    )
+    parser.add_argument(
+        "--signal-scale",
+        type=float,
+        default=0.45,
+        help="Deprecated compatibility flag kept for older command lines; ignored by the paper generator.",
+    )
     parser.add_argument("--methods", type=str, default="GR_RHS,GIGG_MMLE,GIGG_GHS,RHS,GHS_plus,OLS,LASSO_CV")
     parser.add_argument("--seed", type=int, default=MASTER_SEED + 9000)
     parser.add_argument("--save-dir", type=str, default="outputs/randomcoef_probe")
@@ -176,10 +163,9 @@ def main() -> None:
         group_sizes = [10, 10, 10, 10, 10]
     else:
         n = 200
-        group_sizes = [50] * 10
+        group_sizes = [10] * 50
 
     methods = [m.strip() for m in str(args.methods).split(",") if m.strip()]
-    active_groups = [0, 1]
     sampler = SamplerConfig(
         chains=int(args.chains),
         warmup=int(args.warmup),
@@ -207,10 +193,7 @@ def main() -> None:
             group_sizes=list(group_sizes),
             rho_within=float(args.rho_within),
             rho_between=float(args.rho_between),
-            active_groups=list(active_groups),
             target_snr=float(args.target_snr),
-            signal_scale=float(args.signal_scale),
-            coef_mode=str(args.coef_mode),
             methods=list(methods),
             seed=rep_seed,
             sampler=sampler,
@@ -222,7 +205,7 @@ def main() -> None:
         for row in rep_rows:
             row["replicate_id"] = int(rep)
             row["scenario"] = str(args.scenario)
-            row["coef_mode"] = str(args.coef_mode)
+            row["coef_mode"] = "paper"
             raw_rows.append(row)
 
     import pandas as pd
@@ -249,16 +232,28 @@ def main() -> None:
 
     meta = {
         "scenario": str(args.scenario),
-        "coef_mode": str(args.coef_mode),
+        "coef_mode": "paper",
         "repeats": int(args.repeats),
         "n": int(n),
         "p": int(sum(group_sizes)),
         "group_sizes": list(group_sizes),
-        "active_groups": list(active_groups),
+        "signal_mechanism": "paper_random_coefficient",
+        "paper_random_design": {
+            "group_size": 10,
+            "first_group_assignment": "concentrated_or_distributed_with_equal_probability",
+            "remaining_group_probabilities": {
+                "concentrated": 0.2,
+                "distributed": 0.2,
+                "null": 0.6,
+            },
+        },
         "rho_within": float(args.rho_within),
         "rho_between": float(args.rho_between),
         "target_snr": float(args.target_snr),
-        "signal_scale": float(args.signal_scale),
+        "deprecated_args_ignored": {
+            "coef_mode": str(args.coef_mode),
+            "signal_scale": float(args.signal_scale),
+        },
         "methods": list(methods),
         "sampler": {
             "chains": int(args.chains),

@@ -1,6 +1,8 @@
 # simulation_project
 
-Single full simulation framework for GR-RHS Exp1-Exp5, with optional Exp3c/Exp3d stress runs.
+Single full simulation framework for GR-RHS Exp1-Exp5, with two additional optional Exp3 extensions:
+- `Exp3c`: paper-aligned high-dimensional random-coefficient stress run
+- `Exp3d`: legacy boundary-stress run retained for backward compatibility
 
 ## Entrypoints
 
@@ -24,6 +26,8 @@ python scripts/run_sweep.py --list
 - No `--preset` CLI option.
 - Default pipeline order: `Exp1 -> Exp2 -> Exp3a -> Exp3b -> Exp4 -> Exp5 -> analysis`.
 - `Exp3c/Exp3d` run only when explicitly selected.
+- `Exp3a` and `Exp3c` are the paper-aligned fixed-coefficient and random-coefficient benchmark lines.
+- `Exp3d` is not part of that redesign; its historical result path remains `exp3d_within_group_mixed`.
 - Scientific conclusion gate: Exp2-Exp5 Bayesian rows must satisfy `converged=True` and `status=ok`.
 
 Default repeats when `--repeats` is omitted:
@@ -52,6 +56,12 @@ Run one experiment:
 
 ```bash
 python -m simulation_project.src.run_experiment --experiment 3c
+```
+
+Run the legacy boundary-stress extension:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment 3d
 ```
 
 Run analysis only:

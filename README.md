@@ -51,5 +51,9 @@ Ordinary experiment outputs are local artifacts only and should not be committed
 | `2` | group separation |
 | `3a` | main benchmark (concentrated + distributed) |
 | `3b` | boundary stress benchmark |
+| `3c` | optional high-dimensional paper random-coefficient stress run |
+| `3d` | optional legacy boundary stress run |
 | `4` | tau variant ablation |
 | `5` | beta-prior sensitivity |
+
+`Exp3a` and `Exp3c` are the paper-aligned fixed-coefficient and random-coefficient paths. `Exp3d` is kept only as a legacy boundary-stress line; its historical path name still contains `within_group_mixed`, but that is no longer the active signal definition.

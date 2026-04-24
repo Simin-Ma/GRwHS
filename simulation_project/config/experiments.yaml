@@ -47,9 +47,11 @@ exp3c_highdim_stress:
 exp3d_within_group_mixed:
   repeats_default: 100
   description: >
-    Exp3d - boundary-focused stress benchmark under simplified Exp3 protocol.
-    Signals=[boundary] with default group configs [G10x5, CL, CS].
+    Exp3d - legacy boundary-focused stress benchmark under the generic Exp3 protocol.
+    Historical experiment key/path remains exp3d_within_group_mixed, but the
+    current design is boundary-only with default group configs [G10x5, CL, CS].
     Axes: rho_within=[0.8], rho_between=0.2, SNR=[0.2,1.0,5.0], rw>rb.
+    Not part of the paper-aligned fixed-coefficient / random-coefficient redesign.
     Methods=[GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV].
     Main summary uses paired-converged-and-ok subset.
 

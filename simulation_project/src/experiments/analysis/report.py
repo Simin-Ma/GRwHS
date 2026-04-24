@@ -1,5 +1,9 @@
 """
-Post-run analysis for Exp1-5 (including Exp3c/Exp3d).
+Post-run analysis for Exp1-5 plus optional Exp3 extensions.
+
+Exp3c is the paper-aligned high-dimensional random-coefficient stress run.
+Exp3d is a legacy boundary-stress run whose historical results path remains
+`exp3d_within_group_mixed`.
 
 Each analyze_expN() reads the saved CSVs/JSONs for that experiment and
 returns a dict of key metrics plus a list of human-readable finding strings.
@@ -509,7 +513,7 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
 
     sep   = "=" * 68
     sep2  = "-" * 60
-    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5(+optional Exp3c/Exp3d)", sep]
+    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5 plus optional Exp3c/Exp3d extensions", sep]
 
     all_metrics: dict[str, Any] = {}
     exp_configs = [
@@ -523,7 +527,7 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
          analyze_exp3, res / "exp3b_boundary_stress"),
         ("exp3c", "Exp3c: Highdim Stress",
          analyze_exp3, res / "exp3c_highdim_stress"),
-        ("exp3d", "Exp3d: Within-Group Mixed Stress",
+        ("exp3d", "Exp3d: Legacy Boundary Stress",
          analyze_exp3, res / "exp3d_within_group_mixed"),
         ("exp4", "Exp4: Variant Ablation",
          analyze_exp4, res / "exp4_variant_ablation"),

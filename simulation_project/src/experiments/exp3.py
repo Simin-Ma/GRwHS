@@ -38,32 +38,19 @@ from ..utils import (
 )
 
 # ---------------------------------------------------------------------------
-# EXP3 - Linear Benchmark: Paper-aligned fixed-coefficient settings plus
-# optional GR-RHS-specific stress variants.
-# ---------------------------------------------------------------------------
-# The default generic builder below was originally GR-RHS-centric. Exp3a/Exp3c
-# now align their signal-generation semantics to the GIGG paper:
-#   concentrated = signal in few regressors within active groups
-#   distributed  = signal shared across many regressors within active groups
+# EXP3 - Linear Benchmark
 #
-# Factors (default single design):
-#   signal_structure: concentrated / distributed / boundary / within_group_mixed / half_dense / dense
-#     concentrated: few active regressors within each active group
-#     distributed:  many active regressors within each active group
-#     random_coefficient: paper-style random group activation mixture
-#     boundary:     2/5 groups active, beta calibrated at xi_ratio * xi_crit(u0, rho_profile),
-#                   where rho_profile = rho_within / sqrt(sigma2_boundary)
-#     within_group_mixed: each active group has one strong coefficient and
-#                   the remaining coefficients weak but nonzero
-#     half_dense:   random active coefficients at 20% density
-#     dense:        random active coefficients at 60% density
-#   env points:
-#     rw in {0.3, 0.6, 0.8}, rb=0.1, snr in {0.2, 1.0, 5.0}
+# Paper-aligned paths:
+#   Exp3a: fixed-coefficient settings from GIGG Section 5.1 / Table 1
+#   Exp3c: paper-style random-coefficient settings
 #
-# Prediction:
-#   concentrated + moderate/high rho: GR-RHS wins on null_group_mse
-#   distributed: RHS matches GR-RHS (individual-level shrinkage is sufficient)
-#   boundary: GR-RHS separates null/signal groups; competitors may fail
+# Legacy GR-RHS stress paths retained for continuity:
+#   Exp3b: boundary signal benchmark
+#   Exp3d: boundary-focused stress benchmark
+#
+# Semantic convention used throughout the paper-aligned paths:
+#   concentrated = signal in few regressors within an active group
+#   distributed  = signal shared across many regressors within an active group
 # ---------------------------------------------------------------------------
 
 _BOUNDARY_U0 = 0.5
@@ -78,18 +65,17 @@ _PAPER_RANDOM_GROUP_SIZE = 10
 _PAPER_RANDOM_DISTRIBUTED_BETA = 0.25
 
 # ---------------------------------------------------------------------------
-# Default group configurations for Exp3 - mirrors GIGG paper Table 1 coverage,
-# plus GR-RHS-favorable scenarios (large null blocks, rho_between > 0).
+# Default group configurations for the legacy generic Exp3 builder used by
+# boundary-focused stress variants.
 #
 # Each entry:
 #   name          - short label used in output CSV / meta JSON
 #   group_sizes   - list of per-group sizes (sum = p)
 #   active_groups - group indices containing signal (rest are null)
 #
-# G10x5 : 5 equal groups of size 10 (p=50)  - GIGG paper C10H/D10H baseline
-# CL    : [30,10,5,3,2], signal in large groups - GIGG Table 3 CL/DL
-# CS    : [30,10,5,3,2], signal in small groups - GR-RHS kappa_g advantage
-#         (large null blocks enable strong collective contraction)
+# G10x5 : 5 equal groups of size 10 (p=50)
+# CL    : [30,10,5,3,2], signal in large groups
+# CS    : [30,10,5,3,2], signal in small groups
 # ---------------------------------------------------------------------------
 _DEFAULT_EXP3_GROUP_CONFIGS: list[dict[str, Any]] = [
     {"name": "G10x5", "group_sizes": [10, 10, 10, 10, 10],  "active_groups": [0, 1]},
@@ -384,13 +370,9 @@ def _build_benchmark_beta(
 ) -> np.ndarray:
     """Construct beta for each benchmark signal structure.
 
-    concentrated: few active regressors within each active group
-    distributed:  many active regressors within each active group
-    boundary:     all vars in active groups, calibrated at xi_ratio * xi_crit(u0, rho_profile)
-    within_group_mixed: one strong + (p_g-1) weak coefficients per active group
-    half_dense:   random coefficients over all p with 20% active density
-    dense:        random coefficients over all p with 60% active density
-    random_coefficient: paper random-coefficient mixture over groups
+    Public Exp3 paths use concentrated, distributed, boundary, and
+    random_coefficient. A few older helper-only signal labels are retained
+    below for backward-compatible internal stress utilities.
     """
     from ..utils import canonical_groups
     groups = canonical_groups(group_sizes)
@@ -757,7 +739,11 @@ def run_exp3_linear_benchmark(
     exp_key: str = "exp3",
 ) -> Dict[str, str]:
     """
-    Exp3 benchmark (single-default design; no laptop/full split).
+    Generic Exp3 benchmark runner.
+
+    Paper-aligned experiments call this helper with explicit setting tables
+    (`Exp3a`) or random-coefficient settings (`Exp3c`). Legacy boundary-focused
+    stress experiments (`Exp3b`, `Exp3d`) also reuse this runner.
 
     Signal types (default ["concentrated", "distributed", "boundary"]):
       concentrated: few active regressors within each active group.
@@ -1496,7 +1482,11 @@ def run_exp3d_within_group_mixed(
     save_dir: str = "outputs/simulation_project",
     **kwargs,
 ) -> Dict[str, str]:
-    """Exp3d: boundary-focused stress benchmark under simplified Exp3 protocol."""
+    """Exp3d: legacy boundary-focused stress benchmark under the generic Exp3 protocol.
+
+    The public name/path keeps the historical `within_group_mixed` label for
+    backward compatibility, but the active design is boundary-only.
+    """
     return run_exp3_linear_benchmark(
         n_jobs=n_jobs,
         seed=seed,

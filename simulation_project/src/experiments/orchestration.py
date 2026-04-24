@@ -313,7 +313,7 @@ def _cli() -> None:
                     **common_cfg.as_kwargs(),
                 ),
                 "analyze": analyze_exp3,
-                "label": "Exp3d: Within-Group Mixed Stress",
+                "label": "Exp3d: Legacy Boundary Stress",
                 "results_subdir": "exp3d_within_group_mixed",
             },
             "exp4": {
@@ -342,4 +342,3 @@ def _cli() -> None:
             label = str(spec["label"])
             results_subdir = str(spec["results_subdir"])
             _print_exp_analysis(label, analyzer(base / "results" / results_subdir))
-
