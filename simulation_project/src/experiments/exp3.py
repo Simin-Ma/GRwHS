@@ -682,6 +682,18 @@ def run_exp3_linear_benchmark(
     bayes_settings_completed: set[int] = set()
     settings_completed: set[int] = set()
     settings_meta: dict[int, dict[str, Any]] = {}
+    base_keys = [
+        "gigg_mode",
+        "group_config",
+        "signal",
+        "setting_block",
+        "env_id",
+        "design_type",
+        "rho_within",
+        "rho_between",
+        "target_snr",
+        "boundary_xi_ratio",
+    ]
 
     for (sid_v, signal_v, gc_v, block_v, env_v, dt_v, rho_v, rhob_v, snr_v, bxi_v) in settings:
         settings_meta[int(sid_v)] = {
@@ -931,18 +943,6 @@ def run_exp3_linear_benchmark(
     if not raw.empty and "method" in raw.columns:
         raw["method_label"] = raw["method"].map(method_result_label)
 
-    base_keys = [
-        "gigg_mode",
-        "group_config",
-        "signal",
-        "setting_block",
-        "env_id",
-        "design_type",
-        "rho_within",
-        "rho_between",
-        "target_snr",
-        "boundary_xi_ratio",
-    ]
     group_keys = base_keys + [
         "method",
     ]
