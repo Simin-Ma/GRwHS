@@ -96,7 +96,7 @@ def _fit_all_methods(
             grrhs_p0=int(grrhs_p0),
             n=int(n),
             sampler=sampler_try,
-            grrhs_kwargs=dict(grrhs_kwargs),
+            grrhs_kwargs={**dict(grrhs_kwargs), "retry_attempt": int(attempt)},
             gigg_mmle_kwargs=gigg_mmle_try,
             gigg_fixed_kwargs=gigg_fixed_try,
         )
@@ -104,14 +104,13 @@ def _fit_all_methods(
 
     retry_max, until_mode = _retry_budget_from_limit(int(max_convergence_retries))
     gigg_methods = {"GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large"}
-    gigg_no_retry = bool(gigg_cfg.get("no_retry", False))
     gigg_extra_retry = int(gigg_extra_retry_cfg)
     def _run_single_method(method: str) -> tuple[str, FitResult]:
         res: FitResult | None = None
         attempts = 1
-        # GIGG methods with no_retry=True run exactly once (paper budget = 10k+10k);
-        # non-convergence is reported as-is rather than retried with a larger budget.
-        if gigg_no_retry and method in gigg_methods:
+        # Keep GIGG aligned to the gigg-master reference path: one run and no
+        # experiment-level rescue retries.
+        if method in gigg_methods:
             method_retry_max = 0
         else:
             method_retry_max = retry_max + (gigg_extra_retry if method in gigg_methods else 0)

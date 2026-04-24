@@ -219,6 +219,7 @@ def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
             backend=str(_be),
             progress_bar=False,
             retry_resume_payload=_resume,
+            retry_attempt=int(att),
         ),
         method="GR_RHS",
         sampler=sampler,

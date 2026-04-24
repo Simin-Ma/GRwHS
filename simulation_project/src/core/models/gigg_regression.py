@@ -619,14 +619,14 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         store_lambda=bool(payload["store_lambda"]),
         btrick=bool(payload["btrick"]),
         stable_solve=bool(payload["stable_solve"]),
-        init_strategy=str(payload.get("init_strategy", "ridge")),
+        init_strategy=str(payload.get("init_strategy", "zero")),
         init_ridge=float(payload.get("init_ridge", 1.0)),
-        init_scale_blend=float(payload.get("init_scale_blend", 0.5)),
+        init_scale_blend=float(payload.get("init_scale_blend", 0.0)),
         randomize_group_order=bool(payload.get("randomize_group_order", False)),
         lambda_vectorized_update=bool(payload.get("lambda_vectorized_update", False)),
         extra_beta_refresh_prob=float(payload.get("extra_beta_refresh_prob", 0.0)),
-        lambda_constraint_mode=str(payload.get("lambda_constraint_mode", "soft")),
-        q_constraint_mode=str(payload.get("q_constraint_mode", "soft")),
+        lambda_constraint_mode=str(payload.get("lambda_constraint_mode", "none")),
+        q_constraint_mode=str(payload.get("q_constraint_mode", "hard")),
         lambda_cap=float(payload.get("lambda_cap", _POS_CAP)),
         lambda_soft_cap=float(payload.get("lambda_soft_cap", payload.get("lambda_cap", _POS_CAP))),
         progress_bar=bool(payload.get("progress_bar", False)),
@@ -695,7 +695,7 @@ class GIGGRegression:
     store_lambda: bool = True
     btrick: bool = False
     stable_solve: bool = True
-    init_strategy: str = "zero"  # original R package starts alpha/beta at zero by default
+    init_strategy: str = "zero"  # gigg-master starts alpha/beta at zero
     init_ridge: float = 1.0
     init_scale_blend: float = 0.0
     randomize_group_order: bool = False
@@ -754,8 +754,8 @@ class GIGGRegression:
         else:
             self.n_samples = int(max(0, self.n_samples))
         init_mode = str(self.init_strategy).strip().lower()
-        if init_mode not in {"ridge", "zero"}:
-            raise ValueError("init_strategy must be one of {'ridge','zero'}.")
+        if init_mode != "zero":
+            raise ValueError("init_strategy must be 'zero' to match gigg-master.")
         self.init_strategy = init_mode
         self.init_ridge = float(max(self.init_ridge, 0.0))
         self.init_scale_blend = float(min(max(self.init_scale_blend, 0.0), 1.0))
@@ -817,47 +817,6 @@ class GIGGRegression:
         if self.q_constraint_mode == "soft":
             return _soft_cap_positive_array(values, floor=floor, cap=cap)
         return _clip_positive_array(values, floor=floor, cap=cap)
-
-    def _ridge_initial_state(
-        self,
-        *,
-        X: np.ndarray,
-        y_arr: np.ndarray,
-        C_arr: np.ndarray,
-        beta_default: np.ndarray,
-        alpha_default: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Ridge-based warm start for beta/alpha to reduce burn-in drift."""
-        k = int(C_arr.shape[1])
-        p = int(X.shape[1])
-        if self.init_strategy != "ridge":
-            return alpha_default, beta_default
-        if k > 0:
-            Z = np.hstack([C_arr, X])
-        else:
-            Z = X
-        d = int(Z.shape[1])
-        pen = np.full(d, float(self.init_ridge), dtype=float)
-        if k > 0:
-            # Avoid over-penalizing intercept/control coefficients.
-            pen[:k] = 0.0 if self.auto_intercept_ else 0.1 * float(self.init_ridge)
-        lhs = Z.T @ Z + np.diag(pen)
-        if self.jitter > 0.0:
-            lhs = lhs + np.eye(d, dtype=float) * max(self.jitter, 1e-10)
-        rhs = Z.T @ y_arr
-        try:
-            coef = _chol_solve(lhs, rhs)
-        except Exception:
-            coef = np.linalg.lstsq(lhs, rhs, rcond=None)[0]
-        coef = np.nan_to_num(np.asarray(coef, dtype=float), nan=0.0, posinf=_BETA_CAP, neginf=-_BETA_CAP)
-        coef = np.clip(coef, -_BETA_CAP, _BETA_CAP)
-        if k > 0:
-            alpha0 = coef[:k].copy()
-            beta0 = coef[k : (k + p)].copy()
-        else:
-            alpha0 = np.zeros(0, dtype=float)
-            beta0 = coef[:p].copy()
-        return alpha0, beta0
 
     @staticmethod
     def _flatten_param_draws(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
@@ -1190,19 +1149,6 @@ class GIGGRegression:
                 raise ValueError("alpha_inits must have length ncol(C).")
         else:
             alpha = np.zeros(k, dtype=float)
-
-        if beta_inits is None or alpha_inits is None:
-            alpha_warm, beta_warm = self._ridge_initial_state(
-                X=X,
-                y_arr=y_arr,
-                C_arr=C_arr,
-                beta_default=beta,
-                alpha_default=alpha,
-            )
-            if beta_inits is None:
-                beta = beta_warm
-            if alpha_inits is None:
-                alpha = alpha_warm
 
         if self.num_chains > 1:
             return self._fit_multichain(

@@ -7,7 +7,7 @@ import numpy as np
 from simulation_project.src.core.models.gigg_regression import GIGGRegression
 
 from .helpers import as_int_groups, fit_error_result, scaled_iteration_budget
-from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
+from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, timed_call
 
 # Iteration counts
 # Boss et al. (2024) use 10 000 burn-in + 10 000 draws in all simulations
@@ -18,6 +18,41 @@ from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, r
 _DEFAULT_GIGG_ITER_MULT = 4
 _DEFAULT_GIGG_ITER_FLOOR = 10000
 _DEFAULT_GIGG_ITER_CAP = 10000
+
+
+def _validate_gigg_master_alignment(
+    *,
+    init_strategy: str,
+    init_scale_blend: float,
+    randomize_group_order: bool,
+    lambda_vectorized_update: bool,
+    extra_beta_refresh_prob: float,
+    mmle_step_size: float | None = None,
+    mmle_update_every: int | None = None,
+    mmle_window: int | None = None,
+    lambda_constraint_mode: str | None = None,
+    q_constraint_mode: str | None = None,
+) -> None:
+    if str(init_strategy).strip().lower() != "zero":
+        raise ValueError("GIGG is locked to gigg-master alignment: init_strategy must be 'zero'.")
+    if float(init_scale_blend) != 0.0:
+        raise ValueError("GIGG is locked to gigg-master alignment: init_scale_blend must be 0.")
+    if bool(randomize_group_order):
+        raise ValueError("GIGG is locked to gigg-master alignment: randomize_group_order must be False.")
+    if bool(lambda_vectorized_update):
+        raise ValueError("GIGG is locked to gigg-master alignment: lambda_vectorized_update must be False.")
+    if float(extra_beta_refresh_prob) != 0.0:
+        raise ValueError("GIGG is locked to gigg-master alignment: extra_beta_refresh_prob must be 0.")
+    if mmle_step_size is not None and float(mmle_step_size) != 1.0:
+        raise ValueError("GIGG is locked to gigg-master alignment: mmle_step_size must be 1.")
+    if mmle_update_every is not None and int(mmle_update_every) != 1:
+        raise ValueError("GIGG is locked to gigg-master alignment: mmle_update_every must be 1.")
+    if mmle_window is not None and int(mmle_window) != 1:
+        raise ValueError("GIGG is locked to gigg-master alignment: mmle_window must be 1.")
+    if lambda_constraint_mode is not None and str(lambda_constraint_mode).strip().lower() != "none":
+        raise ValueError("GIGG is locked to gigg-master alignment: lambda_constraint_mode must be 'none'.")
+    if q_constraint_mode is not None and str(q_constraint_mode).strip().lower() != "hard":
+        raise ValueError("GIGG is locked to gigg-master alignment: q_constraint_mode must be 'hard'.")
 
 
 def _gigg_iters(
@@ -98,14 +133,10 @@ def fit_gigg_mmle(
     no_retry: bool = False,
     progress_bar: bool = True,
 ) -> FitResult:
-    """GIGG with MMLE hyperparameter estimation (Boss et al. 2024, Section 4.2).
+    """GIGG with MMLE hyperparameter estimation aligned to gigg-master defaults.
 
-    Fixes a_g = 1/n for all groups and estimates b_g via MMLE during burn-in,
-    matching the paper's recommended default procedure.
-
-    tau is calibrated using the Carvalho-Polson-Scott formula
-    tau = p0 / ((p - p0) * sqrt(n)), consistent with how RHS and GR_RHS
-    initialize their global scale.
+    Fixes a_g = 1/n for all groups and estimates b_g via MMLE using the
+    upstream R package's single-chain, zero-init reference path.
 
     no_retry is accepted for compatibility with experiment-level retry policies.
     Retry control is handled by the caller; this function always runs one fit.
@@ -116,10 +147,20 @@ def fit_gigg_mmle(
             "GIGG_MMLE",
             "NotImplementedError: GIGG_MMLE is gaussian-only in this repository",
         )
+    _validate_gigg_master_alignment(
+        init_strategy=init_strategy,
+        init_scale_blend=init_scale_blend,
+        randomize_group_order=randomize_group_order,
+        lambda_vectorized_update=lambda_vectorized_update,
+        extra_beta_refresh_prob=extra_beta_refresh_prob,
+        mmle_step_size=mmle_step_size,
+        mmle_update_every=mmle_update_every,
+        mmle_window=mmle_window,
+        lambda_constraint_mode=lambda_constraint_mode,
+        q_constraint_mode=q_constraint_mode,
+    )
 
-    n, p = X.shape
-    # CPS tau calibration: same formula used for RHS / GR_RHS.
-    tau0 = rhs_style_tau0(n=n, p=p, p0=max(int(p0), 1))
+    n, _ = X.shape
     gigg_burnin, gigg_draws = _gigg_iters(
         sampler,
         iter_mult=iter_mult,
@@ -135,10 +176,10 @@ def fit_gigg_mmle(
             n_samples=gigg_draws,
             n_thin=1,
             seed=int(seed),
-            num_chains=int(sampler.chains),
+            num_chains=1,
             fit_intercept=False,
             store_lambda=True,
-            tau_sq_init=float(tau0 ** 2),
+            tau_sq_init=1.0,
             btrick=bool(btrick),
             stable_solve=True,
             mmle_burnin_only=bool(mmle_burnin_only),
@@ -201,7 +242,7 @@ def fit_gigg_fixed(
     no_retry: bool = False,
     progress_bar: bool = True,
 ) -> FitResult:
-    """GIGG with fixed hyperparameters (Boss et al. 2024, Table 2 ablation variants).
+    """GIGG with fixed hyperparameters aligned to gigg-master defaults.
 
     Key variants that reproduce Table 2 / Table 3 comparisons:
 
@@ -209,7 +250,8 @@ def fit_gigg_fixed(
         GIGG_GHS      a=1/2, b=1/2  - group horseshoe (special case, Section 2.1)
         GIGG_b_large  a=1/n, b=1    - best for distributed (dense within-group) signals
 
-    tau is calibrated via CPS formula, matching GR_RHS / RHS / GIGG_MMLE.
+    Uses the upstream R package's default single-chain initialization path,
+    including `tau_sq_init = 1`.
     """
     _ = bool(no_retry)  # caller-level flag; intentionally unused here
     if str(task).lower() == "logistic":
@@ -217,10 +259,18 @@ def fit_gigg_fixed(
             method_label,
             "NotImplementedError: GIGG_fixed is gaussian-only in this repository",
         )
+    _validate_gigg_master_alignment(
+        init_strategy=init_strategy,
+        init_scale_blend=init_scale_blend,
+        randomize_group_order=randomize_group_order,
+        lambda_vectorized_update=lambda_vectorized_update,
+        extra_beta_refresh_prob=extra_beta_refresh_prob,
+        lambda_constraint_mode=lambda_constraint_mode,
+        q_constraint_mode=q_constraint_mode,
+    )
 
-    n, p = X.shape
+    n, _ = X.shape
     a_fixed = float(a_val) if a_val is not None else 1.0 / max(n, 1)
-    tau0 = rhs_style_tau0(n=n, p=p, p0=max(int(p0), 1))
     gigg_burnin, gigg_draws = _gigg_iters(
         sampler,
         iter_mult=iter_mult,
@@ -236,13 +286,13 @@ def fit_gigg_fixed(
             n_samples=gigg_draws,
             n_thin=1,
             seed=int(seed),
-            num_chains=int(sampler.chains),
+            num_chains=1,
             fit_intercept=False,
             store_lambda=True,
             a_value=a_fixed,
             b_init=float(b_val),
             force_a_1_over_n=False,
-            tau_sq_init=float(tau0 ** 2),
+            tau_sq_init=1.0,
             btrick=bool(btrick),
             stable_solve=True,
             init_strategy=str(init_strategy),

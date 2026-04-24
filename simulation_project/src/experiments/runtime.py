@@ -12,7 +12,7 @@ from ..utils import FitResult, SamplerConfig
 # Method lists
 # ---------------------------------------------------------------------------
 METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus", "OLS", "LASSO_CV"]
-EXP3_GIGG_MODES = ("paper_ref", "stable")
+EXP3_GIGG_MODES = ("paper_ref",)
 
 _BAYESIAN_METHODS = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
 _BAYESIAN_DEFAULT_CHAINS = 4
@@ -80,22 +80,8 @@ def _normalize_exp3_gigg_mode(gigg_mode: str) -> str:
 
 
 def _exp3_gigg_config_for_mode(base_cfg: dict[str, Any], *, gigg_mode: str) -> dict[str, Any]:
-    mode = _normalize_exp3_gigg_mode(gigg_mode)
-    out = dict(base_cfg)
-    if mode == "paper_ref":
-        # Strict reference mode: keep original MMLE trajectory and disable
-        # Exp3-only stabilization/rescue behavior.
-        out["mmle_step_size"] = 1.0
-        out["randomize_group_order"] = False
-        out["lambda_vectorized_update"] = False
-        out["extra_beta_refresh_prob"] = 0.0
-        out["init_scale_blend"] = 0.5
-        out["extra_retry"] = 0
-        out.pop("retry_cap", None)
-        out["no_retry"] = True
-    else:
-        out.setdefault("extra_retry", 0)
-    return out
+    _normalize_exp3_gigg_mode(gigg_mode)
+    return dict(base_cfg)
 
 
 def _resolve_method_list(methods: Sequence[str] | None) -> list[str]:
@@ -144,12 +130,12 @@ def _gigg_config_default(*, profile: str = "default") -> dict[str, Any]:
         "iter_floor": int(iter_floor),
         "iter_cap": int(iter_cap),
         "btrick": False,
-        "mmle_burnin_only": True,
-        "mmle_step_size": 0.2,
-        "mmle_update_every": 25,
-        "mmle_window": 100,
-        "lambda_constraint_mode": "soft",
-        "q_constraint_mode": "soft",
+        "mmle_burnin_only": False,
+        "mmle_step_size": 1.0,
+        "mmle_update_every": 1,
+        "mmle_window": 1,
+        "lambda_constraint_mode": "none",
+        "q_constraint_mode": "hard",
         "no_retry": True,
     }
 def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
@@ -285,12 +271,6 @@ def _scale_gigg_config_for_retry(cfg: dict[str, Any], attempt: int) -> dict[str,
     out["iter_mult"] = max(1, int(out.get("iter_mult", 1)) * mul)
     out["iter_floor"] = min(_RETRY_MAX_GIGG_ITER, max(10, int(out.get("iter_floor", 500)) * mul))
     out["iter_cap"] = min(_RETRY_MAX_GIGG_ITER, max(out["iter_floor"], int(out.get("iter_cap", 1500)) * mul))
-    # Retries should improve mixing quality, not only increase iteration counts.
-    out["randomize_group_order"] = bool(out.get("randomize_group_order", True))
-    out["lambda_vectorized_update"] = bool(out.get("lambda_vectorized_update", True))
-    refresh_prev = float(out.get("extra_beta_refresh_prob", 0.0))
-    refresh_target = min(0.20, 0.08 + 0.04 * float(k - 1))
-    out["extra_beta_refresh_prob"] = max(refresh_prev, refresh_target)
     return out
 
 

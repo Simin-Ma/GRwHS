@@ -17,7 +17,7 @@ sweeps:
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: nuts
-      exp3_gigg_mode: stable
+      exp3_gigg_mode: paper_ref
 
   exp1_to_exp5_paper_laptop:
     experiment: all
@@ -29,7 +29,7 @@ sweeps:
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: nuts
-      exp3_gigg_mode: stable
+      exp3_gigg_mode: paper_ref
       all_parallel_jobs: 2
 
   exp1_paper_laptop:
@@ -65,7 +65,7 @@ sweeps:
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: nuts
-      gigg_mode: stable
+      gigg_mode: paper_ref
 
   exp4_paper_laptop:
     experiment: exp4
@@ -96,7 +96,7 @@ sweeps:
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: nuts
-      gigg_mode: stable
+      gigg_mode: paper_ref
 
   exp5_paper_laptop_appendix:
     experiment: exp5
@@ -129,25 +129,25 @@ sweeps:
 
   exp3a_default:
     experiment: exp3a
-    description: Exp3a default protocol (repeats=100, gigg_mode=stable).
+    description: Exp3a default protocol (repeats=100, gigg_mode=paper_ref).
     fixed:
       repeats: 100
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: nuts
-      gigg_mode: stable
+      gigg_mode: paper_ref
 
   exp3b_default:
     experiment: exp3b
-    description: Exp3b default protocol (repeats=100, gigg_mode=stable).
+    description: Exp3b default protocol (repeats=100, gigg_mode=paper_ref).
     fixed:
       repeats: 100
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
       sampler_backend: nuts
-      gigg_mode: stable
+      gigg_mode: paper_ref
 
   exp4_default:
     experiment: exp4

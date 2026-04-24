@@ -75,7 +75,7 @@ def run_all_experiments(
     max_convergence_retries: int | None = None,
     until_bayes_converged: bool = True,
     sampler_backend: str = "nuts",
-    exp3_gigg_mode: str = "stable",
+    exp3_gigg_mode: str = "paper_ref",
     skip_analysis: bool = False,
     archive_artifacts: bool = True,
     preset: str = "default",
@@ -242,9 +242,9 @@ def _cli() -> None:
     parser.add_argument(
         "--exp3-gigg-mode",
         type=str,
-        default="stable",
+        default="paper_ref",
         choices=list(EXP3_GIGG_MODES),
-        help="Exp3 GIGG mode: stable (enhanced, default) or paper_ref (strict baseline).",
+        help="Exp3 GIGG mode. Only paper_ref is supported; it matches the gigg-master reference path.",
     )
     parser.add_argument(
         "--sampler",

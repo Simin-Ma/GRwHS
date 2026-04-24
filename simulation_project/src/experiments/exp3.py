@@ -238,7 +238,7 @@ def _exp3_worker(
         if not methods:
             raise ValueError("Exp3 task must include at least one method.")
         gigg_config = dict(task["gigg_config"])
-        gigg_mode = str(task.get("gigg_mode", "stable"))
+        gigg_mode = str(task.get("gigg_mode", "paper_ref"))
         ghs_plus_profile = str(task.get("ghs_plus_profile", "default"))
         bayes_min_chains = task.get("bayes_min_chains")
         method_jobs = int(task.get("method_jobs", 1))
@@ -260,37 +260,14 @@ def _exp3_worker(
         else:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_train, n_test, sampler, methods, gigg_config, bayes_min_chains, method_jobs, ghs_plus_profile, enforce_conv, max_retries, grrhs_kwargs = task
         methods = [str(m) for m in methods]
-        gigg_mode = "stable"
+        gigg_mode = "paper_ref"
     group_cfg_name: str = str(group_cfg["name"])
     methods_upper = {m.upper() for m in methods}
     gigg_config = dict(gigg_config)
     gigg_mode_name = _normalize_exp3_gigg_mode(gigg_mode)
     if "GIGG_MMLE" in methods_upper:
-        if gigg_mode_name == "paper_ref":
-            gigg_config["extra_retry"] = 0
-            gigg_config.pop("retry_cap", None)
-        else:
-            hard_setting = group_cfg_name in {"CL", "G10x5"} and signal in {"concentrated", "distributed"}
-            if hard_setting:
-                gigg_config["extra_retry"] = max(1, int(gigg_config.get("extra_retry", 0)))
-                # Keep rescue behavior efficient while preserving robustness.
-                gigg_config["retry_cap"] = 2
-                # For hard Exp3 settings, allow one bounded rescue attempt to
-                # improve benchmark completeness while preserving robustness.
-                if bool(gigg_config.get("no_retry", False)):
-                    gigg_config["no_retry"] = False
-                gigg_config["progress_bar"] = bool(gigg_config.get("progress_bar", False))
-                # For difficult Exp3 settings, prefer stronger mixing from the first attempt.
-                gigg_config["randomize_group_order"] = bool(gigg_config.get("randomize_group_order", True))
-                gigg_config["lambda_vectorized_update"] = bool(gigg_config.get("lambda_vectorized_update", True))
-                gigg_config["extra_beta_refresh_prob"] = max(float(gigg_config.get("extra_beta_refresh_prob", 0.0)), 0.08)
-                gigg_config["init_scale_blend"] = max(float(gigg_config.get("init_scale_blend", 0.5)), 0.65)
-                # Damped MMLE updates reduce q_g oscillation in difficult correlated regimes.
-                gigg_config["mmle_step_size"] = min(max(float(gigg_config.get("mmle_step_size", 0.2)), 0.0), 1.0)
-                gigg_config["mmle_update_every"] = max(1, int(gigg_config.get("mmle_update_every", 25)))
-                gigg_config["mmle_window"] = max(10, int(gigg_config.get("mmle_window", 100)))
-                gigg_config["lambda_constraint_mode"] = str(gigg_config.get("lambda_constraint_mode", "soft"))
-                gigg_config["q_constraint_mode"] = str(gigg_config.get("q_constraint_mode", "soft"))
+        gigg_config["extra_retry"] = 0
+        gigg_config.pop("retry_cap", None)
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
 
     group_sizes: list[int] = list(group_cfg["group_sizes"])
@@ -457,7 +434,7 @@ def run_exp3_linear_benchmark(
     n_test: int = 30,
     sampler_backend: str = "nuts",
     grrhs_extra_kwargs: dict | None = None,
-    gigg_mode: str = "stable",
+    gigg_mode: str = "paper_ref",
     heavy_methods_anchor_only: bool = False,
     gigg_budget_profile: str = "default",
     ghs_plus_budget_profile: str = "default",
@@ -482,8 +459,7 @@ def run_exp3_linear_benchmark(
       GR_RHS, GHS_plus, GIGG_MMLE, RHS, LASSO_CV, OLS.
 
     gigg_mode:
-      paper_ref: strict baseline mode (no Exp3 hard-setting rescue/stabilization).
-      stable:    enhanced mode with bounded rescue/stabilization in hard settings.
+      paper_ref: strict gigg-master-aligned reference mode.
     """
     pd = load_pandas()
     produced: set[Path] = set()

@@ -25,7 +25,7 @@ Common CLI args:
 - `--no-enforce-bayes-convergence`
 - `--max-convergence-retries <int>`
 - `--until-bayes-converged`
-- `--exp3-gigg-mode {paper_ref,stable}`
+- `--exp3-gigg-mode {paper_ref}`
 - `--sampler {nuts,collapsed,gibbs}`
 
 `--profile` is intentionally unsupported.

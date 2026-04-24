@@ -103,13 +103,14 @@ def _exp5_screen_prior_worker(
             tau_target="groups",
             backend=_be,
             retry_resume_payload=_resume,
+            retry_attempt=int(att),
         ),
         method="GR_RHS",
         sampler=sampler,
         bayes_min_chains=int(bayes_min_chains),
         max_convergence_retries=max_retries,
         enforce_bayes_convergence=bool(enforce_conv),
-        continue_on_retry=False,
+        continue_on_retry=True,
     )
     return {
         "setting_id": int(sid),
@@ -165,13 +166,14 @@ def _exp5_worker(
                 tau_target="groups",
                 backend=_be,
                 retry_resume_payload=_resume,
+                retry_attempt=int(att),
             ),
             method="GR_RHS",
             sampler=sampler,
             bayes_min_chains=int(bayes_min_chains),
             max_convergence_retries=max_retries,
             enforce_bayes_convergence=bool(enforce_conv),
-            continue_on_retry=False,
+            continue_on_retry=True,
         )
         beta_mean = _finite_beta_mean(res.beta_mean)
         is_valid = beta_mean is not None
