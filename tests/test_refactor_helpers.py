@@ -115,14 +115,13 @@ def test_architecture_models_and_registry() -> None:
         enforce_bayes_convergence=True,
         max_convergence_retries=2,
         until_bayes_converged=True,
-        sampler_backend="nuts",
     )
     cfg_kwargs = cfg.as_kwargs()
     assert cfg_kwargs["n_jobs"] == 2
     assert cfg_kwargs["method_jobs"] == 3
     assert cfg_kwargs["skip_run_analysis"] is True
     assert cfg_kwargs["archive_artifacts"] is False
-    assert cfg_kwargs["sampler_backend"] == "nuts"
+    assert cfg_kwargs["until_bayes_converged"] is True
 
     manifest = RunManifest(
         exp_key="expX",
@@ -216,7 +215,7 @@ def test_exp5_defaults_to_full_sensitivity_and_retry_budget_5(monkeypatch) -> No
         if worker is exp5_mod._exp5_screen_prior_worker:
             rows = []
             for task in tasks:
-                sid, _group_sizes, _mu, _seed, _sampler, alpha_k, beta_k, _bayes_min_chains, _enforce, _max_retries, _backend = task
+                sid, _group_sizes, _mu, _seed, _sampler, alpha_k, beta_k, _bayes_min_chains, _enforce, _max_retries = task
                 rows.append(
                     {
                         "setting_id": int(sid),
@@ -292,7 +291,7 @@ def test_exp5_defaults_to_full_sensitivity_and_retry_budget_5(monkeypatch) -> No
     full_tasks = captured["tasks_by_worker"]["_fake_exp5_worker"]
     assert screen_tasks and full_tasks
     for task in full_tasks:
-        assert int(task[10]) == 5  # retry budget
+        assert int(task[10]) == -5  # Exp5 practical until-converged sentinel
         assert len(task[6]) == 2  # default prior + screened-in prior
 
     summary_partial = save_dir / "results" / "exp5_prior_sensitivity" / "summary_partial.csv"
@@ -354,7 +353,6 @@ def test_exp4_forces_collapsed_backend_for_all_p0(monkeypatch, tmp_path) -> None
         seed=20260415,
         save_dir=str(save_dir),
         p0_list=[5, 15, 30],
-        sampler_backend="nuts",
         include_oracle=False,
         enforce_bayes_convergence=False,
         until_bayes_converged=False,
@@ -364,12 +362,12 @@ def test_exp4_forces_collapsed_backend_for_all_p0(monkeypatch, tmp_path) -> None
     backends_by_p0: dict[int, set[str]] = {}
     for task in captured_tasks:
         p0_true = int(task[0])
-        backend = str(task[11])
-        backends_by_p0.setdefault(p0_true, set()).add(backend)
+        bayes_min_chains = int(task[6])
+        backends_by_p0.setdefault(p0_true, set()).add(str(bayes_min_chains))
 
-    assert backends_by_p0.get(5) == {"collapsed"}
-    assert backends_by_p0.get(15) == {"collapsed"}
-    assert backends_by_p0.get(30) == {"collapsed"}
+    assert backends_by_p0.get(5) == {"1"}
+    assert backends_by_p0.get(15) == {"1"}
+    assert backends_by_p0.get(30) == {"1"}
 
 
 def test_exp4_default_correlation_uses_0_8_and_0_2(monkeypatch) -> None:

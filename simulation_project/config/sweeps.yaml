@@ -16,7 +16,6 @@ sweeps:
       all_parallel_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: nuts
       exp3_gigg_mode: paper_ref
 
   exp1_default:
@@ -33,7 +32,6 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: nuts
 
   exp3a_default:
     experiment: exp3a
@@ -43,7 +41,6 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: nuts
       gigg_mode: paper_ref
 
   exp3b_default:
@@ -54,7 +51,6 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: nuts
       gigg_mode: paper_ref
 
   exp4_default:
@@ -66,7 +62,6 @@ sweeps:
       enforce_bayes_convergence: true
       max_convergence_retries: 1
       until_bayes_converged: true
-      sampler_backend: nuts
 
   exp5_default:
     experiment: exp5
@@ -76,4 +71,3 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
-      sampler_backend: nuts
