@@ -4,9 +4,14 @@ import argparse
 import json
 import re
 from pathlib import Path
+import sys
 from typing import Any
 
 import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from simulation_project.src.utils import ensure_dir, load_pandas, save_json
 
