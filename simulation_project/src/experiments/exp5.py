@@ -126,13 +126,13 @@ def _exp5_screen_prior_worker(
 
 
 def _exp5_worker(
-    task: tuple[int, int, list[int], list[float], int, SamplerConfig, list[tuple[float, float]], int, int, bool, int]
+    task: tuple[int, int, list[int], list[float], int, SamplerConfig, list[tuple[float, float]], int, int, bool, int, str]
 ) -> list[dict[str, Any]]:
     from .dgp.grouped_linear import generate_heterogeneity_dataset
     from .methods.fit_gr_rhs import fit_gr_rhs
     from .analysis.metrics import group_auroc, group_l2_score
 
-    sid, r, group_sizes, mu, seed, sampler, prior_grid, bayes_min_chains, method_jobs, enforce_conv, max_retries = task
+    sid, r, group_sizes, mu, seed, sampler, prior_grid, bayes_min_chains, method_jobs, enforce_conv, max_retries, log_path = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     p0_signal_groups = int(np.sum(labels))
     s = experiment_seed(5, int(sid), r, master_seed=seed)
@@ -233,6 +233,7 @@ def _exp5_worker(
             row,
             context_keys=["setting_id", "replicate_id", "prior_key"],
             metric_keys=["mse_null", "mse_signal", "group_auroc"],
+            log_path=log_path,
         )
         return row
 
@@ -285,6 +286,7 @@ def run_exp5_prior_sensitivity(
     out_dir = ensure_dir(base / "results" / "exp5_prior_sensitivity")
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp5", base / "logs" / "exp5_prior_sensitivity.log")
+    log_path = str(base / "logs" / "exp5_prior_sensitivity.log")
 
     sampler = _sampler_for_exp5(_sampler_for_standard())
     screen_sampler = _screen_sampler_for_exp5(sampler)
@@ -384,7 +386,7 @@ def run_exp5_prior_sensitivity(
     tasks: list[tuple] = []
     for scen_id, grp_sizes, mu in scenarios:
         for r in range(1, int(repeats) + 1):
-            tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, retained_priors, int(bayes_min_chains_use), int(method_jobs), bool(enforce_bayes_convergence), int(retry_limit)))
+            tasks.append((scen_id, r, grp_sizes, mu, seed, sampler, retained_priors, int(bayes_min_chains_use), int(method_jobs), bool(enforce_bayes_convergence), int(retry_limit), log_path))
 
     log.info("Exp5: %d scenarios x %d repeats x %d retained priors = %d task-rows", len(scenarios), repeats, len(retained_priors), len(tasks) * len(retained_priors))
     all_chunks = _parallel_rows(tasks, _exp5_worker, n_jobs=n_jobs, prefer_process=True, process_fallback="serial", progress_desc="Exp5 Prior Sensitivity")

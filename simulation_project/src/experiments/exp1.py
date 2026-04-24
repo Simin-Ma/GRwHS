@@ -25,6 +25,7 @@ from ..utils import (
     ensure_dir,
     experiment_seed,
     load_pandas,
+    print_experiment_result,
     save_dataframe,
     save_json,
     setup_logger,
@@ -54,12 +55,12 @@ def _linreg_slope_ci(x: np.ndarray, y: np.ndarray) -> tuple[float, tuple[float, 
 # ---------------------------------------------------------------------------
 
 def _exp1_null_worker(task: tuple) -> dict[str, Any]:
-    sid, pg, r, seed, tau, alpha_kappa, beta_kappa, tail_eps = task
+    sid, pg, r, seed, tau, alpha_kappa, beta_kappa, tail_eps, log_path = task
     s = experiment_seed(1, sid, r, master_seed=seed)
     y = generate_null_group(pg=int(pg), sigma2=1.0, seed=s)
     grid = kappa_posterior_grid(y, tau=float(tau), sigma2=1.0, alpha_kappa=alpha_kappa, beta_kappa=beta_kappa)
     sm = posterior_summary_from_grid(grid["kappa"], grid["density"], tail_threshold=float(tail_eps))
-    return {
+    row = {
         "panel": "null",
         "p_g": int(pg),
         "setting_id": int(sid),
@@ -71,6 +72,14 @@ def _exp1_null_worker(task: tuple) -> dict[str, Any]:
         "post_median_kappa": sm["post_median_kappa"],
         "tail_prob_kappa_gt_eps": sm.get("tail_prob", float("nan")),
     }
+    print_experiment_result(
+        "Exp1",
+        row,
+        context_keys=["panel", "setting_id", "replicate_id", "p_g"],
+        metric_keys=["post_mean_kappa", "post_median_kappa", "tail_prob_kappa_gt_eps"],
+        log_path=log_path,
+    )
+    return row
 
 
 def _exp1_null_setting_worker(task: tuple) -> list[dict[str, Any]]:
@@ -130,7 +139,7 @@ def _exp1_phase_setting_worker(task: tuple) -> list[dict[str, Any]]:
 
 
 def _exp1_phase_worker(task: tuple) -> dict[str, Any]:
-    sid, pg, xid, xi, r, seed, tau, sigma2, u0, alpha_kappa, beta_kappa = task
+    sid, pg, xid, xi, r, seed, tau, sigma2, u0, alpha_kappa, beta_kappa, log_path = task
     mu_g = float(xi) * int(pg)
     rho_profile = float(tau) / math.sqrt(max(float(sigma2), 1e-12))
     xi_c = xi_crit_u0_rho(u0=float(u0), rho=rho_profile)
@@ -140,7 +149,7 @@ def _exp1_phase_worker(task: tuple) -> dict[str, Any]:
     y, _ = generate_signal_group_distributed(pg=int(pg), mu_g=float(mu_g), sigma2=float(sigma2), seed=s)
     grid = kappa_posterior_grid(y, tau=float(tau), sigma2=float(sigma2), alpha_kappa=alpha_kappa, beta_kappa=beta_kappa)
     sm = posterior_summary_from_grid(grid["kappa"], grid["density"], tail_threshold=float(u0))
-    return {
+    row = {
         "panel": "phase",
         "p_g": int(pg),
         "setting_id": int(sid),
@@ -157,6 +166,14 @@ def _exp1_phase_worker(task: tuple) -> dict[str, Any]:
         "post_mean_kappa": sm["post_mean_kappa"],
         "post_prob_kappa_gt_u0": sm.get("tail_prob", float("nan")),
     }
+    print_experiment_result(
+        "Exp1",
+        row,
+        context_keys=["panel", "setting_id", "replicate_id", "p_g", "xi_ratio"],
+        metric_keys=["post_mean_kappa", "post_prob_kappa_gt_u0"],
+        log_path=log_path,
+    )
+    return row
 
 
 def _summarize_null_panel(null_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], float, tuple[float, float]]:
@@ -194,7 +211,7 @@ def _summarize_null_panel(null_rows: list[dict[str, Any]]) -> tuple[list[dict[st
 
 
 def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
-    sid, pg, r, seed, alpha_kappa, beta_kappa, tail_eps, sampler, retry_limit, enforce_convergence = task
+    sid, pg, r, seed, alpha_kappa, beta_kappa, tail_eps, sampler, retry_limit, enforce_convergence, log_path = task
     from .methods.fit_gr_rhs import fit_gr_rhs
 
     s = experiment_seed(1, int(sid), int(r), master_seed=int(seed) + 7_000_000)
@@ -243,7 +260,7 @@ def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
             post_median = float(np.median(kg))
             tail_prob = float(np.mean(kg > float(tail_eps)))
 
-    return {
+    row = {
         "panel": "null_full",
         "p_g": int(pg),
         "setting_id": int(sid),
@@ -256,6 +273,14 @@ def _exp1_full_null_worker(task: tuple) -> dict[str, Any]:
         "status": str(res.status),
         "converged": bool(res.converged),
     }
+    print_experiment_result(
+        "Exp1",
+        row,
+        context_keys=["panel", "setting_id", "replicate_id", "p_g"],
+        metric_keys=["post_mean_kappa", "post_median_kappa", "tail_prob_kappa_gt_eps"],
+        log_path=log_path,
+    )
+    return row
 
 
 def _build_exp1_density_story_rows(
@@ -409,6 +434,7 @@ def run_exp1_kappa_profile_regimes(
     out_dir = ensure_dir(base / "results" / "exp1_kappa_profile_regimes")
     fig_dir = ensure_dir(base / "figures")
     log = setup_logger("exp1", base / "logs" / "exp1_kappa_profile_regimes.log")
+    log_path = str(base / "logs" / "exp1_kappa_profile_regimes.log")
 
     pg_null = list(pg_null_list or [10, 20, 50, 100, 200, 500, 1000, 2000])
     pg_phase = list(pg_phase_list or [50, 100, 200, 500])
@@ -423,7 +449,7 @@ def run_exp1_kappa_profile_regimes(
     null_tasks: list[tuple] = []
     for sid, pg in enumerate(pg_null, start=1):
         for r in range(1, int(repeats) + 1):
-            null_tasks.append((sid, pg, r, seed, tau_null, alpha_kappa, beta_kappa, tail_eps))
+            null_tasks.append((sid, pg, r, seed, tau_null, alpha_kappa, beta_kappa, tail_eps, log_path))
     null_rows = _parallel_rows(null_tasks, _exp1_null_worker, n_jobs=n_jobs, prefer_process=False, progress_desc="Exp1A Null")
 
     # Summary: median E[kappa_g|Y] per p_g
@@ -454,6 +480,7 @@ def run_exp1_kappa_profile_regimes(
                         full_sampler,
                         int(full_null_max_convergence_retries),
                         bool(full_null_enforce_convergence),
+                        log_path,
                     )
                 )
         full_rows = _parallel_rows(
@@ -482,7 +509,7 @@ def run_exp1_kappa_profile_regimes(
             for xid, mult in enumerate(xi_mults, start=1):
                 xi_val = xi_crit_ref * float(mult)
                 for r in range(1, int(repeats) + 1):
-                    phase_tasks.append((sid, pg, xid, xi_val, r, seed, tau, sigma2_phase, u0, alpha_kappa, beta_kappa))
+                    phase_tasks.append((sid, pg, xid, xi_val, r, seed, tau, sigma2_phase, u0, alpha_kappa, beta_kappa, log_path))
     phase_rows = _parallel_rows(phase_tasks, _exp1_phase_worker, n_jobs=n_jobs, prefer_process=False, progress_desc="Exp1B Phase")
 
     # Phase summary: mean P(kappa > u0) by (tau, p_g, xi_ratio).

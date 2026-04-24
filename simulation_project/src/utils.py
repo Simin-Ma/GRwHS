@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+from pathlib import Path
 import sys
 import time
 from dataclasses import dataclass
@@ -368,6 +369,7 @@ def print_experiment_result(
     *,
     context_keys: Sequence[str] | None = None,
     metric_keys: Sequence[str] | None = None,
+    log_path: str | Path | None = None,
 ) -> None:
     ctx_keys = [str(k) for k in (context_keys or [])]
     metric_keys_use = [str(k) for k in (metric_keys or [])]
@@ -381,4 +383,10 @@ def print_experiment_result(
     for key in metric_keys_use:
         if key in row:
             parts.append(f"{key}={_progress_format_value(row.get(key))}")
-    print(" ".join(parts), flush=True)
+    line = " ".join(parts)
+    print(line, flush=True)
+    if log_path is not None:
+        path = Path(log_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")

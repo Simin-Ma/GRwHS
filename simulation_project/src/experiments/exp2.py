@@ -52,6 +52,7 @@ def _exp2_worker(
         int,
         dict,
         int,
+        str,
     ]
 ) -> tuple[list[dict], list[dict]]:
     from .dgp.grouped_linear import generate_heterogeneity_dataset
@@ -77,6 +78,7 @@ def _exp2_worker(
         n_test,
         grrhs_kwargs,
         method_jobs,
+        log_path,
     ) = task
     labels = (np.asarray(mu) > 0.0).astype(int)
     p0_signal_groups = int(np.sum(labels))
@@ -149,6 +151,7 @@ def _exp2_worker(
             rep_rows[-1],
             context_keys=["replicate_id", "method"],
             metric_keys=["mse_overall", "mse_null", "mse_signal", "group_auroc"],
+            log_path=log_path,
         )
         if method == "GR_RHS" and res.beta_mean is not None:
             kmeans = _kappa_group_means(res, n_groups)
@@ -213,6 +216,7 @@ def run_exp2_group_separation(
     fig_dir = ensure_dir(base / "figures")
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp2", base / "logs" / "exp2_group_separation.log")
+    log_path = str(base / "logs" / "exp2_group_separation.log")
 
     sampler = _sampler_for_standard()
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
@@ -277,6 +281,7 @@ def run_exp2_group_separation(
                 int(n_test),
                 grrhs_kw,
                 int(method_jobs),
+                log_path,
             )
         )
     results = _parallel_rows(tasks, _exp2_worker, n_jobs=n_jobs, prefer_process=True, process_fallback="serial", progress_desc="Exp2 Group Separation")

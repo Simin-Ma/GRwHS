@@ -249,6 +249,7 @@ def _exp3_worker(
         enforce_conv = bool(task["enforce_bayes_convergence"])
         max_retries = int(task["max_convergence_retries"])
         grrhs_kwargs = dict(task["grrhs_kwargs"])
+        log_path = str(task.get("log_path", "")).strip() or None
     else:
         if len(task) == 19:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
@@ -256,13 +257,16 @@ def _exp3_worker(
             n_train = 100
             method_jobs = 1
             ghs_plus_profile = "default"
+            log_path = None
         elif len(task) == 20:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
             n_train = 100
             method_jobs = 1
             ghs_plus_profile = "default"
+            log_path = None
         else:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_train, n_test, sampler, methods, gigg_config, bayes_min_chains, method_jobs, ghs_plus_profile, enforce_conv, max_retries, grrhs_kwargs = task
+            log_path = None
         methods = [str(m) for m in methods]
         gigg_mode = "paper_ref"
     group_cfg_name: str = str(group_cfg["name"])
@@ -418,6 +422,7 @@ def _exp3_worker(
             out_rows[-1],
             context_keys=["setting_id", "replicate_id", "method", "signal", "group_config", "env_id"],
             metric_keys=["mse_overall", "mse_null", "mse_signal", "lpd_test", "group_auroc"],
+            log_path=log_path,
         )
     return out_rows
 
@@ -480,6 +485,7 @@ def run_exp3_linear_benchmark(
     fig_dir = ensure_dir(base / "figures" / out_name)
     tab_dir = ensure_dir(base / "tables" / out_name)
     log = setup_logger(str(exp_key_name), base / "logs" / f"{out_name}.log")
+    log_path = str(base / "logs" / f"{out_name}.log")
 
     sampler = _sampler_for_standard()
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
@@ -627,6 +633,7 @@ def run_exp3_linear_benchmark(
                 "enforce_bayes_convergence": bool(enforce_bayes_convergence),
                 "max_convergence_retries": int(retry_limit),
                 "grrhs_kwargs": dict(grrhs_kw),
+                "log_path": log_path,
             }
             if bayes_methods_for_setting:
                 bayes_task = dict(base_task)

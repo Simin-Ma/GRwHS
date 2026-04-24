@@ -51,13 +51,13 @@ def _smoke_sampler_for_exp4(base: SamplerConfig) -> SamplerConfig:
 
 
 def _exp4_worker(
-    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], int, int, bool, int, int]
+    task: tuple[int, int, int, list[int], SamplerConfig, dict[str, dict], int, int, bool, int, int, str]
 ) -> list[dict[str, Any]]:
     from .methods.fit_gr_rhs import fit_gr_rhs
     from .methods.fit_rhs import fit_rhs
     from ..utils import canonical_groups, sample_correlated_design
 
-    p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, method_jobs, enforce_conv, max_retries, n = task
+    p0_true, r, seed, group_sizes, sampler, variants, bayes_min_chains, method_jobs, enforce_conv, max_retries, n, log_path = task
     p = int(sum(group_sizes))
     s = experiment_seed(4, int(p0_true), r, master_seed=seed)
 
@@ -176,6 +176,7 @@ def _exp4_worker(
             row,
             context_keys=["p0_true", "replicate_id", "variant", "method_type"],
             metric_keys=["mse_overall", "mse_null", "mse_signal", "tau_ratio_to_oracle"],
+            log_path=log_path,
         )
         return row
 
@@ -236,6 +237,7 @@ def run_exp4_variant_ablation(
     out_dir = ensure_dir(base / "results" / "exp4_variant_ablation")
     tab_dir = ensure_dir(base / "tables")
     log = setup_logger("exp4", base / "logs" / "exp4_variant_ablation.log")
+    log_path = str(base / "logs" / "exp4_variant_ablation.log")
 
     sampler = _sampler_for_exp4(_sampler_for_standard())
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else 2
@@ -287,6 +289,7 @@ def run_exp4_variant_ablation(
                     bool(enforce_bayes_convergence),
                     int(retry_limit),
                     n,
+                    log_path,
                 )
             )
 
