@@ -57,10 +57,7 @@ simulation_project/results/
 # Node dependencies
 node_modules/
 
-# Keep tracked benchmark archive under outputs (override generic outputs ignores)
-!outputs/
-!outputs/ab_runs/
-!outputs/ab_runs/**
+# Ordinary experiment outputs are local-only and should not be pushed.
 
 # Local reference/vendor trees: keep in workspace, do not push
 /gigg-master/

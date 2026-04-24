@@ -83,6 +83,8 @@ Default CLI output is sessionized:
 
 `outputs/simulation_project/sessions/<timestamp>_cli_<experiment>/`
 
+Ordinary experiment outputs are local artifacts only and should not be committed or pushed to `main`.
+
 Useful pointers:
 
 - `outputs/simulation_project/latest_session.txt`

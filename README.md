@@ -37,6 +37,8 @@ Default output layout is now session-based and centralized under:
 
 `outputs/simulation_project/sessions/<timestamp>_cli_<experiment>/`
 
+Ordinary experiment outputs are local artifacts only and should not be committed or pushed to `main`.
+
 ## Documentation
 
 | Document | Purpose |
