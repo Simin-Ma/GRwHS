@@ -66,3 +66,8 @@ node_modules/
 /gigg-master/
 /gigg/
 /rstanarm-master/
+
+# Local CmdStan installs: keep in workspace, do not push
+/.local_cmdstan/
+/cmdstan/
+/cmdstan-*/
