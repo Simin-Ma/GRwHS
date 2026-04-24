@@ -1061,6 +1061,14 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
     phase_a_block_refresh_interval: int = 10
     phase_b_block_refresh_steps: int = 24
     phase_b_block_refresh_repeats: int = 1
+    structure_aware_warmup: bool = True
+    distributed_entropy_threshold: float = 0.85
+    concentrated_score_threshold: float = 0.34
+    concentrated_top2_mass_threshold: float = 0.62
+    distributed_top2_mass_threshold: float = 0.52
+    distributed_block_top_groups: int = 3
+    distributed_phase_a_score_min: int = 3
+    distributed_phase_b_score_min: int = 3
 
     @staticmethod
     def _group_norms(beta: np.ndarray, groups: List[List[int]]) -> np.ndarray:
@@ -1077,6 +1085,66 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         if (not np.isfinite(total)) or total <= 0.0:
             return 0.0
         return float(np.max(arr) / total)
+
+    @staticmethod
+    def _group_mass_weights(group_norms: np.ndarray) -> np.ndarray:
+        arr = np.asarray(group_norms, dtype=float).reshape(-1)
+        total = float(np.sum(arr))
+        if arr.size == 0 or (not np.isfinite(total)) or total <= 0.0:
+            return np.zeros_like(arr, dtype=float)
+        w = arr / total
+        return np.clip(np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0), 0.0, 1.0)
+
+    @classmethod
+    def _group_norm_entropy(cls, group_norms: np.ndarray) -> float:
+        w = cls._group_mass_weights(group_norms)
+        if w.size <= 1 or float(np.sum(w)) <= 0.0:
+            return 0.0
+        mask = w > 0.0
+        ent = -float(np.sum(w[mask] * np.log(w[mask])))
+        return float(ent / max(np.log(float(w.size)), 1e-12))
+
+    @classmethod
+    def _topk_group_mass(cls, group_norms: np.ndarray, k: int) -> float:
+        w = cls._group_mass_weights(group_norms)
+        if w.size == 0:
+            return 0.0
+        kk = int(max(1, min(int(k), int(w.size))))
+        order = np.argsort(-w)
+        return float(np.sum(w[order[:kk]]))
+
+    @staticmethod
+    def _safe_cv(values: np.ndarray) -> float:
+        arr = np.asarray(values, dtype=float).reshape(-1)
+        if arr.size == 0:
+            return 0.0
+        mean = float(np.mean(arr))
+        sd = float(np.std(arr))
+        if (not np.isfinite(mean)) or abs(mean) < 1e-12:
+            return 0.0
+        return float(sd / abs(mean))
+
+    def _structure_mode(
+        self,
+        *,
+        concentration_score: float,
+        group_entropy: float,
+        top2_mass: float,
+    ) -> str:
+        if not bool(self.structure_aware_warmup):
+            return "concentrated"
+        conc = float(concentration_score)
+        ent = float(group_entropy)
+        top2 = float(top2_mass)
+        if conc >= float(self.concentrated_score_threshold) or top2 >= float(self.concentrated_top2_mass_threshold):
+            return "concentrated"
+        if (
+            ent >= float(self.distributed_entropy_threshold)
+            and conc <= float(self.concentrated_score_threshold) * 0.9
+            and top2 <= float(self.distributed_top2_mass_threshold)
+        ):
+            return "distributed"
+        return "unclear"
 
     def _global_beta_refresh(
         self,
@@ -1271,6 +1339,36 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         trend_ok = max(prev_shift, curr_shift) <= float(tol) * scale * 1.25 * float(trend_weight)
         return bool(center_ok and spread_ok and trend_ok)
 
+    def _metric_stable_relaxed(
+        self,
+        trace: List[float],
+        *,
+        window: int,
+        tol: float,
+        center_weight: float = 1.0,
+        spread_weight: float = 1.0,
+        trend_weight: float = 1.0,
+    ) -> bool:
+        stats = self._robust_trace_window(trace, window)
+        if stats is None:
+            return False
+        prev_med = float(stats["prev_med"])
+        curr_med = float(stats["curr_med"])
+        prev_mad = float(stats["prev_mad"])
+        curr_mad = float(stats["curr_mad"])
+        prev_iqr = float(stats["prev_iqr"])
+        curr_iqr = float(stats["curr_iqr"])
+        prev_shift = float(stats["prev_shift"])
+        curr_shift = float(stats["curr_shift"])
+        scale = max(abs(prev_med), abs(curr_med), 1.0)
+        center_ok = abs(curr_med - prev_med) <= float(tol) * scale * float(center_weight)
+        spread_ok = (
+            abs(curr_mad - prev_mad) <= float(tol) * max(prev_mad, curr_mad, 1.0) * float(spread_weight)
+            or abs(curr_iqr - prev_iqr) <= float(tol) * max(prev_iqr, curr_iqr, 1.0) * float(spread_weight)
+        )
+        trend_ok = max(prev_shift, curr_shift) <= float(tol) * scale * 1.25 * float(trend_weight)
+        return bool(center_ok and (spread_ok or trend_ok))
+
     @staticmethod
     def _phase_score(
         *,
@@ -1295,7 +1393,63 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
     def _phase_a_ready(
         self,
         traces: Dict[str, List[float]],
+        *,
+        structure_mode: str,
     ) -> tuple[bool, Dict[str, bool], Dict[str, int]]:
+        if str(structure_mode) == "distributed":
+            checks = {
+                "mean_kappa": self._metric_stable(
+                    traces["mean_kappa"],
+                    window=int(self.geometry_window),
+                    tol=float(self.geometry_tol),
+                ),
+                "sd_kappa": self._metric_stable(
+                    traces["sd_kappa"],
+                    window=int(self.geometry_window),
+                    tol=float(self.geometry_tol) * 1.15,
+                    spread_weight=1.15,
+                ),
+                "mean_log_prior_var": self._metric_stable(
+                    traces["mean_log_prior_var"],
+                    window=int(self.geometry_window),
+                    tol=float(self.geometry_tol) * 1.20,
+                ),
+                "sd_log_prior_var": self._metric_stable(
+                    traces["sd_log_prior_var"],
+                    window=int(self.geometry_window),
+                    tol=float(self.geometry_tol) * 1.40,
+                    spread_weight=1.20,
+                ),
+                "group_norm_cv": self._metric_stable(
+                    traces["group_norm_cv"],
+                    window=int(self.geometry_window),
+                    tol=float(self.geometry_tol) * 1.20,
+                    trend_weight=1.15,
+                ),
+                "group_norm_entropy": self._metric_stable(
+                    traces["group_norm_entropy"],
+                    window=int(self.geometry_window),
+                    tol=float(self.geometry_tol) * 1.15,
+                    trend_weight=1.10,
+                ),
+            }
+            checks["prior_var_ok"] = bool(checks["mean_log_prior_var"] or checks["sd_log_prior_var"])
+            ready, core_pass, support_pass, score = self._phase_score(
+                checks=checks,
+                core_keys=("mean_kappa", "prior_var_ok"),
+                support_keys=("sd_kappa", "group_norm_cv", "group_norm_entropy"),
+                core_min_pass=int(self.phase_a_core_min_pass),
+                support_min_pass=int(self.phase_a_support_min_pass),
+                score_keys=("mean_kappa", "prior_var_ok", "sd_kappa", "group_norm_cv", "group_norm_entropy"),
+                score_min=int(self.distributed_phase_a_score_min),
+            )
+            meta = {
+                "core_pass": int(core_pass),
+                "support_pass": int(support_pass),
+                "score": int(score),
+            }
+            return ready, checks, meta
+
         checks = {
             "log_tau": self._metric_stable(
                 traces["log_tau"],
@@ -1346,7 +1500,64 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
     def _phase_b_ready(
         self,
         traces: Dict[str, List[float]],
+        *,
+        structure_mode: str,
     ) -> tuple[bool, Dict[str, bool], Dict[str, int]]:
+        if str(structure_mode) == "distributed":
+            checks = {
+                "beta_norm": self._metric_stable(
+                    traces["beta_norm"],
+                    window=int(self.transition_window),
+                    tol=float(self.transition_tol),
+                ),
+                "resid_norm": self._metric_stable_relaxed(
+                    traces["resid_norm"],
+                    window=int(self.transition_window),
+                    tol=float(self.transition_tol) * 1.30,
+                    center_weight=1.15,
+                    trend_weight=1.25,
+                ),
+                "mean_group_norm": self._metric_stable_relaxed(
+                    traces["mean_group_norm"],
+                    window=int(self.transition_window),
+                    tol=float(self.transition_tol) * 1.40,
+                    center_weight=1.20,
+                    trend_weight=1.30,
+                ),
+                "sd_group_norm": self._metric_stable(
+                    traces["sd_group_norm"],
+                    window=int(self.transition_window),
+                    tol=float(self.transition_tol) * 1.35,
+                    spread_weight=1.20,
+                ),
+                "group_norm_entropy": self._metric_stable(
+                    traces["group_norm_entropy"],
+                    window=int(self.transition_window),
+                    tol=float(self.transition_tol) * 1.25,
+                    trend_weight=1.15,
+                ),
+                "mean_kappa": self._metric_stable(
+                    traces["mean_kappa"],
+                    window=int(self.transition_window),
+                    tol=float(self.transition_tol) * 1.25,
+                ),
+            }
+            ready, core_pass, support_pass, score = self._phase_score(
+                checks=checks,
+                core_keys=("mean_group_norm", "resid_norm"),
+                support_keys=("beta_norm", "mean_kappa", "sd_group_norm", "group_norm_entropy"),
+                core_min_pass=2,
+                support_min_pass=1,
+                score_keys=("beta_norm", "resid_norm", "mean_group_norm", "sd_group_norm", "group_norm_entropy", "mean_kappa"),
+                score_min=3,
+            )
+            meta = {
+                "core_pass": int(core_pass),
+                "support_pass": int(support_pass),
+                "score": int(score),
+            }
+            return ready, checks, meta
+
         checks = {
             "beta_norm": self._metric_stable(
                 traces["beta_norm"],
@@ -1458,6 +1669,11 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
             "mean_log_prior_var": [],
             "sd_log_prior_var": [],
             "median_group_norm": [],
+            "mean_group_norm": [],
+            "sd_group_norm": [],
+            "group_norm_cv": [],
+            "group_norm_entropy": [],
+            "sd_kappa": [],
             "beta_norm": [],
             "top_group_norm": [],
             "resid_norm": [],
@@ -1480,6 +1696,8 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         block_refresh_group_hist = np.zeros(G, dtype=int)
         block_refresh_steps = 0
         adaptive_concentration_threshold_last = float("nan")
+        structure_mode = "unclear"
+        distributed_block_refresh_count = 0
 
         max_total = int(max(
             sample_target * int(self.thin) + 1,
@@ -1561,6 +1779,13 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
             # after hyper-parameters move, redraw beta again when one/few groups dominate.
             group_norms_pre = self._group_norms(beta, groups)
             concentration_score = self._concentration_score(group_norms_pre)
+            group_entropy_pre = self._group_norm_entropy(group_norms_pre)
+            top2_mass_pre = self._topk_group_mass(group_norms_pre, 2)
+            structure_mode = self._structure_mode(
+                concentration_score=concentration_score,
+                group_entropy=group_entropy_pre,
+                top2_mass=top2_mass_pre,
+            )
             in_phase_a_late = bool(
                 (not phase_a_done)
                 and (not hyper_only_phase)
@@ -1613,11 +1838,20 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                 tau2 = tau ** 2
                 sigma2 = math.exp(2.0 * log_sigma)
                 lam2 = lam ** 2
-                target_groups, adaptive_concentration_threshold_last = self._target_group_ids(
-                    beta=beta,
-                    groups=groups,
-                    concentration_score=concentration_score,
-                )
+                if str(structure_mode) == "distributed":
+                    norms = self._group_norms(beta, groups)
+                    order = np.argsort(-norms)
+                    top_k = int(max(0, min(int(self.distributed_block_top_groups), int(order.size))))
+                    target_groups = [int(v) for v in order[:top_k]]
+                    adaptive_concentration_threshold_last = float("nan")
+                    if target_groups:
+                        distributed_block_refresh_count += 1
+                else:
+                    target_groups, adaptive_concentration_threshold_last = self._target_group_ids(
+                        beta=beta,
+                        groups=groups,
+                        concentration_score=concentration_score,
+                    )
                 if target_groups:
                     block_refresh_steps += 1
                     block_refresh_count += int(len(target_groups)) * int(max(1, block_refresh_repeats))
@@ -1641,15 +1875,25 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
             group_norms = self._group_norms(beta, groups)
             top_group_norm = float(np.max(group_norms)) if group_norms.size else 0.0
             median_group_norm = float(np.median(group_norms)) if group_norms.size else 0.0
+            mean_group_norm = float(np.mean(group_norms)) if group_norms.size else 0.0
+            sd_group_norm = float(np.std(group_norms)) if group_norms.size else 0.0
+            group_norm_cv = self._safe_cv(group_norms)
+            group_norm_entropy = self._group_norm_entropy(group_norms)
             concentration_score = self._concentration_score(group_norms)
+            top2_mass = self._topk_group_mass(group_norms, 2)
             resid_norm = float(np.linalg.norm(y - X @ beta) / math.sqrt(max(n, 1)))
             prior_var = self._v_arr(sigma2, tau2, lam2, kappa[group_id], self.jitter)
             log_prior_var = np.log(np.maximum(prior_var, self.jitter))
             traces["log_tau"].append(float(log_tau))
             traces["mean_kappa"].append(float(np.mean(kappa)))
+            traces["sd_kappa"].append(float(np.std(kappa)))
             traces["mean_log_prior_var"].append(float(np.mean(log_prior_var)))
             traces["sd_log_prior_var"].append(float(np.std(log_prior_var)))
             traces["median_group_norm"].append(median_group_norm)
+            traces["mean_group_norm"].append(mean_group_norm)
+            traces["sd_group_norm"].append(sd_group_norm)
+            traces["group_norm_cv"].append(group_norm_cv)
+            traces["group_norm_entropy"].append(group_norm_entropy)
             traces["beta_norm"].append(float(np.linalg.norm(beta)))
             traces["top_group_norm"].append(top_group_norm)
             traces["resid_norm"].append(resid_norm)
@@ -1659,10 +1903,16 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                 phase_a_iters += 1
                 burnin_total += 1
                 if phase_a_iters >= int(self.min_phase_a_iters):
-                    phase_a_done, phase_a_checks_last, phase_a_meta_last = self._phase_a_ready(traces)
+                    phase_a_done, phase_a_checks_last, phase_a_meta_last = self._phase_a_ready(
+                        traces,
+                        structure_mode=structure_mode,
+                    )
                 if (not phase_a_done) and phase_a_iters >= int(self.phase_a_max_iters):
                     if not phase_a_checks_last:
-                        _ready, phase_a_checks_last, phase_a_meta_last = self._phase_a_ready(traces)
+                        _ready, phase_a_checks_last, phase_a_meta_last = self._phase_a_ready(
+                            traces,
+                            structure_mode=structure_mode,
+                        )
                     phase_a_done = True
                     warmup_warning = "geometry_not_stable"
                 continue
@@ -1671,10 +1921,16 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                 phase_b_iters += 1
                 burnin_total += 1
                 if phase_b_iters >= int(self.min_phase_b_iters):
-                    phase_b_done, phase_b_checks_last, phase_b_meta_last = self._phase_b_ready(traces)
+                    phase_b_done, phase_b_checks_last, phase_b_meta_last = self._phase_b_ready(
+                        traces,
+                        structure_mode=structure_mode,
+                    )
                 if (not phase_b_done) and phase_b_iters >= int(self.phase_b_max_iters):
                     if not phase_b_checks_last:
-                        _ready, phase_b_checks_last, phase_b_meta_last = self._phase_b_ready(traces)
+                        _ready, phase_b_checks_last, phase_b_meta_last = self._phase_b_ready(
+                            traces,
+                            structure_mode=structure_mode,
+                        )
                     phase_b_done = True
                     if not warmup_warning:
                         warmup_warning = "transition_not_stable"
@@ -1744,12 +2000,16 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                 "phase_b_score": int(phase_b_meta_last.get("score", 0)),
                 "phase_b_core_pass": int(phase_b_meta_last.get("core_pass", 0)),
                 "phase_b_support_pass": int(phase_b_meta_last.get("support_pass", 0)),
+                "structure_mode": str(structure_mode),
                 "concentration_score_last": float(concentration_score),
+                "top2_group_mass_last": float(top2_mass),
+                "group_norm_entropy_last": float(group_norm_entropy),
                 "adaptive_concentration_threshold_last": float(adaptive_concentration_threshold_last),
                 "target_group_ids_last": list(target_groups),
                 "block_refresh_count": int(block_refresh_count),
                 "block_refresh_steps": int(block_refresh_steps),
                 "block_refresh_group_histogram": np.asarray(block_refresh_group_hist, dtype=int).tolist(),
+                "distributed_block_refresh_count": int(distributed_block_refresh_count),
                 "concentrated_phase_a_relax_applied": bool(concentrated_phase_a_relax),
                 "resume_no_burnin_used": bool(skip_adaptive),
                 "warmup_warning": str(warmup_warning_final),
@@ -1794,6 +2054,14 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         self.sampler_diagnostics_["phase_a_block_refresh_interval"] = int(self.phase_a_block_refresh_interval)
         self.sampler_diagnostics_["phase_b_block_refresh_steps"] = int(self.phase_b_block_refresh_steps)
         self.sampler_diagnostics_["phase_b_block_refresh_repeats"] = int(self.phase_b_block_refresh_repeats)
+        self.sampler_diagnostics_["structure_aware_warmup"] = bool(self.structure_aware_warmup)
+        self.sampler_diagnostics_["distributed_entropy_threshold"] = float(self.distributed_entropy_threshold)
+        self.sampler_diagnostics_["concentrated_score_threshold"] = float(self.concentrated_score_threshold)
+        self.sampler_diagnostics_["concentrated_top2_mass_threshold"] = float(self.concentrated_top2_mass_threshold)
+        self.sampler_diagnostics_["distributed_top2_mass_threshold"] = float(self.distributed_top2_mass_threshold)
+        self.sampler_diagnostics_["distributed_block_top_groups"] = int(self.distributed_block_top_groups)
+        self.sampler_diagnostics_["distributed_phase_a_score_min"] = int(self.distributed_phase_a_score_min)
+        self.sampler_diagnostics_["distributed_phase_b_score_min"] = int(self.distributed_phase_b_score_min)
         if isinstance(self.chain_phase_infos_, list) and self.chain_phase_infos_:
             self.sampler_diagnostics_["warmup_warning"] = next(
                 (str(info.get("warmup_warning", "")) for info in self.chain_phase_infos_ if str(info.get("warmup_warning", "")).strip()),

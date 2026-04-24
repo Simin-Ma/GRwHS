@@ -46,6 +46,7 @@ def test_grrhs_gibbs_staged_phase_diagnostics_present() -> None:
         assert "phase_b_iters" in info
         assert "actual_burnin" in info
         assert "resume_no_burnin_used" in info
+        assert "structure_mode" in info
         assert "block_refresh_count" in info
         assert "block_refresh_steps" in info
         assert "block_refresh_group_histogram" in info
