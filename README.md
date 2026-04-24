@@ -46,6 +46,12 @@ Default output layout is now session-based and centralized under:
 | `docs/fair_benchmark_protocol.md` | Fairness rules for benchmark comparisons |
 | `docs/bayesian_four_models_priors_posteriors_sampling_convergence.md` | Bayesian backend module locations |
 
+## Method Notes
+
+`GHS_plus` now refers to the Xu et al. (2016) HBGHS baseline with paper-aligned
+Gaussian Gibbs defaults rather than the older project-specific RHS-style `tau0`
+calibration wrapper.
+
 ## Active Experiments
 
 | ID | Name |

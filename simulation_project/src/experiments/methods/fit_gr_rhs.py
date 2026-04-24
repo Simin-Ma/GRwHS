@@ -435,12 +435,9 @@ def fit_gr_rhs(
         if resume_payload_out is not None:
             diagnostics["retry_resume_payload"] = resume_payload_out
         diagnostics["sampling_strategy"] = {
-            "requested_backend": "nuts",
-            "backend_used": "nuts",
             "retry_attempt": int(max(retry_attempt, 0)),
             "warm_start_strategy": str(warm_mode),
             "hard_design": bool(design_profile.get("hard_design", False)),
-            "backend_auto_switched": False,
             "design_profile": design_profile,
         }
 

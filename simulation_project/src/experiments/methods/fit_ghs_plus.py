@@ -7,7 +7,7 @@ import numpy as np
 from simulation_project.src.core.models.baselines import GroupedHorseshoePlus
 
 from .helpers import as_int_groups, fit_error_result, scaled_iteration_budget
-from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, rhs_style_tau0, timed_call
+from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, timed_call
 
 # GHS+ Gibbs mixes far more slowly than HMC for the group-level shrinkage
 # parameters (lambda_g). Scale Gibbs iterations by this multiplier relative
@@ -44,8 +44,22 @@ def fit_ghs_plus(
     iter_mult: int = _GHS_ITER_MULT,
     iter_floor: int = _GHS_ITER_FLOOR,
     iter_cap: int = _GHS_ITER_CAP,
+    fit_intercept: bool = True,
+    tau0: float = 1.0,
+    group_scale_prior: float = 1.0,
+    local_scale_prior: float = 1.0,
     progress_bar: bool = True,
 ) -> FitResult:
+    """Fit Xu et al. (2016) HBGHS using the paper-style Gaussian Gibbs setup.
+
+    The underlying sampler matches the hierarchical grouped horseshoe:
+      tau ~ C+(0, 1), lambda_g ~ C+(0, 1), delta_j ~ C+(0, 1)
+    with centered/scaled Gaussian regression handled inside the model when
+    ``fit_intercept=True``.
+
+    The previous project-specific RHS-style tau calibration is intentionally not
+    used here so the default wrapper stays aligned to the paper's formulation.
+    """
     if str(task).lower() == "logistic":
         return fit_error_result(
             "GHS_plus",
@@ -53,8 +67,6 @@ def fit_ghs_plus(
         )
 
     try:
-        n, p = int(X.shape[0]), int(X.shape[1])
-        tau0 = rhs_style_tau0(n=n, p=p, p0=p0)
         ghs_burnin, ghs_draws = _ghs_iters(
             sampler,
             iter_mult=iter_mult,
@@ -62,8 +74,10 @@ def fit_ghs_plus(
             iter_cap=iter_cap,
         )
         model = GroupedHorseshoePlus(
-            fit_intercept=False,
+            fit_intercept=bool(fit_intercept),
             tau0=float(tau0),
+            group_scale_prior=float(group_scale_prior),
+            local_scale_prior=float(local_scale_prior),
             iters=int(ghs_burnin + ghs_draws),
             burnin=int(ghs_burnin),
             thin=1,
@@ -84,6 +98,16 @@ def fit_ghs_plus(
             beta_draws=beta_draws,
             config=sampler,
         )
+        diagnostics = dict(details or {})
+        diagnostics["paper_alignment"] = {
+            "paper": "Xu et al. (2016)",
+            "model": "HBGHS",
+            "sampler": "gaussian_gibbs",
+            "tau0": float(tau0),
+            "group_scale_prior": float(group_scale_prior),
+            "local_scale_prior": float(local_scale_prior),
+            "fit_intercept": bool(fit_intercept),
+        }
 
         return FitResult(
             method="GHS_plus",
@@ -97,7 +121,7 @@ def fit_ghs_plus(
             bulk_ess_min=float(ess_min),
             divergence_ratio=float(div_ratio),
             converged=bool(converged),
-            diagnostics=details,
+            diagnostics=diagnostics,
         )
     except Exception as exc:
         return fit_error_result("GHS_plus", f"{type(exc).__name__}: {exc}")

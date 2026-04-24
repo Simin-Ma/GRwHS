@@ -155,7 +155,7 @@ def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
 
 
 def _sampler_for_ghs_plus_default(base: SamplerConfig, *, profile: str = "default") -> SamplerConfig:
-    """Method-specific default budget for Grouped Horseshoe+."""
+    """Method-specific Gibbs budget for paper-aligned Xu et al. HBGHS."""
     name = str(profile).strip().lower()
     if name == "laptop":
         min_chains = _GHS_PLUS_LAPTOP_CHAINS

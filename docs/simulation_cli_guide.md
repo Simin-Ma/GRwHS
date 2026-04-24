@@ -28,7 +28,8 @@ Common CLI args:
 - `--exp3-gigg-mode {paper_ref}`
 
 `--profile` is intentionally unsupported.
-Default sampler backend is `nuts`.
+Default sampler backend is `nuts` for `GR_RHS`; `GHS_plus` uses its own
+paper-aligned Gaussian Gibbs backend.
 
 ## 2. Default Protocol
 
@@ -94,6 +95,8 @@ Preset behavior for `--preset paper_laptop`:
 - `Exp4` uses the same `nuts` GR-RHS sampler as the rest of the official protocol
 - `Exp3` heavy methods (`GIGG_MMLE`, `GHS_plus`) restricted to anchor settings in `exp3a/3b`
 - `Exp3` heavy methods use reduced laptop budgets under the preset
+- `GHS_plus` keeps the Xu et al. (2016) HBGHS prior defaults:
+  `tau ~ C+(0,1)`, `lambda_g ~ C+(0,1)`, `delta_j ~ C+(0,1)`
 - run-level analysis is skipped by default
 - duplicate artifact archiving is disabled by default
 
@@ -138,6 +141,7 @@ python -m simulation_project.src.run_experiment --experiment 2 --preset paper_la
 - correlation axis: `rho_within=[0.8]`, `rho_between=0.2`, enforced `rw>rb`
 - SNR axis: `[0.2,1.0,5.0]`
 - methods: `GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV`
+- `GHS_plus` is the paper-aligned HBGHS Gaussian Gibbs baseline (Xu et al., 2016)
 
 Run:
 
@@ -153,6 +157,7 @@ python -m simulation_project.src.run_experiment --experiment 3a --preset paper_l
 - same default methods as Exp3a
 - under `paper_laptop`, heavy methods are restricted to anchor settings (`G10x5`, `RW08_SNR10`, default boundary ratio)
 - under `paper_laptop`, `GIGG_MMLE` and `GHS_plus` use reduced per-fit budgets
+- `GHS_plus` still uses the same Xu et al. prior defaults; only the Gibbs iteration budget is reduced
 
 Run:
 

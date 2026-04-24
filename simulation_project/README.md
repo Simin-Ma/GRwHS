@@ -119,6 +119,15 @@ The `paper_laptop` preset keeps Exp2 at the full default repeats while reducing 
 restricts the heaviest Exp3 methods to anchor settings, lowers GIGG/GHS+ per-fit budgets,
 skips analysis by default, and disables duplicate artifact archiving.
 
+## Bayesian Backends
+
+- `GR_RHS`: project-default NUTS backend
+- `RHS`: Bayesian regularized horseshoe baseline
+- `GIGG_*`: Gibbs samplers aligned to the `gigg-master` reference path
+- `GHS_plus`: Xu et al. (2016) hierarchical Bayesian grouped horseshoe (HBGHS)
+  with paper-aligned Gaussian Gibbs defaults:
+  `tau ~ C+(0,1)`, `lambda_g ~ C+(0,1)`, `delta_j ~ C+(0,1)`
+
 ## Runtime Notes
 
 - On Windows, process pools are available from spawn-safe script entrypoints.

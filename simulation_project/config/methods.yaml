@@ -9,3 +9,11 @@ GIGG_MMLE:
   variant: mmle_main
 GHS_plus:
   variant: xu_group_horseshoe_plus
+  alignment: paper_default
+  model: HBGHS
+  sampler: gibbs
+  likelihood: gaussian_only
+  tau0: 1.0
+  group_scale_prior: 1.0
+  local_scale_prior: 1.0
+  fit_intercept: true
