@@ -292,13 +292,14 @@ def run_exp5_prior_sensitivity(
     screen_sampler = _screen_sampler_for_exp5(sampler)
     bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else int(_BAYESIAN_DEFAULT_CHAINS)
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
-    if max_convergence_retries is None:
-        retry_limit = int(_EXP5_DEFAULT_MAX_CONV_RETRIES)
-    else:
-        retry_limit = _resolve_convergence_retry_limit(max_convergence_retries, until_bayes_converged=bool(until_bayes_converged))
+    retry_limit = _resolve_convergence_retry_limit(
+        max_convergence_retries,
+        until_bayes_converged=bool(until_bayes_converged),
+    )
     if retry_limit < 0:
-        # Exp5 is intentionally heavy; cap unlimited mode to a practical retry budget.
-        retry_limit = int(_EXP5_DEFAULT_MAX_CONV_RETRIES)
+        # Exp5 is intentionally heavy; keep the shared until-converged sentinel
+        # semantics but clamp to a smaller practical cap for this experiment.
+        retry_limit = -min(int(_EXP5_DEFAULT_MAX_CONV_RETRIES), 12)
     priors = list(prior_grid or _DEFAULT_PRIOR_GRID)
 
     scenarios: list[tuple[int, list[int], list[float]]] = [

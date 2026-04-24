@@ -50,7 +50,7 @@ def _preset_overrides_for_experiment(exp_key: str, preset: str) -> dict[str, Any
         "exp1": {"repeats": 300},
         "exp2": {"repeats": 100},
         "exp3": {"repeats": 50, "heavy_methods_anchor_only": True, "gigg_budget_profile": "laptop", "ghs_plus_budget_profile": "laptop"},
-        "exp3a": {"repeats": 50, "heavy_methods_anchor_only": True, "gigg_budget_profile": "laptop", "ghs_plus_budget_profile": "laptop"},
+        "exp3a": {"repeats": 100, "heavy_methods_anchor_only": True, "gigg_budget_profile": "laptop", "ghs_plus_budget_profile": "laptop"},
         "exp3b": {"repeats": 24, "heavy_methods_anchor_only": True, "gigg_budget_profile": "laptop", "ghs_plus_budget_profile": "laptop"},
         "exp3c": {"repeats": 8, "methods": ["GR_RHS", "RHS", "OLS", "LASSO_CV"]},
         "exp3d": {"repeats": 15, "methods": ["GR_RHS", "RHS", "OLS", "LASSO_CV"]},

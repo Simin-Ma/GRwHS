@@ -222,9 +222,10 @@ def _resolve_convergence_retry_limit(
 ) -> int:
     if max_convergence_retries is not None:
         return int(max_convergence_retries)
-    # Single-default retry budget.
     if bool(until_bayes_converged):
-        return _default_convergence_retries()
+        # Negative sentinel enables the capped "retry until converged" mode
+        # in _retry_budget_from_limit().
+        return -1
     return _default_convergence_retries()
 
 

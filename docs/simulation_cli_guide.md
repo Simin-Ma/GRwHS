@@ -27,6 +27,11 @@ Common CLI args:
 - `--until-bayes-converged`
 - `--exp3-gigg-mode {paper_ref}`
 
+Retry semantics:
+- If `--max-convergence-retries` is set to a nonnegative integer, that exact retry budget is used.
+- If `--until-bayes-converged` is enabled and `--max-convergence-retries` is omitted, the runtime now uses a negative sentinel that activates capped "retry until converged" mode.
+- Shared hard cap for until-converged mode is 12 retries (13 total attempts); `Exp5` keeps a smaller practical cap of 5 retries.
+
 `--profile` is intentionally unsupported.
 `GR_RHS` now uses a single staged Gibbs identity:
 - default backend: `staged_gibbs`
@@ -94,7 +99,7 @@ Preset behavior for `--preset paper_laptop`:
 
 - `exp1=300`
 - `exp2=100`
-- `exp3a=50`
+- `exp3a=100`
 - `exp3b=24`
 - `exp3c=8`
 - `exp3d=15`

@@ -1109,7 +1109,7 @@ def run_exp3_linear_benchmark(
 def run_exp3a_main_benchmark(
     n_jobs: int = 1,
     seed: int = MASTER_SEED,
-    repeats: int = 20,
+    repeats: int = 100,
     save_dir: str = "outputs/simulation_project",
     **kwargs,
 ) -> Dict[str, str]:

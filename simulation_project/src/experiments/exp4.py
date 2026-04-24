@@ -11,7 +11,6 @@ from .evaluation import _bridge_ratio_diagnostics, _kappa_group_means
 from .fitting import _fit_with_convergence_retry
 from .reporting import _finalize_experiment_run, _record_produced_paths, _stable_name_seed
 from .runtime import (
-    _EXP4_DEFAULT_MAX_CONV_RETRIES,
     _attempts_used,
     bayes_rhat_threshold_default,
     _parallel_rows,
@@ -247,7 +246,7 @@ def run_exp4_variant_ablation(
             bayes_min_chains_use = 1
     bayes_min_chains_use = max(1, int(bayes_min_chains_use))
     retry_limit = _resolve_convergence_retry_limit(
-        _EXP4_DEFAULT_MAX_CONV_RETRIES if max_convergence_retries is None else max_convergence_retries,
+        max_convergence_retries,
         until_bayes_converged=bool(until_bayes_converged),
     )
     group_sizes = [10, 10, 10, 10, 10]
