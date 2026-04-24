@@ -102,9 +102,12 @@ python -m simulation_project.src.run_experiment --experiment 2
 
 ### Exp3a (`main_benchmark`)
 
-- signals: `concentrated`, `distributed`
-- correlation axis: `rho_within=[0.8]`, `rho_between=0.2`, enforced `rw>rb`
-- SNR axis: `[0.2,1.0,5.0]`
+- paper fixed-coefficient settings:
+  `C10H,D10H,C10M,D10M,C5,D5,C25,D25,CL,DL,CS,DS`
+- `p=50`; project-default `n_train` / `n_test` are unchanged
+- `rho_between=0.2`; `rho_within` follows the paper label (`0.8` for `H`, `0.6` for `M`)
+- explained-variance target fixed at `beta'Sigma beta / (beta'Sigma beta + sigma2) = 0.7`
+- `concentrated` now means within-group sparse; `distributed` now means within-group dense
 - methods: `GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV`
 
 Run:
@@ -128,10 +131,13 @@ python -m simulation_project.src.run_experiment --experiment 3b
 
 ### Exp3c (`highdim_stress`)
 
-- `n_train=200`, `n_test=100`, `p=500`, `group_sizes=[50]*10`
-- signals: `concentrated`, `distributed`
-- correlation axis: `rho_within=[0.8]`, `rho_between=0.2`
-- SNR axis: `[0.2,1.0,5.0]`
+- `n_train=200`, `n_test=100`, `p=500`
+- group structure: `50` groups of size `10`
+- signal mechanism: paper random-coefficient design
+- first group is active with even-probability concentrated/distributed assignment
+- remaining groups are sampled as concentrated/distributed/null with probabilities `0.2/0.2/0.6`
+- `rho_within=0.8`, `rho_between=0.2`
+- explained-variance target fixed at `beta'Sigma beta / (beta'Sigma beta + sigma2) = 0.7`
 
 Run:
 

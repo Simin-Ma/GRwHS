@@ -49,6 +49,7 @@ def _fit_all_methods(
     gigg_cfg = dict(gigg_config or {})
     gigg_extra_retry_cfg = max(0, int(gigg_cfg.pop("extra_retry", 0)))
     gigg_retry_cap_raw = gigg_cfg.pop("retry_cap", None)
+    gigg_allow_budget_retry = bool(gigg_cfg.pop("allow_budget_retry", False))
     gigg_retry_cap_cfg: int | None = None
     if gigg_retry_cap_raw is not None:
         try:
@@ -107,12 +108,13 @@ def _fit_all_methods(
     def _run_single_method(method: str) -> tuple[str, FitResult]:
         res: FitResult | None = None
         attempts = 1
-        # Keep GIGG aligned to the gigg-master reference path: one run and no
-        # experiment-level rescue retries.
         if method in gigg_methods:
-            method_retry_max = 0
+            # Default keeps paper-aligned single-shot GIGG behavior. For
+            # targeted convergence probes we can opt in to retry with a larger
+            # budget on each failed attempt.
+            method_retry_max = (retry_max + gigg_extra_retry) if gigg_allow_budget_retry else 0
         else:
-            method_retry_max = retry_max + (gigg_extra_retry if method in gigg_methods else 0)
+            method_retry_max = retry_max
         if method in gigg_methods and (gigg_retry_cap_cfg is not None):
             method_retry_max = min(int(method_retry_max), int(gigg_retry_cap_cfg))
         if bool(enforce_bayes_convergence) and _is_bayesian_method(method):

@@ -339,14 +339,14 @@ def _build_gibbs_staged(
 ) -> GRRHS_Gibbs_Staged:
     warmup = max(40, int(sampler.warmup))
     draws = max(20, int(sampler.post_warmup_draws))
-    hard_mult = 1.6 if bool(hard_design) else 1.25
-    phase_a_max = int(max(140, round(warmup * 1.10 * hard_mult)))
-    phase_b_max = int(max(80, round(warmup * 0.45 * hard_mult)))
-    phase_a_hyper_only = int(max(40, min(220, round(phase_a_max * 0.40))))
-    min_phase_a = int(max(50, min(180, round(phase_a_max * 0.50))))
-    min_phase_b = int(max(30, min(120, round(phase_b_max * 0.50))))
-    geometry_window = int(max(16, min(80, round(min_phase_a * 0.55))))
-    transition_window = int(max(16, min(70, round(min_phase_b * 0.55))))
+    hard_mult = 2.2 if bool(hard_design) else 1.25
+    phase_a_max = int(max(220, round(warmup * 1.55 * hard_mult)))
+    phase_b_max = int(max(140, round(warmup * 0.80 * hard_mult)))
+    phase_a_hyper_only = int(max(80, min(420, round(phase_a_max * 0.52))))
+    min_phase_a = int(max(90, min(340, round(phase_a_max * 0.62))))
+    min_phase_b = int(max(60, min(240, round(phase_b_max * 0.62))))
+    geometry_window = int(max(24, min(160, round(min_phase_a * 0.62))))
+    transition_window = int(max(24, min(140, round(min_phase_b * 0.62))))
     total_iters = int(max(4, phase_a_max + phase_b_max + draws))
     burnin = int(max(0, min(phase_a_max + phase_b_max, total_iters - 1)))
     return GRRHS_Gibbs_Staged(

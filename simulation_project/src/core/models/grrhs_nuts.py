@@ -610,6 +610,12 @@ class GRRHS_Gibbs:
     progress_bar: bool = True
     initial_chain_states: Optional[List[Dict[str, Any]]] = None
     resume_no_burnin: bool = False
+    tau_prior_sigma_cap_multiplier: float = 4.0
+    tau_log_ratio_floor: float = -8.0
+    tau_log_ratio_cap: float = 4.0
+    grouped_tau_refresh_repeats: int = 1
+    grouped_tau_sigma_relative_update: bool = True
+    grouped_sigma_tau_block_repeats: int = 0
 
     # posterior storage (set by fit)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -654,6 +660,165 @@ class GRRHS_Gibbs:
         """Log N(0, diag(v)) density for beta (up to constants)."""
         return -0.5 * float(np.sum(np.log(v) + beta ** 2 / v))
 
+    def _tau_prior_scale(self, sigma2: float, tau0_eff: float) -> float:
+        sigma = math.sqrt(max(float(sigma2), self.jitter))
+        sigma_anchor = max(float(self.sigma_reference), float(self.s0), math.sqrt(self.jitter))
+        if str(self.tau_target).strip().lower() == "groups":
+            sigma = min(sigma, sigma_anchor * max(float(self.tau_prior_sigma_cap_multiplier), 1.0))
+        return max(float(tau0_eff) * sigma, self.jitter)
+
+    def _clip_log_tau(self, log_tau: float, tau_scale: float) -> float:
+        if str(self.tau_target).strip().lower() != "groups":
+            return float(log_tau)
+        center = math.log(max(float(tau_scale), self.jitter))
+        lower = center + float(self.tau_log_ratio_floor)
+        upper = center + float(self.tau_log_ratio_cap)
+        return float(min(max(float(log_tau), lower), upper))
+
+    def _clip_log_tau_ratio(self, log_tau_ratio: float, tau0_eff: float) -> float:
+        lower = math.log(max(float(tau0_eff), self.jitter)) + float(self.tau_log_ratio_floor)
+        upper = math.log(max(float(tau0_eff), self.jitter)) + float(self.tau_log_ratio_cap)
+        return float(min(max(float(log_tau_ratio), lower), upper))
+
+    def _sample_log_tau(
+        self,
+        *,
+        log_tau: float,
+        beta: np.ndarray,
+        sigma2: float,
+        lam2: np.ndarray,
+        kappa_j: np.ndarray,
+        tau0_eff: float,
+        rng: Generator,
+    ) -> tuple[float, float]:
+        grouped_relative = bool(self.grouped_tau_sigma_relative_update) and (
+            str(self.tau_target).strip().lower() == "groups"
+        )
+        if grouped_relative:
+            log_sigma = 0.5 * math.log(max(float(sigma2), self.jitter))
+            log_tau_ratio = self._clip_log_tau_ratio(float(log_tau) - log_sigma, tau0_eff)
+
+            def _lc_tr(z: float) -> float:
+                return self._lc_log_tau_ratio(z, beta, sigma2, lam2, kappa_j, tau0_eff)
+
+            log_tau_ratio_new = slice_sample_1d(
+                _lc_tr,
+                float(log_tau_ratio),
+                rng,
+                width=self.slice_width_log,
+                max_steps=self.slice_max_steps,
+            )
+            log_tau_ratio_new = self._clip_log_tau_ratio(log_tau_ratio_new, tau0_eff)
+            log_tau_new = log_sigma + log_tau_ratio_new
+            tau_scale = self._tau_prior_scale(sigma2, tau0_eff)
+            log_tau_new = self._clip_log_tau(log_tau_new, tau_scale)
+            tau_new = math.exp(log_tau_new)
+            return float(log_tau_new), float(tau_new)
+
+        tau_scale = self._tau_prior_scale(sigma2, tau0_eff)
+
+        def _lc_t(u: float) -> float:
+            return self._lc_log_tau(u, beta, sigma2, lam2, kappa_j, tau_scale)
+
+        log_tau_new = slice_sample_1d(
+            _lc_t,
+            float(log_tau),
+            rng,
+            width=self.slice_width_log,
+            max_steps=self.slice_max_steps,
+        )
+        log_tau_new = self._clip_log_tau(log_tau_new, tau_scale)
+        tau_new = math.exp(log_tau_new)
+        return float(log_tau_new), float(tau_new)
+
+    def _sample_sigma_tau_block(
+        self,
+        *,
+        log_sigma: float,
+        log_tau: float,
+        beta: np.ndarray,
+        y: np.ndarray,
+        Xbeta: np.ndarray,
+        lam2: np.ndarray,
+        kappa_j: np.ndarray,
+        tau0_eff: float,
+        rng: Generator,
+        repeats: int,
+    ) -> tuple[float, float, float, float]:
+        reps = int(max(0, repeats))
+        sigma2 = math.exp(2.0 * float(log_sigma))
+        tau = math.exp(float(log_tau))
+        for _ in range(reps):
+            log_sigma, sigma2 = self._sample_log_sigma(
+                log_sigma=float(log_sigma),
+                log_tau=float(log_tau),
+                beta=beta,
+                y=y,
+                Xbeta=Xbeta,
+                lam2=lam2,
+                kappa_j=kappa_j,
+                tau0_eff=tau0_eff,
+                rng=rng,
+            )
+            sigma2 = math.exp(2.0 * log_sigma)
+            log_tau, tau = self._sample_log_tau(
+                log_tau=float(log_tau),
+                beta=beta,
+                sigma2=sigma2,
+                lam2=lam2,
+                kappa_j=kappa_j,
+                tau0_eff=tau0_eff,
+                rng=rng,
+            )
+        return float(log_sigma), float(sigma2), float(log_tau), float(tau)
+
+    def _sample_log_sigma(
+        self,
+        *,
+        log_sigma: float,
+        log_tau: float,
+        beta: np.ndarray,
+        y: np.ndarray,
+        Xbeta: np.ndarray,
+        lam2: np.ndarray,
+        kappa_j: np.ndarray,
+        tau0_eff: float,
+        rng: Generator,
+    ) -> tuple[float, float]:
+        grouped_relative = bool(self.grouped_tau_sigma_relative_update) and (
+            str(self.tau_target).strip().lower() == "groups"
+        )
+        if grouped_relative:
+            log_tau_ratio = float(log_tau) - float(log_sigma)
+
+            def _lc_sr(r: float) -> float:
+                return self._lc_log_sigma_ratio(r, log_tau_ratio, beta, y, Xbeta, lam2, kappa_j, tau0_eff)
+
+            log_sigma_new = slice_sample_1d(
+                _lc_sr,
+                float(log_sigma),
+                rng,
+                width=self.slice_width_log,
+                max_steps=self.slice_max_steps,
+            )
+            sigma2_new = math.exp(2.0 * log_sigma_new)
+            return float(log_sigma_new), float(sigma2_new)
+
+        tau2 = math.exp(2.0 * float(log_tau))
+
+        def _lc_s(r: float) -> float:
+            return self._lc_log_sigma(r, beta, y, Xbeta, tau2, lam2, kappa_j)
+
+        log_sigma_new = slice_sample_1d(
+            _lc_s,
+            float(log_sigma),
+            rng,
+            width=self.slice_width_log,
+            max_steps=self.slice_max_steps,
+        )
+        sigma2_new = math.exp(2.0 * log_sigma_new)
+        return float(log_sigma_new), float(sigma2_new)
+
     # ------------------------------------------------------------------ log conditionals
 
     def _lc_log_sigma(
@@ -696,6 +861,56 @@ class GRRHS_Gibbs:
             self._ll_beta(beta, v)
             + u
             - math.log(max(tau_scale ** 2 + tau2, self.jitter))
+        )
+
+    def _lc_log_tau_ratio(
+        self,
+        z: float,
+        beta: np.ndarray,
+        sigma2: float,
+        lam2: np.ndarray,
+        kappa_j: np.ndarray,
+        tau0_eff: float,
+    ) -> float:
+        """Log-conditional for z = log(tau / sigma)."""
+        tau2 = max(float(sigma2), self.jitter) * math.exp(2.0 * z)
+        v = self._v_arr(sigma2, tau2, lam2, kappa_j, self.jitter)
+        return (
+            self._ll_beta(beta, v)
+            + z
+            - math.log(max(float(tau0_eff) ** 2 + math.exp(2.0 * z), self.jitter))
+        )
+
+    def _lc_log_sigma_ratio(
+        self,
+        r: float,
+        log_tau_ratio: float,
+        beta: np.ndarray,
+        y: np.ndarray,
+        Xbeta: np.ndarray,
+        lam2: np.ndarray,
+        kappa_j: np.ndarray,
+        tau0_eff: float,
+    ) -> float:
+        """Log-conditional for r = log(sigma) with z = log(tau / sigma) held fixed."""
+        sigma2 = math.exp(2.0 * r)
+        tau_ratio2 = math.exp(2.0 * float(log_tau_ratio))
+        tau2 = sigma2 * tau_ratio2
+        resid = y - Xbeta
+        v = self._v_arr(sigma2, tau2, lam2, kappa_j, self.jitter)
+        n = float(len(y))
+        tau_prior_const = (
+            float(log_tau_ratio)
+            - math.log(max(float(tau0_eff) ** 2 + tau_ratio2, self.jitter))
+            - r
+        )
+        return (
+            -n * r
+            - 0.5 * float(np.dot(resid, resid)) / sigma2
+            + self._ll_beta(beta, v)
+            + r
+            - math.log(max(self.s0 ** 2 + sigma2, self.jitter))
+            + tau_prior_const
         )
 
     def _lc_log_lam_j(
@@ -784,6 +999,9 @@ class GRRHS_Gibbs:
             tau = max(float(math.exp(log_tau)), self.jitter)
             lam = np.maximum(np.exp(log_lam), self.jitter)
             kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
+        tau_scale_init = self._tau_prior_scale(sigma2, tau0_eff)
+        log_tau = self._clip_log_tau(log_tau, tau_scale_init)
+        tau = max(float(math.exp(log_tau)), self.jitter)
 
         iters_use = int(max(1, iters))
         burnin_use = int(max(0, min(burnin, iters_use - 1)))
@@ -818,17 +1036,28 @@ class GRRHS_Gibbs:
             Xbeta = X @ beta
 
             # ---- log sigma | rest  (1-D slice) ----
-            def _lc_s(r: float) -> float:
-                return self._lc_log_sigma(r, beta, y, Xbeta, tau2, lam2, kappa_j)
-            log_sigma = slice_sample_1d(_lc_s, log_sigma, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
-            sigma2 = math.exp(2.0 * log_sigma)
+            log_sigma, sigma2 = self._sample_log_sigma(
+                log_sigma=log_sigma,
+                log_tau=log_tau,
+                beta=beta,
+                y=y,
+                Xbeta=Xbeta,
+                lam2=lam2,
+                kappa_j=kappa_j,
+                tau0_eff=tau0_eff,
+                rng=rng,
+            )
 
             # ---- log tau | rest  (1-D slice) ----
-            tau_scale = float(tau0_eff) * math.sqrt(max(sigma2, self.jitter))
-            def _lc_t(u: float) -> float:
-                return self._lc_log_tau(u, beta, sigma2, lam2, kappa_j, tau_scale)
-            log_tau = slice_sample_1d(_lc_t, log_tau, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
-            tau = math.exp(log_tau)
+            log_tau, tau = self._sample_log_tau(
+                log_tau=log_tau,
+                beta=beta,
+                sigma2=sigma2,
+                lam2=lam2,
+                kappa_j=kappa_j,
+                tau0_eff=tau0_eff,
+                rng=rng,
+            )
             tau2 = tau ** 2
 
             # ---- log lambda_j | rest  (1-D slice per coefficient) ----
@@ -853,6 +1082,20 @@ class GRRHS_Gibbs:
                         return self._lc_logit_kappa_g(w, beta[_idx], sigma2, tau2, lam2[_idx])
                     logit_kappa[g] = slice_sample_1d(_lc_kg, logit_kappa[g], rng, width=self.slice_width_logit, max_steps=self.slice_max_steps)
                 kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
+            if str(self.tau_target).strip().lower() == "groups":
+                extra_tau_refresh = int(max(0, self.grouped_tau_refresh_repeats))
+                for _ in range(extra_tau_refresh):
+                    kappa_j = kappa[group_id]
+                    log_tau, tau = self._sample_log_tau(
+                        log_tau=log_tau,
+                        beta=beta,
+                        sigma2=sigma2,
+                        lam2=lam2,
+                        kappa_j=kappa_j,
+                        tau0_eff=tau0_eff,
+                        rng=rng,
+                    )
+                    tau2 = tau ** 2
 
             kappa_j = kappa[group_id]
 
@@ -995,6 +1238,12 @@ class GRRHS_Gibbs:
             "profile_mode_factorised": bool(profile_mode),
             "use_local_scale": bool(self.use_local_scale),
             "tau0_effective": float(tau0_eff),
+            "tau_prior_sigma_cap_multiplier": float(self.tau_prior_sigma_cap_multiplier),
+            "tau_log_ratio_floor": float(self.tau_log_ratio_floor),
+            "tau_log_ratio_cap": float(self.tau_log_ratio_cap),
+            "grouped_tau_refresh_repeats": int(self.grouped_tau_refresh_repeats),
+            "grouped_tau_sigma_relative_update": bool(self.grouped_tau_sigma_relative_update),
+            "grouped_sigma_tau_block_repeats": int(self.grouped_sigma_tau_block_repeats),
         }
         if isinstance(self.chain_phase_infos_, list) and self.chain_phase_infos_:
             self.sampler_diagnostics_["chain_phase_infos"] = self.chain_phase_infos_
@@ -1069,6 +1318,7 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
     distributed_block_top_groups: int = 3
     distributed_phase_a_score_min: int = 3
     distributed_phase_b_score_min: int = 3
+    grouped_sigma_tau_block_repeats: int = 2
 
     @staticmethod
     def _group_norms(beta: np.ndarray, groups: List[List[int]]) -> np.ndarray:
@@ -1651,6 +1901,9 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
             tau = max(float(math.exp(log_tau)), self.jitter)
             lam = np.maximum(np.exp(log_lam), self.jitter)
             kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
+        tau_scale_init = self._tau_prior_scale(sigma2, tau0_eff)
+        log_tau = self._clip_log_tau(log_tau, tau_scale_init)
+        tau = max(float(math.exp(log_tau)), self.jitter)
 
         sample_target = max(
             0,
@@ -1733,21 +1986,29 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                     beta = beta_sample_cholesky(XtX, Xty, sigma2, v, rng, jitter=self.jitter)
                 Xbeta = X @ beta
 
-                def _lc_s(r: float) -> float:
-                    return self._lc_log_sigma(r, beta, y, Xbeta, tau2, lam2, kappa_j)
-
-                log_sigma = slice_sample_1d(_lc_s, log_sigma, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
-                sigma2 = math.exp(2.0 * log_sigma)
+                log_sigma, sigma2 = self._sample_log_sigma(
+                    log_sigma=log_sigma,
+                    log_tau=log_tau,
+                    beta=beta,
+                    y=y,
+                    Xbeta=Xbeta,
+                    lam2=lam2,
+                    kappa_j=kappa_j,
+                    tau0_eff=tau0_eff,
+                    rng=rng,
+                )
             else:
                 Xbeta = X @ beta
 
-            tau_scale = float(tau0_eff) * math.sqrt(max(sigma2, self.jitter))
-
-            def _lc_t(u: float) -> float:
-                return self._lc_log_tau(u, beta, sigma2, lam2, kappa_j, tau_scale)
-
-            log_tau = slice_sample_1d(_lc_t, log_tau, rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
-            tau = math.exp(log_tau)
+            log_tau, tau = self._sample_log_tau(
+                log_tau=log_tau,
+                beta=beta,
+                sigma2=sigma2,
+                lam2=lam2,
+                kappa_j=kappa_j,
+                tau0_eff=tau0_eff,
+                rng=rng,
+            )
             tau2 = tau ** 2
 
             if self.use_local_scale:
@@ -1774,6 +2035,36 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
 
                     logit_kappa[g] = slice_sample_1d(_lc_kg, logit_kappa[g], rng, width=self.slice_width_logit, max_steps=self.slice_max_steps)
                 kappa = 1.0 / (1.0 + np.exp(-logit_kappa))
+            if str(self.tau_target).strip().lower() == "groups":
+                extra_tau_refresh = int(max(0, self.grouped_tau_refresh_repeats))
+                for _ in range(extra_tau_refresh):
+                    kappa_j = kappa[group_id]
+                    log_tau, tau = self._sample_log_tau(
+                        log_tau=log_tau,
+                        beta=beta,
+                        sigma2=sigma2,
+                        lam2=lam2,
+                        kappa_j=kappa_j,
+                        tau0_eff=tau0_eff,
+                        rng=rng,
+                    )
+                    tau2 = tau ** 2
+                sigma_tau_repeats = int(max(0, self.grouped_sigma_tau_block_repeats))
+                if sigma_tau_repeats > 0:
+                    kappa_j = kappa[group_id]
+                    log_sigma, sigma2, log_tau, tau = self._sample_sigma_tau_block(
+                        log_sigma=log_sigma,
+                        log_tau=log_tau,
+                        beta=beta,
+                        y=y,
+                        Xbeta=Xbeta,
+                        lam2=lam2,
+                        kappa_j=kappa_j,
+                        tau0_eff=tau0_eff,
+                        rng=rng,
+                        repeats=sigma_tau_repeats,
+                    )
+                    tau2 = tau ** 2
 
             # Extra beta refresh to improve coupling in concentrated-signal regimes:
             # after hyper-parameters move, redraw beta again when one/few groups dominate.
@@ -2047,6 +2338,12 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         self.sampler_diagnostics_["phase_b_core_min_pass"] = int(self.phase_b_core_min_pass)
         self.sampler_diagnostics_["phase_b_support_min_pass"] = int(self.phase_b_support_min_pass)
         self.sampler_diagnostics_["phase_b_score_min"] = int(self.phase_b_score_min)
+        self.sampler_diagnostics_["tau_prior_sigma_cap_multiplier"] = float(self.tau_prior_sigma_cap_multiplier)
+        self.sampler_diagnostics_["tau_log_ratio_floor"] = float(self.tau_log_ratio_floor)
+        self.sampler_diagnostics_["tau_log_ratio_cap"] = float(self.tau_log_ratio_cap)
+        self.sampler_diagnostics_["grouped_tau_refresh_repeats"] = int(self.grouped_tau_refresh_repeats)
+        self.sampler_diagnostics_["grouped_tau_sigma_relative_update"] = bool(self.grouped_tau_sigma_relative_update)
+        self.sampler_diagnostics_["grouped_sigma_tau_block_repeats"] = int(self.grouped_sigma_tau_block_repeats)
         self.sampler_diagnostics_["concentrated_block_refresh"] = bool(self.concentrated_block_refresh)
         self.sampler_diagnostics_["concentrated_top_groups"] = int(self.concentrated_top_groups)
         self.sampler_diagnostics_["concentrated_refresh_score_delta"] = float(self.concentrated_refresh_min_score)

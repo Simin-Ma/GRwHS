@@ -38,15 +38,19 @@ from ..utils import (
 )
 
 # ---------------------------------------------------------------------------
-# EXP3 - Linear Benchmark: Concentrated vs. Distributed vs. Boundary
+# EXP3 - Linear Benchmark: Paper-aligned fixed-coefficient settings plus
+# optional GR-RHS-specific stress variants.
 # ---------------------------------------------------------------------------
-# Factor design directly testing the core GR-RHS hypothesis:
-#   "kappa_g mechanism is most beneficial when signals are group-concentrated"
+# The default generic builder below was originally GR-RHS-centric. Exp3a/Exp3c
+# now align their signal-generation semantics to the GIGG paper:
+#   concentrated = signal in few regressors within active groups
+#   distributed  = signal shared across many regressors within active groups
 #
 # Factors (default single design):
 #   signal_structure: concentrated / distributed / boundary / within_group_mixed / half_dense / dense
-#     concentrated: 2/5 groups fully active, beta_j = 1/sqrt(p_g) (dense in group)
-#     distributed:  2/5 groups with one active variable each, beta_j = 1
+#     concentrated: few active regressors within each active group
+#     distributed:  many active regressors within each active group
+#     random_coefficient: paper-style random group activation mixture
 #     boundary:     2/5 groups active, beta calibrated at xi_ratio * xi_crit(u0, rho_profile),
 #                   where rho_profile = rho_within / sqrt(sigma2_boundary)
 #     within_group_mixed: each active group has one strong coefficient and
@@ -68,6 +72,11 @@ _SIGMA2_BOUNDARY = 1.0
 _WITHIN_GROUP_MIXED_STRONG = 1.0
 _WITHIN_GROUP_MIXED_WEAK = 0.25
 _EXP3_HEAVY_METHODS = {"GIGG_MMLE", "GHS_plus"}
+_PAPER_FIXED_TARGET_R2 = 0.7
+_PAPER_FIXED_TARGET_SNR = _PAPER_FIXED_TARGET_R2 / max(1.0 - _PAPER_FIXED_TARGET_R2, 1e-12)
+_PAPER_RANDOM_GROUP_SIZE = 10
+_PAPER_RANDOM_DISTRIBUTED_BETA = 0.25
+_PAPER_RANDOM_CONCENTRATED_BETA = 5.125
 
 # ---------------------------------------------------------------------------
 # Default group configurations for Exp3 - mirrors GIGG paper Table 1 coverage,
@@ -89,6 +98,155 @@ _DEFAULT_EXP3_GROUP_CONFIGS: list[dict[str, Any]] = [
     {"name": "CS",    "group_sizes": [30, 10, 5, 3, 2],     "active_groups": [3, 4]},
 ]
 
+
+def _paper_fixed_exp3_group_configs() -> list[dict[str, Any]]:
+    """Fixed-coefficient settings from the GIGG paper (Section 5.1 / Table 1)."""
+    return [
+        {
+            "name": "C10H",
+            "group_sizes": [10, 10, 10, 10, 10],
+            "active_groups": [0, 1, 2, 3, 4],
+            "paper_pattern": "one_per_group",
+            "allowed_signals": ["concentrated"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+        {
+            "name": "D10H",
+            "group_sizes": [10, 10, 10, 10, 10],
+            "active_groups": [0],
+            "paper_pattern": "all_within_groups",
+            "allowed_signals": ["distributed"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+        {
+            "name": "C10M",
+            "group_sizes": [10, 10, 10, 10, 10],
+            "active_groups": [0, 1, 2, 3, 4],
+            "paper_pattern": "one_per_group",
+            "allowed_signals": ["concentrated"],
+            "allowed_env_ids": ["PAPER_RHO06"],
+        },
+        {
+            "name": "D10M",
+            "group_sizes": [10, 10, 10, 10, 10],
+            "active_groups": [0],
+            "paper_pattern": "all_within_groups",
+            "allowed_signals": ["distributed"],
+            "allowed_env_ids": ["PAPER_RHO06"],
+        },
+        {
+            "name": "C5",
+            "group_sizes": [5] * 10,
+            "active_groups": [0, 1, 2, 3, 4],
+            "paper_pattern": "one_per_group",
+            "allowed_signals": ["concentrated"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+        {
+            "name": "D5",
+            "group_sizes": [5] * 10,
+            "active_groups": [0, 1],
+            "paper_pattern": "all_within_groups",
+            "allowed_signals": ["distributed"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+        {
+            "name": "C25",
+            "group_sizes": [25, 25],
+            "active_groups": [0, 1],
+            "paper_pattern": "custom_counts",
+            "paper_active_counts": [3, 2],
+            "allowed_signals": ["concentrated"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+        {
+            "name": "D25",
+            "group_sizes": [25, 25],
+            "active_groups": [0],
+            "paper_pattern": "first_k_in_first_active_group",
+            "paper_first_k": 10,
+            "allowed_signals": ["distributed"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+        {
+            "name": "CL",
+            "group_sizes": [30, 10, 5, 3, 2],
+            "active_groups": [0, 1],
+            "paper_pattern": "one_per_group",
+            "allowed_signals": ["concentrated"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+        {
+            "name": "DL",
+            "group_sizes": [30, 10, 5, 3, 2],
+            "active_groups": [0],
+            "paper_pattern": "all_within_groups",
+            "allowed_signals": ["distributed"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+        {
+            "name": "CS",
+            "group_sizes": [30, 10, 5, 3, 2],
+            "active_groups": [3, 4],
+            "paper_pattern": "one_per_group",
+            "allowed_signals": ["concentrated"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+        {
+            "name": "DS",
+            "group_sizes": [30, 10, 5, 3, 2],
+            "active_groups": [2, 3, 4],
+            "paper_pattern": "all_within_groups",
+            "allowed_signals": ["distributed"],
+            "allowed_env_ids": ["PAPER_RHO08"],
+        },
+    ]
+
+
+def _paper_fixed_exp3_env_points() -> list[dict[str, Any]]:
+    return [
+        {
+            "env_id": "PAPER_RHO08",
+            "setting_block": "paper_fixed_coeff",
+            "rho_within": 0.8,
+            "rho_between": 0.2,
+            "target_snr": float(_PAPER_FIXED_TARGET_SNR),
+            "signals": ["concentrated", "distributed"],
+        },
+        {
+            "env_id": "PAPER_RHO06",
+            "setting_block": "paper_fixed_coeff",
+            "rho_within": 0.6,
+            "rho_between": 0.2,
+            "target_snr": float(_PAPER_FIXED_TARGET_SNR),
+            "signals": ["concentrated", "distributed"],
+        },
+    ]
+
+
+def _paper_random_exp3_group_configs(*, total_groups: int = 50) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": f"RND_G{total_groups}x{_PAPER_RANDOM_GROUP_SIZE}",
+            "group_sizes": [_PAPER_RANDOM_GROUP_SIZE] * int(total_groups),
+            "active_groups": [0],
+            "paper_random_coefficients": True,
+        }
+    ]
+
+
+def _paper_random_exp3_env_points() -> list[dict[str, Any]]:
+    return [
+        {
+            "env_id": "PAPER_RANDOM_RHO08",
+            "setting_block": "paper_random_coeff",
+            "rho_within": 0.8,
+            "rho_between": 0.2,
+            "target_snr": float(_PAPER_FIXED_TARGET_SNR),
+            "signals": ["random_coefficient"],
+        }
+    ]
+
 def _default_exp3_env_points() -> list[dict[str, Any]]:
     points: list[dict[str, Any]] = []
     for rw in [0.8]:
@@ -104,6 +262,8 @@ def _default_exp3_env_points() -> list[dict[str, Any]]:
                 }
             )
     return points
+
+
 
 
 def _exp3_keep_env_point_rw_gt_rb(ep: dict[str, Any]) -> bool:
@@ -135,19 +295,58 @@ def _exp3_is_anchor_setting(
     group_name = str(group_cfg.get("name", "")).strip()
     env_name = str(env_id).strip()
     sig = str(signal).strip().lower()
-    if group_name != "G10x5":
-        return False
-    if env_name != "RW08_SNR10":
-        return False
+    if group_name == "G10x5" and env_name == "RW08_SNR10":
+        if sig == "boundary":
+            return abs(float(boundary_xi_ratio) - float(_BOUNDARY_XI_RATIO)) < 1e-9
+        return sig in {"concentrated", "distributed"}
+    if group_name in {"C10H", "D10H"} and env_name == "PAPER_RHO08":
+        return sig in {"concentrated", "distributed"}
     if sig == "boundary":
-        return abs(float(boundary_xi_ratio) - float(_BOUNDARY_XI_RATIO)) < 1e-9
-    return sig in {"concentrated", "distributed"}
+        return False
+    return False
+
+
+def _build_paper_random_beta(
+    group_sizes: Sequence[int],
+    *,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    from ..utils import canonical_groups
+
+    groups = canonical_groups(group_sizes)
+    beta = np.zeros(sum(group_sizes), dtype=float)
+    if not groups:
+        return beta
+
+    def _apply_concentrated(gid: int) -> None:
+        idx = np.asarray(groups[gid], dtype=int)
+        if idx.size:
+            beta[idx[0]] = float(_PAPER_RANDOM_CONCENTRATED_BETA)
+
+    def _apply_distributed(gid: int) -> None:
+        idx = np.asarray(groups[gid], dtype=int)
+        if idx.size:
+            beta[idx] = float(_PAPER_RANDOM_DISTRIBUTED_BETA)
+
+    if float(rng.uniform()) < 0.5:
+        _apply_concentrated(0)
+    else:
+        _apply_distributed(0)
+
+    for gid in range(1, len(groups)):
+        u = float(rng.uniform())
+        if u < 0.2:
+            _apply_concentrated(gid)
+        elif u < 0.4:
+            _apply_distributed(gid)
+    return beta
 
 
 def _build_benchmark_beta(
     signal: str,
     group_sizes: Sequence[int],
     *,
+    group_cfg: dict[str, Any] | None = None,
     active_groups: Sequence[int] | None = None,
     sigma2: float = 1.0,
     p: int | None = None,
@@ -158,26 +357,66 @@ def _build_benchmark_beta(
 ) -> np.ndarray:
     """Construct beta for each benchmark signal structure.
 
-    concentrated: all variables in active groups with equal weight (||beta_g||=1 per group)
-    distributed:  first variable only in each active group (beta_j=1)
+    concentrated: few active regressors within each active group
+    distributed:  many active regressors within each active group
     boundary:     all vars in active groups, calibrated at xi_ratio * xi_crit(u0, rho_profile)
     within_group_mixed: one strong + (p_g-1) weak coefficients per active group
     half_dense:   random coefficients over all p with 20% active density
     dense:        random coefficients over all p with 60% active density
+    random_coefficient: paper random-coefficient mixture over groups
     """
     from ..utils import canonical_groups
     groups = canonical_groups(group_sizes)
     total_p = int(p or sum(group_sizes))
     beta = np.zeros(total_p, dtype=float)
     _active = list(active_groups) if active_groups is not None else [0, 1]
+    cfg = dict(group_cfg or {})
+    paper_pattern = str(cfg.get("paper_pattern", "")).strip().lower()
+
+    if signal == "random_coefficient":
+        rng_local = rng if rng is not None else np.random.default_rng(12345)
+        return _build_paper_random_beta(group_sizes, rng=rng_local)
+
+    if paper_pattern and signal in {"concentrated", "distributed"}:
+        if paper_pattern == "one_per_group":
+            for gid in _active:
+                idx = np.asarray(groups[gid], dtype=int)
+                if idx.size:
+                    beta[idx[0]] = 1.0
+            return beta
+        if paper_pattern == "all_within_groups":
+            for gid in _active:
+                idx = np.asarray(groups[gid], dtype=int)
+                if idx.size:
+                    beta[idx] = 1.0
+            return beta
+        if paper_pattern == "custom_counts":
+            counts = list(cfg.get("paper_active_counts", []))
+            for gid, k in zip(_active, counts):
+                idx = np.asarray(groups[gid], dtype=int)
+                k_use = int(max(0, min(int(k), int(idx.size))))
+                if k_use > 0:
+                    beta[idx[:k_use]] = 1.0
+            return beta
+        if paper_pattern == "first_k_in_first_active_group":
+            if _active:
+                gid = int(_active[0])
+                idx = np.asarray(groups[gid], dtype=int)
+                k_use = int(max(0, min(int(cfg.get("paper_first_k", 0)), int(idx.size))))
+                if k_use > 0:
+                    beta[idx[:k_use]] = 1.0
+            return beta
 
     if signal == "concentrated":
         for gid in _active:
             idx = np.asarray(groups[gid], dtype=int)
-            beta[idx] = 1.0 / math.sqrt(len(idx))
+            if idx.size:
+                beta[idx[0]] = 1.0
     elif signal == "distributed":
         for gid in _active:
-            beta[groups[gid][0]] = 1.0
+            idx = np.asarray(groups[gid], dtype=int)
+            if idx.size:
+                beta[idx] = 1.0 / math.sqrt(len(idx))
     elif signal == "boundary":
         if boundary_rho_profile is None:
             raise ValueError("boundary_rho_profile must be provided for boundary signal calibration.")
@@ -271,7 +510,7 @@ def _exp3_worker(
     methods_upper = {m.upper() for m in methods}
     gigg_config = dict(gigg_config)
     gigg_mode_name = _normalize_exp3_gigg_mode(gigg_mode)
-    if "GIGG_MMLE" in methods_upper:
+    if "GIGG_MMLE" in methods_upper and not bool(gigg_config.get("allow_budget_retry", False)):
         gigg_config["extra_retry"] = 0
         gigg_config.pop("retry_cap", None)
     s = experiment_seed(3, int(sid), r, master_seed=int(seed_base))
@@ -290,6 +529,7 @@ def _exp3_worker(
     beta0 = _build_benchmark_beta(
         signal,
         group_sizes,
+        group_cfg=group_cfg,
         active_groups=active_groups,
         sigma2=sigma2_boundary if signal == "boundary" else 1.0,
         boundary_u0=float(_BOUNDARY_U0),
@@ -336,7 +576,7 @@ def _exp3_worker(
         )
     )
     n_groups = len(group_sizes)
-    if signal in {"half_dense", "dense"}:
+    if signal in {"half_dense", "dense", "random_coefficient"}:
         active_group_set = {
             gid for gid, g in enumerate(groups)
             if np.any(np.abs(beta0[np.asarray(g, dtype=int)]) > 1e-12)
@@ -421,6 +661,7 @@ def _exp3_worker(
             "rho_within": float(rho_within),
             "rho_between": float(rho_between),
             "target_snr": float(target_snr),
+            "target_r2": float(target_snr / (1.0 + target_snr)) if np.isfinite(target_snr) and target_snr > 0.0 else float("nan"),
             "sigma2": float(sigma2),
             "boundary_u0": float(_BOUNDARY_U0) if signal == "boundary" else float("nan"),
             "boundary_xi_ratio": float(boundary_xi_ratio) if signal == "boundary" else float(_BOUNDARY_XI_RATIO),
@@ -489,11 +730,14 @@ def run_exp3_linear_benchmark(
     Exp3 benchmark (single-default design; no laptop/full split).
 
     Signal types (default ["concentrated", "distributed", "boundary"]):
-      concentrated: all nonzero beta in G0 and G1, G2/G3/G4 are null.
-      distributed: one nonzero beta in each of G0 and G1.
+      concentrated: few active regressors within each active group.
+      distributed: many active regressors within each active group.
       boundary: signal set to xi_ratio * xi_crit(u0=0.5, rho_profile),
                 with rho_profile = rho_within / sqrt(sigma2_boundary).
                 xi_ratio values come from boundary_xi_ratio_list (default [1.2]).
+      random_coefficient: paper 5.1 random group-level mixture with
+                first group forced active and remaining groups sampled from
+                concentrated/distributed/null with probabilities 0.2/0.2/0.6.
 
     bayes_min_chains:
       Minimum number of chains for Bayesian methods in Exp3.
@@ -587,9 +831,15 @@ def run_exp3_linear_benchmark(
             }
         )
     for gc in gc_list:
+        allowed_signals = {str(s) for s in gc.get("allowed_signals", signals)}
+        allowed_env_ids = {str(v) for v in gc.get("allowed_env_ids", [])}
         for ep in env_points_used:
+            if allowed_env_ids and str(ep["env_id"]) not in allowed_env_ids:
+                continue
             sig_set = set(ep.get("signals", signals))
             for signal in signals:
+                if signal not in allowed_signals:
+                    continue
                 if signal not in sig_set:
                     continue
                 rho = float(ep["rho_within"])
@@ -1147,13 +1397,15 @@ def run_exp3a_main_benchmark(
     save_dir: str = "outputs/simulation_project",
     **kwargs,
 ) -> Dict[str, str]:
-    """Exp3a: main benchmark (concentrated + distributed only)."""
+    """Exp3a: paper-aligned fixed-coefficient benchmark (GIGG Section 5.1)."""
     return run_exp3_linear_benchmark(
         n_jobs=n_jobs,
         seed=seed,
         repeats=repeats,
         save_dir=save_dir,
         signal_types=["concentrated", "distributed"],
+        group_configs=_paper_fixed_exp3_group_configs(),
+        env_points=_paper_fixed_exp3_env_points(),
         result_dir_name="exp3a_main_benchmark",
         exp_key="exp3a",
         **kwargs,
@@ -1190,31 +1442,15 @@ def run_exp3c_highdim_stress(
     save_dir: str = "outputs/simulation_project",
     **kwargs,
 ) -> Dict[str, str]:
-    """Exp3c: high-dimensional stress test (n=200, p=500) with sparse signals only."""
-    group_configs = [
-        {"name": "HD10x50", "group_sizes": [50] * 10, "active_groups": [0, 1]},
-    ]
-    env_points = []
-    for rw in [0.8]:
-        for snr in [0.2, 1.0, 5.0]:
-            env_points.append(
-                {
-                    "env_id": f"HD_RW{int(round(rw*10)):02d}_SNR{int(round(snr*10)):02d}",
-                    "setting_block": "highdim_axis",
-                    "rho_within": float(rw),
-                    "rho_between": 0.2,
-                    "target_snr": float(snr),
-                    "signals": ["concentrated", "distributed"],
-                }
-            )
+    """Exp3c: high-dimensional stress test with paper-style random coefficients."""
     return run_exp3_linear_benchmark(
         n_jobs=n_jobs,
         seed=seed,
         repeats=repeats,
         save_dir=save_dir,
-        signal_types=["concentrated", "distributed"],
-        group_configs=group_configs,
-        env_points=env_points,
+        signal_types=["random_coefficient"],
+        group_configs=_paper_random_exp3_group_configs(total_groups=50),
+        env_points=_paper_random_exp3_env_points(),
         n_train=200,
         n_test=100,
         result_dir_name="exp3c_highdim_stress",

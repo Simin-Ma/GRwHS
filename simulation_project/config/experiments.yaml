@@ -17,8 +17,11 @@ exp2_group_separation:
 exp3a_main_benchmark:
   repeats_default: 100
   description: >
-    Exp3a - main benchmark (concentrated/distributed signals).
-    Axes: rho_within=[0.8], rho_between=0.2, SNR=[0.2,1.0,5.0], rw>rb.
+    Exp3a - paper-aligned fixed-coefficient benchmark (GIGG Section 5.1 / Table 1).
+    p=50 with fixed settings=[C10H,D10H,C10M,D10M,C5,D5,C25,D25,CL,DL,CS,DS].
+    Training/test sample sizes stay on the project defaults.
+    rho_within in {0.8,0.6} as specified by each label, rho_between=0.2.
+    Residual variance calibrated to beta'Sigma beta / (beta'Sigma beta + sigma2) = 0.7.
     Methods=[GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV].
     Main summary uses paired-converged-and-ok subset.
 
@@ -33,9 +36,11 @@ exp3b_boundary_stress:
 exp3c_highdim_stress:
   repeats_default: 30
   description: >
-    Exp3c - high-dimensional stress benchmark.
-    n=200, p=500 (group_sizes=[50]*10), signals=[concentrated,distributed].
-    Axes: rho_within=[0.8], rho_between=0.2, SNR=[0.2,1.0,5.0], rw>rb.
+    Exp3c - high-dimensional stress benchmark with paper-style random coefficients.
+    n=200, p=500 via 50 groups of size 10; first group is always active and the
+    remaining groups are sampled as concentrated/distributed/null with probabilities
+    0.2/0.2/0.6. rho_within=0.8, rho_between=0.2, and
+    beta'Sigma beta / (beta'Sigma beta + sigma2) = 0.7.
     Methods=[GR_RHS,RHS,GIGG_MMLE,GHS_plus,OLS,LASSO_CV].
     Main summary uses paired-converged-and-ok subset.
 

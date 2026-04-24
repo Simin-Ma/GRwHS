@@ -126,6 +126,7 @@ def _gigg_config_default() -> dict[str, Any]:
         "mmle_window": 1,
         "lambda_constraint_mode": "none",
         "q_constraint_mode": "hard",
+        "allow_budget_retry": False,
         "no_retry": True,
     }
 def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
