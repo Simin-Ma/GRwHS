@@ -372,6 +372,14 @@ def _exp3_worker(
         kappa_signal_mean = float("nan")
         kappa_null_prob_gt_u0 = float("nan")
         kappa_signal_prob_gt_u0 = float("nan")
+        mmle_q_json = ""
+        mmle_b_json = ""
+        mmle_a_json = ""
+        mmle_q_mean = float("nan")
+        mmle_q_std = float("nan")
+        mmle_q_min = float("nan")
+        mmle_q_max = float("nan")
+        mmle_q_n_groups = 0
         if method == "GR_RHS" and res.beta_mean is not None:
             km = _kappa_group_means(res, n_groups)
             kp = _kappa_group_prob_gt(res, n_groups, threshold=float(_BOUNDARY_U0))
@@ -383,6 +391,24 @@ def _exp3_worker(
             kappa_null_mean = float(np.mean(_null_vals)) if _null_vals else float("nan")
             kappa_signal_prob_gt_u0 = float(np.mean(_sig_probs)) if _sig_probs else float("nan")
             kappa_null_prob_gt_u0 = float(np.mean(_null_probs)) if _null_probs else float("nan")
+        if method == "GIGG_MMLE":
+            diag = dict(res.diagnostics or {})
+            mmle_est = diag.get("mmle_estimate", {}) if isinstance(diag, dict) else {}
+            q_vals = mmle_est.get("q_estimate", []) if isinstance(mmle_est, dict) else []
+            a_vals = mmle_est.get("a_estimate", []) if isinstance(mmle_est, dict) else []
+            if isinstance(q_vals, list):
+                mmle_q_json = json.dumps(q_vals, ensure_ascii=False)
+                mmle_b_json = mmle_q_json
+                q_arr = np.asarray(q_vals, dtype=float)
+                q_arr = q_arr[np.isfinite(q_arr)]
+                if q_arr.size:
+                    mmle_q_mean = float(np.mean(q_arr))
+                    mmle_q_std = float(np.std(q_arr, ddof=0))
+                    mmle_q_min = float(np.min(q_arr))
+                    mmle_q_max = float(np.max(q_arr))
+                    mmle_q_n_groups = int(q_arr.size)
+            if isinstance(a_vals, list):
+                mmle_a_json = json.dumps(a_vals, ensure_ascii=False)
         out_rows.append({
             "setting_id": int(sid),
             "gigg_mode": str(gigg_mode_name),
@@ -409,6 +435,14 @@ def _exp3_worker(
             "kappa_signal_mean": kappa_signal_mean,
             "kappa_null_prob_gt_u0": kappa_null_prob_gt_u0,
             "kappa_signal_prob_gt_u0": kappa_signal_prob_gt_u0,
+            "mmle_q_estimate_json": mmle_q_json,
+            "mmle_b_estimate_json": mmle_b_json,
+            "mmle_a_estimate_json": mmle_a_json,
+            "mmle_q_mean": mmle_q_mean,
+            "mmle_q_std": mmle_q_std,
+            "mmle_q_min": mmle_q_min,
+            "mmle_q_max": mmle_q_max,
+            "mmle_q_n_groups": int(mmle_q_n_groups),
             **_result_diag_fields(res),
             **bridge_diag,
             **metrics,
