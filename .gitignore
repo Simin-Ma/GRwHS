@@ -61,3 +61,8 @@ node_modules/
 !outputs/
 !outputs/ab_runs/
 !outputs/ab_runs/**
+
+# Local reference/vendor trees: keep in workspace, do not push
+/gigg-master/
+/gigg/
+/rstanarm-master/
