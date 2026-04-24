@@ -30,7 +30,7 @@ Default repeats when `--repeats` is omitted:
 - `exp2=100`
 - `exp3a=100`
 - `exp3b=100`
-- `exp4=12`
+- `exp4=10`
 - `exp5=20`
 
 Optional explicit runs:

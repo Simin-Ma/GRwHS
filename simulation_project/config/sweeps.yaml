@@ -71,7 +71,7 @@ sweeps:
     experiment: exp4
     description: Paper-laptop main-text Exp4 preset (2h minimal config).
     fixed:
-      repeats: 12
+      repeats: 10
       n_jobs: 2
       method_jobs: 2
       skip_run_analysis: true
@@ -151,9 +151,9 @@ sweeps:
 
   exp4_default:
     experiment: exp4
-    description: Exp4 default protocol (repeats=12, built-in retry default=1).
+    description: Exp4 default protocol (repeats=10, built-in retry default=1).
     fixed:
-      repeats: 12
+      repeats: 10
       method_jobs: 2
       enforce_bayes_convergence: true
       max_convergence_retries: 1

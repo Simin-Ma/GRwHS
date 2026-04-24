@@ -61,7 +61,7 @@ Default repeats:
 - `exp2=100`
 - `exp3a=100`
 - `exp3b=100`
-- `exp4=12`
+- `exp4=10`
 - `exp5=20`
 
 `exp3c=30` and `exp3d=100` remain available via explicit `--experiment 3c/3d` runs.
@@ -89,7 +89,7 @@ Preset behavior for `--preset paper_laptop`:
 - `exp3b=24`
 - `exp3c=8`
 - `exp3d=15`
-- `exp4=12`
+- `exp4=10`
 - `exp5=10`
 - default `--n-jobs 2 --method-jobs 2`
 - default sampler backend `nuts`
