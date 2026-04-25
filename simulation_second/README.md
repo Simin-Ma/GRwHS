@@ -16,6 +16,13 @@ What is implemented here:
   `summary_paired_deltas.csv`
 - paper-table builder producing markdown, CSV, and LaTeX tables
 
+Convergence policy:
+
+- all Bayesian methods in `simulation_second` are always run with Bayesian
+  convergence enforcement enabled
+- the package forces the legacy runtime's `until converged` retry mode for
+  Bayesian methods, including smoke runs and test-driven benchmark runs
+
 The package stays separate from `simulation_project/`, but it reuses the
 legacy fitting and evaluation kernels where that is the fastest way to get a
 complete second-generation benchmark pipeline working.

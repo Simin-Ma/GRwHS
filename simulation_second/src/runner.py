@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -10,7 +11,12 @@ import numpy as np
 from simulation_project.src.experiments.runtime import _parallel_rows
 from simulation_project.src.utils import FitResult, load_pandas
 
-from .config import BenchmarkConfig, family_spec_from_dict, setting_spec_from_dict
+from .config import (
+    BenchmarkConfig,
+    family_spec_from_dict,
+    force_until_converged_gate,
+    setting_spec_from_dict,
+)
 from .dataset import generate_grouped_dataset, save_grouped_dataset
 from .evaluation import evaluate_method_result
 from .fitting import fit_benchmark_methods
@@ -186,6 +192,7 @@ def _run_replicate_task(task: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
     pd = load_pandas()
+    config = replace(config, convergence_gate=force_until_converged_gate(config.convergence_gate))
     out_dir = ensure_dir(config.runner.output_dir)
     paper_dir = ensure_dir(out_dir / "paper_tables")
 

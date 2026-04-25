@@ -8,6 +8,7 @@ from typing import Iterable
 
 from ..config import MechanismConfig, load_mechanism_config
 from ..dgp import generate_mechanism_dataset, save_mechanism_dataset
+from ..plotting import build_mechanism_figures_from_results_dir
 from ..runner import run_mechanism
 from ..table_builder import build_paper_tables_from_results_dir
 from ..utils import ensure_dir, save_json
@@ -133,6 +134,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="outputs/simulation_mechanism/mechanism_main",
         help="Directory containing mechanism CSV outputs.",
     )
+
+    figures = sub.add_parser("build-figures", help="Rebuild mechanism figures from an existing results directory.")
+    figures.add_argument(
+        "--results-dir",
+        default="outputs/simulation_mechanism/mechanism_main",
+        help="Directory containing mechanism CSV outputs.",
+    )
     return parser
 
 
@@ -203,6 +211,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "build-tables":
         result = build_paper_tables_from_results_dir(args.results_dir)
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "build-figures":
+        result = build_mechanism_figures_from_results_dir(args.results_dir)
         print(json.dumps(result, indent=2))
         return 0
 

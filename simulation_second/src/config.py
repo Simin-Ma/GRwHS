@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -23,6 +23,20 @@ DEFAULT_PAIRING_METRICS = (
     "mse_overall",
     "lpd_test",
 )
+
+
+def force_until_converged_gate(gate: ConvergenceGateSpec) -> ConvergenceGateSpec:
+    """
+    Package-level policy for simulation_second:
+    all Bayesian methods are always run with convergence enforcement enabled and
+    the retry budget set to the "until converged" mode used by the legacy
+    runtime (`max_convergence_retries = -1` sentinel).
+    """
+    return replace(
+        gate,
+        enforce_bayes_convergence=True,
+        max_convergence_retries=-1,
+    )
 
 
 @dataclass(frozen=True)
@@ -176,7 +190,7 @@ def build_default_config() -> BenchmarkConfig:
     return BenchmarkConfig(
         package="simulation_second",
         description="Second-generation benchmark suite built from the GR-RHS blueprint.",
-        convergence_gate=ConvergenceGateSpec(),
+        convergence_gate=force_until_converged_gate(ConvergenceGateSpec()),
         families={name: spec for name, spec in FAMILY_SPECS.items()},
         methods=MethodRuntimeConfig(),
         runner=RunnerConfig(),
@@ -213,22 +227,24 @@ def benchmark_config_from_payload(payload: Mapping[str, Any]) -> BenchmarkConfig
     return BenchmarkConfig(
         package=str(payload.get("package", "simulation_second")),
         description=str(payload.get("description", "")),
-        convergence_gate=ConvergenceGateSpec(
-            enforce_bayes_convergence=bool(
-                gate_payload.get("enforce_bayes_convergence", True)
-            ),
-            max_convergence_retries=int(gate_payload.get("max_convergence_retries", -1)),
-            bayes_min_chains=int(gate_payload.get("bayes_min_chains", 2)),
-            chains=int(gate_payload.get("chains", 2)),
-            warmup=int(gate_payload.get("warmup", 250)),
-            post_warmup_draws=int(gate_payload.get("post_warmup_draws", 250)),
-            adapt_delta=float(gate_payload.get("adapt_delta", 0.90)),
-            max_treedepth=int(gate_payload.get("max_treedepth", 12)),
-            strict_adapt_delta=float(gate_payload.get("strict_adapt_delta", 0.95)),
-            strict_max_treedepth=int(gate_payload.get("strict_max_treedepth", 14)),
-            rhat_threshold=float(gate_payload.get("rhat_threshold", 1.01)),
-            ess_threshold=float(gate_payload.get("ess_threshold", 200.0)),
-            max_divergence_ratio=float(gate_payload.get("max_divergence_ratio", 0.01)),
+        convergence_gate=force_until_converged_gate(
+            ConvergenceGateSpec(
+                enforce_bayes_convergence=bool(
+                    gate_payload.get("enforce_bayes_convergence", True)
+                ),
+                max_convergence_retries=int(gate_payload.get("max_convergence_retries", -1)),
+                bayes_min_chains=int(gate_payload.get("bayes_min_chains", 2)),
+                chains=int(gate_payload.get("chains", 2)),
+                warmup=int(gate_payload.get("warmup", 250)),
+                post_warmup_draws=int(gate_payload.get("post_warmup_draws", 250)),
+                adapt_delta=float(gate_payload.get("adapt_delta", 0.90)),
+                max_treedepth=int(gate_payload.get("max_treedepth", 12)),
+                strict_adapt_delta=float(gate_payload.get("strict_adapt_delta", 0.95)),
+                strict_max_treedepth=int(gate_payload.get("strict_max_treedepth", 14)),
+                rhat_threshold=float(gate_payload.get("rhat_threshold", 1.01)),
+                ess_threshold=float(gate_payload.get("ess_threshold", 200.0)),
+                max_divergence_ratio=float(gate_payload.get("max_divergence_ratio", 0.01)),
+            )
         ),
         families=families,
         methods=methods_cfg,

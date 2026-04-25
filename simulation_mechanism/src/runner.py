@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -9,7 +10,7 @@ import numpy as np
 from simulation_project.src.experiments.runtime import _parallel_rows
 from simulation_project.src.utils import FitResult, load_pandas
 
-from .config import MechanismConfig, setting_spec_from_dict
+from .config import MechanismConfig, force_until_converged_gate, setting_spec_from_dict
 from .dgp import generate_mechanism_dataset, save_mechanism_dataset
 from .evaluation import build_group_kappa_rows, evaluate_method_result
 from .fitting import fit_setting_methods, oracle_tau0_for_method
@@ -20,6 +21,7 @@ from .reporting import (
     build_summary,
     default_setting_group_cols,
 )
+from .plotting import build_mechanism_figures_from_results_dir
 from .table_builder import build_paper_tables
 from .utils import ensure_dir, save_json, stringify_groups
 
@@ -219,6 +221,7 @@ def _dedup_method_order(settings: Sequence[Any]) -> list[str]:
 
 def run_mechanism(config: MechanismConfig) -> dict[str, str]:
     pd = load_pandas()
+    config = replace(config, convergence_gate=force_until_converged_gate(config.convergence_gate))
     out_dir = ensure_dir(config.runner.output_dir)
     paper_dir = ensure_dir(out_dir / "paper_tables")
 
@@ -322,4 +325,5 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
                 out_dir=paper_dir,
             )
         )
+        result_paths.update(build_mechanism_figures_from_results_dir(out_dir))
     return result_paths

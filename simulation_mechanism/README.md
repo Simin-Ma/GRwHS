@@ -19,6 +19,13 @@ What it adds beyond the older experiment runners:
 - per-group `kappa_g` export for mechanism figures
 - compact mechanism table and figure-ready CSVs
 
+Convergence policy:
+
+- all Bayesian methods in `simulation_mechanism` are always run with Bayesian
+  convergence enforcement enabled
+- the package forces the legacy runtime's `until converged` retry mode for
+  Bayesian methods, including smoke runs and test-driven mechanism runs
+
 Examples:
 
 ```bash
@@ -27,4 +34,5 @@ python -m simulation_mechanism.src.run_mechanism dump-manifest --save-path outpu
 python -m simulation_mechanism.src.run_mechanism sample-setting --setting-id m2_mixed_decoy_rw080
 python -m simulation_mechanism.src.run_mechanism run-mechanism --repeats 3 --save-dir outputs/simulation_mechanism/demo_run
 python -m simulation_mechanism.src.run_mechanism build-tables --results-dir outputs/simulation_mechanism/demo_run
+python -m simulation_mechanism.src.run_mechanism build-figures --results-dir outputs/simulation_mechanism/demo_run
 ```

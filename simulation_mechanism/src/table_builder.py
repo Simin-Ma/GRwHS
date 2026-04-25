@@ -204,6 +204,41 @@ def build_figure6_data(summary_paired):
     return summary_paired.loc[summary_paired["experiment_id"] == "M4", cols].copy()
 
 
+def build_figure6_delta_data(paired_deltas):
+    if paired_deltas.empty:
+        return paired_deltas
+    keep_metrics = {"kappa_gap", "mse_overall", "mse_signal"}
+    cols = [
+        col
+        for col in [
+            "experiment_id",
+            "setting_id",
+            "total_active_coeff",
+            "method",
+            "method_label",
+            "baseline_method",
+            "baseline_method_label",
+            "metric",
+            "metric_direction",
+            "n_effective_pairs",
+            "mean_diff",
+            "std_diff",
+            "se_diff",
+            "ci95_lo",
+            "ci95_hi",
+            "wins_vs_baseline",
+            "losses_vs_baseline",
+            "ties_vs_baseline",
+        ]
+        if col in paired_deltas.columns
+    ]
+    return paired_deltas.loc[
+        (paired_deltas["experiment_id"] == "M4")
+        & paired_deltas["metric"].astype(str).isin(keep_metrics),
+        cols,
+    ].copy()
+
+
 def build_paper_tables(
     *,
     summary_paired,
@@ -226,17 +261,20 @@ def build_paper_tables(
     fig4 = build_figure4_representative_profile(paired_raw, per_group_kappa)
     fig5 = build_figure5_data(summary_paired)
     fig6 = build_figure6_data(summary_paired)
+    fig6_delta = build_figure6_delta_data(paired_deltas)
 
     fig2_path = figure_dir / "figure2_group_separation.csv"
     fig3_path = figure_dir / "figure3_correlation_ambiguity.csv"
     fig4_path = figure_dir / "figure4_representative_profile.csv"
     fig5_path = figure_dir / "figure5_complexity_unit.csv"
     fig6_path = figure_dir / "figure6_ablation.csv"
+    fig6_delta_path = figure_dir / "figure6_ablation_deltas.csv"
     fig2.to_csv(fig2_path, index=False)
     fig3.to_csv(fig3_path, index=False)
     fig4.to_csv(fig4_path, index=False)
     fig5.to_csv(fig5_path, index=False)
     fig6.to_csv(fig6_path, index=False)
+    fig6_delta.to_csv(fig6_delta_path, index=False)
 
     return {
         "paper_table_mechanism_csv": str(compact_csv),
@@ -246,6 +284,7 @@ def build_paper_tables(
         "figure4_representative_profile": str(fig4_path),
         "figure5_complexity_unit": str(fig5_path),
         "figure6_ablation": str(fig6_path),
+        "figure6_ablation_deltas": str(fig6_delta_path),
     }
 
 

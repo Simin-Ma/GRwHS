@@ -8,8 +8,9 @@ import pandas as pd
 
 from simulation_project.src.utils import FitResult
 
-from simulation_mechanism.src.config import load_mechanism_config
+from simulation_mechanism.src.config import load_mechanism_config, mechanism_config_from_payload
 from simulation_mechanism.src.dgp import generate_mechanism_dataset
+from simulation_mechanism.src.plotting import build_mechanism_figures_from_results_dir
 from simulation_mechanism.src.runner import run_mechanism
 from simulation_mechanism.src.schemas import active_group_mask
 from simulation_mechanism.src.suite import build_mechanism_suite, get_setting_by_id
@@ -37,6 +38,23 @@ def test_default_mechanism_yaml_loads() -> None:
     assert len(config.settings) == 12
     assert config.methods.standard_methods == ("GR_RHS", "RHS")
     assert config.methods.grrhs_kwargs["tau_target"] == "groups"
+    assert config.convergence_gate.enforce_bayes_convergence is True
+    assert config.convergence_gate.max_convergence_retries == -1
+
+
+def test_mechanism_config_forces_until_convergence_even_if_payload_disables_it() -> None:
+    payload = {
+        "convergence_gate": {
+            "enforce_bayes_convergence": False,
+            "max_convergence_retries": 1,
+            "chains": 3,
+        },
+        "settings": [],
+    }
+    config = mechanism_config_from_payload(payload)
+    assert config.convergence_gate.enforce_bayes_convergence is True
+    assert config.convergence_gate.max_convergence_retries == -1
+    assert config.convergence_gate.chains == 3
 
 
 def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
@@ -124,6 +142,9 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     assert Path(result_paths["per_group_kappa"]).exists()
     assert (tmp_path / "paper_tables" / "paper_table_mechanism.md").exists()
     assert (tmp_path / "paper_tables" / "figure_data" / "figure4_representative_profile.csv").exists()
+    assert (tmp_path / "paper_tables" / "figure_data" / "figure6_ablation_deltas.csv").exists()
+    assert (tmp_path / "figures" / "figure1_mechanism_schematic.png").exists()
+    assert (tmp_path / "figures" / "figure6_ablation.png").exists()
 
     raw = pd.read_csv(tmp_path / "raw_results.csv")
     paired_deltas = pd.read_csv(tmp_path / "summary_paired_deltas.csv")
@@ -136,3 +157,7 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     m4_deltas = paired_deltas.loc[paired_deltas["experiment_id"] == "M4"]
     assert not m4_deltas.empty
     assert set(m4_deltas["baseline_method"]) == {"GR_RHS"}
+
+    rebuilt = build_mechanism_figures_from_results_dir(tmp_path)
+    assert Path(rebuilt["figure3_correlation_ambiguity"]).exists()
+    assert Path(rebuilt["figure6_ablation"]).exists()

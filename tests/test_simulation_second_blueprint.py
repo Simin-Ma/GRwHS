@@ -9,7 +9,7 @@ import pandas as pd
 from simulation_project.src.utils import FitResult
 
 from simulation_second.src.blueprint import sample_signal_blueprint
-from simulation_second.src.config import load_benchmark_config
+from simulation_second.src.config import benchmark_config_from_payload, load_benchmark_config
 from simulation_second.src.dataset import generate_grouped_dataset
 from simulation_second.src.runner import run_benchmark
 from simulation_second.src.suite import build_main_suite, get_setting_by_id
@@ -61,6 +61,23 @@ def test_default_benchmark_yaml_loads_with_six_methods() -> None:
     assert len(config.settings) == 6
     assert config.methods.roster == ("GR_RHS", "RHS", "GHS_plus", "GIGG_MMLE", "LASSO_CV", "OLS")
     assert config.methods.grrhs_kwargs["tau_target"] == "groups"
+    assert config.convergence_gate.enforce_bayes_convergence is True
+    assert config.convergence_gate.max_convergence_retries == -1
+
+
+def test_benchmark_config_forces_until_convergence_even_if_payload_disables_it() -> None:
+    payload = {
+        "convergence_gate": {
+            "enforce_bayes_convergence": False,
+            "max_convergence_retries": 0,
+            "chains": 3,
+        },
+        "settings": [],
+    }
+    config = benchmark_config_from_payload(payload)
+    assert config.convergence_gate.enforce_bayes_convergence is True
+    assert config.convergence_gate.max_convergence_retries == -1
+    assert config.convergence_gate.chains == 3
 
 
 def test_run_benchmark_pipeline_smoke(monkeypatch, tmp_path) -> None:
