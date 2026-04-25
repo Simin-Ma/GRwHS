@@ -122,7 +122,7 @@ class RunnerConfig:
     seed: int = MASTER_SEED
     n_jobs: int = 1
     method_jobs: int = 1
-    output_dir: str = "outputs/simulation_mechanism/mechanism_main"
+    output_dir: str = "outputs/history/simulation_mechanism/mechanism_main"
     save_datasets: bool = False
     build_tables: bool = True
     baseline_method: str = "RHS"
@@ -311,7 +311,7 @@ def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig
             n_jobs=int(runner_payload.get("n_jobs", 1)),
             method_jobs=int(runner_payload.get("method_jobs", 1)),
             output_dir=str(
-                runner_payload.get("output_dir", "outputs/simulation_mechanism/mechanism_main")
+                runner_payload.get("output_dir", "outputs/history/simulation_mechanism/mechanism_main")
             ),
             save_datasets=bool(runner_payload.get("save_datasets", False)),
             build_tables=bool(runner_payload.get("build_tables", True)),

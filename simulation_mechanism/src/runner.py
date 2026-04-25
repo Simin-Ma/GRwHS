@@ -24,7 +24,7 @@ from .reporting import (
 )
 from .plotting import build_mechanism_figures_from_results_dir
 from .table_builder import build_paper_tables
-from .utils import ensure_dir, run_timestamp_tag, save_json, snapshot_result_files, stringify_groups
+from .utils import ensure_dir, prepare_history_run_dir, save_json, stringify_groups, write_history_run_index
 
 
 def _group_config_name(group_sizes: Sequence[int]) -> str:
@@ -223,9 +223,10 @@ def _dedup_method_order(settings: Sequence[Any]) -> list[str]:
 def run_mechanism(config: MechanismConfig) -> dict[str, str]:
     pd = load_pandas()
     config = replace(config, convergence_gate=force_until_converged_gate(config.convergence_gate))
-    out_dir = ensure_dir(config.runner.output_dir)
+    requested_output_dir = str(config.runner.output_dir)
+    history_root, out_dir, run_timestamp = prepare_history_run_dir(requested_output_dir)
+    config = replace(config, runner=replace(config.runner, output_dir=str(out_dir)))
     paper_dir = ensure_dir(out_dir / "paper_tables")
-    run_timestamp = run_timestamp_tag()
 
     spec_path = save_json(config.to_manifest(), out_dir / "mechanism_spec.json")
     task_chunks = _parallel_rows(
@@ -333,6 +334,9 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
             "package": "simulation_mechanism",
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "run_timestamp": str(run_timestamp),
+            "history_root": str(history_root),
+            "requested_output_dir": requested_output_dir,
+            "run_dir": str(out_dir),
             "n_rows": int(raw.shape[0]),
             "n_settings": int(len(config.settings)),
             "repeats": int(config.runner.repeats),
@@ -342,16 +346,17 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
         },
         out_dir / "run_manifest.json",
     )
+    result_paths["history_root"] = str(history_root)
+    result_paths["requested_output_dir"] = requested_output_dir
+    result_paths["run_dir"] = str(out_dir)
+    result_paths["run_timestamp"] = str(run_timestamp)
     result_paths["run_manifest"] = str(run_manifest_path)
     result_paths.update(
-        {
-            key: str(value)
-            for key, value in snapshot_result_files(
-                out_dir,
-                result_paths,
-                timestamp=run_timestamp,
-            ).items()
-            if key != "archived_paths"
-        }
+        write_history_run_index(
+            history_root,
+            run_timestamp=run_timestamp,
+            run_dir=out_dir,
+            result_paths=result_paths,
+        )
     )
     return result_paths

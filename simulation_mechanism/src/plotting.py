@@ -12,7 +12,7 @@ import numpy as np
 
 from simulation_project.src.utils import load_pandas
 
-from .utils import ensure_dir
+from .utils import ensure_dir, resolve_history_results_dir
 
 
 _METHOD_COLORS: dict[str, str] = {
@@ -480,7 +480,17 @@ def plot_figure6_ablation(summary_df: Any, delta_df: Any, out_dir: Path | str) -
 
 def build_mechanism_figures_from_results_dir(results_dir: Path | str) -> dict[str, str]:
     pd = load_pandas()
-    root = Path(results_dir)
+    root = resolve_history_results_dir(
+        results_dir,
+        required_files=(
+            "paper_tables/figure_data/figure2_group_separation.csv",
+            "paper_tables/figure_data/figure3_correlation_ambiguity.csv",
+            "paper_tables/figure_data/figure4_representative_profile.csv",
+            "paper_tables/figure_data/figure5_complexity_unit.csv",
+            "paper_tables/figure_data/figure6_ablation.csv",
+            "paper_tables/figure_data/figure6_ablation_deltas.csv",
+        ),
+    )
     paper_dir = ensure_dir(root / "paper_tables")
     fig_data_dir = paper_dir / "figure_data"
     fig_out_dir = ensure_dir(root / "figures")

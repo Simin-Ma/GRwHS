@@ -71,7 +71,7 @@ class RunnerConfig:
     seed: int = MASTER_SEED
     n_jobs: int = 1
     method_jobs: int = 1
-    output_dir: str = "outputs/simulation_second/benchmark_main"
+    output_dir: str = "outputs/history/simulation_second/benchmark_main"
     save_datasets: bool = False
     build_tables: bool = True
     baseline_method: str = "RHS"
@@ -254,7 +254,7 @@ def benchmark_config_from_payload(payload: Mapping[str, Any]) -> BenchmarkConfig
             seed=int(runner_payload.get("seed", MASTER_SEED)),
             n_jobs=int(runner_payload.get("n_jobs", 1)),
             method_jobs=int(runner_payload.get("method_jobs", 1)),
-            output_dir=str(runner_payload.get("output_dir", "outputs/simulation_second/benchmark_main")),
+            output_dir=str(runner_payload.get("output_dir", "outputs/history/simulation_second/benchmark_main")),
             save_datasets=bool(runner_payload.get("save_datasets", False)),
             build_tables=bool(runner_payload.get("build_tables", True)),
             baseline_method=str(runner_payload.get("baseline_method", "RHS")),

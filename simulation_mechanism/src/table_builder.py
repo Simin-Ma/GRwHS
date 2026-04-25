@@ -7,7 +7,7 @@ import numpy as np
 
 from simulation_project.src.utils import load_pandas
 
-from .utils import ensure_dir, mechanism_method_label
+from .utils import ensure_dir, mechanism_method_label, resolve_history_results_dir
 
 
 DEFAULT_NDIGITS = 6
@@ -542,7 +542,10 @@ def build_paper_tables(
 
 def build_paper_tables_from_results_dir(results_dir: Path | str) -> dict[str, str]:
     pd = load_pandas()
-    root = Path(results_dir)
+    root = resolve_history_results_dir(
+        results_dir,
+        required_files=("summary_paired.csv", "summary_paired_deltas.csv", "raw_results_paired.csv", "per_group_kappa.csv"),
+    )
     summary_paired = pd.read_csv(root / "summary_paired.csv")
     paired_deltas = pd.read_csv(root / "summary_paired_deltas.csv")
     paired_raw = pd.read_csv(root / "raw_results_paired.csv")

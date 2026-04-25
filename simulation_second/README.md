@@ -31,8 +31,12 @@ Examples:
 
 ```bash
 python -m simulation_second.src.run_blueprint list-settings
-python -m simulation_second.src.run_blueprint dump-manifest --save-path outputs/simulation_second/manifest.json
-python -m simulation_second.src.run_blueprint sample-suite --repeats 2 --save-dir outputs/simulation_second/samples
-python -m simulation_second.src.run_blueprint run-benchmark --settings setting_5_multimode_equal --repeats 3 --save-dir outputs/simulation_second/demo_run
-python -m simulation_second.src.run_blueprint build-tables --results-dir outputs/simulation_second/demo_run
+python -m simulation_second.src.run_blueprint dump-manifest --save-path outputs/history/simulation_second/manifest.json
+python -m simulation_second.src.run_blueprint sample-suite --repeats 2 --save-dir outputs/history/simulation_second/samples
+python -m simulation_second.src.run_blueprint run-benchmark --settings setting_5_multimode_equal --repeats 3 --save-dir outputs/history/simulation_second/demo_run
+python -m simulation_second.src.run_blueprint build-tables --results-dir outputs/history/simulation_second/demo_run
 ```
+
+Each run now lands in its own timestamped subdirectory under the chosen history
+root, and that root keeps `latest_run.json`, `latest_run.txt`, and
+`session_index.jsonl` so results are not overwritten.

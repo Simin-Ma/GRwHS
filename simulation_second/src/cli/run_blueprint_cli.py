@@ -10,7 +10,7 @@ from ..config import BenchmarkConfig, load_benchmark_config
 from ..dataset import generate_grouped_dataset, save_grouped_dataset
 from ..runner import run_benchmark
 from ..table_builder import build_paper_tables_from_results_dir
-from ..utils import ensure_dir, save_json
+from ..utils import prepare_history_run_dir, save_json, write_history_run_index
 
 
 def _print_settings(settings: Iterable[object]) -> None:
@@ -82,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--n-test", type=int, default=None, help="Override test sample size.")
     sample.add_argument(
         "--save-dir",
-        default="outputs/simulation_second/samples",
+        default="outputs/history/simulation_second/samples",
         help="Directory used to store the sampled dataset.",
     )
 
@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--settings", nargs="*", default=None, help="Optional subset of setting ids.")
     suite.add_argument(
         "--save-dir",
-        default="outputs/simulation_second/suite_samples",
+        default="outputs/history/simulation_second/suite_samples",
         help="Directory used to store the sampled datasets.",
     )
 
@@ -112,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     tables = sub.add_parser("build-tables", help="Rebuild paper tables from an existing results directory.")
     tables.add_argument(
         "--results-dir",
-        default="outputs/simulation_second/benchmark_main",
+        default="outputs/history/simulation_second/benchmark_main",
         help="Directory containing raw_results.csv.",
     )
 
@@ -152,8 +152,23 @@ def main(argv: list[str] | None = None) -> int:
             master_seed=runner_seed,
             family_specs=config.families,
         )
-        produced = save_grouped_dataset(dataset, args.save_dir)
-        print(json.dumps(produced, indent=2))
+        history_root, out_dir, run_timestamp = prepare_history_run_dir(args.save_dir)
+        produced = save_grouped_dataset(dataset, out_dir)
+        result = {
+            "history_root": str(history_root),
+            "run_dir": str(out_dir),
+            "run_timestamp": str(run_timestamp),
+            **produced,
+        }
+        result.update(
+            write_history_run_index(
+                history_root,
+                run_timestamp=run_timestamp,
+                run_dir=out_dir,
+                result_paths=produced,
+            )
+        )
+        print(json.dumps(result, indent=2))
         return 0
 
     if args.command == "sample-suite":
@@ -161,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         suite_config = _override_n_test(suite_config, args.n_test)
         if not suite_config.settings:
             parser.error("No settings selected for sample-suite.")
-        root = ensure_dir(args.save_dir)
+        history_root, root, run_timestamp = prepare_history_run_dir(args.save_dir)
         produced: list[dict[str, str]] = []
         seed = int(args.seed) if args.seed is not None else int(suite_config.runner.seed)
         for setting in suite_config.settings:
@@ -176,7 +191,25 @@ def main(argv: list[str] | None = None) -> int:
                 produced.append(save_grouped_dataset(dataset, setting_dir))
         manifest_path = root / "suite_manifest.json"
         save_json(suite_config.to_manifest(), manifest_path)
-        print(json.dumps({"manifest": str(manifest_path), "datasets": produced}, indent=2))
+        result = {
+            "history_root": str(history_root),
+            "run_dir": str(root),
+            "run_timestamp": str(run_timestamp),
+            "manifest": str(manifest_path),
+            "datasets": produced,
+        }
+        result.update(
+            write_history_run_index(
+                history_root,
+                run_timestamp=run_timestamp,
+                run_dir=root,
+                result_paths={
+                    "manifest": str(manifest_path),
+                    "dataset_count": len(produced),
+                },
+            )
+        )
+        print(json.dumps(result, indent=2))
         return 0
 
     if args.command == "run-benchmark":

@@ -7,6 +7,7 @@ import numpy as np
 
 from simulation_project.src.utils import load_pandas, method_display_name
 
+from .utils import resolve_history_results_dir
 from .reporting import build_paired_summary, default_setting_group_cols
 
 
@@ -519,7 +520,7 @@ def build_paper_tables_from_results_dir(
     required_metric_cols: Sequence[str] = ("mse_null", "mse_signal", "mse_overall", "lpd_test"),
 ):
     pd = load_pandas()
-    base = Path(results_dir)
+    base = resolve_history_results_dir(results_dir, required_files=("raw_results.csv",))
     raw = pd.read_csv(base / "raw_results.csv")
     return build_paper_tables(
         raw,

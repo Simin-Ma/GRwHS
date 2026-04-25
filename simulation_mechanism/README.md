@@ -30,9 +30,13 @@ Examples:
 
 ```bash
 python -m simulation_mechanism.src.run_mechanism list-settings
-python -m simulation_mechanism.src.run_mechanism dump-manifest --save-path outputs/simulation_mechanism/manifest.json
+python -m simulation_mechanism.src.run_mechanism dump-manifest --save-path outputs/history/simulation_mechanism/manifest.json
 python -m simulation_mechanism.src.run_mechanism sample-setting --setting-id m2_mixed_decoy_rw080
-python -m simulation_mechanism.src.run_mechanism run-mechanism --repeats 3 --save-dir outputs/simulation_mechanism/demo_run
-python -m simulation_mechanism.src.run_mechanism build-tables --results-dir outputs/simulation_mechanism/demo_run
-python -m simulation_mechanism.src.run_mechanism build-figures --results-dir outputs/simulation_mechanism/demo_run
+python -m simulation_mechanism.src.run_mechanism run-mechanism --repeats 3 --save-dir outputs/history/simulation_mechanism/demo_run
+python -m simulation_mechanism.src.run_mechanism build-tables --results-dir outputs/history/simulation_mechanism/demo_run
+python -m simulation_mechanism.src.run_mechanism build-figures --results-dir outputs/history/simulation_mechanism/demo_run
 ```
+
+Each run now lands in its own timestamped subdirectory under the chosen history
+root, and that root keeps `latest_run.json`, `latest_run.txt`, and
+`session_index.jsonl` so results are not overwritten.

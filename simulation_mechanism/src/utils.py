@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Mapping, Sequence, Tuple
@@ -127,46 +126,90 @@ def run_timestamp_tag() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
 
-def snapshot_result_files(
-    output_dir: Path | str,
-    result_paths: Mapping[str, Any],
+def prepare_history_run_dir(output_dir: Path | str, *, timestamp: str | None = None) -> tuple[Path, Path, str]:
+    history_root = ensure_dir(output_dir)
+    base_tag = str(timestamp or run_timestamp_tag())
+    run_tag = base_tag
+    run_dir = history_root / run_tag
+    counter = 1
+    while run_dir.exists():
+        run_tag = f"{base_tag}_{counter:02d}"
+        run_dir = history_root / run_tag
+        counter += 1
+    ensure_dir(run_dir)
+    return history_root, run_dir, run_tag
+
+
+def write_history_run_index(
+    history_root: Path | str,
     *,
-    timestamp: str | None = None,
-) -> dict[str, Any]:
-    root = ensure_dir(output_dir)
-    ts = str(timestamp or run_timestamp_tag())
-    run_dir = ensure_dir(root / "runs" / ts)
-
-    archived_paths: dict[str, str] = {}
-    root_resolved = root.resolve()
-    for name, value in dict(result_paths).items():
-        if not isinstance(value, str):
-            continue
-        src = Path(value)
-        if not src.exists() or not src.is_file():
-            continue
-        src_resolved = src.resolve()
-        try:
-            rel = src_resolved.relative_to(root_resolved)
-        except ValueError:
-            rel = Path(src.name)
-        dst = run_dir / rel
-        ensure_dir(dst.parent)
-        shutil.copy2(src_resolved, dst)
-        archived_paths[str(name)] = str(dst)
-
-    manifest = {
-        "run_timestamp": ts,
-        "output_dir": str(root),
-        "run_dir": str(run_dir),
-        "archived_paths": dict(archived_paths),
+    run_timestamp: str,
+    run_dir: Path | str,
+    result_paths: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    root = ensure_dir(history_root)
+    run_dir_path = Path(run_dir)
+    entry = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "run_timestamp": str(run_timestamp),
+        "run_dir": str(run_dir_path),
+        "result_paths": dict(result_paths or {}),
     }
-    run_manifest_path = save_json(manifest, run_dir / "run_manifest.json")
-    latest_path = save_json(manifest, root / "latest_run.json")
+    latest_json = save_json(entry, root / "latest_run.json")
+    latest_txt = root / "latest_run.txt"
+    latest_txt.write_text(f"{run_dir_path}\n", encoding="utf-8")
+    index_path = root / "session_index.jsonl"
+    with index_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     return {
-        "run_timestamp": ts,
-        "run_dir": str(run_dir),
-        "run_archive_manifest": str(run_manifest_path),
-        "latest_run": str(latest_path),
-        "archived_paths": dict(archived_paths),
+        "history_root": str(root),
+        "latest_run": str(latest_json),
+        "latest_run_txt": str(latest_txt),
+        "session_index": str(index_path),
     }
+
+
+def _contains_required_files(base: Path, required_files: Sequence[str]) -> bool:
+    if not required_files:
+        return base.exists()
+    return all((base / rel).exists() for rel in required_files)
+
+
+def _latest_run_dir_from_root(root: Path) -> Path | None:
+    latest_json = root / "latest_run.json"
+    if latest_json.exists():
+        try:
+            payload = json.loads(latest_json.read_text(encoding="utf-8"))
+            run_dir = payload.get("run_dir")
+            if run_dir:
+                candidate = Path(str(run_dir))
+                if candidate.exists():
+                    return candidate
+        except (json.JSONDecodeError, OSError, TypeError):
+            pass
+
+    latest_txt = root / "latest_run.txt"
+    if latest_txt.exists():
+        try:
+            text = latest_txt.read_text(encoding="utf-8").strip()
+            if text:
+                candidate = Path(text)
+                if candidate.exists():
+                    return candidate
+        except OSError:
+            pass
+    return None
+
+
+def resolve_history_results_dir(
+    results_dir: Path | str,
+    *,
+    required_files: Sequence[str] = (),
+) -> Path:
+    root = Path(results_dir)
+    if _contains_required_files(root, required_files):
+        return root
+    latest_run_dir = _latest_run_dir_from_root(root)
+    if latest_run_dir is not None and _contains_required_files(latest_run_dir, required_files):
+        return latest_run_dir
+    return root
