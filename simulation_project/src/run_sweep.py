@@ -24,6 +24,9 @@ from .experiments import (
     run_exp3d_within_group_mixed,
     run_exp4_variant_ablation,
     run_exp5_prior_sensitivity,
+    run_ga_v2_group_separation,
+    run_ga_v2_complexity_mismatch,
+    run_ga_v2_correlation_stress,
 )
 from .experiments.orchestration import run_all_experiments
 from .experiment_aliases import normalize_sweep_experiment
@@ -42,6 +45,9 @@ _RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {
     "exp3d": run_exp3d_within_group_mixed,
     "exp4": run_exp4_variant_ablation,
     "exp5": run_exp5_prior_sensitivity,
+    "ga_v2a": run_ga_v2_group_separation,
+    "ga_v2b": run_ga_v2_complexity_mismatch,
+    "ga_v2c": run_ga_v2_correlation_stress,
 }
 
 def _load_sweep_config(path: Path) -> dict[str, Any]:
@@ -404,5 +410,3 @@ def _cli() -> None:
 
 if __name__ == "__main__":
     _cli()
-
-

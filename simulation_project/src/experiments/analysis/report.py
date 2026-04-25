@@ -84,6 +84,13 @@ def _median(v: list[float]) -> float:
     return float(np.median(arr))
 
 
+def _finite_mean(v: list[float]) -> float:
+    arr = np.asarray([float(x) for x in v if np.isfinite(float(x))], dtype=float)
+    if arr.size == 0:
+        return float("nan")
+    return float(np.mean(arr))
+
+
 def _compute_diag_rows(rows: list[dict], *, exp_key: str, method_col: str, bayes_methods: set[str] | None = None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if not rows:
@@ -114,7 +121,7 @@ def _compute_diag_rows(rows: list[dict], *, exp_key: str, method_col: str, bayes
                 "runtime_seconds_p95": _quantile(rt, 0.95),
                 "bulk_ess_min_median": _median(ess),
                 "rhat_max_p95": _quantile(rh, 0.95),
-                "divergence_ratio_mean": float(np.nanmean(np.asarray(div, dtype=float))) if len(div) else float("nan"),
+                "divergence_ratio_mean": _finite_mean(div),
             }
         )
     return out
@@ -284,6 +291,61 @@ def analyze_exp2(results_dir: Path) -> dict[str, Any]:
     return {"metrics": metrics, "findings": findings}
 
 
+def analyze_ga_v2_group_separation(results_dir: Path) -> dict[str, Any]:
+    findings: list[str] = []
+
+    summary_path = results_dir / "summary_paired.csv"
+    if not summary_path.exists():
+        summary_path = results_dir / "summary.csv"
+    if not summary_path.exists():
+        return {"metrics": {}, "findings": ["  summary.csv not found, skipping."]}
+
+    rows = _load_csv(summary_path)
+    if not rows:
+        return {"metrics": {}, "findings": ["  summary.csv is empty, skipping."]}
+
+    metrics: dict[str, Any] = {}
+    score_cols = ["group_auroc", "mse_overall", "kappa_gap", "null_group_mse", "signal_group_mse", "lpd_test"]
+    by_method: dict[str, dict[str, float]] = {}
+    for r in rows:
+        method = str(r.get("method", "")).strip()
+        if not method:
+            continue
+        by_method[method] = {c: _float(r.get(c, "nan")) for c in score_cols}
+        by_method[method]["n_effective"] = int(_float(r.get("n_effective", 0)))
+    metrics["by_method"] = by_method
+
+    gr = by_method.get("GR_RHS", {})
+    rhs = by_method.get("RHS", {})
+    lines = ["  GA-V2-A focuses on group-level mechanism metrics rather than only coefficient MSE."]
+    if gr or rhs:
+        lines.append(
+            "  Group AUROC: "
+            + "  ".join(
+                f"{_method_label(m)}={vals.get('group_auroc', float('nan')):.3f}"
+                for m, vals in [("GR_RHS", gr), ("RHS", rhs)]
+                if vals
+            )
+        )
+        lines.append(
+            "  Overall MSE: "
+            + "  ".join(
+                f"{_method_label(m)}={vals.get('mse_overall', float('nan')):.5f}"
+                for m, vals in [("GR_RHS", gr), ("RHS", rhs)]
+                if vals
+            )
+        )
+    if gr:
+        lines.append(
+            f"  GR_RHS mechanism summary: kappa_gap={gr.get('kappa_gap', float('nan')):.3f}  "
+            f"null_group_mse={gr.get('null_group_mse', float('nan')):.5f}  "
+            f"signal_group_mse={gr.get('signal_group_mse', float('nan')):.5f}  "
+            f"n_effective={int(gr.get('n_effective', 0))}"
+        )
+    findings.append("\n".join(lines))
+    return {"metrics": metrics, "findings": findings}
+
+
 # ---------------------------------------------------------------------------
 # Exp3 -- linear benchmark
 # ---------------------------------------------------------------------------
@@ -449,6 +511,190 @@ def analyze_exp4(results_dir: Path) -> dict[str, Any]:
     return {"metrics": metrics, "findings": findings}
 
 
+def analyze_ga_v2_complexity_mismatch(results_dir: Path) -> dict[str, Any]:
+    findings: list[str] = []
+    metrics: dict[str, Any] = {}
+
+    summary_path = results_dir / "summary_paired.csv"
+    if not summary_path.exists():
+        summary_path = results_dir / "summary.csv"
+    if not summary_path.exists():
+        return {"metrics": {}, "findings": ["  summary.csv not found, skipping."]}
+
+    rows = _load_csv(summary_path)
+    if not rows:
+        return {"metrics": {}, "findings": ["  summary.csv is empty, skipping."]}
+
+    cell_metrics: dict[str, dict[str, dict[str, float]]] = {}
+    for r in rows:
+        cell = f"{r.get('complexity_pattern', '')}/{r.get('within_group_pattern', '')}"
+        method = str(r.get("method", "")).strip()
+        if not cell.strip("/") or not method:
+            continue
+        cell_metrics.setdefault(cell, {})[method] = {
+            "group_auroc": _float(r.get("group_auroc", "nan")),
+            "mse_overall": _float(r.get("mse_overall", "nan")),
+            "kappa_gap": _float(r.get("kappa_gap", "nan")),
+            "true_active_groups": _float(r.get("true_active_groups", "nan")),
+            "n_effective": _float(r.get("n_effective", "nan")),
+        }
+    metrics["cells"] = cell_metrics
+
+    lines = ["  GA-V2-B holds total active coefficient count fixed and shifts activity across groups."]
+    for cell in sorted(cell_metrics.keys()):
+        gr = cell_metrics[cell].get("GR_RHS", {})
+        rhs = cell_metrics[cell].get("RHS", {})
+        parts = [f"  {cell}:"]
+        if gr:
+            parts.append(
+                f"GR_RHS auroc={gr.get('group_auroc', float('nan')):.3f} "
+                f"mse={gr.get('mse_overall', float('nan')):.5f} "
+                f"kappa_gap={gr.get('kappa_gap', float('nan')):.3f}"
+            )
+        if rhs:
+            parts.append(
+                f"RHS auroc={rhs.get('group_auroc', float('nan')):.3f} "
+                f"mse={rhs.get('mse_overall', float('nan')):.5f}"
+            )
+        lines.append("  ".join(parts))
+    findings.append("\n".join(lines))
+    return {"metrics": metrics, "findings": findings}
+
+
+def analyze_ga_v2_correlation_stress(results_dir: Path) -> dict[str, Any]:
+    findings: list[str] = []
+    metrics: dict[str, Any] = {}
+
+    summary_path = results_dir / "summary_paired.csv"
+    if not summary_path.exists():
+        summary_path = results_dir / "summary.csv"
+    if not summary_path.exists():
+        return {"metrics": {}, "findings": ["  summary.csv not found, skipping."]}
+
+    rows = _load_csv(summary_path)
+    if not rows:
+        return {"metrics": {}, "findings": ["  summary.csv is empty, skipping."]}
+
+    trend: dict[str, list[dict[str, float]]] = {}
+    for r in rows:
+        pat = str(r.get("within_group_pattern", "")).strip()
+        method = str(r.get("method", "")).strip()
+        if not pat or not method:
+            continue
+        trend.setdefault(pat, []).append(
+            {
+                "rho_within": _float(r.get("rho_within", "nan")),
+                "method": method,
+                "group_auroc": _float(r.get("group_auroc", "nan")),
+                "mse_overall": _float(r.get("mse_overall", "nan")),
+                "kappa_gap": _float(r.get("kappa_gap", "nan")),
+            }
+        )
+    metrics["by_pattern"] = trend
+
+    lines = ["  GA-V2-C varies within-group correlation while holding the group sparsity pattern fixed."]
+    for pat in sorted(trend.keys()):
+        chunk = sorted(trend[pat], key=lambda d: (d["rho_within"], d["method"]))
+        lines.append(f"  pattern={pat}:")
+        for rec in chunk:
+            pieces = [
+                f"rho={rec['rho_within']:.2f}",
+                _method_label(str(rec["method"])),
+                f"auroc={rec['group_auroc']:.3f}",
+                f"mse={rec['mse_overall']:.5f}",
+            ]
+            if np.isfinite(rec["kappa_gap"]):
+                pieces.append(f"kappa_gap={rec['kappa_gap']:.3f}")
+            lines.append("    " + "  ".join(pieces))
+    findings.append("\n".join(lines))
+    return {"metrics": metrics, "findings": findings}
+
+
+def analyze_group_aware_v2_suite(results_dir: Path) -> dict[str, Any]:
+    findings: list[str] = []
+    metrics: dict[str, Any] = {}
+
+    suite_specs = [
+        ("ga_v2a", "GA-V2-A", "ga_v2_group_separation", ["method"]),
+        ("ga_v2b", "GA-V2-B", "ga_v2_complexity_mismatch", ["complexity_pattern", "within_group_pattern", "method"]),
+        ("ga_v2c", "GA-V2-C", "ga_v2_correlation_stress", ["rho_within", "within_group_pattern", "method"]),
+    ]
+
+    suite_rows: list[dict[str, Any]] = []
+    available = 0
+    for key, label, subdir, _ in suite_specs:
+        exp_dir = results_dir / subdir
+        summary_path = exp_dir / "summary_paired.csv"
+        if not summary_path.exists():
+            summary_path = exp_dir / "summary.csv"
+        if not summary_path.exists():
+            continue
+        rows = _load_csv(summary_path)
+        if not rows:
+            continue
+        available += 1
+        methods = sorted({str(r.get("method", "")).strip() for r in rows if str(r.get("method", "")).strip()})
+        findings.append(f"  {label}: methods in paired summary = {[_method_label(m) for m in methods]}")
+
+        grouping_keys = [c for c in rows[0].keys() if c not in {"method", "method_label", "group_auroc", "group_auroc_std", "kappa_gap", "kappa_gap_std", "kappa_null_mean", "kappa_signal_mean", "null_group_mse", "signal_group_mse", "mse_null", "mse_signal", "mse_overall", "lpd_test", "runtime_seconds", "true_active_groups", "true_active_coeff", "n_effective"}]
+        cell_map: dict[tuple[Any, ...], dict[str, dict[str, Any]]] = {}
+        for r in rows:
+            method = str(r.get("method", "")).strip()
+            if not method:
+                continue
+            cell_key = tuple((k, str(r.get(k, ""))) for k in grouping_keys)
+            cell_map.setdefault(cell_key, {})[method] = r
+
+        for cell_key, method_rows in cell_map.items():
+            gr = method_rows.get("GR_RHS")
+            rhs = method_rows.get("RHS")
+            cell_desc = ", ".join(f"{k}={v}" for k, v in cell_key if str(v).strip()) or "overall"
+            suite_rows.append(
+                {
+                    "suite_experiment": label,
+                    "experiment_key": key,
+                    "cell": cell_desc,
+                    "gr_group_auroc": _float(gr.get("group_auroc", "nan")) if gr else float("nan"),
+                    "rhs_group_auroc": _float(rhs.get("group_auroc", "nan")) if rhs else float("nan"),
+                    "delta_group_auroc_gr_minus_rhs": (
+                        _float(gr.get("group_auroc", "nan")) - _float(rhs.get("group_auroc", "nan"))
+                        if gr and rhs else float("nan")
+                    ),
+                    "gr_mse_overall": _float(gr.get("mse_overall", "nan")) if gr else float("nan"),
+                    "rhs_mse_overall": _float(rhs.get("mse_overall", "nan")) if rhs else float("nan"),
+                    "delta_mse_overall_gr_minus_rhs": (
+                        _float(gr.get("mse_overall", "nan")) - _float(rhs.get("mse_overall", "nan"))
+                        if gr and rhs else float("nan")
+                    ),
+                    "gr_kappa_gap": _float(gr.get("kappa_gap", "nan")) if gr else float("nan"),
+                    "gr_n_effective": int(_float(gr.get("n_effective", 0))) if gr else 0,
+                    "rhs_n_effective": int(_float(rhs.get("n_effective", 0))) if rhs else 0,
+                }
+            )
+
+    if available == 0:
+        return {"metrics": {}, "findings": ["  no GA-V2 result directories found, skipping."]}
+
+    metrics["suite_rows"] = suite_rows
+    if suite_rows:
+        auroc_deltas = [float(r["delta_group_auroc_gr_minus_rhs"]) for r in suite_rows if np.isfinite(float(r["delta_group_auroc_gr_minus_rhs"]))]
+        mse_deltas = [float(r["delta_mse_overall_gr_minus_rhs"]) for r in suite_rows if np.isfinite(float(r["delta_mse_overall_gr_minus_rhs"]))]
+        kappa_vals = [float(r["gr_kappa_gap"]) for r in suite_rows if np.isfinite(float(r["gr_kappa_gap"]))]
+        metrics["suite_aggregates"] = {
+            "n_cells": int(len(suite_rows)),
+            "mean_delta_group_auroc_gr_minus_rhs": float(np.mean(auroc_deltas)) if auroc_deltas else float("nan"),
+            "mean_delta_mse_overall_gr_minus_rhs": float(np.mean(mse_deltas)) if mse_deltas else float("nan"),
+            "mean_gr_kappa_gap": float(np.mean(kappa_vals)) if kappa_vals else float("nan"),
+        }
+        findings.append(
+            "  Suite aggregate: "
+            f"mean delta(group_auroc, GR_RHS-RHS)={metrics['suite_aggregates']['mean_delta_group_auroc_gr_minus_rhs']:.3f}  "
+            f"mean delta(mse_overall, GR_RHS-RHS)={metrics['suite_aggregates']['mean_delta_mse_overall_gr_minus_rhs']:.5f}  "
+            f"mean GR_RHS kappa_gap={metrics['suite_aggregates']['mean_gr_kappa_gap']:.3f}"
+        )
+    return {"metrics": metrics, "findings": findings}
+
+
 # ---------------------------------------------------------------------------
 # Exp5 -- prior sensitivity
 # ---------------------------------------------------------------------------
@@ -513,7 +759,7 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
 
     sep   = "=" * 68
     sep2  = "-" * 60
-    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5 plus optional Exp3c/Exp3d extensions", sep]
+    report_lines: list[str] = [sep, "SIMULATION RESULTS ANALYSIS -- Exp1-5 plus optional Exp3c/Exp3d and GA-V2 suite", sep]
 
     all_metrics: dict[str, Any] = {}
     exp_configs = [
@@ -547,6 +793,41 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
         for finding in result.get("findings", []):
             report_lines.append(finding)
 
+    ga_v2_root = res / "group_aware_v2"
+    report_lines.append("\nGroup-Aware Validation V2 Suite")
+    report_lines.append(sep2)
+    if ga_v2_root.exists():
+        suite_result = analyze_group_aware_v2_suite(ga_v2_root)
+        all_metrics["group_aware_v2_suite"] = suite_result.get("metrics", {})
+        for finding in suite_result.get("findings", []):
+            report_lines.append(finding)
+        suite_rows = list((suite_result.get("metrics", {}) or {}).get("suite_rows", []))
+        if suite_rows:
+            import csv
+            suite_fields = [
+                "suite_experiment",
+                "experiment_key",
+                "cell",
+                "gr_group_auroc",
+                "rhs_group_auroc",
+                "delta_group_auroc_gr_minus_rhs",
+                "gr_mse_overall",
+                "rhs_mse_overall",
+                "delta_mse_overall_gr_minus_rhs",
+                "gr_kappa_gap",
+                "gr_n_effective",
+                "rhs_n_effective",
+            ]
+            with open(ga_v2_root / "suite_summary.csv", "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=suite_fields)
+                writer.writeheader()
+                for row in suite_rows:
+                    writer.writerow({k: row.get(k) for k in suite_fields})
+            all_metrics["group_aware_v2_suite_summary_csv"] = str(ga_v2_root / "suite_summary.csv")
+    else:
+        report_lines.append(f"  [results directory not found: {ga_v2_root}]")
+        all_metrics["group_aware_v2_suite"] = {}
+
     # Strict Bayesian convergence gate + diagnostics table.
     bayes_method_set = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
     gate_specs = [
@@ -557,6 +838,9 @@ def run_analysis(save_dir: str = "outputs/simulation_project") -> dict[str, Any]
         ("exp3d", res / "exp3d_within_group_mixed" / "raw_results.csv", "method", bayes_method_set, False),
         ("exp4", res / "exp4_variant_ablation" / "raw_results.csv", "method_type", {"GR_RHS", "RHS"}, True),
         ("exp5", res / "exp5_prior_sensitivity" / "raw_results.csv", "", None, True),
+        ("ga_v2a", res / "group_aware_v2" / "ga_v2_group_separation" / "raw_results.csv", "method", {"GR_RHS", "RHS"}, False),
+        ("ga_v2b", res / "group_aware_v2" / "ga_v2_complexity_mismatch" / "raw_results.csv", "method", {"GR_RHS", "RHS"}, False),
+        ("ga_v2c", res / "group_aware_v2" / "ga_v2_correlation_stress" / "raw_results.csv", "method", {"GR_RHS", "RHS"}, False),
     ]
     gate_ok = True
     gate_lines: list[str] = []

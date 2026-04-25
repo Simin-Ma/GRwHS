@@ -11,7 +11,7 @@ python scripts/run_simulation.py --help
 
 Common CLI args:
 
-- `--experiment {all,1,2,3,3a,3b,3c,3d,4,5,analysis}`
+- `--experiment {all,1,2,3,3a,3b,3c,3d,4,5,ga_v2a,ga_v2b,ga_v2c,analysis}`
 - `--workspace simulation_project`
 - `--save-dir <path>`
 - `--seed <int>`
@@ -25,6 +25,22 @@ Common CLI args:
 - `--max-convergence-retries <int>`
 - `--until-bayes-converged`
 - `--exp3-gigg-mode {paper_ref}`
+- `--ga-v2-group-sizes <csv>`
+- `--ga-v2-methods <csv>`
+- `--ga-v2-n-train <int>`
+- `--ga-v2-n-test <int>`
+- `--ga-v2-rho-within <float>`
+- `--ga-v2-rho-between <float>`
+- `--ga-v2a-mu <csv>`
+- `--ga-v2a-sigma2 <float>`
+- `--ga-v2b-patterns <csv>`
+- `--ga-v2b-within-patterns <csv>`
+- `--ga-v2b-total-active-coeff <int>`
+- `--ga-v2b-target-snr <float>`
+- `--ga-v2c-rho-list <csv>`
+- `--ga-v2c-within-patterns <csv>`
+- `--ga-v2c-active-groups <csv>`
+- `--ga-v2c-target-snr <float>`
 
 Retry semantics:
 - If `--max-convergence-retries` is set to a nonnegative integer, that exact retry budget is used.
@@ -189,6 +205,81 @@ Run:
 python -m simulation_project.src.run_experiment --experiment 5
 ```
 
+### GA-V2-A (`ga_v2_group_separation`)
+
+- new group-aware validation suite, separate from `Exp1-Exp5`
+- mechanism-first group separation design
+- main outputs: `raw_results.csv`, `summary.csv`, `summary_paired.csv`, `paired_stats.csv`
+- defaults:
+  - `group_sizes=[10,10,10,10,10]`
+  - `mu=[0,0,1.5,4.0,10.0]`
+  - `rho_within=0.8`, `rho_between=0.2`
+  - `n_train=100`, `n_test=30`
+  - methods: `GR_RHS`, `RHS`
+
+Run:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment ga_v2a
+```
+
+Custom run:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment ga_v2a --repeats 20 --ga-v2-group-sizes 10,10,10,10,10 --ga-v2a-mu 0,0,1,3,6 --ga-v2-rho-within 0.85 --ga-v2-rho-between 0.15
+```
+
+### GA-V2-B (`ga_v2_complexity_mismatch`)
+
+- new group-aware validation suite, separate from `Exp1-Exp5`
+- fixes total active coefficient count and varies active-group allocation
+- `many_groups` spreads activity across many but not all groups, so null-group metrics remain identifiable
+- main outputs: `raw_results.csv`, `summary.csv`, `summary_paired.csv`, `paired_stats.csv`
+- defaults:
+  - `group_sizes=[10,10,10,10,10]`
+  - `patterns=[few_groups,many_groups]`
+  - `within_group_patterns=[concentrated,distributed]`
+  - `total_active_coeff=10`
+  - `rho_within=0.8`, `rho_between=0.2`
+
+Run:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment ga_v2b
+```
+
+Custom run:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment ga_v2b --repeats 10 --ga-v2b-patterns few_groups,many_groups --ga-v2b-within-patterns concentrated --ga-v2b-total-active-coeff 10 --ga-v2b-target-snr 1.0
+```
+
+### GA-V2-C (`ga_v2_correlation_stress`)
+
+- new group-aware validation suite, separate from `Exp1-Exp5`
+- fixes the active-group structure and varies within-group correlation under structural ambiguity
+- defaults:
+  - `group_sizes=[10,10,10,10,10]`
+  - `active_groups=[0,1]`
+  - `within_group_patterns=[mixed_decoy,concentrated]`
+  - `rho_within_list=[0.4,0.6,0.8,0.95]`
+  - `rho_between=0.2`
+  - `target_snr=1.0`
+
+- `mixed_decoy` uses within-group mixed signal in the active groups and adds a decoy null group with extra latent coupling to the primary active group, so the main estimand is structure-matched group shrinkage rather than pure coefficient MSE.
+
+Run:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment ga_v2c
+```
+
+Custom run:
+
+```bash
+python -m simulation_project.src.run_experiment --experiment ga_v2c --repeats 10 --ga-v2c-rho-list 0.4,0.8,0.95 --ga-v2c-within-patterns concentrated,distributed --ga-v2c-active-groups 0,1 --ga-v2c-target-snr 1.0
+```
+
 ## 5. Analysis Only
 
 ```bash
@@ -201,4 +292,7 @@ python -m simulation_project.src.run_experiment --experiment analysis
 python -m simulation_project.src.run_sweep --list
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5
 python -m simulation_project.src.run_sweep --sweep exp1_to_exp5 --set n_jobs=2 --set method_jobs=2 --set all_parallel_jobs=2 --set max_convergence_retries=2
+python -m simulation_project.src.run_sweep --sweep ga_v2a_default
+python -m simulation_project.src.run_sweep --sweep ga_v2b_quickscan
+python -m simulation_project.src.run_sweep --sweep ga_v2c_quickscan
 ```

@@ -69,3 +69,32 @@ exp5_prior_sensitivity:
     Exp5 - prior sensitivity with paired design across priors.
     Reports paired deltas and 95% intervals relative to default prior (0.5,1.0).
     Main summary uses paired-converged-and-ok subset.
+
+ga_v2_group_separation:
+  repeats_default: 100
+  description: >
+    Group-aware validation suite V2, Experiment A.
+    Clean group-separation design focused on mechanism metrics:
+    group_auroc, kappa_gap, bridge-ratio diagnostics, and null/signal group error.
+    Default design uses group_sizes=[10,10,10,10,10], mu=[0,0,1.5,4,10],
+    rho_within=0.8, rho_between=0.2, methods=[GR_RHS,RHS].
+
+ga_v2_complexity_mismatch:
+  repeats_default: 40
+  description: >
+    Group-aware validation suite V2, Experiment B.
+    Complexity-mismatch design holding total active coefficient count fixed while
+    varying how those coefficients are allocated across groups.
+    Default patterns are few_groups vs many_groups crossed with
+    concentrated vs distributed within-group signal shapes; many_groups
+    uses many but not all groups so null-group diagnostics remain defined.
+
+ga_v2_correlation_stress:
+  repeats_default: 30
+  description: >
+    Group-aware validation suite V2, Experiment C.
+    Correlation-stress design holding group sparsity fixed while varying
+    within-group correlation and within-group signal shape.
+    Default design uses rho_within_list=[0.4,0.6,0.8,0.95],
+    rho_between=0.2, active_groups=[0,1], and
+    within_group_patterns=[concentrated,distributed].

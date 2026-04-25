@@ -1,0 +1,8 @@
+[
+  {"env_id": "RW080_RB015_SNR10_N250", "rho_within": 0.80, "rho_between": 0.15, "target_snr": 1.0, "n_train": 250},
+  {"env_id": "RW080_RB015_SNR10_N350", "rho_within": 0.80, "rho_between": 0.15, "target_snr": 1.0, "n_train": 350},
+  {"env_id": "RW085_RB015_SNR10_N350", "rho_within": 0.85, "rho_between": 0.15, "target_snr": 1.0, "n_train": 350},
+  {"env_id": "RW088_RB015_SNR10_N300", "rho_within": 0.88, "rho_between": 0.15, "target_snr": 1.0, "n_train": 300},
+  {"env_id": "RW090_RB015_SNR10_N300", "rho_within": 0.90, "rho_between": 0.15, "target_snr": 1.0, "n_train": 300},
+  {"env_id": "RW090_RB015_SNR10_N350", "rho_within": 0.90, "rho_between": 0.15, "target_snr": 1.0, "n_train": 350}
+]

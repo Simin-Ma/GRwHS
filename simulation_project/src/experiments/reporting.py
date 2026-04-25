@@ -55,7 +55,16 @@ def _collect_existing_paths(obj: Any) -> set[Path]:
 
 def _analyze_single_experiment(exp_key: str, results_dir: Path) -> dict[str, Any]:
     try:
-        from .analysis.report import analyze_exp1, analyze_exp2, analyze_exp3, analyze_exp4, analyze_exp5
+        from .analysis.report import (
+            analyze_exp1,
+            analyze_exp2,
+            analyze_exp3,
+            analyze_exp4,
+            analyze_exp5,
+            analyze_ga_v2_complexity_mismatch,
+            analyze_ga_v2_correlation_stress,
+            analyze_ga_v2_group_separation,
+        )
         analyzers = {
             "exp1": analyze_exp1,
             "exp2": analyze_exp2,
@@ -66,6 +75,9 @@ def _analyze_single_experiment(exp_key: str, results_dir: Path) -> dict[str, Any
             "exp3d": analyze_exp3,
             "exp4": analyze_exp4,
             "exp5": analyze_exp5,
+            "ga_v2_group_separation": analyze_ga_v2_group_separation,
+            "ga_v2_complexity_mismatch": analyze_ga_v2_complexity_mismatch,
+            "ga_v2_correlation_stress": analyze_ga_v2_correlation_stress,
         }
         fn = analyzers.get(str(exp_key).strip().lower())
         if fn is None:

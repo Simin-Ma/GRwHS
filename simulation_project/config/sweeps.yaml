@@ -71,3 +71,77 @@ sweeps:
       method_jobs: 2
       enforce_bayes_convergence: true
       until_bayes_converged: true
+
+  ga_v2a_default:
+    experiment: ga_v2a
+    description: GA-V2-A default protocol for mechanism-first group separation.
+    fixed:
+      repeats: 100
+      method_jobs: 2
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+
+  ga_v2a_quick:
+    experiment: ga_v2a
+    description: Lightweight GA-V2-A smoke/iteration sweep.
+    fixed:
+      repeats: 5
+      method_jobs: 1
+      enforce_bayes_convergence: true
+      max_convergence_retries: 1
+      until_bayes_converged: true
+
+  ga_v2b_default:
+    experiment: ga_v2b
+    description: GA-V2-B default protocol across both complexity and within-group pattern axes.
+    fixed:
+      repeats: 40
+      method_jobs: 2
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+
+  ga_v2b_quickscan:
+    experiment: ga_v2b
+    description: Fast GA-V2-B scan over a reduced design for iteration.
+    fixed:
+      repeats: 3
+      method_jobs: 1
+      patterns:
+        - few_groups
+      within_group_patterns:
+        - concentrated
+        - distributed
+      total_active_coeff: 10
+      target_snr: 1.0
+      enforce_bayes_convergence: true
+      max_convergence_retries: 1
+      until_bayes_converged: true
+
+  ga_v2c_default:
+    experiment: ga_v2c
+    description: GA-V2-C default protocol across the within-group correlation grid.
+    fixed:
+      repeats: 30
+      method_jobs: 2
+      enforce_bayes_convergence: true
+      until_bayes_converged: true
+
+  ga_v2c_quickscan:
+    experiment: ga_v2c
+    description: Fast GA-V2-C correlation stress scan for iteration.
+    fixed:
+      repeats: 3
+      method_jobs: 1
+      rho_within_list:
+        - 0.4
+        - 0.8
+      within_group_patterns:
+        - concentrated
+        - distributed
+      active_groups:
+        - 0
+        - 1
+      target_snr: 1.0
+      enforce_bayes_convergence: true
+      max_convergence_retries: 1
+      until_bayes_converged: true

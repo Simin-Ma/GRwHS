@@ -1,0 +1,20 @@
+package: simulation_mechanism
+description: Mechanism-first GR-RHS experiment suite defined by docs/grrhs_mechanism_experiment_design.md.
+runner:
+  output_dir: outputs/simulation_mechanism/mechanism_main
+  repeats: 10
+  n_jobs: 1
+  method_jobs: 1
+  build_tables: true
+methods:
+  standard_methods:
+    - GR_RHS
+    - RHS
+  ablation_variants:
+    - GR_RHS
+    - GR_RHS_fixed_10x
+    - RHS_oracle
+    - GR_RHS_oracle
+    - GR_RHS_no_local_scales
+    - GR_RHS_shared_kappa
+    - GR_RHS_no_kappa

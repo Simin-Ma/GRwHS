@@ -33,9 +33,15 @@ SWEEP_EXPERIMENT_ALIASES: dict[str, str] = {
     "5": "exp5",
     "exp5": "exp5",
     "exp5_prior_sensitivity": "exp5",
+    "ga_v2a": "ga_v2a",
+    "ga_v2_group_separation": "ga_v2a",
+    "ga_v2b": "ga_v2b",
+    "ga_v2_complexity_mismatch": "ga_v2b",
+    "ga_v2c": "ga_v2c",
+    "ga_v2_correlation_stress": "ga_v2c",
 }
 
-CLI_EXPERIMENT_CHOICES: tuple[str, ...] = ("all", "1", "2", "3", "3a", "3b", "3c", "3d", "4", "5", "analysis")
+CLI_EXPERIMENT_CHOICES: tuple[str, ...] = ("all", "1", "2", "3", "3a", "3b", "3c", "3d", "4", "5", "ga_v2a", "ga_v2b", "ga_v2c", "analysis")
 
 CLI_CHOICE_TO_KEY: dict[str, str] = {
     "all": "all",
@@ -48,6 +54,9 @@ CLI_CHOICE_TO_KEY: dict[str, str] = {
     "3d": "exp3d",
     "4": "exp4",
     "5": "exp5",
+    "ga_v2a": "ga_v2a",
+    "ga_v2b": "ga_v2b",
+    "ga_v2c": "ga_v2c",
     "analysis": "analysis",
 }
 

@@ -9,6 +9,9 @@ from .exp3 import (
 )
 from .exp4 import run_exp4_variant_ablation
 from .exp5 import run_exp5_prior_sensitivity
+from .exp_ga_v2_group_separation import run_ga_v2_group_separation
+from .exp_ga_v2_complexity_mismatch import run_ga_v2_complexity_mismatch
+from .exp_ga_v2_correlation_stress import run_ga_v2_correlation_stress
 from .orchestration import run_all_experiments
 
 __all__ = [
@@ -21,5 +24,8 @@ __all__ = [
     "run_exp3d_within_group_mixed",
     "run_exp4_variant_ablation",
     "run_exp5_prior_sensitivity",
+    "run_ga_v2_group_separation",
+    "run_ga_v2_complexity_mismatch",
+    "run_ga_v2_correlation_stress",
     "run_all_experiments",
 ]

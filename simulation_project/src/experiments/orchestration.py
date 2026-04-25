@@ -24,6 +24,34 @@ from .exp3 import (
 )
 from .exp4 import run_exp4_variant_ablation
 from .exp5 import run_exp5_prior_sensitivity
+from .exp_ga_v2_group_separation import run_ga_v2_group_separation
+from .exp_ga_v2_complexity_mismatch import run_ga_v2_complexity_mismatch
+from .exp_ga_v2_correlation_stress import run_ga_v2_correlation_stress
+
+
+def _parse_csv_ints(value: str | None) -> list[int] | None:
+    if value is None:
+        return None
+    parts = [p.strip() for p in str(value).split(",") if p.strip()]
+    if not parts:
+        return None
+    return [int(p) for p in parts]
+
+
+def _parse_csv_floats(value: str | None) -> list[float] | None:
+    if value is None:
+        return None
+    parts = [p.strip() for p in str(value).split(",") if p.strip()]
+    if not parts:
+        return None
+    return [float(p) for p in parts]
+
+
+def _parse_csv_strings(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    parts = [p.strip() for p in str(value).split(",") if p.strip()]
+    return parts or None
 
 
 def run_all_experiments(
@@ -188,6 +216,22 @@ def _cli() -> None:
         choices=list(EXP3_GIGG_MODES),
         help="Exp3 GIGG mode. Only paper_ref is supported; it matches the gigg-master reference path.",
     )
+    parser.add_argument("--ga-v2-group-sizes", type=str, default=None, help="Comma-separated group sizes for GA-V2 runs, e.g. 10,10,10,10,10")
+    parser.add_argument("--ga-v2-methods", type=str, default=None, help="Comma-separated method list for GA-V2 runs, e.g. GR_RHS,RHS")
+    parser.add_argument("--ga-v2-n-train", type=int, default=None, help="Override training sample size for GA-V2 runs.")
+    parser.add_argument("--ga-v2-n-test", type=int, default=None, help="Override test sample size for GA-V2 runs.")
+    parser.add_argument("--ga-v2-rho-within", type=float, default=None, help="Override within-group correlation for GA-V2 runs.")
+    parser.add_argument("--ga-v2-rho-between", type=float, default=None, help="Override between-group correlation for GA-V2 runs.")
+    parser.add_argument("--ga-v2a-mu", type=str, default=None, help="Comma-separated group-level means for GA-V2-A, e.g. 0,0,1.5,4,10")
+    parser.add_argument("--ga-v2a-sigma2", type=float, default=None, help="Override residual variance for GA-V2-A.")
+    parser.add_argument("--ga-v2b-patterns", type=str, default=None, help="Comma-separated GA-V2-B complexity patterns, e.g. few_groups,many_groups")
+    parser.add_argument("--ga-v2b-within-patterns", type=str, default=None, help="Comma-separated GA-V2-B within-group patterns, e.g. concentrated,distributed")
+    parser.add_argument("--ga-v2b-total-active-coeff", type=int, default=None, help="Override total active coefficient count for GA-V2-B.")
+    parser.add_argument("--ga-v2b-target-snr", type=float, default=None, help="Override target SNR for GA-V2-B.")
+    parser.add_argument("--ga-v2c-rho-list", type=str, default=None, help="Comma-separated rho_within grid for GA-V2-C, e.g. 0.4,0.6,0.8,0.95")
+    parser.add_argument("--ga-v2c-within-patterns", type=str, default=None, help="Comma-separated within-group patterns for GA-V2-C.")
+    parser.add_argument("--ga-v2c-active-groups", type=str, default=None, help="Comma-separated active group ids for GA-V2-C, e.g. 0,1")
+    parser.add_argument("--ga-v2c-target-snr", type=float, default=None, help="Override target SNR for GA-V2-C.")
     args = parser.parse_args()
     exp_key = cli_choice_to_key(args.experiment)
     n_jobs_use = int(args.n_jobs)
@@ -216,8 +260,66 @@ def _cli() -> None:
         until_bayes_converged=until_conv,
     )
     reps = repeats_use
+    ga_v2_common_overrides: dict[str, Any] = {}
+    ga_v2_group_sizes = _parse_csv_ints(args.ga_v2_group_sizes)
+    ga_v2_methods = _parse_csv_strings(args.ga_v2_methods)
+    if ga_v2_group_sizes is not None:
+        ga_v2_common_overrides["group_sizes"] = ga_v2_group_sizes
+    if ga_v2_methods is not None:
+        ga_v2_common_overrides["methods"] = ga_v2_methods
+    if args.ga_v2_n_train is not None:
+        ga_v2_common_overrides["n_train"] = int(args.ga_v2_n_train)
+    if args.ga_v2_n_test is not None:
+        ga_v2_common_overrides["n_test"] = int(args.ga_v2_n_test)
+    if args.ga_v2_rho_within is not None:
+        ga_v2_common_overrides["rho_within"] = float(args.ga_v2_rho_within)
+    if args.ga_v2_rho_between is not None:
+        ga_v2_common_overrides["rho_between"] = float(args.ga_v2_rho_between)
 
-    from .analysis.report import analyze_exp1, analyze_exp2, analyze_exp3, analyze_exp4, analyze_exp5, _safe_print, run_analysis
+    ga_v2a_overrides = dict(ga_v2_common_overrides)
+    ga_v2a_mu = _parse_csv_floats(args.ga_v2a_mu)
+    if ga_v2a_mu is not None:
+        ga_v2a_overrides["mu"] = ga_v2a_mu
+    if args.ga_v2a_sigma2 is not None:
+        ga_v2a_overrides["sigma2"] = float(args.ga_v2a_sigma2)
+
+    ga_v2b_overrides = dict(ga_v2_common_overrides)
+    ga_v2b_patterns = _parse_csv_strings(args.ga_v2b_patterns)
+    ga_v2b_within_patterns = _parse_csv_strings(args.ga_v2b_within_patterns)
+    if ga_v2b_patterns is not None:
+        ga_v2b_overrides["patterns"] = ga_v2b_patterns
+    if ga_v2b_within_patterns is not None:
+        ga_v2b_overrides["within_group_patterns"] = ga_v2b_within_patterns
+    if args.ga_v2b_total_active_coeff is not None:
+        ga_v2b_overrides["total_active_coeff"] = int(args.ga_v2b_total_active_coeff)
+    if args.ga_v2b_target_snr is not None:
+        ga_v2b_overrides["target_snr"] = float(args.ga_v2b_target_snr)
+
+    ga_v2c_overrides = dict(ga_v2_common_overrides)
+    ga_v2c_rho_list = _parse_csv_floats(args.ga_v2c_rho_list)
+    ga_v2c_within_patterns = _parse_csv_strings(args.ga_v2c_within_patterns)
+    ga_v2c_active_groups = _parse_csv_ints(args.ga_v2c_active_groups)
+    if ga_v2c_rho_list is not None:
+        ga_v2c_overrides["rho_within_list"] = ga_v2c_rho_list
+    if ga_v2c_within_patterns is not None:
+        ga_v2c_overrides["within_group_patterns"] = ga_v2c_within_patterns
+    if ga_v2c_active_groups is not None:
+        ga_v2c_overrides["active_groups"] = ga_v2c_active_groups
+    if args.ga_v2c_target_snr is not None:
+        ga_v2c_overrides["target_snr"] = float(args.ga_v2c_target_snr)
+
+    from .analysis.report import (
+        analyze_exp1,
+        analyze_exp2,
+        analyze_exp3,
+        analyze_exp4,
+        analyze_exp5,
+        analyze_ga_v2_complexity_mismatch,
+        analyze_ga_v2_correlation_stress,
+        analyze_ga_v2_group_separation,
+        _safe_print,
+        run_analysis,
+    )
 
     base = Path(str(save_dir_resolved))
 
@@ -333,6 +435,36 @@ def _cli() -> None:
                 "analyze": analyze_exp5,
                 "label": "Exp5: Prior Sensitivity",
                 "results_subdir": "exp5_prior_sensitivity",
+            },
+            "ga_v2a": {
+                "run": lambda: run_ga_v2_group_separation(
+                    repeats=reps or 100,
+                    **common_cfg.as_kwargs(),
+                    **ga_v2a_overrides,
+                ),
+                "analyze": analyze_ga_v2_group_separation,
+                "label": "GA-V2-A: Group Separation",
+                "results_subdir": "group_aware_v2/ga_v2_group_separation",
+            },
+            "ga_v2b": {
+                "run": lambda: run_ga_v2_complexity_mismatch(
+                    repeats=reps or 40,
+                    **common_cfg.as_kwargs(),
+                    **ga_v2b_overrides,
+                ),
+                "analyze": analyze_ga_v2_complexity_mismatch,
+                "label": "GA-V2-B: Complexity Mismatch",
+                "results_subdir": "group_aware_v2/ga_v2_complexity_mismatch",
+            },
+            "ga_v2c": {
+                "run": lambda: run_ga_v2_correlation_stress(
+                    repeats=reps or 30,
+                    **common_cfg.as_kwargs(),
+                    **ga_v2c_overrides,
+                ),
+                "analyze": analyze_ga_v2_correlation_stress,
+                "label": "GA-V2-C: Correlation Stress",
+                "results_subdir": "group_aware_v2/ga_v2_correlation_stress",
             },
         }
         spec = dispatch[exp_key]

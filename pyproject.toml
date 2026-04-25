@@ -39,6 +39,8 @@ dev = [
 
 [project.scripts]
 run-simulation = "simulation_project.src.run_experiment:_cli"
+run-simulation-second = "simulation_second.src.run_blueprint:_cli"
+run-simulation-second-benchmark = "simulation_second.src.run_benchmark:_cli"
 
 [tool.setuptools.packages.find]
 # Discover packages from repository root

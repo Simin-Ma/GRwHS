@@ -1,0 +1,221 @@
+package: simulation_second
+description: Second-generation benchmark suite built from the GR-RHS blueprint.
+
+methods:
+  - GR_RHS
+  - RHS
+  - GHS_plus
+  - GIGG_MMLE
+  - LASSO_CV
+  - OLS
+
+method_config:
+  roster:
+    - GR_RHS
+    - RHS
+    - GHS_plus
+    - GIGG_MMLE
+    - LASSO_CV
+    - OLS
+  grrhs_kwargs:
+    tau_target: groups
+    progress_bar: false
+  gigg_config:
+    allow_budget_retry: true
+    extra_retry: 0
+    no_retry: true
+
+convergence_gate:
+  enforce_bayes_convergence: true
+  max_convergence_retries: -1
+  bayes_min_chains: 2
+  chains: 2
+  warmup: 250
+  post_warmup_draws: 250
+  adapt_delta: 0.9
+  max_treedepth: 12
+  strict_adapt_delta: 0.95
+  strict_max_treedepth: 14
+  rhat_threshold: 1.01
+  ess_threshold: 200.0
+  max_divergence_ratio: 0.01
+
+runner:
+  task: gaussian
+  repeats: 10
+  seed: 20260425
+  n_jobs: 1
+  method_jobs: 1
+  output_dir: outputs/simulation_second/benchmark_main
+  save_datasets: false
+  build_tables: true
+  baseline_method: RHS
+  required_metrics_for_pairing:
+    - mse_null
+    - mse_signal
+    - mse_overall
+    - lpd_test
+
+signal_families:
+  classical_reference:
+    name: classical_reference
+    support_fraction_range: [0.6, 0.8]
+    concentration_range: [3.0, 6.0]
+    share_hyperparameters: true
+    log_uniform_concentration: false
+    acceptance_alpha_ratio_min:
+    acceptance_support_gap_min:
+    description: Shared mild within-group blueprint close to classical dense or tiered settings.
+  single_mode_heterogeneous:
+    name: single_mode_heterogeneous
+    support_fraction_range: [0.4, 0.8]
+    concentration_range: [0.8, 2.0]
+    share_hyperparameters: true
+    log_uniform_concentration: false
+    acceptance_alpha_ratio_min:
+    acceptance_support_gap_min:
+    description: Shared heterogeneous blueprint family with independent support realization per active group.
+  multimode_heterogeneous:
+    name: multimode_heterogeneous
+    support_fraction_range: [0.2, 0.8]
+    concentration_range: [0.2, 6.0]
+    share_hyperparameters: false
+    log_uniform_concentration: true
+    acceptance_alpha_ratio_min: 3.0
+    acceptance_support_gap_min: 0.25
+    description: Active groups draw distinct within-group blueprint parameters and must not collapse to the same mode.
+
+tables:
+  main_benchmark_leaderboard:
+    rows:
+      - headline settings from the main benchmark families
+    columns:
+      - winner
+      - mse_overall
+      - mse_signal
+      - coverage_95
+      - runner_up
+      - delta_overall_vs_runner_up
+      - GIGG_MMLE_overall_mse
+      - GIGG_MMLE_over_GR_RHS_mse_ratio
+  full_appendix_benchmark_table:
+    rows:
+      - setting x method
+    columns:
+      - n_runs
+      - n_ok
+      - n_converged
+      - mse_overall
+      - mse_signal
+      - mse_null
+      - coverage_95
+      - avg_ci_length
+      - runtime_mean
+  group_size_family_comparison:
+    rows:
+      - equal-size
+      - small-size
+      - large-size
+      - unequal-size
+    columns:
+      - winner
+      - LASSO_CV_over_GR_RHS_mse_ratio
+      - GIGG_MMLE_over_GR_RHS_mse_ratio
+      - interpretation
+
+optional_stress_lines:
+  - name: paired_decoy
+    role: supporting robustness benchmark
+    status: design placeholder in simulation_second
+  - name: size_imbalance
+    role: supporting robustness benchmark
+    status: design placeholder in simulation_second
+  - name: weak_identification
+    role: supporting inference benchmark
+    status: design placeholder in simulation_second
+
+settings:
+  - setting_id: setting_1_classical_equal_medium
+    label: "Setting 1: Classical Reference, Equal Groups, Medium Correlation"
+    family: classical_reference
+    group_sizes: [10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2]
+    n_train: 500
+    n_test: 100
+    rho_within: 0.6
+    rho_between: 0.2
+    target_r2: 0.7
+    role: credibility anchor
+    notes: Family A random blueprint with shared mild support and concentration.
+    suite: main
+    methods: [GR_RHS, RHS, GHS_plus, GIGG_MMLE, LASSO_CV, OLS]
+  - setting_id: setting_2_classical_equal_high
+    label: "Setting 2: Classical Reference, Equal Groups, High Correlation"
+    family: classical_reference
+    group_sizes: [10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2]
+    n_train: 500
+    n_test: 100
+    rho_within: 0.8
+    rho_between: 0.2
+    target_r2: 0.7
+    role: classical paper-style stress point
+    notes: Family A random blueprint under higher within-group correlation.
+    suite: main
+    methods: [GR_RHS, RHS, GHS_plus, GIGG_MMLE, LASSO_CV, OLS]
+  - setting_id: setting_3_single_mode_equal
+    label: "Setting 3: Single-Mode Heterogeneous, Equal Groups"
+    family: single_mode_heterogeneous
+    group_sizes: [10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2]
+    n_train: 500
+    n_test: 100
+    rho_within: 0.6
+    rho_between: 0.2
+    target_r2: 0.7
+    role: transition from neutral to mechanism-sensitive benchmark
+    notes: Family B random blueprint with shared heterogeneous mode family.
+    suite: main
+    methods: [GR_RHS, RHS, GHS_plus, GIGG_MMLE, LASSO_CV, OLS]
+  - setting_id: setting_4_single_mode_unequal
+    label: "Setting 4: Single-Mode Heterogeneous, Unequal Groups"
+    family: single_mode_heterogeneous
+    group_sizes: [30, 10, 5, 3, 2]
+    active_groups: [0, 1, 2]
+    n_train: 500
+    n_test: 100
+    rho_within: 0.6
+    rho_between: 0.2
+    target_r2: 0.7
+    role: group-size heterogeneity benchmark
+    notes: Tests whether unequal group sizes make the group layer more informative.
+    suite: main
+    methods: [GR_RHS, RHS, GHS_plus, GIGG_MMLE, LASSO_CV, OLS]
+  - setting_id: setting_5_multimode_equal
+    label: "Setting 5: Main Showcase, Multi-Mode Heterogeneous Active Groups"
+    family: multimode_heterogeneous
+    group_sizes: [10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2]
+    n_train: 500
+    n_test: 100
+    rho_within: 0.8
+    rho_between: 0.2
+    target_r2: 0.7
+    role: main showcase setting
+    notes: Family C random blueprint with active-group-specific hyperparameters.
+    suite: main
+    methods: [GR_RHS, RHS, GHS_plus, GIGG_MMLE, LASSO_CV, OLS]
+  - setting_id: setting_6_multimode_large_groups
+    label: "Setting 6: Main Showcase, Multi-Mode Heterogeneous, Larger Groups"
+    family: multimode_heterogeneous
+    group_sizes: [25, 25]
+    active_groups: [0, 1]
+    n_train: 500
+    n_test: 100
+    rho_within: 0.8
+    rho_between: 0.2
+    target_r2: 0.7
+    role: wide-group multimode benchmark
+    notes: Large groups make coordinate-only sparsity less aligned with the DGP.
+    suite: main
+    methods: [GR_RHS, RHS, GHS_plus, GIGG_MMLE, LASSO_CV, OLS]
