@@ -29,7 +29,7 @@ from .reporting import (
     write_json_manifest,
 )
 from .table_builder import build_paper_tables
-from .utils import ensure_dir, save_json
+from .utils import ensure_dir, run_timestamp_tag, save_json, snapshot_result_files
 
 
 def _group_config_name(group_sizes: Sequence[int]) -> str:
@@ -195,6 +195,7 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
     config = replace(config, convergence_gate=force_until_converged_gate(config.convergence_gate))
     out_dir = ensure_dir(config.runner.output_dir)
     paper_dir = ensure_dir(out_dir / "paper_tables")
+    run_timestamp = run_timestamp_tag()
 
     spec_path = save_json(config.to_manifest(), out_dir / "benchmark_spec.json")
     tasks = _task_payloads(config)
@@ -273,6 +274,7 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
     manifest = {
         "package": "simulation_second",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "run_timestamp": str(run_timestamp),
         "n_rows": int(raw.shape[0]),
         "n_settings": int(len(config.settings)),
         "repeats": int(config.runner.repeats),
@@ -282,4 +284,15 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
     }
     manifest_path = write_json_manifest(manifest, out_dir / "run_manifest.json")
     result_paths["run_manifest"] = str(manifest_path)
+    result_paths.update(
+        {
+            key: str(value)
+            for key, value in snapshot_result_files(
+                out_dir,
+                result_paths,
+                timestamp=run_timestamp,
+            ).items()
+            if key != "archived_paths"
+        }
+    )
     return result_paths

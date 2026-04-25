@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
+from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Sequence, Tuple
+from typing import Any, List, Mapping, Sequence, Tuple
 
 import numpy as np
 
@@ -119,3 +121,52 @@ def mechanism_method_family(name: str) -> str:
     if text.startswith("GR_RHS"):
         return "GR_RHS"
     return text
+
+
+def run_timestamp_tag() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+
+def snapshot_result_files(
+    output_dir: Path | str,
+    result_paths: Mapping[str, Any],
+    *,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    root = ensure_dir(output_dir)
+    ts = str(timestamp or run_timestamp_tag())
+    run_dir = ensure_dir(root / "runs" / ts)
+
+    archived_paths: dict[str, str] = {}
+    root_resolved = root.resolve()
+    for name, value in dict(result_paths).items():
+        if not isinstance(value, str):
+            continue
+        src = Path(value)
+        if not src.exists() or not src.is_file():
+            continue
+        src_resolved = src.resolve()
+        try:
+            rel = src_resolved.relative_to(root_resolved)
+        except ValueError:
+            rel = Path(src.name)
+        dst = run_dir / rel
+        ensure_dir(dst.parent)
+        shutil.copy2(src_resolved, dst)
+        archived_paths[str(name)] = str(dst)
+
+    manifest = {
+        "run_timestamp": ts,
+        "output_dir": str(root),
+        "run_dir": str(run_dir),
+        "archived_paths": dict(archived_paths),
+    }
+    run_manifest_path = save_json(manifest, run_dir / "run_manifest.json")
+    latest_path = save_json(manifest, root / "latest_run.json")
+    return {
+        "run_timestamp": ts,
+        "run_dir": str(run_dir),
+        "run_archive_manifest": str(run_manifest_path),
+        "latest_run": str(latest_path),
+        "archived_paths": dict(archived_paths),
+    }

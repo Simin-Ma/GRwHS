@@ -155,13 +155,19 @@ def test_run_benchmark_pipeline_smoke(monkeypatch, tmp_path) -> None:
     assert (tmp_path / "summary_paired_deltas.csv").exists()
     assert (tmp_path / "paper_tables" / "paper_table_main.md").exists()
     assert (tmp_path / "paper_tables" / "paper_table_appendix_full.md").exists()
+    assert (tmp_path / "latest_run.json").exists()
     assert Path(result_paths["summary_paired"]).exists()
+    assert Path(result_paths["run_dir"]).exists()
+    assert Path(result_paths["run_archive_manifest"]).exists()
 
     raw = pd.read_csv(tmp_path / "raw_results.csv")
     summary_paired = pd.read_csv(tmp_path / "summary_paired.csv")
     appendix = pd.read_csv(tmp_path / "paper_tables" / "paper_table_appendix_full.csv")
+    appendix_md = (tmp_path / "paper_tables" / "paper_table_appendix_full.md").read_text(encoding="utf-8")
 
     assert raw.shape[0] == 12
     assert set(raw["method"]) == set(config.methods.roster)
     assert summary_paired.shape[0] == 6
     assert appendix.shape[0] == 6
+    assert "rhat_max_mean" in appendix.columns
+    assert "**" in appendix_md

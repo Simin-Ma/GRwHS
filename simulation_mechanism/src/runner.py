@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -23,7 +24,7 @@ from .reporting import (
 )
 from .plotting import build_mechanism_figures_from_results_dir
 from .table_builder import build_paper_tables
-from .utils import ensure_dir, save_json, stringify_groups
+from .utils import ensure_dir, run_timestamp_tag, save_json, snapshot_result_files, stringify_groups
 
 
 def _group_config_name(group_sizes: Sequence[int]) -> str:
@@ -224,6 +225,7 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
     config = replace(config, convergence_gate=force_until_converged_gate(config.convergence_gate))
     out_dir = ensure_dir(config.runner.output_dir)
     paper_dir = ensure_dir(out_dir / "paper_tables")
+    run_timestamp = run_timestamp_tag()
 
     spec_path = save_json(config.to_manifest(), out_dir / "mechanism_spec.json")
     task_chunks = _parallel_rows(
@@ -326,4 +328,30 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
             )
         )
         result_paths.update(build_mechanism_figures_from_results_dir(out_dir))
+    run_manifest_path = save_json(
+        {
+            "package": "simulation_mechanism",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "run_timestamp": str(run_timestamp),
+            "n_rows": int(raw.shape[0]),
+            "n_settings": int(len(config.settings)),
+            "repeats": int(config.runner.repeats),
+            "methods": list(method_order),
+            "group_cols": list(group_cols),
+            "result_paths": dict(result_paths),
+        },
+        out_dir / "run_manifest.json",
+    )
+    result_paths["run_manifest"] = str(run_manifest_path)
+    result_paths.update(
+        {
+            key: str(value)
+            for key, value in snapshot_result_files(
+                out_dir,
+                result_paths,
+                timestamp=run_timestamp,
+            ).items()
+            if key != "archived_paths"
+        }
+    )
     return result_paths

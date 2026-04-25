@@ -10,11 +10,81 @@ from simulation_project.src.utils import load_pandas
 from .utils import ensure_dir, mechanism_method_label
 
 
-def _fmt(value: float, ndigits: int = 3) -> str:
+DEFAULT_NDIGITS = 6
+CSV_FLOAT_FORMAT = "%.8f"
+FULL_TABLE_BASE_COLS = (
+    "experiment_id",
+    "experiment_label",
+    "setting_id",
+    "setting_label",
+    "method",
+    "method_label",
+    "n_runs",
+    "n_ok",
+    "n_converged",
+    "n_paired",
+    "n_total_replicates",
+    "n_common_replicates",
+    "common_rate",
+)
+FULL_TABLE_PRIORITY = (
+    "group_auroc",
+    "kappa_gap",
+    "kappa_signal_mean",
+    "kappa_null_mean",
+    "kappa_signal_prob_gt_0_5",
+    "kappa_null_prob_gt_0_5",
+    "kappa_decoy_mean",
+    "kappa_decoy_prob_gt_0_5",
+    "null_group_mse",
+    "signal_group_mse",
+    "mse_overall",
+    "mse_signal",
+    "mse_null",
+    "coverage_95",
+    "avg_ci_length",
+    "lpd_test",
+    "runtime_mean",
+    "runtime_max",
+    "fit_attempts_mean",
+    "rhat_max_mean",
+    "bulk_ess_min_mean",
+    "divergence_ratio_mean",
+    "tau_post_mean",
+    "tau_ratio_to_oracle",
+    "bridge_ratio_mean",
+    "bridge_ratio_min",
+    "bridge_ratio_max",
+    "bridge_ratio_p95",
+    "bridge_ratio_violations",
+    "bridge_ratio_signal_mean",
+    "bridge_ratio_null_mean",
+)
+INTEGER_LIKE_COLS = {
+    "n_runs",
+    "n_ok",
+    "n_converged",
+    "n_paired",
+    "n_total_replicates",
+    "n_common_replicates",
+}
+
+
+def _fmt(value: float, ndigits: int = DEFAULT_NDIGITS) -> str:
     pd = load_pandas()
     if pd.isna(value):
         return "--"
     return f"{float(value):.{ndigits}f}"
+
+
+def _latex_escape(value: Any) -> str:
+    text = str(value)
+    return (
+        text.replace("\\", r"\textbackslash{}")
+        .replace("&", r"\&")
+        .replace("%", r"\%")
+        .replace("_", r"\_")
+    )
 
 
 def _weighted_mean(sub, metric: str) -> float:
@@ -52,6 +122,92 @@ def _takeaway(metric: str, baseline_value: float, comparator_value: float, basel
     if baseline_value > comparator_value:
         return f"{comparator_label} retains the lower error."
     return "The headline metric is effectively tied."
+
+
+def _metric_highlight_rule(metric: str) -> tuple[str | None, float | None]:
+    name = str(metric)
+    if name == "coverage_95":
+        return "target", 0.95
+    if name == "tau_ratio_to_oracle":
+        return "target", 1.0
+    if name in {"n_ok", "n_converged", "n_paired", "common_rate"}:
+        return "max", None
+    if name.startswith("lpd") or name.endswith("auroc") or name.endswith("_gap") or name.startswith("bulk_ess"):
+        return "max", None
+    if "kappa" in name:
+        if "null" in name or "decoy" in name:
+            return "min", None
+        return "max", None
+    if "bridge_ratio" in name:
+        if "signal" in name:
+            return "max", None
+        return "min", None
+    if any(token in name for token in ("mse", "runtime", "attempt", "rhat", "divergence", "ci_length", "violations")):
+        return "min", None
+    return None, None
+
+
+def _ordered_full_metric_cols(df, *, excluded: set[str]) -> list[str]:
+    pd = load_pandas()
+    out: list[str] = []
+    for col in FULL_TABLE_PRIORITY:
+        if col in df.columns and col not in excluded and pd.api.types.is_numeric_dtype(df[col]):
+            out.append(col)
+    extras = [
+        str(col)
+        for col in df.columns
+        if col not in excluded and col not in set(out) and pd.api.types.is_numeric_dtype(df[col])
+    ]
+    return out + sorted(extras)
+
+
+def _best_metric_index_map(df, *, group_col: str, metric_cols: list[str]) -> dict[tuple[Any, str], set[int]]:
+    pd = load_pandas()
+    best: dict[tuple[Any, str], set[int]] = {}
+    if df.empty or group_col not in df.columns:
+        return best
+    for group_value, sub in df.groupby(group_col, dropna=False, sort=False):
+        for metric in metric_cols:
+            if metric not in sub.columns:
+                continue
+            mode, target = _metric_highlight_rule(metric)
+            if mode is None:
+                continue
+            vals = pd.to_numeric(sub[metric], errors="coerce")
+            valid = vals.notna()
+            if not bool(valid.any()):
+                continue
+            compare = vals.loc[valid]
+            if mode == "max":
+                best_value = float(compare.max())
+                mask = np.isclose(compare.to_numpy(dtype=float), best_value, rtol=1e-10, atol=1e-12)
+            elif mode == "min":
+                best_value = float(compare.min())
+                mask = np.isclose(compare.to_numpy(dtype=float), best_value, rtol=1e-10, atol=1e-12)
+            else:
+                distances = np.abs(compare.to_numpy(dtype=float) - float(target))
+                best_distance = float(np.min(distances))
+                mask = np.isclose(distances, best_distance, rtol=1e-10, atol=1e-12)
+            best[(group_value, str(metric))] = set(compare.index[np.asarray(mask, dtype=bool)].tolist())
+    return best
+
+
+def _format_full_cell(value: Any, *, col: str, bold: bool, latex: bool) -> str:
+    pd = load_pandas()
+    if pd.isna(value):
+        text = "--"
+    elif str(col) in INTEGER_LIKE_COLS:
+        text = str(int(round(float(value))))
+    elif isinstance(value, (int, np.integer)):
+        text = str(int(value))
+    elif isinstance(value, (float, np.floating)):
+        text = f"{float(value):.{DEFAULT_NDIGITS}f}"
+    else:
+        text = str(value)
+    if latex:
+        text = _latex_escape(text)
+        return rf"\textbf{{{text}}}" if bold and text != "--" else text
+    return f"**{text}**" if bold and text != "--" else text
 
 
 def build_compact_mechanism_table(summary_paired):
@@ -108,6 +264,34 @@ def build_compact_mechanism_table(summary_paired):
     return pd.DataFrame(rows)
 
 
+def build_full_mechanism_table(summary_paired):
+    pd = load_pandas()
+    if summary_paired.empty:
+        return pd.DataFrame()
+
+    base_cols = [col for col in FULL_TABLE_BASE_COLS if col in summary_paired.columns]
+    excluded = set(base_cols) | {
+        "summary_scope",
+        "rank_mse_overall",
+        "rank_kappa_gap",
+        "methods_required",
+        "methods_list",
+    }
+    metric_cols = _ordered_full_metric_cols(summary_paired, excluded=excluded)
+    out = summary_paired.loc[:, base_cols + metric_cols].copy()
+    sort_cols = [col for col in ["experiment_id", "setting_id"] if col in out.columns]
+    if "rank_mse_overall" in summary_paired.columns:
+        out["_rank_mse_overall"] = summary_paired.loc[out.index, "rank_mse_overall"]
+        sort_cols.append("_rank_mse_overall")
+    if "method_label" in out.columns:
+        sort_cols.append("method_label")
+    elif "method" in out.columns:
+        sort_cols.append("method")
+    if sort_cols:
+        out = out.sort_values(sort_cols, kind="stable")
+    return out.drop(columns=[col for col in ["_rank_mse_overall"] if col in out.columns]).reset_index(drop=True)
+
+
 def write_markdown_compact_mechanism(df, path: Path | str) -> None:
     path_obj = Path(path)
     lines = [
@@ -130,6 +314,62 @@ def write_markdown_compact_mechanism(df, path: Path | str) -> None:
             )
             + " |"
         )
+    path_obj.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_markdown_full_table(df, path: Path | str, *, group_col: str = "setting_id") -> None:
+    pd = load_pandas()
+    path_obj = Path(path)
+    if df.empty:
+        path_obj.write_text("_No rows._\n", encoding="utf-8")
+        return
+    cols = list(df.columns)
+    metric_cols = [col for col in cols if pd.api.types.is_numeric_dtype(df[col])]
+    best_map = _best_metric_index_map(df, group_col=group_col, metric_cols=metric_cols)
+    lines = [
+        "| " + " | ".join(cols) + " |",
+        "| " + " | ".join(["---"] * len(cols)) + " |",
+    ]
+    for idx, row in df.iterrows():
+        group_value = row[group_col] if group_col in row.index else None
+        cells = []
+        for col in cols:
+            bold = idx in best_map.get((group_value, str(col)), set())
+            cells.append(_format_full_cell(row[col], col=str(col), bold=bold, latex=False))
+        lines.append("| " + " | ".join(cells) + " |")
+    path_obj.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_latex_full_table(df, path: Path | str, *, group_col: str = "setting_id") -> None:
+    pd = load_pandas()
+    path_obj = Path(path)
+    if df.empty:
+        path_obj.write_text("% No rows.\n", encoding="utf-8")
+        return
+    cols = list(df.columns)
+    metric_cols = [col for col in cols if pd.api.types.is_numeric_dtype(df[col])]
+    best_map = _best_metric_index_map(df, group_col=group_col, metric_cols=metric_cols)
+    align = "".join("r" if pd.api.types.is_numeric_dtype(df[col]) else "l" for col in cols)
+    header = " & ".join(_latex_escape(col) for col in cols) + r" \\"
+    lines = [
+        rf"\begin{{longtable}}{{{align}}}",
+        r"\toprule",
+        header,
+        r"\midrule",
+        r"\endfirsthead",
+        r"\toprule",
+        header,
+        r"\midrule",
+        r"\endhead",
+    ]
+    for idx, row in df.iterrows():
+        group_value = row[group_col] if group_col in row.index else None
+        cells = []
+        for col in cols:
+            bold = idx in best_map.get((group_value, str(col)), set())
+            cells.append(_format_full_cell(row[col], col=str(col), bold=bold, latex=True))
+        lines.append(" & ".join(cells) + r" \\")
+    lines.extend([r"\bottomrule", r"\end{longtable}"])
     path_obj.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -250,10 +490,19 @@ def build_paper_tables(
     root = ensure_dir(out_dir)
     figure_dir = ensure_dir(root / "figure_data")
 
+    full_df = build_full_mechanism_table(summary_paired)
     compact = build_compact_mechanism_table(summary_paired)
-    compact_csv = root / "paper_table_mechanism.csv"
-    compact_md = root / "paper_table_mechanism.md"
-    compact.to_csv(compact_csv, index=False)
+
+    full_csv = root / "paper_table_mechanism.csv"
+    full_md = root / "paper_table_mechanism.md"
+    full_tex = root / "paper_table_mechanism.tex"
+    compact_csv = root / "paper_table_mechanism_compact.csv"
+    compact_md = root / "paper_table_mechanism_compact.md"
+
+    full_df.to_csv(full_csv, index=False, float_format=CSV_FLOAT_FORMAT)
+    write_markdown_full_table(full_df, full_md, group_col="setting_id")
+    write_latex_full_table(full_df, full_tex, group_col="setting_id")
+    compact.to_csv(compact_csv, index=False, float_format=CSV_FLOAT_FORMAT)
     write_markdown_compact_mechanism(compact, compact_md)
 
     fig2 = build_figure2_data(summary_paired)
@@ -269,16 +518,19 @@ def build_paper_tables(
     fig5_path = figure_dir / "figure5_complexity_unit.csv"
     fig6_path = figure_dir / "figure6_ablation.csv"
     fig6_delta_path = figure_dir / "figure6_ablation_deltas.csv"
-    fig2.to_csv(fig2_path, index=False)
-    fig3.to_csv(fig3_path, index=False)
-    fig4.to_csv(fig4_path, index=False)
-    fig5.to_csv(fig5_path, index=False)
-    fig6.to_csv(fig6_path, index=False)
-    fig6_delta.to_csv(fig6_delta_path, index=False)
+    fig2.to_csv(fig2_path, index=False, float_format=CSV_FLOAT_FORMAT)
+    fig3.to_csv(fig3_path, index=False, float_format=CSV_FLOAT_FORMAT)
+    fig4.to_csv(fig4_path, index=False, float_format=CSV_FLOAT_FORMAT)
+    fig5.to_csv(fig5_path, index=False, float_format=CSV_FLOAT_FORMAT)
+    fig6.to_csv(fig6_path, index=False, float_format=CSV_FLOAT_FORMAT)
+    fig6_delta.to_csv(fig6_delta_path, index=False, float_format=CSV_FLOAT_FORMAT)
 
     return {
-        "paper_table_mechanism_csv": str(compact_csv),
-        "paper_table_mechanism_md": str(compact_md),
+        "paper_table_mechanism_csv": str(full_csv),
+        "paper_table_mechanism_md": str(full_md),
+        "paper_table_mechanism_tex": str(full_tex),
+        "paper_table_mechanism_compact_csv": str(compact_csv),
+        "paper_table_mechanism_compact_md": str(compact_md),
         "figure2_group_separation": str(fig2_path),
         "figure3_correlation_ambiguity": str(fig3_path),
         "figure4_representative_profile": str(fig4_path),

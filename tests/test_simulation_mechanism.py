@@ -141,15 +141,21 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     assert Path(result_paths["summary_paired"]).exists()
     assert Path(result_paths["per_group_kappa"]).exists()
     assert (tmp_path / "paper_tables" / "paper_table_mechanism.md").exists()
+    assert (tmp_path / "paper_tables" / "paper_table_mechanism_compact.md").exists()
     assert (tmp_path / "paper_tables" / "figure_data" / "figure4_representative_profile.csv").exists()
     assert (tmp_path / "paper_tables" / "figure_data" / "figure6_ablation_deltas.csv").exists()
     assert (tmp_path / "figures" / "figure1_mechanism_schematic.png").exists()
     assert (tmp_path / "figures" / "figure6_ablation.png").exists()
+    assert (tmp_path / "latest_run.json").exists()
+    assert Path(result_paths["run_dir"]).exists()
+    assert Path(result_paths["run_archive_manifest"]).exists()
 
     raw = pd.read_csv(tmp_path / "raw_results.csv")
     paired_deltas = pd.read_csv(tmp_path / "summary_paired_deltas.csv")
     per_group = pd.read_csv(tmp_path / "per_group_kappa.csv")
     fig4 = pd.read_csv(tmp_path / "paper_tables" / "figure_data" / "figure4_representative_profile.csv")
+    mechanism_table = pd.read_csv(tmp_path / "paper_tables" / "paper_table_mechanism.csv")
+    mechanism_md = (tmp_path / "paper_tables" / "paper_table_mechanism.md").read_text(encoding="utf-8")
 
     assert set(raw["experiment_id"]) == {"M2", "M4"}
     assert "paired_common_converged" in per_group.columns
@@ -157,6 +163,8 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     m4_deltas = paired_deltas.loc[paired_deltas["experiment_id"] == "M4"]
     assert not m4_deltas.empty
     assert set(m4_deltas["baseline_method"]) == {"GR_RHS"}
+    assert "group_auroc" in mechanism_table.columns
+    assert "**" in mechanism_md
 
     rebuilt = build_mechanism_figures_from_results_dir(tmp_path)
     assert Path(rebuilt["figure3_correlation_ambiguity"]).exists()
