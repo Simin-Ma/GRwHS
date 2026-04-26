@@ -77,6 +77,31 @@ def _fmt(value: float, ndigits: int = DEFAULT_NDIGITS) -> str:
     return f"{float(value):.{ndigits}f}"
 
 
+def _coerce_primary_table_mask(series):
+    pd = load_pandas()
+    if pd.api.types.is_bool_dtype(series):
+        return series.fillna(True)
+    text = series.astype(str).str.strip().str.lower()
+    out = text.map(
+        {
+            "true": True,
+            "false": False,
+            "1": True,
+            "0": False,
+            "yes": True,
+            "no": False,
+        }
+    )
+    return out.fillna(True)
+
+
+def _filter_primary_table_rows(df):
+    if df.empty or "include_in_paper_table" not in df.columns:
+        return df
+    mask = _coerce_primary_table_mask(df["include_in_paper_table"])
+    return df.loc[mask].copy()
+
+
 def _latex_escape(value: Any) -> str:
     text = str(value)
     return (
@@ -212,6 +237,7 @@ def _format_full_cell(value: Any, *, col: str, bold: bool, latex: bool) -> str:
 
 def build_compact_mechanism_table(summary_paired):
     pd = load_pandas()
+    summary_paired = _filter_primary_table_rows(summary_paired)
     if summary_paired.empty:
         return pd.DataFrame()
 
@@ -266,6 +292,7 @@ def build_compact_mechanism_table(summary_paired):
 
 def build_full_mechanism_table(summary_paired):
     pd = load_pandas()
+    summary_paired = _filter_primary_table_rows(summary_paired)
     if summary_paired.empty:
         return pd.DataFrame()
 

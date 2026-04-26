@@ -153,6 +153,7 @@ class MechanismConfig:
     methods: MethodRuntimeConfig
     runner: RunnerConfig
     settings: tuple[MechanismSettingSpec, ...]
+    include_dense_ablation: bool = False
 
     def setting_map(self) -> dict[str, MechanismSettingSpec]:
         return {setting.setting_id: setting for setting in self.settings}
@@ -164,6 +165,7 @@ class MechanismConfig:
             "convergence_gate": self.convergence_gate.to_dict(),
             "methods": self.methods.to_dict(),
             "runner": self.runner.to_dict(),
+            "include_dense_ablation": bool(self.include_dense_ablation),
             "settings": [setting.to_dict() for setting in self.settings],
         }
 
@@ -207,6 +209,7 @@ def setting_spec_from_dict(
         suite=str(payload.get("suite", "mechanism")),
         role=str(payload.get("role", "")),
         notes=str(payload.get("notes", "")),
+        include_in_paper_table=bool(payload.get("include_in_paper_table", True)),
         methods=tuple(str(item) for item in methods),
     )
 
@@ -235,15 +238,20 @@ def build_default_config() -> MechanismConfig:
         settings=build_mechanism_suite(
             standard_methods=methods.standard_methods,
             ablation_variants=methods.ablation_variants,
+            include_dense_ablation=False,
         ),
+        include_dense_ablation=False,
     )
 
 
 def build_default_config_payload() -> dict[str, Any]:
-    return build_default_config().to_manifest()
+    payload = build_default_config().to_manifest()
+    payload.pop("settings", None)
+    return payload
 
 
 def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig:
+    include_dense_ablation = bool(payload.get("include_dense_ablation", False))
     methods_payload = dict(payload.get("methods", {}))
     methods_cfg = MethodRuntimeConfig(
         standard_methods=tuple(
@@ -281,6 +289,7 @@ def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig
         settings = build_mechanism_suite(
             standard_methods=methods_cfg.standard_methods,
             ablation_variants=methods_cfg.ablation_variants,
+            include_dense_ablation=include_dense_ablation,
         )
 
     return MechanismConfig(
@@ -326,10 +335,15 @@ def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig
             ),
         ),
         settings=settings,
+        include_dense_ablation=include_dense_ablation,
     )
 
 
-def load_mechanism_config(path: str | Path | None = None) -> MechanismConfig:
+def load_mechanism_config(
+    path: str | Path | None = None,
+    *,
+    include_dense_ablation: bool | None = None,
+) -> MechanismConfig:
     merged = build_default_config_payload()
     config_path: Path | None = None
     if path is None:
@@ -344,4 +358,6 @@ def load_mechanism_config(path: str | Path | None = None) -> MechanismConfig:
     if config_path is not None:
         payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         merged = _deep_merge(merged, payload)
+    if include_dense_ablation is not None:
+        merged["include_dense_ablation"] = bool(include_dense_ablation)
     return mechanism_config_from_payload(merged)

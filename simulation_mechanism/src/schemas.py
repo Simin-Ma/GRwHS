@@ -64,6 +64,7 @@ class MechanismSettingSpec:
     suite: str = "mechanism"
     role: str = ""
     notes: str = ""
+    include_in_paper_table: bool = True
     methods: Tuple[str, ...] = DEFAULT_STANDARD_METHODS
 
     def to_dict(self) -> Dict[str, Any]:
@@ -92,6 +93,7 @@ class MechanismSettingSpec:
             "suite": self.suite,
             "role": self.role,
             "notes": self.notes,
+            "include_in_paper_table": bool(self.include_in_paper_table),
             "methods": list(self.methods),
         }
 

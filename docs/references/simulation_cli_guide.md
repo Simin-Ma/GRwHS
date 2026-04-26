@@ -46,6 +46,13 @@ python -m simulation_second.src.run_blueprint build-tables --results-dir outputs
 python -m simulation_mechanism.src.run_mechanism run-mechanism
 ```
 
+默认主 suite 只包含论文机制主线；`M4` 默认只保留 `p0=5`。
+如果要把 `p0=15/30` 的 dense ablation 诊断线一起带上，请显式加：
+
+```bash
+python -m simulation_mechanism.src.run_mechanism run-mechanism --include-dense-ablation
+```
+
 `repeat = 1` 快速测试：
 
 ```bash

@@ -31,6 +31,7 @@ DEFAULT_SETTING_GROUP_COLS = (
     "suite",
     "role",
     "notes",
+    "include_in_paper_table",
     "within_group_pattern",
     "complexity_pattern",
     "total_active_coeff",

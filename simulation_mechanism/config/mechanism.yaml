@@ -1,5 +1,6 @@
 package: simulation_mechanism
 description: Mechanism-first GR-RHS experiment suite defined by docs/grrhs_mechanism_experiment_design.md.
+include_dense_ablation: false
 runner:
   output_dir: outputs/history/simulation_mechanism/mechanism_main
   repeats: 10

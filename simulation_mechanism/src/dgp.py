@@ -335,7 +335,26 @@ def _generate_ablation_dataset(setting: MechanismSettingSpec, *, seed: int, repl
     rng = np.random.default_rng(seed + 303)
     beta = np.zeros(int(sum(setting.group_sizes)), dtype=float)
     p0_true = max(1, int(setting.total_active_coeff))
-    active = rng.choice(np.arange(beta.size), size=p0_true, replace=False)
+    nonempty_group_ids = [gid for gid, group in enumerate(groups) if len(group) > 0]
+    if len(nonempty_group_ids) < 2:
+        raise ValueError("Ablation settings require at least two non-empty groups to retain a null group.")
+    eligible_null_groups = [
+        gid
+        for gid in nonempty_group_ids
+        if sum(len(groups[j]) for j in nonempty_group_ids if j != gid) >= p0_true
+    ]
+    if not eligible_null_groups:
+        raise ValueError(
+            "Ablation setting cannot retain a null group with the requested total_active_coeff."
+        )
+    reserved_null_group = int(rng.choice(np.asarray(eligible_null_groups, dtype=int)))
+    candidate_index_blocks = [
+        np.asarray(groups[gid], dtype=int)
+        for gid in nonempty_group_ids
+        if gid != reserved_null_group and len(groups[gid]) > 0
+    ]
+    candidate_indices = np.concatenate(candidate_index_blocks) if candidate_index_blocks else np.asarray([], dtype=int)
+    active = rng.choice(candidate_indices, size=p0_true, replace=False)
     n_strong = max(1, int(math.ceil(0.5 * p0_true)))
     beta[active[:n_strong]] = 2.0
     if active[n_strong:].size > 0:
@@ -348,6 +367,8 @@ def _generate_ablation_dataset(setting: MechanismSettingSpec, *, seed: int, repl
     y_test = X_test @ beta + rng_test.normal(0.0, np.sqrt(sigma2), size=setting.n_test)
     signal_var = float(beta.T @ cov_x @ beta)
     active_mask = active_group_mask(beta, groups)
+    if bool(np.asarray(active_mask, dtype=bool).all()):
+        raise RuntimeError("Ablation dataset generation failed to retain a null group.")
 
     metadata = {
         "seed": int(seed),
@@ -358,6 +379,7 @@ def _generate_ablation_dataset(setting: MechanismSettingSpec, *, seed: int, repl
         "active_group_ids": [int(i) for i in np.flatnonzero(active_mask)],
         "p0_true": int(np.count_nonzero(beta)),
         "p0_groups_true": int(active_mask.sum()),
+        "reserved_null_group": int(reserved_null_group),
         "decoy_group": -1,
     }
     return MechanismDataset(

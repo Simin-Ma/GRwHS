@@ -13,14 +13,20 @@ from simulation_mechanism.src.dgp import generate_mechanism_dataset
 from simulation_mechanism.src.plotting import build_mechanism_figures_from_results_dir
 from simulation_mechanism.src.runner import run_mechanism
 from simulation_mechanism.src.schemas import active_group_mask
-from simulation_mechanism.src.suite import build_mechanism_suite, get_setting_by_id
+from simulation_mechanism.src.suite import build_dense_ablation_settings, build_mechanism_suite, get_setting_by_id
 from simulation_mechanism.src.utils import mechanism_method_family
 
 
-def test_mechanism_suite_has_twelve_settings() -> None:
+def test_mechanism_suite_defaults_to_ten_primary_settings() -> None:
     settings = build_mechanism_suite()
-    assert len(settings) == 12
+    assert len(settings) == 10
     assert {setting.experiment_id for setting in settings} == {"M1", "M2", "M3", "M4"}
+    assert "m4_ablation_p0_15" not in {setting.setting_id for setting in settings}
+    dense = build_dense_ablation_settings()
+    assert len(dense) == 2
+    assert {setting.setting_id for setting in dense} == {"m4_ablation_p0_15", "m4_ablation_p0_30"}
+    assert all(setting.suite == "dense_ablation" for setting in dense)
+    assert len(build_mechanism_suite(include_dense_ablation=True)) == 12
 
 
 def test_mixed_decoy_dataset_marks_decoy_group() -> None:
@@ -32,14 +38,38 @@ def test_mixed_decoy_dataset_marks_decoy_group() -> None:
     assert int(dataset.metadata["p0_groups_true"]) == 2
 
 
+def test_ablation_dataset_retains_null_group() -> None:
+    for setting_id in ("m4_ablation_p0_05", "m4_ablation_p0_15", "m4_ablation_p0_30"):
+        setting = get_setting_by_id(setting_id)
+        for rep in range(1, 11):
+            dataset = generate_mechanism_dataset(setting, replicate_id=rep, master_seed=20260425)
+            assert int(dataset.metadata["p0_groups_true"]) <= len(dataset.groups) - 1
+            assert int(dataset.metadata["reserved_null_group"]) >= 0
+
+
+def test_dense_ablation_settings_are_diagnostic_only() -> None:
+    assert get_setting_by_id("m4_ablation_p0_05").include_in_paper_table is True
+    assert get_setting_by_id("m4_ablation_p0_15").include_in_paper_table is False
+    assert get_setting_by_id("m4_ablation_p0_30").include_in_paper_table is False
+
+
 def test_default_mechanism_yaml_loads() -> None:
     config = load_mechanism_config()
     assert config.package == "simulation_mechanism"
-    assert len(config.settings) == 12
+    assert len(config.settings) == 10
+    assert config.include_dense_ablation is False
     assert config.methods.standard_methods == ("GR_RHS", "RHS")
     assert config.methods.grrhs_kwargs["tau_target"] == "groups"
     assert config.convergence_gate.enforce_bayes_convergence is True
     assert config.convergence_gate.max_convergence_retries == -1
+
+
+def test_config_can_include_dense_ablation_group() -> None:
+    config = load_mechanism_config(include_dense_ablation=True)
+    assert config.include_dense_ablation is True
+    assert "m4_ablation_p0_15" in config.setting_map()
+    assert "m4_ablation_p0_30" in config.setting_map()
+    assert len(config.settings) == 12
 
 
 def test_mechanism_config_forces_until_convergence_even_if_payload_disables_it() -> None:
@@ -58,12 +88,13 @@ def test_mechanism_config_forces_until_convergence_even_if_payload_disables_it()
 
 
 def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
-    config = load_mechanism_config()
+    config = load_mechanism_config(include_dense_ablation=True)
     config = replace(
         config,
         settings=(
             config.setting_map()["m2_mixed_decoy_rw080"],
             config.setting_map()["m4_ablation_p0_05"],
+            config.setting_map()["m4_ablation_p0_15"],
         ),
         runner=replace(
             config.runner,
@@ -138,24 +169,26 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("simulation_mechanism.src.runner.fit_setting_methods", fake_fit_setting_methods)
 
     result_paths = run_mechanism(config)
+    run_dir = Path(result_paths["run_dir"])
     assert Path(result_paths["summary_paired"]).exists()
     assert Path(result_paths["per_group_kappa"]).exists()
-    assert (tmp_path / "paper_tables" / "paper_table_mechanism.md").exists()
-    assert (tmp_path / "paper_tables" / "paper_table_mechanism_compact.md").exists()
-    assert (tmp_path / "paper_tables" / "figure_data" / "figure4_representative_profile.csv").exists()
-    assert (tmp_path / "paper_tables" / "figure_data" / "figure6_ablation_deltas.csv").exists()
-    assert (tmp_path / "figures" / "figure1_mechanism_schematic.png").exists()
-    assert (tmp_path / "figures" / "figure6_ablation.png").exists()
+    assert (run_dir / "paper_tables" / "paper_table_mechanism.md").exists()
+    assert (run_dir / "paper_tables" / "paper_table_mechanism_compact.md").exists()
+    assert (run_dir / "paper_tables" / "figure_data" / "figure4_representative_profile.csv").exists()
+    assert (run_dir / "paper_tables" / "figure_data" / "figure6_ablation_deltas.csv").exists()
+    assert (run_dir / "figures" / "figure1_mechanism_schematic.png").exists()
+    assert (run_dir / "figures" / "figure6_ablation.png").exists()
     assert (tmp_path / "latest_run.json").exists()
     assert Path(result_paths["run_dir"]).exists()
-    assert Path(result_paths["run_archive_manifest"]).exists()
+    assert Path(result_paths["run_manifest"]).exists()
 
-    raw = pd.read_csv(tmp_path / "raw_results.csv")
-    paired_deltas = pd.read_csv(tmp_path / "summary_paired_deltas.csv")
-    per_group = pd.read_csv(tmp_path / "per_group_kappa.csv")
-    fig4 = pd.read_csv(tmp_path / "paper_tables" / "figure_data" / "figure4_representative_profile.csv")
-    mechanism_table = pd.read_csv(tmp_path / "paper_tables" / "paper_table_mechanism.csv")
-    mechanism_md = (tmp_path / "paper_tables" / "paper_table_mechanism.md").read_text(encoding="utf-8")
+    raw = pd.read_csv(run_dir / "raw_results.csv")
+    paired_deltas = pd.read_csv(run_dir / "summary_paired_deltas.csv")
+    per_group = pd.read_csv(run_dir / "per_group_kappa.csv")
+    fig4 = pd.read_csv(run_dir / "paper_tables" / "figure_data" / "figure4_representative_profile.csv")
+    fig6 = pd.read_csv(run_dir / "paper_tables" / "figure_data" / "figure6_ablation.csv")
+    mechanism_table = pd.read_csv(run_dir / "paper_tables" / "paper_table_mechanism.csv")
+    mechanism_md = (run_dir / "paper_tables" / "paper_table_mechanism.md").read_text(encoding="utf-8")
 
     assert set(raw["experiment_id"]) == {"M2", "M4"}
     assert "paired_common_converged" in per_group.columns
@@ -164,8 +197,10 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     assert not m4_deltas.empty
     assert set(m4_deltas["baseline_method"]) == {"GR_RHS"}
     assert "group_auroc" in mechanism_table.columns
+    assert "m4_ablation_p0_15" not in set(mechanism_table["setting_id"].astype(str))
+    assert "m4_ablation_p0_15" in set(fig6["setting_id"].astype(str))
     assert "**" in mechanism_md
 
-    rebuilt = build_mechanism_figures_from_results_dir(tmp_path)
+    rebuilt = build_mechanism_figures_from_results_dir(run_dir)
     assert Path(rebuilt["figure3_correlation_ambiguity"]).exists()
     assert Path(rebuilt["figure6_ablation"]).exists()

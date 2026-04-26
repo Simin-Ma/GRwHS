@@ -19,6 +19,15 @@ def _print_settings(settings: Iterable[object]) -> None:
         print(f"{setting.setting_id}: {setting.setting_label}")
 
 
+def _add_dense_ablation_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--include-dense-ablation",
+        action="store_true",
+        default=None,
+        help="Include optional dense M4 ablation settings (p0=15/30) in the loaded suite.",
+    )
+
+
 def _filtered_config(
     config: MechanismConfig,
     *,
@@ -86,13 +95,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     list_parser = sub.add_parser("list-settings", help="List mechanism settings.")
+    _add_dense_ablation_flag(list_parser)
     list_parser.add_argument("--n-test", type=int, default=None, help="Optional override for test sample size.")
 
     dump = sub.add_parser("dump-manifest", help="Export the loaded mechanism manifest as JSON.")
+    _add_dense_ablation_flag(dump)
     dump.add_argument("--save-path", default="", help="Optional JSON path to write the manifest.")
     dump.add_argument("--n-test", type=int, default=None, help="Optional override for test sample size.")
 
     sample = sub.add_parser("sample-setting", help="Generate one dataset for a mechanism setting.")
+    _add_dense_ablation_flag(sample)
     sample.add_argument("--setting-id", required=True, help="Setting identifier from list-settings.")
     sample.add_argument("--replicate", type=int, default=1, help="Replicate index.")
     sample.add_argument("--seed", type=int, default=None, help="Master seed override.")
@@ -104,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     suite = sub.add_parser("sample-suite", help="Generate datasets for the whole mechanism suite.")
+    _add_dense_ablation_flag(suite)
     suite.add_argument("--repeats", type=int, default=1, help="Number of replicates per setting.")
     suite.add_argument("--seed", type=int, default=None, help="Master seed override.")
     suite.add_argument("--n-test", type=int, default=None, help="Override test sample size.")
@@ -116,6 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     run = sub.add_parser("run-mechanism", help="Run the full mechanism pipeline from config to tables.")
+    _add_dense_ablation_flag(run)
     run.add_argument("--save-dir", default="", help="Optional override for the output directory.")
     run.add_argument("--repeats", type=int, default=None, help="Override repeats.")
     run.add_argument("--seed", type=int, default=None, help="Override master seed.")
@@ -147,7 +161,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    config = load_mechanism_config(args.config or None)
+    config = load_mechanism_config(
+        args.config or None,
+        include_dense_ablation=getattr(args, "include_dense_ablation", None),
+    )
 
     if args.command == "list-settings":
         config = _override_n_test(config, args.n_test)

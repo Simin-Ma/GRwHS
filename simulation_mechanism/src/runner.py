@@ -153,6 +153,7 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
             "suite": setting.suite,
             "role": setting.role,
             "notes": setting.notes,
+            "include_in_paper_table": bool(setting.include_in_paper_table),
             "group_config": _group_config_name(setting.group_sizes),
             "group_sizes": stringify_groups(setting.group_sizes),
             "active_groups": _stringify_active_groups(setting.active_groups),

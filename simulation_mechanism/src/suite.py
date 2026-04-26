@@ -9,10 +9,65 @@ from .schemas import (
 )
 
 
+def _build_ablation_setting(
+    p0_true: int,
+    *,
+    ablation_variants: Sequence[str],
+    dense_ablation: bool,
+) -> MechanismSettingSpec:
+    include_in_paper_table = int(p0_true) == 5
+    return MechanismSettingSpec(
+        setting_id=f"m4_ablation_p0_{int(p0_true):02d}",
+        setting_label=f"M4 Ablation p0={int(p0_true)}",
+        experiment_id="M4",
+        experiment_label="Mechanism Ablation",
+        experiment_kind="ablation",
+        line_id="exp4",
+        line_label="Exp4",
+        scientific_question="Which part of GR-RHS is responsible for the mechanism advantage?",
+        primary_metric="kappa_gap",
+        group_sizes=(10, 10, 10, 10, 10),
+        n_train=100,
+        n_test=30,
+        rho_within=0.8,
+        rho_between=0.2,
+        sigma2=1.0,
+        total_active_coeff=int(p0_true),
+        suite="dense_ablation" if dense_ablation else "mechanism",
+        role=(
+            "ablation and mechanism attribution"
+            if include_in_paper_table
+            else "ablation diagnostic under dense support"
+        ),
+        notes=(
+            "Random mixed strong/weak coefficient support with oracle-reference tau diagnostics."
+            if include_in_paper_table
+            else "Dense-support ablation diagnostic retained as an optional stress slice, not the default mechanism suite."
+        ),
+        include_in_paper_table=include_in_paper_table,
+        methods=tuple(str(item) for item in ablation_variants),
+    )
+
+
+def build_dense_ablation_settings(
+    *,
+    ablation_variants: Sequence[str] = DEFAULT_ABLATION_VARIANTS,
+) -> tuple[MechanismSettingSpec, ...]:
+    return tuple(
+        _build_ablation_setting(
+            p0_true,
+            ablation_variants=ablation_variants,
+            dense_ablation=True,
+        )
+        for p0_true in (15, 30)
+    )
+
+
 def build_mechanism_suite(
     *,
     standard_methods: Sequence[str] = DEFAULT_STANDARD_METHODS,
     ablation_variants: Sequence[str] = DEFAULT_ABLATION_VARIANTS,
+    include_dense_ablation: bool = False,
 ) -> tuple[MechanismSettingSpec, ...]:
     standard = tuple(str(item) for item in standard_methods)
     ablation = tuple(str(item) for item in ablation_variants)
@@ -97,30 +152,15 @@ def build_mechanism_suite(
                 )
             )
 
-    for p0_true in (5, 15, 30):
-        out.append(
-            MechanismSettingSpec(
-                setting_id=f"m4_ablation_p0_{int(p0_true):02d}",
-                setting_label=f"M4 Ablation p0={int(p0_true)}",
-                experiment_id="M4",
-                experiment_label="Mechanism Ablation",
-                experiment_kind="ablation",
-                line_id="exp4",
-                line_label="Exp4",
-                scientific_question="Which part of GR-RHS is responsible for the mechanism advantage?",
-                primary_metric="kappa_gap",
-                group_sizes=(10, 10, 10, 10, 10),
-                n_train=100,
-                n_test=30,
-                rho_within=0.8,
-                rho_between=0.2,
-                sigma2=1.0,
-                total_active_coeff=int(p0_true),
-                role="ablation and mechanism attribution",
-                notes="Random mixed strong/weak coefficient support with oracle-reference tau diagnostics.",
-                methods=ablation,
-            )
+    out.append(
+        _build_ablation_setting(
+            5,
+            ablation_variants=ablation,
+            dense_ablation=False,
         )
+    )
+    if include_dense_ablation:
+        out.extend(build_dense_ablation_settings(ablation_variants=ablation))
 
     return tuple(out)
 
@@ -130,11 +170,13 @@ def get_setting_by_id(
     *,
     standard_methods: Sequence[str] = DEFAULT_STANDARD_METHODS,
     ablation_variants: Sequence[str] = DEFAULT_ABLATION_VARIANTS,
+    include_dense_ablation: bool = True,
 ) -> MechanismSettingSpec:
     target = str(setting_id)
     for setting in build_mechanism_suite(
         standard_methods=standard_methods,
         ablation_variants=ablation_variants,
+        include_dense_ablation=include_dense_ablation,
     ):
         if setting.setting_id == target:
             return setting
