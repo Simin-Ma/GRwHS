@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from simulation_project.src.experiments.runtime import _parallel_rows
-from simulation_project.src.utils import FitResult, load_pandas, save_fit_result_artifacts
+from simulation_project.src.utils import FitResult, append_jsonl_records, load_pandas, save_fit_result_artifacts
 
 from .config import dataset_spec_from_dict, force_until_converged_gate
 from .dataset import load_prepared_real_dataset, prepare_split, save_prepared_real_dataset, save_prepared_split
@@ -295,6 +295,27 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
         save_json(summary, out_dir / "datasets" / dataset_spec.dataset_id / "dataset_summary.json")
 
     tasks = _task_payloads(config)
+    incremental_raw_path = out_dir / "raw_results_incremental.jsonl"
+    incremental_artifacts_path = out_dir / "artifact_catalog_incremental.jsonl"
+    for checkpoint_path in (
+        incremental_raw_path,
+        incremental_artifacts_path,
+    ):
+        ensure_dir(checkpoint_path.parent)
+        checkpoint_path.write_text("", encoding="utf-8")
+
+    def _on_task_done(task: Mapping[str, Any], result_rows: Any) -> None:
+        _ = task
+        if isinstance(result_rows, Mapping):
+            append_jsonl_records(
+                incremental_raw_path,
+                [dict(row) for row in result_rows.get("raw_rows", [])],
+            )
+            append_jsonl_records(
+                incremental_artifacts_path,
+                [dict(row) for row in result_rows.get("artifact_rows", [])],
+            )
+
     task_chunks = _parallel_rows(
         tasks,
         _run_replicate_task,
@@ -302,6 +323,7 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
         prefer_process=bool(int(config.runner.n_jobs) > 1),
         process_fallback="thread",
         progress_desc="Real Data Experiment",
+        on_task_done=_on_task_done,
     )
 
     rows: list[dict[str, Any]] = []
@@ -381,6 +403,8 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
         "selection_stability": str(stability_path),
         "group_selection_frequency": str(group_freq_path),
         "artifact_catalog": str(artifact_catalog_path),
+        "raw_results_incremental": str(incremental_raw_path),
+        "artifact_catalog_incremental": str(incremental_artifacts_path),
         "fit_details_dir": str(out_dir / "fit_details"),
         "datasets_dir": str(out_dir / "datasets"),
         "splits_dir": str(out_dir / "splits"),

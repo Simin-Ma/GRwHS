@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from simulation_project.src.experiments.runtime import _parallel_rows
-from simulation_project.src.utils import FitResult, load_pandas, save_fit_result_artifacts
+from simulation_project.src.utils import FitResult, append_jsonl_records, load_pandas, save_fit_result_artifacts
 
 from .config import (
     BenchmarkConfig,
@@ -417,11 +417,35 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
     paper_dir = ensure_dir(out_dir / "paper_tables")
 
     spec_path = save_json(config.to_manifest(), out_dir / "benchmark_spec.json")
+    incremental_raw_path = out_dir / "raw_results_incremental.jsonl"
+    incremental_coefficients_path = out_dir / "coefficient_estimates_incremental.jsonl"
+    incremental_artifacts_path = out_dir / "artifact_catalog_incremental.jsonl"
+    for checkpoint_path in (
+        incremental_raw_path,
+        incremental_coefficients_path,
+        incremental_artifacts_path,
+    ):
+        ensure_dir(checkpoint_path.parent)
+        checkpoint_path.write_text("", encoding="utf-8")
+
     tasks = _task_payloads(config)
     task_progress = {"completed": 0, "total": len(tasks)}
 
     def _on_task_done(task: Mapping[str, Any], result_rows: Any) -> None:
         task_progress["completed"] += 1
+        if isinstance(result_rows, Mapping):
+            append_jsonl_records(
+                incremental_raw_path,
+                [dict(row) for row in result_rows.get("raw_rows", [])],
+            )
+            append_jsonl_records(
+                incremental_coefficients_path,
+                [dict(row) for row in result_rows.get("coefficient_rows", [])],
+            )
+            append_jsonl_records(
+                incremental_artifacts_path,
+                [dict(row) for row in result_rows.get("artifact_rows", [])],
+            )
         _print_task_result_line(
             task,
             (result_rows or {}).get("raw_rows") if isinstance(result_rows, Mapping) else result_rows,
@@ -535,6 +559,9 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
         "coefficient_estimates": str(coefficient_estimates_path),
         "coefficient_estimates_paired": str(coefficient_estimates_paired_path),
         "artifact_catalog": str(artifact_catalog_path),
+        "raw_results_incremental": str(incremental_raw_path),
+        "coefficient_estimates_incremental": str(incremental_coefficients_path),
+        "artifact_catalog_incremental": str(incremental_artifacts_path),
         "fit_details_dir": str(out_dir / "fit_details"),
         "datasets_dir": str(out_dir / "datasets"),
     }

@@ -304,6 +304,18 @@ def json_ready(value: Any) -> Any:
     return _json_ready_scalar(value)
 
 
+def append_jsonl_records(path: Path | str, records: Sequence[Mapping[str, Any]]) -> None:
+    """Append JSON-serializable checkpoint records as JSON Lines."""
+    if not records:
+        return
+    out = Path(path)
+    ensure_dir(out.parent)
+    with out.open("a", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(json_ready(dict(record)), ensure_ascii=True, sort_keys=True))
+            handle.write("\n")
+
+
 def save_array_bundle(
     out_path: Path | str,
     /,

@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from simulation_project.src.experiments.runtime import _parallel_rows
-from simulation_project.src.utils import FitResult, load_pandas, save_fit_result_artifacts
+from simulation_project.src.utils import FitResult, append_jsonl_records, load_pandas, save_fit_result_artifacts
 
 from .config import MechanismConfig, force_until_converged_gate, setting_spec_from_dict
 from .dgp import generate_mechanism_dataset, save_mechanism_dataset
@@ -282,13 +282,43 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
     paper_dir = ensure_dir(out_dir / "paper_tables")
 
     spec_path = save_json(config.to_manifest(), out_dir / "mechanism_spec.json")
+    incremental_raw_path = out_dir / "raw_results_incremental.jsonl"
+    incremental_group_path = out_dir / "per_group_kappa_incremental.jsonl"
+    incremental_artifacts_path = out_dir / "artifact_catalog_incremental.jsonl"
+    for checkpoint_path in (
+        incremental_raw_path,
+        incremental_group_path,
+        incremental_artifacts_path,
+    ):
+        ensure_dir(checkpoint_path.parent)
+        checkpoint_path.write_text("", encoding="utf-8")
+
+    tasks = _task_payloads(config)
+
+    def _on_task_done(task: Mapping[str, Any], result_rows: Any) -> None:
+        _ = task
+        if isinstance(result_rows, Mapping):
+            append_jsonl_records(
+                incremental_raw_path,
+                [dict(row) for row in result_rows.get("raw_rows", [])],
+            )
+            append_jsonl_records(
+                incremental_group_path,
+                [dict(row) for row in result_rows.get("group_rows", [])],
+            )
+            append_jsonl_records(
+                incremental_artifacts_path,
+                [dict(row) for row in result_rows.get("artifact_rows", [])],
+            )
+
     task_chunks = _parallel_rows(
-        _task_payloads(config),
+        tasks,
         _run_replicate_task,
         n_jobs=int(config.runner.n_jobs),
         prefer_process=bool(int(config.runner.n_jobs) > 1),
         process_fallback="thread",
         progress_desc="Simulation Mechanism",
+        on_task_done=_on_task_done,
     )
 
     raw_rows: list[dict[str, Any]] = []
@@ -374,6 +404,9 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
         "per_group_kappa": str(per_group_path),
         "per_group_kappa_paired": str(per_group_paired_path),
         "artifact_catalog": str(artifact_catalog_path),
+        "raw_results_incremental": str(incremental_raw_path),
+        "per_group_kappa_incremental": str(incremental_group_path),
+        "artifact_catalog_incremental": str(incremental_artifacts_path),
         "fit_details_dir": str(out_dir / "fit_details"),
         "datasets_dir": str(out_dir / "datasets"),
     }

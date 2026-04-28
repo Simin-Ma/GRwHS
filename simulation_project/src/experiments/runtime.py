@@ -343,7 +343,13 @@ def _parallel_rows(
             mode = str(process_fallback).strip().lower()
             if mode == "serial":
                 print(f"[WARN] Process pool disabled ({process_reason}). Using serial execution.")
-                return [worker(t) for t in tqdm(tasks, total=len(tasks), desc=(progress_desc or "Running") + " [serial]", leave=True)]
+                out_serial: list[Any] = []
+                for t in tqdm(tasks, total=len(tasks), desc=(progress_desc or "Running") + " [serial]", leave=True):
+                    res = worker(t)
+                    out_serial.append(res)
+                    if on_task_done is not None:
+                        on_task_done(t, res)
+                return out_serial
             print(f"[WARN] Process pool disabled ({process_reason}). Using thread pool.")
             use_process = False
     executor_cls = ProcessPoolExecutor if use_process else ThreadPoolExecutor
