@@ -245,6 +245,186 @@ groups of size 25. These six settings move from relatively standard grouped
 regression designs toward settings in which a single global slab width is least
 well aligned with the true grouped signal geometry.
 
+\section{High-dimensional sampler design and literature sources}
+
+This section documents the sources behind the high-dimensional GR-RHS sampling
+design and clarifies which components are inherited from existing Bayesian
+shrinkage and MCMC ideas and which components are specific to our model. The
+high-dimensional sampler used for the \(p>n\) extension is called
+\textbf{GR-RHS-CaP}, short for \emph{collapsed-and-profile GR-RHS}. Its purpose
+is not to replace the staged Gibbs sampler in the low-dimensional Gaussian
+experiments. Rather, it provides a more scalable inference path for
+high-dimensional grouped regression, where coefficient-wise local-scale updates
+become the dominant computational cost.
+
+\subsection{Modeling ingredients inherited from the shrinkage literature}
+
+The global-local shrinkage principle used by GR-RHS follows the horseshoe
+line of work. Carvalho, Polson, and Scott (2010), ``The horseshoe estimator for
+sparse signals,'' introduced the horseshoe estimator as a prior that strongly
+shrinks small coefficients while allowing large coefficients to escape through
+local scales. Polson and Scott (2010), ``Shrink globally, act locally: sparse
+Bayesian regularization and prediction,'' gives the same idea in the language
+of a global scale controlling overall sparsity and local scales protecting
+large signals. In GR-RHS, the global scale \(\tau\) and coefficient-level local
+scales \(\lambda_j\) inherit this global-local logic.
+
+The finite-slab part of the model is motivated by the regularized horseshoe
+literature. Piironen and Vehtari (2017), especially their work on sparsity
+information and regularization in the horseshoe prior, introduced the practical
+idea that the horseshoe should be regularized by a slab-like upper scale so
+that very large coefficients do not become effectively unregularized. The
+\texttt{rstanarm} implementation of the regularized horseshoe follows this
+same finite-slab design. GR-RHS keeps this regularized-horseshoe motivation but
+changes the unit at which the slab ceiling is learned: instead of using only a
+single coefficient-blind slab scale, GR-RHS introduces group-specific retention
+parameters \(\kappa_g\).
+
+Grouped sparsity as a statistical target is connected to the group-lasso and
+sparse-group-lasso literature. Yuan and Lin (2006), ``Model selection and
+estimation in regression with grouped variables,'' established the importance
+of treating predefined groups as units of regularization. Meier, van de Geer,
+and Buhlmann (2008) extended grouped regularization ideas to logistic
+regression, and Simon, Friedman, Hastie, and Tibshirani (2013) developed the
+sparse-group lasso, combining group-level and within-group sparsity. GR-RHS is
+Bayesian rather than penalized-likelihood based, but the simulation design uses
+the same scientific distinction: a method may need to retain or suppress whole
+groups while still allowing sparse or heterogeneous behavior within active
+groups.
+
+The grouped horseshoe baseline is related to the grouped global-local
+shrinkage literature, while the Horseshoe+ baseline follows Bhadra, Datta,
+Polson, and Willard (2017), ``The Horseshoe+ estimator of ultra-sparse
+signals.'' In our experiments, these baselines help separate the benefit of
+generic group-aware shrinkage from the specific GR-RHS mechanism, namely a
+group-specific slab-retention ceiling.
+
+\subsection{Sampling ingredients inherited from the MCMC literature}
+
+The key high-dimensional Gaussian sampling identity comes from Bhattacharya,
+Chakraborty, and Mallick (2016), ``Fast sampling with Gaussian scale mixture
+priors in high-dimensional regression.'' They showed how to draw regression
+coefficients from a Gaussian conditional posterior under scale-mixture priors
+using a Woodbury/Bhattacharya sampler with complexity favorable when
+\(n \ll p\). GR-RHS-CaP uses this idea for the conditional draw
+\[
+  \beta \mid \theta, y,
+  \qquad
+  \theta = (\sigma,\tau,\lambda,\kappa),
+\]
+after the hyperparameters have been sampled. In the implementation, this is
+the same computational principle used by the repository's
+\texttt{beta\_sample\_woodbury} routine.
+
+The dynamic Hamiltonian Monte Carlo component follows Hoffman and Gelman
+(2014), ``The No-U-Turn Sampler: adaptively setting path lengths in
+Hamiltonian Monte Carlo.'' GR-RHS-CaP does not introduce a new HMC algorithm.
+It uses NUTS as implemented in NumPyro, but changes the posterior geometry that
+NUTS sees by marginalizing \(\beta\) out of the main sampling state.
+
+The collapsed-sampling idea is a standard Rao-Blackwellized Bayesian
+computation strategy: analytically integrate a conditionally Gaussian block
+when possible, sample the lower-dimensional marginal posterior, and then
+reconstruct the integrated block from its exact conditional posterior. In
+GR-RHS-CaP, the marginal likelihood is
+\[
+  y \mid \theta \sim
+  \Norm\!\left(0,\, X V(\theta) X^\top + \sigma^2 I_n\right),
+\]
+where \(V(\theta)\) is the diagonal prior covariance implied by the
+regularized horseshoe hierarchy. This is the part that makes the high-
+dimensional sampler substantially different from a joint NUTS sampler over
+\(\beta\), \(\lambda\), \(\tau\), and \(\kappa\).
+
+\subsection{What is specific to GR-RHS-CaP}
+
+The first model-specific contribution is the \emph{group-specific slab
+retention} parameter \(\kappa_g\). In ordinary RHS, the regularized slab is
+coefficient-blind. In GR-RHS, each coefficient belongs to a group \(g(j)\), and
+the regularized prior variance uses the group-level retention parameter
+\(\kappa_{g(j)}\). This makes \(\kappa_g\) interpretable as a group-level
+ceiling on how much signal can escape global shrinkage. The mechanism
+experiments in this document are designed around exactly this interpretation:
+they evaluate whether signal groups receive larger posterior retention than
+null groups and whether this separation disappears when the group gate is
+removed.
+
+The second model-specific contribution is the \emph{profile mode} used for
+high-dimensional experiments. When \(\texttt{use\_local\_scale=false}\), the
+coefficient-level local scales are profiled out by setting \(\lambda_j=1\). The
+main NUTS state then contains essentially \((\sigma,\tau,\kappa_1,\dots,
+\kappa_G)\), so the dimension is approximately \(G+2\) rather than \(p+G+2\).
+This is the reason the high-dimensional configuration uses
+\[
+  \texttt{sampler\_backend = collapsed\_profile},
+  \qquad
+  \texttt{use\_local\_scale = false}.
+\]
+The design is intentionally conservative: in very high dimensions, the first
+goal is to learn stable group-level retention before reintroducing thousands of
+coefficient-specific local scales.
+
+The third model-specific contribution is the two-resolution interpretation of
+GR-RHS inference. The low-dimensional and moderate-dimensional Gaussian
+experiments use the staged Gibbs sampler because full coefficient-level
+posterior sampling is still feasible there. The high-dimensional experiments
+use GR-RHS-CaP because the coefficient block can be reconstructed after
+sampling the lower-dimensional grouped hyperparameter posterior. Thus the
+repository now uses two inference regimes for the same statistical prior:
+staged Gibbs for detailed low-dimensional posterior exploration and
+collapsed-profile NUTS for scalable high-dimensional grouped screening.
+
+\subsection{What is original in the experimental design}
+
+The random-coefficient benchmark design is our own validation layer around the
+GR-RHS mechanism. Rather than testing only fixed coefficient vectors, each
+replicate draws active groups, within-group support fractions, energy shares,
+and concentration parameters. This creates benchmark families in which the
+same method must work across many grouped sparse configurations. The
+single-mode and multimode families are especially important because they test
+whether a group-aware slab is useful when active groups have heterogeneous
+internal signal allocation.
+
+The high-dimensional extension is also our own adaptation to the GR-RHS
+architecture. The borrowed computational ideas are clear: global-local
+shrinkage from the horseshoe literature, finite-slab regularization from the
+regularized horseshoe, fast Gaussian conditional sampling from Bhattacharya,
+Chakraborty, and Mallick, and NUTS from Hoffman and Gelman. What is specific
+to this project is the way those components are assembled around
+\(\kappa_g\): the finite slab is made group-specific, the high-dimensional
+sampler collapses \(\beta\), the profile mode reduces the NUTS state to
+group-level retention parameters, and the experiments explicitly test whether
+that group-level retention is learned in the regimes where grouped structure is
+informative.
+
+\subsection{Reference checklist for the sampler and design}
+
+For clarity, the main external sources used in the design are:
+\begin{itemize}[leftmargin=*]
+  \item Carvalho, Polson, and Scott (2010), ``The horseshoe estimator for
+  sparse signals'': global-local shrinkage and local escape.
+  \item Polson and Scott (2010), ``Shrink globally, act locally: sparse
+  Bayesian regularization and prediction'': global shrinkage with local
+  adaptivity as the organizing principle.
+  \item Piironen and Vehtari (2017), ``Sparsity information and regularization
+  in the horseshoe and other shrinkage priors'': finite-slab regularization and
+  practical sparsity calibration for the regularized horseshoe.
+  \item Yuan and Lin (2006), ``Model selection and estimation in regression
+  with grouped variables'': group-level regularization as a statistical target.
+  \item Meier, van de Geer, and Buhlmann (2008), ``The group lasso for logistic
+  regression'': grouped regularization beyond Gaussian least squares.
+  \item Simon, Friedman, Hastie, and Tibshirani (2013), ``A sparse-group
+  lasso'': simultaneous group-level and within-group sparsity.
+  \item Bhadra, Datta, Polson, and Willard (2017), ``The Horseshoe+ estimator
+  of ultra-sparse signals'': the ultra-sparse Horseshoe+ baseline family.
+  \item Bhattacharya, Chakraborty, and Mallick (2016), ``Fast sampling with
+  Gaussian scale mixture priors in high-dimensional regression'': Woodbury
+  conditional Gaussian sampling for \(n \ll p\).
+  \item Hoffman and Gelman (2014), ``The No-U-Turn Sampler: adaptively setting
+  path lengths in Hamiltonian Monte Carlo'': the NUTS engine used for the
+  collapsed hyperparameter posterior.
+\end{itemize}
+
 \section{Evaluation criteria}
 
 The main evaluation metrics are test-set overall mean-squared error, signal

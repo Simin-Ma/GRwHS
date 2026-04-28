@@ -5,7 +5,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.core.models.grrhs_nuts import GRRHS_Gibbs_Staged, GRRHS_NUTS
+from simulation_project.src.core.models.grrhs_nuts import GRRHS_CollapsedNUTS, GRRHS_Gibbs_Staged, GRRHS_NUTS
 
 from .helpers import as_int_groups, fit_error_result
 from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
@@ -54,7 +54,11 @@ def _resume_gibbs_states(
 def _extract_retry_resume_payload(*, model: Any) -> dict[str, Any] | None:
     init_params = _clone_numeric_dict(getattr(model, "last_init_params_", None))
     if init_params:
-        return {"backend": "nuts", "init_params": init_params}
+        diag = getattr(model, "sampler_diagnostics_", {})
+        backend = "nuts"
+        if isinstance(diag, dict) and str(diag.get("backend", "")).strip() == "simcore_collapsed_nuts":
+            backend = "collapsed_profile"
+        return {"backend": backend, "init_params": init_params}
     chain_last_states = getattr(model, "chain_last_states_", None)
     if isinstance(chain_last_states, list) and chain_last_states:
         payload_states: list[dict[str, Any]] = []
@@ -468,6 +472,51 @@ def _build_gibbs_staged(
     )
 
 
+def _build_collapsed_profile(
+    *,
+    seed: int,
+    p0: int,
+    alpha_kappa: float,
+    beta_kappa: float,
+    use_local_scale: bool,
+    shared_kappa: bool,
+    auto_calibrate_tau: bool,
+    tau0: float | None,
+    tau_target: str,
+    sigma_reference: float,
+    sampler: SamplerConfig,
+    progress_bar: bool,
+    init_params: dict[str, np.ndarray] | None = None,
+    resume_no_warmup: bool = False,
+    adapt_delta: float | None = None,
+    max_treedepth: int | None = None,
+) -> GRRHS_CollapsedNUTS:
+    """Build GR-RHS-CaP: collapsed-and-profile GR-RHS for high-dimensional Gaussian runs."""
+    return GRRHS_CollapsedNUTS(
+        alpha_kappa=float(alpha_kappa),
+        beta_kappa=float(beta_kappa),
+        eta=1.0,
+        p0=int(max(p0, 1)),
+        tau0=None if tau0 is None else float(tau0),
+        auto_calibrate_tau=bool(auto_calibrate_tau),
+        tau_target=str(tau_target),
+        sigma_reference=float(sigma_reference),
+        use_local_scale=bool(use_local_scale),
+        shared_kappa=bool(shared_kappa),
+        num_warmup=int(sampler.warmup),
+        num_samples=int(sampler.post_warmup_draws),
+        num_chains=int(sampler.chains),
+        target_accept_prob=float(sampler.adapt_delta if adapt_delta is None else adapt_delta),
+        max_tree_depth=int(sampler.max_treedepth if max_treedepth is None else max_treedepth),
+        dense_mass=False,
+        chain_method="sequential",
+        progress_bar=bool(progress_bar),
+        seed=int(seed),
+        init_params=_clone_numeric_dict(init_params),
+        resume_no_warmup=bool(resume_no_warmup),
+    )
+
+
 def fit_gr_rhs(
     X: np.ndarray,
     y: np.ndarray,
@@ -524,12 +573,27 @@ def fit_gr_rhs(
             warm_mode = "ridge"
         task_name = str(task).strip().lower()
         backend_name = str(sampler_backend or "gibbs_staged").strip().lower()
-        if backend_name not in {"nuts", "gibbs_staged"}:
-            backend_name = "gibbs_staged"
+        backend_name = {
+            "cap": "collapsed_profile",
+            "grrhs_cap": "collapsed_profile",
+            "gr-rhs-cap": "collapsed_profile",
+            "collapsed": "collapsed_profile",
+            "collapsed_nuts": "collapsed_profile",
+            "profile_collapsed": "collapsed_profile",
+            "collapsed_profile": "collapsed_profile",
+            "gibbs": "gibbs_staged",
+            "staged_gibbs": "gibbs_staged",
+            "gibbs_staged": "gibbs_staged",
+            "nuts": "nuts",
+        }.get(backend_name, "gibbs_staged")
         if task_name == "logistic" and backend_name == "gibbs_staged":
             raise NotImplementedError(
                 "GR_RHS staged Gibbs is currently implemented for Gaussian likelihood only; "
                 "logistic Gibbs is not yet available."
+            )
+        if task_name == "logistic" and backend_name == "collapsed_profile":
+            raise NotImplementedError(
+                "GR-RHS-CaP collapsed/profile sampling is currently implemented for Gaussian likelihood only."
             )
         ridge_init = None
         if warm_mode == "ridge":
@@ -598,8 +662,52 @@ def fit_gr_rhs(
                 budget_scale=gibbs_budget_scale,
             )
 
+        def _make_collapsed_profile(
+            seed_: int,
+            adapt_delta: float,
+            max_treedepth: int,
+            resume_payload: dict[str, Any] | None,
+        ):
+            init_params = _resume_init_params(resume_payload)
+            warm_init = init_params
+            if warm_init is None:
+                warm_init = _expand_manual_init_params_for_chains(
+                    _clone_numeric_dict(ridge_init),
+                    num_chains=int(sampler.chains),
+                )
+            return _build_collapsed_profile(
+                seed=seed_,
+                p0=p0,
+                alpha_kappa=alpha_kappa,
+                beta_kappa=beta_kappa,
+                use_local_scale=use_local_scale,
+                shared_kappa=shared_kappa,
+                auto_calibrate_tau=auto_calibrate_tau,
+                tau0=tau0,
+                tau_target=tau_target,
+                sigma_reference=float(pseudo_sigma),
+                sampler=sampler,
+                progress_bar=bool(progress_bar),
+                init_params=_filter_nuts_init_params(
+                    warm_init,
+                    task=task,
+                    use_local_scale=use_local_scale,
+                    shared_kappa=shared_kappa,
+                ),
+                resume_no_warmup=bool(init_params),
+                adapt_delta=float(adapt_delta),
+                max_treedepth=int(max_treedepth),
+            )
+
         if backend_name == "gibbs_staged":
             model = _make_gibbs(seed, resume_payload=retry_resume_payload)
+        elif backend_name == "collapsed_profile":
+            model = _make_collapsed_profile(
+                seed,
+                float(sampler.adapt_delta),
+                int(sampler.max_treedepth),
+                resume_payload=retry_resume_payload,
+            )
         else:
             model = _make_nuts(
                 seed,
@@ -621,15 +729,23 @@ def fit_gr_rhs(
             config=sampler,
         )
 
-        # Retry the same NUTS design with stricter adaptation when divergences are high.
-        if backend_name == "nuts":
+        # Retry HMC/NUTS designs with stricter adaptation when divergences are high.
+        if backend_name in {"nuts", "collapsed_profile"}:
             if np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
-                strict = _make_nuts(
-                    seed + 999,
-                    float(sampler.strict_adapt_delta),
-                    int(sampler.strict_max_treedepth),
-                    resume_payload=resume_payload_out,
-                )
+                if backend_name == "collapsed_profile":
+                    strict = _make_collapsed_profile(
+                        seed + 999,
+                        float(sampler.strict_adapt_delta),
+                        int(sampler.strict_max_treedepth),
+                        resume_payload=resume_payload_out,
+                    )
+                else:
+                    strict = _make_nuts(
+                        seed + 999,
+                        float(sampler.strict_adapt_delta),
+                        int(sampler.strict_max_treedepth),
+                        resume_payload=resume_payload_out,
+                    )
                 strict, runtime2 = timed_call(strict.fit, X, y, groups=groups_use)
                 resume_payload_out = _extract_retry_resume_payload(model=strict)
                 beta_draws = getattr(strict, "coef_samples_", None)

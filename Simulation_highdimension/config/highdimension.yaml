@@ -17,6 +17,8 @@ method_config:
     - LASSO_CV
   grrhs_kwargs:
     tau_target: groups
+    sampler_backend: collapsed_profile
+    use_local_scale: false
     progress_bar: false
   gigg_config:
     allow_budget_retry: true

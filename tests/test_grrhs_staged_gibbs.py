@@ -157,6 +157,35 @@ def test_fit_gr_rhs_gaussian_staged_gibbs_small_problem_not_clearly_worse_than_n
     assert mse_staged <= max(0.75, 2.5 * mse_nuts + 1e-8)
 
 
+def test_fit_gr_rhs_gaussian_collapsed_profile_backend_runs() -> None:
+    X, y, groups, _beta_true = _tiny_gaussian_problem(seed=6)
+    sampler = SamplerConfig(chains=1, warmup=15, post_warmup_draws=15, ess_threshold=1.0)
+
+    out = fit_gr_rhs(
+        X,
+        y,
+        groups,
+        task="gaussian",
+        seed=88,
+        p0=2,
+        sampler=sampler,
+        progress_bar=False,
+        sampler_backend="collapsed_profile",
+        use_local_scale=False,
+        tau_target="groups",
+    )
+
+    assert out.status == "ok"
+    assert out.beta_mean is not None
+    diag = dict(out.diagnostics or {})
+    strat = dict(diag.get("sampling_strategy") or {})
+    sampler_diag = dict(diag.get("sampler_diagnostics") or {})
+    assert strat.get("backend") == "collapsed_profile"
+    assert sampler_diag.get("backend") == "simcore_collapsed_nuts"
+    assert sampler_diag.get("profile_mode") is True
+    assert sampler_diag.get("nuts_dim") == len(groups) + 2
+
+
 def test_fit_gr_rhs_logistic_does_not_silently_route_to_nuts() -> None:
     X, _y, groups, _beta_true = _tiny_gaussian_problem(seed=5)
     rng = np.random.default_rng(5)
