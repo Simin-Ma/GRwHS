@@ -1,0 +1,162 @@
+package: Simulation_highdimension
+description: High-dimensional p>n benchmark suite for GR-RHS.
+
+methods:
+  - GR_RHS
+  - RHS
+  - GHS_plus
+  - GIGG_MMLE
+  - LASSO_CV
+
+method_config:
+  roster:
+    - GR_RHS
+    - RHS
+    - GHS_plus
+    - GIGG_MMLE
+    - LASSO_CV
+  grrhs_kwargs:
+    tau_target: groups
+    progress_bar: false
+  gigg_config:
+    allow_budget_retry: true
+    extra_retry: 0
+    no_retry: true
+
+convergence_gate:
+  enforce_bayes_convergence: true
+  max_convergence_retries: -1
+  bayes_min_chains: 2
+  chains: 2
+  warmup: 250
+  post_warmup_draws: 250
+  adapt_delta: 0.9
+  max_treedepth: 12
+  strict_adapt_delta: 0.95
+  strict_max_treedepth: 14
+  rhat_threshold: 1.01
+  ess_threshold: 200.0
+  max_divergence_ratio: 0.01
+
+runner:
+  task: gaussian
+  repeats: 10
+  seed: 20260428
+  n_jobs: 1
+  method_jobs: 1
+  output_dir: outputs/history/Simulation_highdimension/benchmark_main
+  save_datasets: true
+  build_tables: true
+  baseline_method: RHS
+  required_metrics_for_pairing:
+    - mse_null
+    - mse_signal
+    - mse_overall
+    - lpd_test
+
+signal_families:
+  classical_reference:
+    name: classical_reference
+    support_fraction_range: [0.6, 0.8]
+    concentration_range: [3.0, 6.0]
+    share_hyperparameters: true
+    log_uniform_concentration: false
+    acceptance_alpha_ratio_min:
+    acceptance_support_gap_min:
+    description: Shared mild within-group blueprint used as a neutral high-dimensional anchor.
+  single_mode_heterogeneous:
+    name: single_mode_heterogeneous
+    support_fraction_range: [0.4, 0.8]
+    concentration_range: [0.8, 2.0]
+    share_hyperparameters: true
+    log_uniform_concentration: false
+    acceptance_alpha_ratio_min:
+    acceptance_support_gap_min:
+    description: Shared heterogeneous active-group blueprint for the high-dimensional transition setting.
+  multimode_heterogeneous:
+    name: multimode_heterogeneous
+    support_fraction_range: [0.2, 0.8]
+    concentration_range: [0.2, 6.0]
+    share_hyperparameters: false
+    log_uniform_concentration: true
+    acceptance_alpha_ratio_min: 3.0
+    acceptance_support_gap_min: 0.25
+    description: Active groups draw distinct within-group blueprint parameters for the high-dimensional showcase.
+
+tables:
+  highdim_leaderboard:
+    rows:
+      - high-dimensional setting x method
+    columns:
+      - mse_overall
+      - mse_signal
+      - mse_null
+      - coverage_95
+      - runtime_mean
+      - n_converged
+  highdim_paired_deltas:
+    rows:
+      - common-converged paired setting x method
+    columns:
+      - delta_vs_rhs
+      - paired_n
+      - mse_overall
+      - mse_signal
+
+optional_stress_lines: []
+
+settings:
+  - setting_id: hd_setting_1_classical_anchor
+    label: "HD Setting 1: Classical High-Dimensional Anchor"
+    family: classical_reference
+    group_sizes: [10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2, 3, 4]
+    n_train: 200
+    n_test: 200
+    rho_within: 0.6
+    rho_between: 0.2
+    target_r2: 0.7
+    role: neutral high-dimensional anchor
+    notes: High-dimensional analogue of the classical low-dimensional reference family.
+    suite: highdim
+    methods: [GR_RHS, RHS, GHS_plus, GIGG_MMLE, LASSO_CV]
+  - setting_id: hd_setting_2_single_mode
+    label: "HD Setting 2: Single-Mode Heterogeneous High-Dimensional"
+    family: single_mode_heterogeneous
+    group_sizes: [10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2, 3, 4]
+    n_train: 200
+    n_test: 200
+    rho_within: 0.8
+    rho_between: 0.2
+    target_r2: 0.7
+    role: high-dimensional transition setting
+    notes: Tests whether shared heterogeneous active-group structure remains useful when p exceeds n.
+    suite: highdim
+    methods: [GR_RHS, RHS, GHS_plus, GIGG_MMLE, LASSO_CV]
+  - setting_id: hd_setting_3_multimode_showcase
+    label: "HD Setting 3: Multimode Heterogeneous High-Dimensional Showcase"
+    family: multimode_heterogeneous
+    group_sizes: [10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2, 3, 4]
+    n_train: 200
+    n_test: 200
+    rho_within: 0.8
+    rho_between: 0.2
+    target_r2: 0.7
+    role: main high-dimensional showcase
+    notes: High-dimensional analogue of the multimode heterogeneous GR-RHS showcase family.
+    suite: highdim
+    methods: [GR_RHS, RHS, GHS_plus, GIGG_MMLE, LASSO_CV]
