@@ -1,0 +1,73 @@
+package: real_data_experiment
+description: Single-method NHANES reproduction config for GR-RHS.
+
+convergence_gate:
+  enforce_bayes_convergence: true
+  max_convergence_retries: -1
+  bayes_min_chains: 2
+  chains: 2
+  warmup: 250
+  post_warmup_draws: 250
+  adapt_delta: 0.9
+  max_treedepth: 12
+  strict_adapt_delta: 0.95
+  strict_max_treedepth: 14
+  rhat_threshold: 1.01
+  ess_threshold: 200.0
+  max_divergence_ratio: 0.01
+
+methods:
+  roster:
+    - GR_RHS
+  grrhs_kwargs:
+    tau_target: groups
+    progress_bar: false
+  gigg_config:
+    allow_budget_retry: true
+    extra_retry: 0
+    no_retry: true
+
+runner:
+  output_dir: outputs/history/real_data_experiment/reproduce_grrhs_nhanes
+  seed: 20260426
+  n_jobs: 1
+  method_jobs: 1
+  build_tables: false
+  save_splits: true
+  baseline_method: RHS
+  required_metrics_for_pairing:
+    - rmse_test
+    - mae_test
+    - lpd_test
+    - r2_test
+
+datasets:
+  - dataset_id: nhanes_2003_2004
+    label: NHANES 2003-2004 GGT
+    description: Environmental exposure regression on NHANES complete-case adults.
+    loader:
+      path_X: data/real/nhanes_2003_2004/processed/runner_ready/X.npy
+      path_C: data/real/nhanes_2003_2004/processed/runner_ready/C.npy
+      path_y: data/real/nhanes_2003_2004/processed/runner_ready/y.npy
+      path_feature_names: data/real/nhanes_2003_2004/processed/runner_ready/feature_names.txt
+      path_covariate_feature_names: data/real/nhanes_2003_2004/processed/runner_ready/covariate_feature_names.txt
+      path_group_map: data/real/nhanes_2003_2004/processed/runner_ready/group_map.json
+    task: gaussian
+    methods:
+      - GR_RHS
+    group_labels:
+      - metals
+      - phthalates
+      - organochlorines
+      - pbdes
+      - pahs
+    target_label: gamma_glutamyl_transferase
+    target_transform: none
+    response_standardization: train_center
+    covariate_mode: residualize
+    p0_strategy: sqrt_p
+    p0_groups_strategy: half_groups
+    test_fraction: 0.2
+    repeats: 1
+    shuffle: true
+    notes: Uses train-only covariate residualization; held-out metrics are evaluated after adding the nuisance prediction back to the original y scale.

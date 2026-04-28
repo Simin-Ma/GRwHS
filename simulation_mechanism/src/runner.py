@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from simulation_project.src.experiments.runtime import _parallel_rows
-from simulation_project.src.utils import FitResult, load_pandas
+from simulation_project.src.utils import FitResult, load_pandas, save_fit_result_artifacts
 
 from .config import MechanismConfig, force_until_converged_gate, setting_spec_from_dict
 from .dgp import generate_mechanism_dataset, save_mechanism_dataset
@@ -83,8 +83,9 @@ def _task_payloads(config: MechanismConfig) -> list[dict[str, Any]]:
                     "standard_methods": list(config.methods.standard_methods),
                     "ablation_variants": list(config.methods.ablation_variants),
                     "method_jobs": int(config.runner.method_jobs),
-                    "save_datasets": bool(config.runner.save_datasets),
+                    "save_datasets": True,
                     "dataset_dir": str(Path(config.runner.output_dir) / "datasets"),
+                    "fit_detail_dir": str(Path(config.runner.output_dir) / "fit_details"),
                 }
             )
     return tasks
@@ -101,8 +102,9 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
         replicate_id=int(task["replicate_id"]),
         master_seed=int(task["master_seed"]),
     )
-    if bool(task.get("save_datasets", False)):
-        save_mechanism_dataset(dataset, Path(str(task["dataset_dir"])) / setting.setting_id)
+    dataset_artifacts: dict[str, str] = {}
+    if bool(task.get("save_datasets", True)):
+        dataset_artifacts = save_mechanism_dataset(dataset, Path(str(task["dataset_dir"])) / setting.setting_id)
 
     methods = [str(method) for method in setting.methods]
     try:
@@ -122,6 +124,17 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
 
     raw_rows: list[dict[str, Any]] = []
     group_rows: list[dict[str, Any]] = []
+    artifact_rows: list[dict[str, Any]] = []
+    if dataset_artifacts:
+        artifact_rows.append(
+            {
+                "artifact_type": "dataset",
+                "setting_id": setting.setting_id,
+                "replicate_id": int(dataset.metadata["replicate_id"]),
+                "seed": int(dataset.metadata["seed"]),
+                **dataset_artifacts,
+            }
+        )
     for method in methods:
         result = results.get(method, _error_fit_result(method, "Missing result from fit_setting_methods"))
         eval_row = evaluate_method_result(method_name=method, result=result, dataset=dataset)
@@ -139,6 +152,38 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
             )
             if np.isfinite(tau_post_mean) and np.isfinite(tau0_oracle) and abs(tau0_oracle) > 1e-12:
                 tau_ratio_to_oracle = float(tau_post_mean / tau0_oracle)
+        fit_artifacts = save_fit_result_artifacts(
+            Path(str(task["fit_detail_dir"])) / setting.setting_id / f"rep_{int(dataset.metadata['replicate_id']):03d}" / str(method),
+            result=result,
+            run_context={
+                "experiment_id": setting.experiment_id,
+                "experiment_kind": setting.experiment_kind,
+                "setting_id": setting.setting_id,
+                "setting_label": setting.setting_label,
+                "replicate_id": int(dataset.metadata["replicate_id"]),
+                "seed": int(dataset.metadata["seed"]),
+                "method": str(method),
+                "tau0_oracle": _json_safe_float(tau0_oracle),
+                "tau_post_mean": _json_safe_float(tau_post_mean),
+                "tau_ratio_to_oracle": _json_safe_float(tau_ratio_to_oracle),
+            },
+            coefficient_truth=dataset.beta,
+            extra_json={
+                "evaluation": eval_row,
+                "setting": setting.to_dict(),
+                "dataset_summary": dataset.summary(),
+            },
+        )
+        artifact_rows.append(
+            {
+                "artifact_type": "fit_result",
+                "setting_id": setting.setting_id,
+                "replicate_id": int(dataset.metadata["replicate_id"]),
+                "method": str(method),
+                "seed": int(dataset.metadata["seed"]),
+                **fit_artifacts,
+            }
+        )
 
         row = {
             "experiment_id": setting.experiment_id,
@@ -174,6 +219,9 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
             "p0_groups_true": int(dataset.metadata["p0_groups_true"]),
             "decoy_group": int(dataset.metadata.get("decoy_group", -1)),
             "method": str(method),
+            "fit_artifact_dir": str(fit_artifacts.get("fit_dir", "")),
+            "dataset_arrays_path": str(dataset_artifacts.get("arrays", "")),
+            "dataset_metadata_path": str(dataset_artifacts.get("metadata", "")),
             "error": str(result.error),
             "tau_post_mean": float(tau_post_mean),
             "tau0_oracle": float(tau0_oracle),
@@ -206,7 +254,11 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
                 },
             )
         )
-    return {"raw_rows": raw_rows, "group_rows": group_rows}
+    return {"raw_rows": raw_rows, "group_rows": group_rows, "artifact_rows": artifact_rows}
+
+
+def _json_safe_float(value: float) -> float | None:
+    return float(value) if np.isfinite(float(value)) else None
 
 
 def _dedup_method_order(settings: Sequence[Any]) -> list[str]:
@@ -226,7 +278,7 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
     config = replace(config, convergence_gate=force_until_converged_gate(config.convergence_gate))
     requested_output_dir = str(config.runner.output_dir)
     history_root, out_dir, run_timestamp = prepare_history_run_dir(requested_output_dir)
-    config = replace(config, runner=replace(config.runner, output_dir=str(out_dir)))
+    config = replace(config, runner=replace(config.runner, output_dir=str(out_dir), save_datasets=True))
     paper_dir = ensure_dir(out_dir / "paper_tables")
 
     spec_path = save_json(config.to_manifest(), out_dir / "mechanism_spec.json")
@@ -241,9 +293,11 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
 
     raw_rows: list[dict[str, Any]] = []
     group_rows: list[dict[str, Any]] = []
+    artifact_rows: list[dict[str, Any]] = []
     for chunk in task_chunks:
         raw_rows.extend(chunk.get("raw_rows", []))
         group_rows.extend(chunk.get("group_rows", []))
+        artifact_rows.extend(chunk.get("artifact_rows", []))
 
     raw = pd.DataFrame(raw_rows)
     per_group = pd.DataFrame(group_rows)
@@ -297,6 +351,7 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
     paired_deltas_path = out_dir / "summary_paired_deltas.csv"
     per_group_path = out_dir / "per_group_kappa.csv"
     per_group_paired_path = out_dir / "per_group_kappa_paired.csv"
+    artifact_catalog_path = out_dir / "artifact_catalog.json"
 
     raw.to_csv(raw_path, index=False)
     summary.to_csv(summary_path, index=False)
@@ -306,6 +361,7 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
     paired_deltas.to_csv(paired_deltas_path, index=False)
     per_group.to_csv(per_group_path, index=False)
     per_group_paired.to_csv(per_group_paired_path, index=False)
+    save_json(artifact_rows, artifact_catalog_path)
 
     result_paths: dict[str, str] = {
         "mechanism_spec": str(spec_path),
@@ -317,6 +373,9 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
         "summary_paired_deltas": str(paired_deltas_path),
         "per_group_kappa": str(per_group_path),
         "per_group_kappa_paired": str(per_group_paired_path),
+        "artifact_catalog": str(artifact_catalog_path),
+        "fit_details_dir": str(out_dir / "fit_details"),
+        "datasets_dir": str(out_dir / "datasets"),
     }
 
     if bool(config.runner.build_tables):

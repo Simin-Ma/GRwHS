@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from statistics import NormalDist
 from typing import Any, Sequence
 
 import numpy as np
@@ -21,6 +22,7 @@ from .schemas import PreparedSplit
 ZERO_TOL = 1e-8
 REL_GROUP_SELECTION_TOL = 1e-2
 REL_COEF_SELECTION_TOL = 1e-2
+_STANDARD_NORMAL = NormalDist()
 
 
 def _safe_json(payload: Any) -> str:
@@ -90,6 +92,50 @@ def _posterior_predictive_lpd_full_scale(
     m = np.max(loglik, axis=1, keepdims=True)
     lme = (m + np.log(np.mean(np.exp(loglik - m), axis=1, keepdims=True))).reshape(-1)
     return float(np.mean(lme))
+
+
+def _predictive_variance_full_scale(
+    result: FitResult,
+    split: PreparedSplit,
+    *,
+    sigma2_hat: float,
+    on_test: bool,
+) -> np.ndarray | None:
+    X_used = split.X_test_used if on_test else split.X_train_used
+    offset = split.prediction_offset_test if on_test else split.prediction_offset_train
+    if X_used is None or offset is None:
+        return None
+    base = np.full(int(np.asarray(X_used).shape[0]), max(float(sigma2_hat), 1e-8), dtype=float)
+    if result.beta_draws is None:
+        return base
+    draws = _flatten_draws(result.beta_draws)
+    if draws is None or draws.shape[0] <= 1:
+        return base
+    mu_model = float(split.y_offset) + float(split.y_scale) * (np.asarray(X_used, dtype=float) @ draws.T)
+    mu_full = np.asarray(offset, dtype=float).reshape(-1, 1) + mu_model
+    mu_var = np.var(mu_full, axis=1, ddof=1)
+    return np.maximum(mu_var + max(float(sigma2_hat), 1e-8), 1e-8)
+
+
+def _predictive_interval_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    pred_var: np.ndarray,
+    *,
+    level: float,
+) -> tuple[float, float]:
+    yt = np.asarray(y_true, dtype=float).reshape(-1)
+    yp = np.asarray(y_pred, dtype=float).reshape(-1)
+    vv = np.asarray(pred_var, dtype=float).reshape(-1)
+    if yt.size == 0 or yp.size != yt.size or vv.size != yt.size:
+        return float("nan"), float("nan")
+    if not (0.0 < float(level) < 1.0):
+        return float("nan"), float("nan")
+    z = float(_STANDARD_NORMAL.inv_cdf(0.5 + 0.5 * float(level)))
+    sd = np.sqrt(np.maximum(vv, 1e-8))
+    lo = yp - z * sd
+    hi = yp + z * sd
+    return float(np.mean(hi - lo)), float(np.mean((yt >= lo) & (yt <= hi)))
 
 
 def _group_scores(beta: np.ndarray, groups: Sequence[Sequence[int]]) -> np.ndarray:
@@ -164,6 +210,10 @@ def evaluate_method_result(
             "lpd_test": nan,
             "lpd_test_ppd": nan,
             "lpd_test_plugin": nan,
+            "avg_pred_interval_length_90": nan,
+            "pred_coverage_90": nan,
+            "avg_pred_interval_length_95": nan,
+            "pred_coverage_95": nan,
             "sigma2_hat_train": nan,
             "coef_l1_norm": nan,
             "coef_l2_norm": nan,
@@ -204,6 +254,10 @@ def evaluate_method_result(
             "lpd_test": nan,
             "lpd_test_ppd": nan,
             "lpd_test_plugin": nan,
+            "avg_pred_interval_length_90": nan,
+            "pred_coverage_90": nan,
+            "avg_pred_interval_length_95": nan,
+            "pred_coverage_95": nan,
             "sigma2_hat_train": nan,
             "coef_l1_norm": nan,
             "coef_l2_norm": nan,
@@ -236,6 +290,25 @@ def evaluate_method_result(
     lpd_plugin = _plugin_lpd(split.y_test, yhat_test, sigma2_hat)
     lpd_ppd = _posterior_predictive_lpd_full_scale(result, split, sigma2_hat=sigma2_hat)
     lpd = lpd_ppd if np.isfinite(lpd_ppd) else lpd_plugin
+    pred_var_test = _predictive_variance_full_scale(result, split, sigma2_hat=sigma2_hat, on_test=True)
+    if pred_var_test is None:
+        avg_pred_interval_length_90 = float("nan")
+        pred_coverage_90 = float("nan")
+        avg_pred_interval_length_95 = float("nan")
+        pred_coverage_95 = float("nan")
+    else:
+        avg_pred_interval_length_90, pred_coverage_90 = _predictive_interval_metrics(
+            split.y_test,
+            yhat_test,
+            pred_var_test,
+            level=0.90,
+        )
+        avg_pred_interval_length_95, pred_coverage_95 = _predictive_interval_metrics(
+            split.y_test,
+            yhat_test,
+            pred_var_test,
+            level=0.95,
+        )
 
     beta = np.asarray(result.beta_mean, dtype=float).reshape(-1)
     coef_abs = np.abs(beta)
@@ -268,6 +341,10 @@ def evaluate_method_result(
         "lpd_test": float(lpd),
         "lpd_test_ppd": float(lpd_ppd),
         "lpd_test_plugin": float(lpd_plugin),
+        "avg_pred_interval_length_90": float(avg_pred_interval_length_90),
+        "pred_coverage_90": float(pred_coverage_90),
+        "avg_pred_interval_length_95": float(avg_pred_interval_length_95),
+        "pred_coverage_95": float(pred_coverage_95),
         "sigma2_hat_train": float(sigma2_hat),
         "coef_l1_norm": float(np.sum(coef_abs)),
         "coef_l2_norm": float(np.linalg.norm(beta, ord=2)),

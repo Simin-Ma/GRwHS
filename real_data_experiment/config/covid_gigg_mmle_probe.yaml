@@ -1,0 +1,80 @@
+package: real_data_experiment
+description: COVID trust-experts grouped regression probe for GIGG-MMLE reproducibility.
+
+convergence_gate:
+  enforce_bayes_convergence: true
+  max_convergence_retries: -1
+  bayes_min_chains: 2
+  chains: 2
+  warmup: 250
+  post_warmup_draws: 250
+  adapt_delta: 0.9
+  max_treedepth: 12
+  strict_adapt_delta: 0.95
+  strict_max_treedepth: 14
+  rhat_threshold: 1.01
+  ess_threshold: 200.0
+  max_divergence_ratio: 0.01
+
+methods:
+  roster:
+    - GR_RHS
+    - GIGG_MMLE
+    - LASSO_CV
+    - OLS
+  grrhs_kwargs:
+    tau_target: groups
+    progress_bar: false
+  gigg_config:
+    allow_budget_retry: true
+    extra_retry: 0
+    no_retry: true
+
+runner:
+  output_dir: outputs/history/real_data_experiment/reproduce_covid_gigg_probe
+  seed: 20260427
+  n_jobs: 1
+  method_jobs: 1
+  build_tables: false
+  save_splits: true
+  baseline_method: OLS
+  required_metrics_for_pairing:
+    - rmse_test
+    - mae_test
+    - lpd_test
+    - r2_test
+
+datasets:
+  - dataset_id: covid19_trust_experts
+    label: COVID-19 Trust Experts
+    description: Regression on the sparsegl trust_experts real-data design matrix.
+    loader:
+      path_X: data/real/covid19_trust_experts/processed/runner_ready/X.npy
+      path_y: data/real/covid19_trust_experts/processed/runner_ready/y.npy
+      path_feature_names: data/real/covid19_trust_experts/processed/runner_ready/feature_names.txt
+      path_group_map: data/real/covid19_trust_experts/processed/runner_ready/group_map.json
+    task: gaussian
+    methods:
+      - GR_RHS
+      - GIGG_MMLE
+      - LASSO_CV
+      - OLS
+    group_labels:
+      - period
+      - region
+      - age
+      - gender
+      - raceethnicity
+      - cli_spline
+      - hh_cmnty_cli_spline
+    target_label: trust_experts
+    target_transform: none
+    response_standardization: train_center
+    covariate_mode: none
+    p0_strategy: sqrt_p
+    p0_groups_strategy: half_groups
+    train_size: 6831
+    test_size: 2928
+    repeats: 1
+    shuffle: true
+    notes: Paper-aligned 70/30 split probe on the sparsegl trust_experts design.

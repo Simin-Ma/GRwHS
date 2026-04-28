@@ -5,6 +5,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -261,6 +262,219 @@ def save_json(obj: Mapping[str, Any], path: Path | str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _artifact_safe_name(value: Any) -> str:
+    text = str(value).strip()
+    if not text:
+        return "unknown"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", text)
+    safe = safe.strip("._-")
+    return safe or "unknown"
+
+
+def _json_ready_scalar(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        val = float(value)
+        if np.isnan(val):
+            return None
+        if np.isposinf(val):
+            return "inf"
+        if np.isneginf(val):
+            return "-inf"
+        return val
+    return value
+
+
+def json_ready(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(k): json_ready(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_ready(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return json_ready(value.tolist())
+    return _json_ready_scalar(value)
+
+
+def save_array_bundle(
+    out_path: Path | str,
+    /,
+    **arrays: Any,
+) -> Path:
+    path = Path(out_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        str(name): np.asarray(value)
+        for name, value in arrays.items()
+        if value is not None
+    }
+    np.savez_compressed(path, **payload)
+    return path
+
+
+def fit_result_summary_payload(
+    result: FitResult,
+    *,
+    extra_metadata: Mapping[str, Any] | None = None,
+    include_draw_shapes: bool = True,
+) -> dict[str, Any]:
+    draw_shapes: dict[str, list[int] | None] = {}
+    if include_draw_shapes:
+        draw_shapes = {
+            "beta_mean": None if result.beta_mean is None else [int(x) for x in np.asarray(result.beta_mean).shape],
+            "beta_draws": None if result.beta_draws is None else [int(x) for x in np.asarray(result.beta_draws).shape],
+            "kappa_draws": None if result.kappa_draws is None else [int(x) for x in np.asarray(result.kappa_draws).shape],
+            "group_scale_draws": None if result.group_scale_draws is None else [int(x) for x in np.asarray(result.group_scale_draws).shape],
+            "tau_draws": None if result.tau_draws is None else [int(x) for x in np.asarray(result.tau_draws).shape],
+        }
+    payload: dict[str, Any] = {
+        "method": str(result.method),
+        "status": str(result.status),
+        "converged": bool(result.converged),
+        "runtime_seconds": float(result.runtime_seconds),
+        "rhat_max": _json_ready_scalar(result.rhat_max),
+        "bulk_ess_min": _json_ready_scalar(result.bulk_ess_min),
+        "divergence_ratio": _json_ready_scalar(result.divergence_ratio),
+        "error": str(result.error or ""),
+        "has_beta_mean": bool(result.beta_mean is not None),
+        "has_beta_draws": bool(result.beta_draws is not None),
+        "has_kappa_draws": bool(result.kappa_draws is not None),
+        "has_group_scale_draws": bool(result.group_scale_draws is not None),
+        "has_tau_draws": bool(result.tau_draws is not None),
+        "diagnostics": json_ready(result.diagnostics or {}),
+    }
+    if include_draw_shapes:
+        payload["draw_shapes"] = draw_shapes
+    if extra_metadata:
+        payload["metadata"] = json_ready(dict(extra_metadata))
+    if result.beta_mean is not None:
+        beta_mean_arr = np.asarray(result.beta_mean, dtype=float).reshape(-1)
+        payload["beta_mean_summary"] = {
+            "dimension": int(beta_mean_arr.size),
+            "l1_norm": float(np.sum(np.abs(beta_mean_arr))),
+            "l2_norm": float(np.linalg.norm(beta_mean_arr)),
+            "max_abs": float(np.max(np.abs(beta_mean_arr))) if beta_mean_arr.size else 0.0,
+            "nonzero_abs_gt_1e-12": int(np.sum(np.abs(beta_mean_arr) > 1e-12)),
+        }
+    if result.tau_draws is not None:
+        tau_arr = np.asarray(result.tau_draws, dtype=float).reshape(-1)
+        if tau_arr.size:
+            payload["tau_draws_summary"] = {
+                "mean": float(np.mean(tau_arr)),
+                "median": float(np.median(tau_arr)),
+                "sd": float(np.std(tau_arr, ddof=0)),
+                "q025": float(np.quantile(tau_arr, 0.025)),
+                "q975": float(np.quantile(tau_arr, 0.975)),
+            }
+    return payload
+
+
+def save_fit_result_artifacts(
+    root_dir: Path | str,
+    *,
+    result: FitResult,
+    run_context: Mapping[str, Any] | None = None,
+    coefficient_truth: Any = None,
+    dataset_arrays: Mapping[str, Any] | None = None,
+    dataset_metadata: Mapping[str, Any] | None = None,
+    extra_arrays: Mapping[str, Any] | None = None,
+    extra_json: Mapping[str, Any] | None = None,
+    save_dataset_bundle: bool = False,
+) -> dict[str, str]:
+    root = ensure_dir(root_dir)
+    fit_dir = ensure_dir(root / "fit")
+
+    summary_path = fit_dir / "fit_summary.json"
+    draws_path = fit_dir / "posterior_draws.npz"
+    beta_mean_path = fit_dir / "beta_mean.npy"
+    coefficient_path = fit_dir / "coefficient_detail.csv"
+
+    save_json(
+        fit_result_summary_payload(
+            result,
+            extra_metadata=run_context,
+        ),
+        summary_path,
+    )
+
+    written: dict[str, str] = {
+        "fit_dir": str(fit_dir),
+        "fit_summary": str(summary_path),
+    }
+
+    if result.beta_mean is not None:
+        np.save(beta_mean_path, np.asarray(result.beta_mean, dtype=float))
+        written["beta_mean"] = str(beta_mean_path)
+
+    draws_payload = {
+        "beta_draws": result.beta_draws,
+        "kappa_draws": result.kappa_draws,
+        "group_scale_draws": result.group_scale_draws,
+        "tau_draws": result.tau_draws,
+    }
+    if any(value is not None for value in draws_payload.values()):
+        save_array_bundle(draws_path, **draws_payload)
+        written["posterior_draws"] = str(draws_path)
+
+    beta_mean_flat = None if result.beta_mean is None else np.asarray(result.beta_mean, dtype=float).reshape(-1)
+    beta_true_flat = None if coefficient_truth is None else np.asarray(coefficient_truth, dtype=float).reshape(-1)
+    if beta_mean_flat is not None or beta_true_flat is not None:
+        p = max(
+            0 if beta_mean_flat is None else int(beta_mean_flat.size),
+            0 if beta_true_flat is None else int(beta_true_flat.size),
+        )
+        rows: list[dict[str, Any]] = []
+        for idx in range(p):
+            true_value = float(beta_true_flat[idx]) if beta_true_flat is not None and idx < beta_true_flat.size else float("nan")
+            est_value = float(beta_mean_flat[idx]) if beta_mean_flat is not None and idx < beta_mean_flat.size else float("nan")
+            error = est_value - true_value if np.isfinite(est_value) and np.isfinite(true_value) else float("nan")
+            rows.append(
+                {
+                    "coefficient_index": int(idx),
+                    "beta_true": None if not np.isfinite(true_value) else true_value,
+                    "beta_estimate": None if not np.isfinite(est_value) else est_value,
+                    "error": None if not np.isfinite(error) else float(error),
+                    "abs_error": None if not np.isfinite(error) else float(abs(error)),
+                    "is_true_nonzero": bool(np.isfinite(true_value) and abs(true_value) > 1e-12),
+                    "is_est_nonzero": bool(np.isfinite(est_value) and abs(est_value) > 1e-12),
+                }
+            )
+        pd = load_pandas()
+        pd.DataFrame(rows).to_csv(coefficient_path, index=False)
+        written["coefficient_detail"] = str(coefficient_path)
+
+    if save_dataset_bundle or dataset_arrays or dataset_metadata:
+        dataset_dir = ensure_dir(root / "dataset")
+        if dataset_arrays:
+            dataset_arrays_path = dataset_dir / "dataset_arrays.npz"
+            save_array_bundle(dataset_arrays_path, **dict(dataset_arrays))
+            written["dataset_arrays"] = str(dataset_arrays_path)
+        if dataset_metadata is not None:
+            dataset_meta_path = dataset_dir / "dataset_metadata.json"
+            save_json(json_ready(dict(dataset_metadata)), dataset_meta_path)
+            written["dataset_metadata"] = str(dataset_meta_path)
+
+    if extra_arrays:
+        extras_dir = ensure_dir(root / "extras")
+        extra_arrays_path = extras_dir / "extra_arrays.npz"
+        save_array_bundle(extra_arrays_path, **dict(extra_arrays))
+        written["extra_arrays"] = str(extra_arrays_path)
+
+    if extra_json:
+        extras_dir = ensure_dir(root / "extras")
+        extra_json_path = extras_dir / "extra_metadata.json"
+        save_json(json_ready(dict(extra_json)), extra_json_path)
+        written["extra_metadata"] = str(extra_json_path)
+
+    return written
 
 
 def load_pandas():

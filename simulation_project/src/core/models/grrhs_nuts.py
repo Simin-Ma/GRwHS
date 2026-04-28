@@ -1237,6 +1237,9 @@ class GRRHS_Gibbs:
             "beta_sampler": "woodbury_bhattacharya" if n < p else "cholesky",
             "profile_mode_factorised": bool(profile_mode),
             "use_local_scale": bool(self.use_local_scale),
+            "slice_width_log": float(self.slice_width_log),
+            "slice_width_logit": float(self.slice_width_logit),
+            "slice_max_steps": int(self.slice_max_steps),
             "tau0_effective": float(tau0_eff),
             "tau_prior_sigma_cap_multiplier": float(self.tau_prior_sigma_cap_multiplier),
             "tau_log_ratio_floor": float(self.tau_log_ratio_floor),
@@ -2326,6 +2329,9 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         self.sampler_diagnostics_["transition_window"] = int(self.transition_window)
         self.sampler_diagnostics_["geometry_tol"] = float(self.geometry_tol)
         self.sampler_diagnostics_["transition_tol"] = float(self.transition_tol)
+        self.sampler_diagnostics_["slice_width_log"] = float(self.slice_width_log)
+        self.sampler_diagnostics_["slice_width_logit"] = float(self.slice_width_logit)
+        self.sampler_diagnostics_["slice_max_steps"] = int(self.slice_max_steps)
         self.sampler_diagnostics_["phase_a_late_beta_refresh"] = bool(self.phase_a_late_beta_refresh)
         self.sampler_diagnostics_["phase_b_extra_beta_refresh"] = bool(self.phase_b_extra_beta_refresh)
         self.sampler_diagnostics_["phase_a_refresh_interval"] = int(self.phase_a_refresh_interval)

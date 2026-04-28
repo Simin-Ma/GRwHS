@@ -1,0 +1,64 @@
+package: real_data_experiment
+description: Exploratory six-method run on the GSE40279 local-methylation-block micro variant.
+
+methods:
+  roster:
+    - GR_RHS
+    - RHS
+    - GHS_plus
+    - GIGG_MMLE
+    - LASSO_CV
+    - OLS
+  grrhs_kwargs:
+    tau_target: groups
+    progress_bar: false
+  gigg_config:
+    allow_budget_retry: true
+    extra_retry: 0
+    no_retry: true
+
+runner:
+  output_dir: outputs/history/real_data_experiment/gse40279_micro_local_block_gap1000_six_methods
+  seed: 20260426
+  n_jobs: 1
+  method_jobs: 1
+  build_tables: false
+  save_splits: true
+  baseline_method: RHS
+  required_metrics_for_pairing:
+    - rmse_test
+    - mae_test
+    - lpd_test
+    - r2_test
+
+datasets:
+  - dataset_id: gse40279_age_local_block_micro_gap1000
+    label: GSE40279 Methylation Age (micro, local block gap1000)
+    description: Exploratory local methylation block variant with 200 CpGs grouped by genomic proximity.
+    loader:
+      path_X: data/real/gse40279_methylation_age/processed/runner_ready_micro_local_block_gap1000/X.npy
+      path_y: data/real/gse40279_methylation_age/processed/runner_ready_micro_local_block_gap1000/y.npy
+      path_feature_names: data/real/gse40279_methylation_age/processed/runner_ready_micro_local_block_gap1000/feature_names.txt
+      path_group_map: data/real/gse40279_methylation_age/processed/runner_ready_micro_local_block_gap1000/group_map.json
+      path_group_labels: data/real/gse40279_methylation_age/processed/runner_ready_micro_local_block_gap1000/group_labels.txt
+    task: gaussian
+    methods:
+      - GR_RHS
+      - RHS
+      - GHS_plus
+      - GIGG_MMLE
+      - LASSO_CV
+      - OLS
+    target_label: chronological_age
+    target_transform: none
+    response_standardization: train_center
+    covariate_mode: none
+    p0_strategy: sqrt_p
+    p0_groups_strategy: half_groups
+    test_fraction: 0.2
+    repeats: 1
+    shuffle: true
+    notes: >
+      Exploratory comparison only. This run uses the local methylation block grouping
+      derived from genomic proximity with a 1000bp adjacency threshold and no per-group
+      hard cap during preprocessing.

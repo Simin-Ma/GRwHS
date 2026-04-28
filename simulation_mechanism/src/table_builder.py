@@ -400,11 +400,98 @@ def write_latex_full_table(df, path: Path | str, *, group_col: str = "setting_id
     path_obj.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def build_figure2_data(summary_paired):
-    if summary_paired.empty:
-        return summary_paired
-    cols = [col for col in ["experiment_id", "setting_id", "method", "method_label", "group_auroc", "kappa_gap", "mse_overall", "n_paired"] if col in summary_paired.columns]
-    return summary_paired.loc[summary_paired["experiment_id"] == "M1", cols].copy()
+def build_figure2_data(summary_paired, paired_deltas, per_group_kappa):
+    pd = load_pandas()
+    frames: list[Any] = []
+
+    if not summary_paired.empty:
+        summary_cols = [
+            col
+            for col in [
+                "experiment_id",
+                "setting_id",
+                "method",
+                "method_label",
+                "group_auroc",
+                "kappa_gap",
+                "mse_overall",
+                "mse_signal",
+                "mse_null",
+                "null_group_mse",
+                "signal_group_mse",
+                "n_paired",
+            ]
+            if col in summary_paired.columns
+        ]
+        summary = summary_paired.loc[summary_paired["experiment_id"] == "M1", summary_cols].copy()
+        if not summary.empty:
+            summary["record_type"] = "method_summary"
+            frames.append(summary)
+
+    if not paired_deltas.empty:
+        delta_cols = [
+            col
+            for col in [
+                "experiment_id",
+                "setting_id",
+                "method",
+                "method_label",
+                "baseline_method",
+                "baseline_method_label",
+                "metric",
+                "metric_direction",
+                "mean_diff",
+                "ci95_lo",
+                "ci95_hi",
+                "wins_vs_baseline",
+                "losses_vs_baseline",
+                "ties_vs_baseline",
+                "n_effective_pairs",
+            ]
+            if col in paired_deltas.columns
+        ]
+        delta = paired_deltas.loc[
+            (paired_deltas["experiment_id"] == "M1")
+            & (paired_deltas["method"] == "GR_RHS")
+            & paired_deltas["metric"].astype(str).isin({"mse_overall", "mse_signal", "mse_null"}),
+            delta_cols,
+        ].copy()
+        if not delta.empty:
+            delta["record_type"] = "paired_delta"
+            frames.append(delta)
+
+    if not per_group_kappa.empty:
+        group = per_group_kappa.loc[
+            (per_group_kappa["experiment_id"] == "M1")
+            & (per_group_kappa["method"] == "GR_RHS")
+        ].copy()
+        if "paired_common_converged" in group.columns:
+            group = group.loc[group["paired_common_converged"].fillna(False).astype(bool)].copy()
+        group_cols = [
+            col
+            for col in [
+                "experiment_id",
+                "setting_id",
+                "method",
+                "method_label",
+                "replicate_id",
+                "group_id",
+                "group_role",
+                "is_active_group",
+                "true_group_l2_norm",
+                "kappa_group_mean",
+                "kappa_group_prob_gt_0_5",
+            ]
+            if col in group.columns
+        ]
+        group = group.loc[:, group_cols].copy()
+        if not group.empty:
+            group["record_type"] = "group_kappa"
+            frames.append(group)
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True, sort=False)
 
 
 def build_figure3_data(summary_paired, paired_deltas):
@@ -457,24 +544,134 @@ def build_figure4_representative_profile(paired_raw, per_group_kappa):
     return out
 
 
-def build_figure5_data(summary_paired):
+def build_figure5_data(summary_paired, paired_deltas):
+    pd = load_pandas()
     if summary_paired.empty:
-        return summary_paired
-    cols = [col for col in ["setting_id", "complexity_pattern", "within_group_pattern", "method", "method_label", "kappa_gap", "mse_overall", "n_paired"] if col in summary_paired.columns]
-    return summary_paired.loc[summary_paired["experiment_id"] == "M3", cols].copy()
+        return pd.DataFrame()
+
+    summary = summary_paired.loc[
+        (summary_paired["experiment_id"] == "M3")
+        & summary_paired["method"].astype(str).isin({"GR_RHS", "RHS"})
+    ].copy()
+    if summary.empty:
+        return pd.DataFrame()
+
+    delta = pd.DataFrame()
+    if not paired_deltas.empty:
+        delta = paired_deltas.loc[
+            (paired_deltas["experiment_id"] == "M3")
+            & paired_deltas["method"].astype(str).eq("GR_RHS")
+            & paired_deltas["baseline_method"].astype(str).eq("RHS")
+            & paired_deltas["metric"].astype(str).eq("mse_overall")
+        ].copy()
+
+    summary_cols = [
+        col
+        for col in [
+            "setting_id",
+            "setting_label",
+            "complexity_pattern",
+            "within_group_pattern",
+            "total_active_coeff",
+            "method",
+            "method_label",
+            "kappa_gap",
+            "mse_overall",
+            "mse_signal",
+            "n_paired",
+        ]
+        if col in summary.columns
+    ]
+    summary = summary.loc[:, summary_cols].copy()
+
+    delta_cols = [
+        col
+        for col in [
+            "setting_id",
+            "mean_diff",
+            "ci95_lo",
+            "ci95_hi",
+            "wins_vs_baseline",
+            "losses_vs_baseline",
+            "ties_vs_baseline",
+            "n_effective_pairs",
+        ]
+        if col in delta.columns
+    ]
+    delta = delta.loc[:, delta_cols].copy() if not delta.empty else pd.DataFrame(columns=delta_cols)
+    if not delta.empty:
+        delta = delta.rename(
+            columns={
+                "mean_diff": "gr_minus_rhs_mse_overall",
+                "ci95_lo": "gr_minus_rhs_mse_overall_ci95_lo",
+                "ci95_hi": "gr_minus_rhs_mse_overall_ci95_hi",
+                "wins_vs_baseline": "gr_wins_vs_rhs",
+                "losses_vs_baseline": "gr_losses_vs_rhs",
+                "ties_vs_baseline": "gr_ties_vs_rhs",
+            }
+        )
+
+    merged_rows: list[dict[str, Any]] = []
+    for setting_id, sub in summary.groupby("setting_id", sort=False):
+        row_gr = sub.loc[sub["method"].astype(str).eq("GR_RHS")]
+        row_rhs = sub.loc[sub["method"].astype(str).eq("RHS")]
+        if row_gr.empty or row_rhs.empty:
+            continue
+        row_gr = row_gr.iloc[0]
+        row_rhs = row_rhs.iloc[0]
+        delta_row = delta.loc[delta["setting_id"].astype(str).eq(str(setting_id))]
+        delta_item = delta_row.iloc[0] if not delta_row.empty else None
+        merged_rows.append(
+            {
+                "setting_id": str(setting_id),
+                "setting_label": str(row_gr["setting_label"]) if "setting_label" in row_gr.index else str(setting_id),
+                "complexity_pattern": str(row_gr["complexity_pattern"]),
+                "within_group_pattern": str(row_gr["within_group_pattern"]),
+                "total_active_coeff": float(row_gr["total_active_coeff"]) if "total_active_coeff" in row_gr.index and pd.notna(row_gr["total_active_coeff"]) else np.nan,
+                "kappa_gap": float(row_gr["kappa_gap"]) if "kappa_gap" in row_gr.index and pd.notna(row_gr["kappa_gap"]) else np.nan,
+                "gr_mse_overall": float(row_gr["mse_overall"]) if "mse_overall" in row_gr.index and pd.notna(row_gr["mse_overall"]) else np.nan,
+                "rhs_mse_overall": float(row_rhs["mse_overall"]) if "mse_overall" in row_rhs.index and pd.notna(row_rhs["mse_overall"]) else np.nan,
+                "gr_mse_signal": float(row_gr["mse_signal"]) if "mse_signal" in row_gr.index and pd.notna(row_gr["mse_signal"]) else np.nan,
+                "rhs_mse_signal": float(row_rhs["mse_signal"]) if "mse_signal" in row_rhs.index and pd.notna(row_rhs["mse_signal"]) else np.nan,
+                "n_paired": float(row_gr["n_paired"]) if "n_paired" in row_gr.index and pd.notna(row_gr["n_paired"]) else np.nan,
+                "gr_minus_rhs_mse_overall": float(delta_item["gr_minus_rhs_mse_overall"]) if delta_item is not None and pd.notna(delta_item.get("gr_minus_rhs_mse_overall")) else np.nan,
+                "gr_minus_rhs_mse_overall_ci95_lo": float(delta_item["gr_minus_rhs_mse_overall_ci95_lo"]) if delta_item is not None and pd.notna(delta_item.get("gr_minus_rhs_mse_overall_ci95_lo")) else np.nan,
+                "gr_minus_rhs_mse_overall_ci95_hi": float(delta_item["gr_minus_rhs_mse_overall_ci95_hi"]) if delta_item is not None and pd.notna(delta_item.get("gr_minus_rhs_mse_overall_ci95_hi")) else np.nan,
+                "gr_wins_vs_rhs": int(float(delta_item["gr_wins_vs_rhs"])) if delta_item is not None and pd.notna(delta_item.get("gr_wins_vs_rhs")) else 0,
+                "gr_losses_vs_rhs": int(float(delta_item["gr_losses_vs_rhs"])) if delta_item is not None and pd.notna(delta_item.get("gr_losses_vs_rhs")) else 0,
+                "gr_ties_vs_rhs": int(float(delta_item["gr_ties_vs_rhs"])) if delta_item is not None and pd.notna(delta_item.get("gr_ties_vs_rhs")) else 0,
+                "n_effective_pairs": float(delta_item["n_effective_pairs"]) if delta_item is not None and pd.notna(delta_item.get("n_effective_pairs")) else np.nan,
+            }
+        )
+    return pd.DataFrame(merged_rows)
 
 
 def build_figure6_data(summary_paired):
     if summary_paired.empty:
         return summary_paired
-    cols = [col for col in ["setting_id", "total_active_coeff", "method", "method_label", "kappa_gap", "mse_overall", "mse_signal", "tau_ratio_to_oracle", "n_paired"] if col in summary_paired.columns]
+    cols = [
+        col
+        for col in [
+            "setting_id",
+            "total_active_coeff",
+            "method",
+            "method_label",
+            "kappa_gap",
+            "null_group_mse",
+            "signal_group_mse",
+            "mse_signal",
+            "tau_ratio_to_oracle",
+            "n_paired",
+        ]
+        if col in summary_paired.columns
+    ]
     return summary_paired.loc[summary_paired["experiment_id"] == "M4", cols].copy()
 
 
 def build_figure6_delta_data(paired_deltas):
     if paired_deltas.empty:
         return paired_deltas
-    keep_metrics = {"kappa_gap", "mse_overall", "mse_signal"}
+    keep_metrics = {"kappa_gap", "null_group_mse", "signal_group_mse"}
     cols = [
         col
         for col in [
@@ -532,10 +729,10 @@ def build_paper_tables(
     compact.to_csv(compact_csv, index=False, float_format=CSV_FLOAT_FORMAT)
     write_markdown_compact_mechanism(compact, compact_md)
 
-    fig2 = build_figure2_data(summary_paired)
+    fig2 = build_figure2_data(summary_paired, paired_deltas, per_group_kappa)
     fig3 = build_figure3_data(summary_paired, paired_deltas)
     fig4 = build_figure4_representative_profile(paired_raw, per_group_kappa)
-    fig5 = build_figure5_data(summary_paired)
+    fig5 = build_figure5_data(summary_paired, paired_deltas)
     fig6 = build_figure6_data(summary_paired)
     fig6_delta = build_figure6_delta_data(paired_deltas)
 

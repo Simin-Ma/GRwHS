@@ -25,6 +25,7 @@ from ..utils import (
     method_result_label,
     print_experiment_result,
     sample_correlated_design,
+    save_fit_result_artifacts,
     save_dataframe,
     save_json,
     setup_logger,
@@ -115,7 +116,7 @@ def _ga_v2_complexity_worker(
         int,
         str,
     ]
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     (
         replicate_id,
         seed,
@@ -189,6 +190,50 @@ def _ga_v2_complexity_worker(
     )
 
     out: list[dict[str, Any]] = []
+    artifact_rows: list[dict[str, Any]] = []
+    base_dir = Path(log_path).resolve().parents[1]
+    dataset_dir = ensure_dir(base_dir / "results" / "group_aware_v2" / "ga_v2_complexity_mismatch" / "datasets" / f"rep_{int(replicate_id):03d}")
+    dataset_arrays_path = dataset_dir / "dataset_arrays.npz"
+    dataset_metadata_path = dataset_dir / "dataset_metadata.json"
+    np.savez_compressed(
+        dataset_arrays_path,
+        X_train=np.asarray(ds["X"], dtype=float),
+        y_train=np.asarray(ds["y"], dtype=float),
+        X_test=np.asarray(X_test, dtype=float),
+        y_test=np.asarray(y_test, dtype=float),
+        beta_true=np.asarray(beta_true, dtype=float),
+        cov_x=np.asarray(cov_x, dtype=float),
+    )
+    save_json(
+        {
+            "suite": "group_aware_v2",
+            "experiment_family": "ga_v2_complexity_mismatch",
+            "replicate_id": int(replicate_id),
+            "seed": int(s),
+            "group_sizes": [int(v) for v in group_sizes],
+            "groups": [[int(idx) for idx in group] for group in ds["groups"]],
+            "pattern": str(pattern),
+            "within_group_pattern": str(within_group_pattern),
+            "total_active_coeff": int(total_active_coeff),
+            "rho_within": float(rho_within),
+            "rho_between": float(rho_between),
+            "target_snr": float(target_snr),
+            "sigma2": float(sigma2),
+            "n_train": int(n_train),
+            "n_test": int(n_test),
+        },
+        dataset_metadata_path,
+    )
+    artifact_rows.append(
+        {
+            "artifact_type": "dataset",
+            "experiment_family": "ga_v2_complexity_mismatch",
+            "replicate_id": int(replicate_id),
+            "seed": int(s),
+            "dataset_arrays": str(dataset_arrays_path),
+            "dataset_metadata": str(dataset_metadata_path),
+        }
+    )
     for method, res in fits.items():
         row = summarize_method_row(
             result=res,
@@ -219,6 +264,42 @@ def _ga_v2_complexity_worker(
                 "group_sizes": "|".join(str(int(v)) for v in group_sizes),
             }
         )
+        fit_artifacts = save_fit_result_artifacts(
+            dataset_dir.parent.parent / "fit_details" / f"rep_{int(replicate_id):03d}" / str(method),
+            result=res,
+            run_context={
+                "suite": "group_aware_v2",
+                "experiment_family": "ga_v2_complexity_mismatch",
+                "replicate_id": int(replicate_id),
+                "seed": int(s),
+                "method": str(method),
+                "pattern": str(pattern),
+                "within_group_pattern": str(within_group_pattern),
+                "target_snr": float(target_snr),
+            },
+            coefficient_truth=beta_true,
+            extra_json={
+                "metrics": row,
+                "dataset_context": {
+                    "group_sizes": [int(v) for v in group_sizes],
+                    "groups": [[int(idx) for idx in group] for group in ds["groups"]],
+                    "total_active_coeff": int(total_active_coeff),
+                },
+            },
+        )
+        row["fit_artifact_dir"] = str(fit_artifacts.get("fit_dir", ""))
+        row["dataset_arrays_path"] = str(dataset_arrays_path)
+        row["dataset_metadata_path"] = str(dataset_metadata_path)
+        artifact_rows.append(
+            {
+                "artifact_type": "fit_result",
+                "experiment_family": "ga_v2_complexity_mismatch",
+                "replicate_id": int(replicate_id),
+                "seed": int(s),
+                "method": str(method),
+                **fit_artifacts,
+            }
+        )
         print_experiment_result(
             "GA-V2-B",
             row,
@@ -227,7 +308,7 @@ def _ga_v2_complexity_worker(
             log_path=log_path,
         )
         out.append(row)
-    return out
+    return out, artifact_rows
 
 
 def run_ga_v2_complexity_mismatch(
@@ -319,8 +400,10 @@ def run_ga_v2_complexity_mismatch(
         progress_desc="GA-V2 Complexity Mismatch",
     )
     rows: list[dict[str, Any]] = []
-    for chunk in rows_nested:
-        rows.extend(chunk)
+    artifact_rows: list[dict[str, Any]] = []
+    for row_chunk, artifact_chunk in rows_nested:
+        rows.extend(row_chunk)
+        artifact_rows.extend(artifact_chunk)
 
     raw = pd.DataFrame(rows)
     if not raw.empty and "method" in raw.columns:
@@ -359,6 +442,7 @@ def run_ga_v2_complexity_mismatch(
     save_dataframe(summary, out_dir / "summary_paired.csv")
     save_dataframe(paired_stats, out_dir / "paired_stats.csv")
     save_dataframe(summary, tab_dir / "ga_v2_complexity_mismatch_summary.csv")
+    save_json(artifact_rows, out_dir / "artifact_catalog.json")
     save_json(
         {
             "suite": "group_aware_v2",
@@ -384,6 +468,7 @@ def run_ga_v2_complexity_mismatch(
         out_dir / "summary.csv",
         out_dir / "summary_paired.csv",
         out_dir / "paired_stats.csv",
+        out_dir / "artifact_catalog.json",
         out_dir / "meta.json",
         tab_dir / "ga_v2_complexity_mismatch_summary.csv",
     )
@@ -394,6 +479,9 @@ def run_ga_v2_complexity_mismatch(
         "summary": str(out_dir / "summary.csv"),
         "summary_paired": str(out_dir / "summary_paired.csv"),
         "paired_stats": str(out_dir / "paired_stats.csv"),
+        "artifact_catalog": str(out_dir / "artifact_catalog.json"),
+        "fit_details_dir": str(out_dir / "fit_details"),
+        "datasets_dir": str(out_dir / "datasets"),
         "table": str(tab_dir / "ga_v2_complexity_mismatch_summary.csv"),
         "meta": str(out_dir / "meta.json"),
     }

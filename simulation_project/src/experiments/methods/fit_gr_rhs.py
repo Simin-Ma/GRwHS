@@ -336,19 +336,91 @@ def _build_gibbs_staged(
     initial_chain_states: list[dict[str, Any]] | None = None,
     resume_no_burnin: bool = False,
     hard_design: bool = False,
+    budget_scale: float | None = None,
 ) -> GRRHS_Gibbs_Staged:
     warmup = max(40, int(sampler.warmup))
     draws = max(20, int(sampler.post_warmup_draws))
+    budget_scale_use = 1.0 if budget_scale is None else float(max(0.05, min(float(budget_scale), 4.0)))
+    light_budget = bool(budget_scale is not None and budget_scale_use < 0.999)
     hard_mult = 2.2 if bool(hard_design) else 1.25
-    phase_a_max = int(max(220, round(warmup * 1.55 * hard_mult)))
-    phase_b_max = int(max(140, round(warmup * 0.80 * hard_mult)))
-    phase_a_hyper_only = int(max(80, min(420, round(phase_a_max * 0.52))))
-    min_phase_a = int(max(90, min(340, round(phase_a_max * 0.62))))
-    min_phase_b = int(max(60, min(240, round(phase_b_max * 0.62))))
-    geometry_window = int(max(24, min(160, round(min_phase_a * 0.62))))
-    transition_window = int(max(24, min(140, round(min_phase_b * 0.62))))
+    micro_budget = bool(light_budget and budget_scale_use <= 0.15)
+    if micro_budget:
+        phase_a_floor = 16
+        phase_b_floor = 10
+        hyper_only_floor = 6
+        min_phase_a_floor = 8
+        min_phase_b_floor = 6
+        window_floor = 6
+    else:
+        phase_a_floor = 48 if light_budget else 220
+        phase_b_floor = 28 if light_budget else 140
+        hyper_only_floor = 16 if light_budget else 80
+        min_phase_a_floor = 24 if light_budget else 90
+        min_phase_b_floor = 18 if light_budget else 60
+        window_floor = 12 if light_budget else 24
+    phase_a_max = int(max(phase_a_floor, round(warmup * 1.55 * hard_mult * budget_scale_use)))
+    phase_b_max = int(max(phase_b_floor, round(warmup * 0.80 * hard_mult * budget_scale_use)))
+    if micro_budget:
+        phase_a_hyper_only_cap = 18
+        min_phase_a_cap = 24
+        min_phase_b_cap = 18
+        geometry_window_cap = 18
+        transition_window_cap = 16
+    else:
+        phase_a_hyper_only_cap = 180 if light_budget else 420
+        min_phase_a_cap = 180 if light_budget else 340
+        min_phase_b_cap = 120 if light_budget else 240
+        geometry_window_cap = 80 if light_budget else 160
+        transition_window_cap = 70 if light_budget else 140
+    phase_a_hyper_only = int(max(hyper_only_floor, min(phase_a_hyper_only_cap, round(phase_a_max * 0.52))))
+    min_phase_a = int(max(min_phase_a_floor, min(min_phase_a_cap, round(phase_a_max * 0.62))))
+    min_phase_b = int(max(min_phase_b_floor, min(min_phase_b_cap, round(phase_b_max * 0.62))))
+    geometry_window = int(max(window_floor, min(geometry_window_cap, round(min_phase_a * 0.62))))
+    transition_window = int(max(window_floor, min(transition_window_cap, round(min_phase_b * 0.62))))
     total_iters = int(max(4, phase_a_max + phase_b_max + draws))
     burnin = int(max(0, min(phase_a_max + phase_b_max, total_iters - 1)))
+    grouped_tau_refresh_repeats = 1
+    grouped_sigma_tau_block_repeats = 2
+    slice_max_steps = 200
+    phase_a_late_beta_refresh = True
+    phase_b_extra_beta_refresh = True
+    concentrated_block_refresh = True
+    structure_aware_warmup = True
+    distributed_block_top_groups = 3
+    concentrated_top_groups = 2
+    phase_a_refresh_interval = 12
+    phase_a_refresh_repeats = 1
+    phase_b_initial_extra_refresh_steps = 20
+    phase_b_initial_refresh_repeats = 1
+    phase_a_block_refresh_interval = 10
+    phase_b_block_refresh_steps = 24
+    phase_b_block_refresh_repeats = 1
+
+    if light_budget:
+        slice_max_steps = 96 if not micro_budget else 56
+        grouped_tau_refresh_repeats = 0 if micro_budget else 1
+        grouped_sigma_tau_block_repeats = 0 if micro_budget else 1
+        phase_a_refresh_interval = 18 if not micro_budget else 999999
+        phase_a_refresh_repeats = 0 if micro_budget else 1
+        phase_b_initial_extra_refresh_steps = 8 if not micro_budget else 0
+        phase_b_initial_refresh_repeats = 0 if micro_budget else 1
+        phase_a_block_refresh_interval = 18 if not micro_budget else 999999
+        phase_b_block_refresh_steps = 8 if not micro_budget else 0
+        phase_b_block_refresh_repeats = 0 if micro_budget else 1
+        distributed_block_top_groups = 2 if not micro_budget else 1
+        concentrated_top_groups = 1
+        if budget_scale_use <= 0.35:
+            phase_a_late_beta_refresh = False
+            concentrated_block_refresh = False
+        if budget_scale_use <= 0.20:
+            phase_b_extra_beta_refresh = False
+            structure_aware_warmup = False
+        if micro_budget:
+            phase_a_late_beta_refresh = False
+            phase_b_extra_beta_refresh = False
+            concentrated_block_refresh = False
+            structure_aware_warmup = False
+
     return GRRHS_Gibbs_Staged(
         alpha_kappa=float(alpha_kappa),
         beta_kappa=float(beta_kappa),
@@ -377,6 +449,22 @@ def _build_gibbs_staged(
         transition_window=int(transition_window),
         geometry_tol=0.075 if not bool(hard_design) else 0.095,
         transition_tol=0.09 if not bool(hard_design) else 0.11,
+        slice_max_steps=int(slice_max_steps),
+        grouped_tau_refresh_repeats=int(grouped_tau_refresh_repeats),
+        grouped_sigma_tau_block_repeats=int(grouped_sigma_tau_block_repeats),
+        phase_a_late_beta_refresh=bool(phase_a_late_beta_refresh),
+        phase_b_extra_beta_refresh=bool(phase_b_extra_beta_refresh),
+        phase_a_refresh_interval=int(phase_a_refresh_interval),
+        phase_a_refresh_repeats=int(phase_a_refresh_repeats),
+        phase_b_initial_extra_refresh_steps=int(phase_b_initial_extra_refresh_steps),
+        phase_b_initial_refresh_repeats=int(phase_b_initial_refresh_repeats),
+        concentrated_block_refresh=bool(concentrated_block_refresh),
+        concentrated_top_groups=int(concentrated_top_groups),
+        phase_a_block_refresh_interval=int(phase_a_block_refresh_interval),
+        phase_b_block_refresh_steps=int(phase_b_block_refresh_steps),
+        phase_b_block_refresh_repeats=int(phase_b_block_refresh_repeats),
+        structure_aware_warmup=bool(structure_aware_warmup),
+        distributed_block_top_groups=int(distributed_block_top_groups),
     )
 
 
@@ -401,6 +489,7 @@ def fit_gr_rhs(
     retry_attempt: int = 0,
     warm_start_strategy: str = "ridge",
     sampler_backend: str | None = None,
+    gibbs_budget_scale: float | None = None,
 ) -> FitResult:
     tracked = ["beta", "tau", "kappa"]
     groups_use = as_int_groups(groups)
@@ -506,6 +595,7 @@ def fit_gr_rhs(
                 initial_chain_states=init_states,
                 resume_no_burnin=bool(init_states),
                 hard_design=bool(design_profile.get("hard_design", False)),
+                budget_scale=gibbs_budget_scale,
             )
 
         if backend_name == "gibbs_staged":
@@ -563,6 +653,7 @@ def fit_gr_rhs(
             "warm_start_strategy": str(warm_mode),
             "hard_design": bool(design_profile.get("hard_design", False)),
             "design_profile": design_profile,
+            "gibbs_budget_scale": None if gibbs_budget_scale is None else float(gibbs_budget_scale),
         }
         sampler_diag = diagnostics.get("sampler_diagnostics")
         if backend_name == "gibbs_staged" and isinstance(sampler_diag, dict):

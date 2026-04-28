@@ -34,6 +34,7 @@ class LoadedDataset:
     C: Optional[np.ndarray] = None
     y: Optional[np.ndarray] = None
     groups: Optional[List[List[int]]] = None
+    group_labels: Optional[List[str]] = None
     feature_names: Optional[List[str]] = None
     covariate_feature_names: Optional[List[str]] = None
     beta: Optional[np.ndarray] = None
@@ -152,6 +153,7 @@ def load_real_dataset(
         path_feature_names (str, optional): text/JSON/YAML file listing feature names in order.
         path_covariate_feature_names (str, optional): text/JSON/YAML file listing covariate names in order.
         path_group_map (str, optional): JSON/YAML/CSV mapping feature name to group id.
+        path_group_labels (str, optional): text/JSON/YAML file listing group labels ordered by group id.
         beta_path (str, optional): ground-truth coefficients (for simulations based on real design matrices).
         beta_key (str, optional): companion key when ``beta_path`` is .npz.
     """
@@ -202,6 +204,10 @@ def load_real_dataset(
     if loader_cfg.get('path_group_map'):
         group_map = _load_group_map(_ensure_path(loader_cfg['path_group_map'], root))
 
+    group_labels: Optional[List[str]] = None
+    if loader_cfg.get('path_group_labels'):
+        group_labels = _load_feature_names(_ensure_path(loader_cfg['path_group_labels'], root))
+
     groups: Optional[List[List[int]]] = None
     if loader_cfg.get('groups') is not None:
         groups = [[int(idx) for idx in group] for group in loader_cfg['groups']]
@@ -235,6 +241,7 @@ def load_real_dataset(
             "path_feature_names",
             "path_covariate_feature_names",
             "path_group_map",
+            "path_group_labels",
             "beta_path",
             "beta_key",
         }
@@ -250,6 +257,7 @@ def load_real_dataset(
         C=C,
         y=y,
         groups=groups,
+        group_labels=group_labels,
         feature_names=feature_names,
         covariate_feature_names=covariate_feature_names,
         beta=beta,

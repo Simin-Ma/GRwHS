@@ -13,6 +13,12 @@ from .utils import MASTER_SEED
 
 
 def force_until_converged_gate(gate: ConvergenceGateSpec) -> ConvergenceGateSpec:
+    """
+    Package-level policy for real_data_experiment:
+    all Bayesian methods are always run with convergence enforcement enabled and
+    the retry budget set to the legacy "until converged" mode
+    (`max_convergence_retries = -1` sentinel).
+    """
     return replace(
         gate,
         enforce_bayes_convergence=True,
@@ -117,6 +123,56 @@ def build_default_config() -> RealDataConfig:
             repeats=10,
             methods=methods.roster,
             notes="Direct grouped-design comparison without extra covariates.",
+        ),
+        DatasetSpec(
+            dataset_id="gse40279_age_gene_groups_smoke",
+            label="GSE40279 Methylation Age (smoke)",
+            description="Human methylation-age regression with disjoint single-gene proxy groups from 450k CpGs.",
+            loader={
+                "path_X": "data/real/gse40279_methylation_age/processed/runner_ready_smoke/X.npy",
+                "path_y": "data/real/gse40279_methylation_age/processed/runner_ready_smoke/y.npy",
+                "path_feature_names": "data/real/gse40279_methylation_age/processed/runner_ready_smoke/feature_names.txt",
+                "path_group_map": "data/real/gse40279_methylation_age/processed/runner_ready_smoke/group_map.json",
+                "path_group_labels": "data/real/gse40279_methylation_age/processed/runner_ready_smoke/group_labels.txt",
+            },
+            task="gaussian",
+            methods=("GR_RHS", "RHS"),
+            target_label="chronological_age",
+            covariate_mode="none",
+            response_standardization="train_center",
+            p0_strategy="sqrt_p",
+            p0_groups_strategy="half_groups",
+            test_fraction=0.2,
+            repeats=2,
+            notes=(
+                "Smoke runner uses top-variance CpGs grouped by a single-gene proxy derived from the "
+                "Illumina 450k UCSC_RefGene_Name annotation."
+            ),
+        ),
+        DatasetSpec(
+            dataset_id="gse40279_age_gene_groups_micro",
+            label="GSE40279 Methylation Age (micro)",
+            description="Micro runner-verification subset from GSE40279 with the same grouping rule but 200 CpGs.",
+            loader={
+                "path_X": "data/real/gse40279_methylation_age/processed/runner_ready_micro/X.npy",
+                "path_y": "data/real/gse40279_methylation_age/processed/runner_ready_micro/y.npy",
+                "path_feature_names": "data/real/gse40279_methylation_age/processed/runner_ready_micro/feature_names.txt",
+                "path_group_map": "data/real/gse40279_methylation_age/processed/runner_ready_micro/group_map.json",
+                "path_group_labels": "data/real/gse40279_methylation_age/processed/runner_ready_micro/group_labels.txt",
+            },
+            task="gaussian",
+            methods=("GR_RHS", "RHS"),
+            target_label="chronological_age",
+            covariate_mode="none",
+            response_standardization="train_center",
+            p0_strategy="sqrt_p",
+            p0_groups_strategy="half_groups",
+            test_fraction=0.2,
+            repeats=1,
+            notes=(
+                "Micro runner is a lightweight real-data closure check derived from the same GSE40279 "
+                "preprocessing pipeline as the 2000-feature smoke asset."
+            ),
         ),
     )
     return RealDataConfig(

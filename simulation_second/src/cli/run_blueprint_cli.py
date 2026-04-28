@@ -116,6 +116,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory containing raw_results.csv.",
     )
 
+    figures = sub.add_parser("build-figures", help="Rebuild benchmark figures from an existing results directory.")
+    figures.add_argument(
+        "--results-dir",
+        default="outputs/history/simulation_second/benchmark_main",
+        help="Directory containing benchmark figure-data CSVs.",
+    )
+
     return parser
 
 
@@ -227,6 +234,13 @@ def main(argv: list[str] | None = None) -> int:
             args.results_dir,
             method_order=config.methods.roster,
         )
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "build-figures":
+        from ..plotting import build_benchmark_figures_from_results_dir
+
+        result = build_benchmark_figures_from_results_dir(args.results_dir)
         print(json.dumps(result, indent=2))
         return 0
 

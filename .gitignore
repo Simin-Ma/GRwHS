@@ -22,12 +22,29 @@ dist/
 # Notebooks checkpoints
 .ipynb_checkpoints/
 
+# Local simulation notebook
+/Simulation.ipynb
+/simulation.ipynb
+
 # Experiment outputs
 outputs/
 tmp/
 simulation_project/figures/
 simulation_project/logs/
 simulation_project/results/
+
+# Local real-data inputs and generated analysis artifacts
+/data/real/**/raw/
+/data/real/**/processed/
+*.npy
+
+# Generated report figures are reproducible from scripts; keep small CSV summaries only
+/docs/generated_figures/*.png
+/docs/generated_figures/*.pdf
+/docs/generated_figures/*.svg
+
+# Local profiling/debug captures
+/importtime_*.txt
 
 # Generic generated outputs (any depth)
 **/output/

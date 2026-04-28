@@ -123,7 +123,7 @@ class RunnerConfig:
     n_jobs: int = 1
     method_jobs: int = 1
     output_dir: str = "outputs/history/simulation_mechanism/mechanism_main"
-    save_datasets: bool = False
+    save_datasets: bool = True
     build_tables: bool = True
     baseline_method: str = "RHS"
     ablation_baseline_method: str = "GR_RHS"
@@ -322,7 +322,7 @@ def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig
             output_dir=str(
                 runner_payload.get("output_dir", "outputs/history/simulation_mechanism/mechanism_main")
             ),
-            save_datasets=bool(runner_payload.get("save_datasets", False)),
+            save_datasets=bool(runner_payload.get("save_datasets", True)),
             build_tables=bool(runner_payload.get("build_tables", True)),
             baseline_method=str(runner_payload.get("baseline_method", "RHS")),
             ablation_baseline_method=str(runner_payload.get("ablation_baseline_method", "GR_RHS")),

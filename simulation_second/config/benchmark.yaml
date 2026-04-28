@@ -47,7 +47,7 @@ runner:
   n_jobs: 1
   method_jobs: 1
   output_dir: outputs/history/simulation_second/benchmark_main
-  save_datasets: false
+  save_datasets: true
   build_tables: true
   baseline_method: RHS
   required_metrics_for_pairing:

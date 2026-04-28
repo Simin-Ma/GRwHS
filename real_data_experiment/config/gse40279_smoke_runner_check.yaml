@@ -1,0 +1,72 @@
+package: real_data_experiment
+description: Lightweight runner-verification config for the 2000-feature GSE40279 smoke asset.
+
+convergence_gate:
+  enforce_bayes_convergence: true
+  max_convergence_retries: -1
+  bayes_min_chains: 1
+  chains: 1
+  warmup: 20
+  post_warmup_draws: 20
+  adapt_delta: 0.9
+  max_treedepth: 8
+  strict_adapt_delta: 0.92
+  strict_max_treedepth: 9
+  rhat_threshold: 2.5
+  ess_threshold: 5.0
+  max_divergence_ratio: 1.0
+
+methods:
+  roster:
+    - GR_RHS
+    - RHS
+  grrhs_kwargs:
+    tau_target: groups
+    progress_bar: false
+    gibbs_budget_scale: 0.05
+  gigg_config:
+    allow_budget_retry: true
+    extra_retry: 0
+    no_retry: true
+
+runner:
+  output_dir: outputs/history/real_data_experiment/smoke_runner_check
+  seed: 20260426
+  n_jobs: 1
+  method_jobs: 1
+  build_tables: false
+  save_splits: true
+  baseline_method: RHS
+  required_metrics_for_pairing:
+    - rmse_test
+    - mae_test
+    - lpd_test
+    - r2_test
+
+datasets:
+  - dataset_id: gse40279_age_gene_groups_smoke
+    label: GSE40279 Methylation Age (smoke)
+    description: Human methylation-age regression with disjoint single-gene proxy groups from 450k CpGs.
+    loader:
+      path_X: data/real/gse40279_methylation_age/processed/runner_ready_smoke/X.npy
+      path_y: data/real/gse40279_methylation_age/processed/runner_ready_smoke/y.npy
+      path_feature_names: data/real/gse40279_methylation_age/processed/runner_ready_smoke/feature_names.txt
+      path_group_map: data/real/gse40279_methylation_age/processed/runner_ready_smoke/group_map.json
+      path_group_labels: data/real/gse40279_methylation_age/processed/runner_ready_smoke/group_labels.txt
+    task: gaussian
+    methods:
+      - GR_RHS
+      - RHS
+    target_label: chronological_age
+    target_transform: none
+    response_standardization: train_center
+    covariate_mode: none
+    p0_strategy: sqrt_p
+    p0_groups_strategy: half_groups
+    test_fraction: 0.2
+    repeats: 1
+    shuffle: true
+    notes: >
+      Runner-verification only. This config keeps the full 2000-feature GSE40279 smoke asset
+      but uses a single Bayesian chain plus a tiny staged-Gibbs budget to validate that the
+      real-data execution path can finish end-to-end. It is not intended as paper evidence.

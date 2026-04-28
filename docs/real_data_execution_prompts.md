@@ -4,6 +4,8 @@
 
 本文档给出的是可直接复制给 Codex 的执行 prompt。建议不要一次性把所有任务塞进一个 prompt，而是按阶段逐个执行。
 
+真实数据实验同样遵循 `convergence-first` 原则：Bayesian 方法必须启用 convergence gate 并以收敛为前提；正式比较只讨论 `status = ok` 且 `converged = True` 的结果，方法间结论优先基于 common-converged paired subset。
+
 建议顺序：
 
 1. 先用 Prompt 1 生成 `GSE40279 smoke`
@@ -108,7 +110,7 @@
 1. 不要改动 simulation_second 或 simulation_mechanism 的既有行为
 2. 尽量复用现有 config.py、dataset.py、fitting.py、evaluation.py
 3. 保存目录风格对齐 outputs/history/real_data_experiment/main
-4. 保持 Bayesian convergence gate 的使用逻辑与现有配置一致
+4. 必须强制启用 Bayesian convergence gate，并保持 until-converged 逻辑与现有配置一致
 5. 如果发现 __init__.py 中引用了不存在的 runner，请一起修复
 
 验证要求：
@@ -138,12 +140,15 @@
 3. 必须保证 paired split
 4. 必须记录 rmse_test、mae_test、r2_test、lpd_test
 5. 同时导出 group_selected_count、group_norm_entropy、top_groups_json、kappa_group_mean_json
+6. Bayesian 方法只有在 `status = ok` 且 `converged = True` 时才算有效 repeat
+7. 正式比较必须基于 common-converged paired subset；如果 `GR_RHS` 与 `RHS` 没有共同收敛 repeat，要明确报告“本次 smoke 未形成正式比较证据”
 
 总结要求：
 1. 给出每个 repeat 的核心指标
 2. 给出 GR_RHS 相对 RHS 的 paired 差值
 3. 指出结果更像“预测优势”还是“结构性差异更明显而预测差异温和”
 4. 如果结果不稳定，明确说出是算力问题、收敛问题还是数据集问题
+5. 明确报告每个方法的 `n_runs`、`n_converged` 和最终 `n_paired`
 
 请直接执行并汇总结果。
 ```
@@ -166,38 +171,27 @@
 3. 不要改成 pathway overlaps
 4. 保持 Gaussian regression 任务
 5. 主表指标与结构性指标都要保留
+6. Bayesian 方法必须继续使用 until-converged gate，并在结果里明确报告 `n_converged`
+7. 论文级比较必须以 common-converged paired summary / paper tables 为准，不能用各方法单独过滤后的 summary 混写结论
 
 运行建议：
 1. 先做 repeats=2 的 main smoke
 2. 如果可行，再扩到 repeats=10
-3. 输出一版适合写进 paper 的结果摘要
+3. 输出一版适合写进 paper 的结果摘要，并同时说明 `n_paired` 覆盖率
 
 请直接完成仓库改动、运行和总结。
 ```
 
-## Prompt 6：增加确认性数据集 `GSE80672`
+## Prompt 6：暂不扩展 `GSE80672`
 
 ```text
-请在 GSE40279 跑通之后，为 GR-RHS 真实数据实验增加第二个成熟确认性数据集：GSE80672（mouse methylation age）。
+当前真实数据主线暂时只保留 GSE40279。
 
-目标：
-1. 创建 data/real/gse80672_mouse_methylation_age/
-2. 构造 runner_ready_smoke
-3. 优先使用 processed supplementary files；如果格式复杂，再明确报告阻塞点
-4. 使用连续年龄作为 y
-5. 采用 nearest-gene 或等价的单组映射规则，保证 group_map.json 满足 single-group-id 约束
-
-硬性约束：
-1. 这次不要碰 TCGA
-2. 仍然保持 gaussian 任务
-3. 仍然先做 smoke 版
-4. 必须记录与 GSE40279 的差异：样本数、特征数、组数、预处理难点
-5. 如果 raw/processed 文件结构过重，请先产出一个最小可跑子集
-
-完成后：
-1. 注册 dataset spec
-2. 跑一次 smoke split 检查
-3. 如果有余力，跑 repeats=2 的最小实验
+要求：
+1. 不再接入 GSE80672
+2. 不保留 GSE80672 的下载文件、预处理脚本、dataset spec 或 runner 配置
+3. 如仓库里曾尝试过 GSE80672，请显式清理相关目录与引用
+4. 后续真实数据实验先聚焦 GSE40279 的 smoke/main 与 convergence-first 结果整理
 ```
 
 ## Prompt 7：第二阶段扩展到 `TCGA`
@@ -231,8 +225,7 @@
 请把当前仓库的 GR-RHS 真实数据验证路线，按“先主线可跑、再补强说服力”的原则完整推进。优先路线是：
 
 1. GSE40279 human methylation age
-2. GSE80672 mouse methylation age
-3. TCGA 作为第二阶段扩展，不要一开始就强行接入
+2. TCGA 作为第二阶段扩展，不要一开始就强行接入
 
 请按以下顺序执行：
 1. 检查并利用现有 real_data_experiment 骨架和 data/real runner_ready 约定
@@ -241,7 +234,7 @@
 4. 检查 real_data_experiment 是否缺 runner/cli，缺则补齐最小闭环
 5. 跑 GSE40279 smoke 实验
 6. 构造 GSE40279 main 版本
-7. 如进展顺利，再接入 GSE80672 smoke
+7. 不要再扩展 GSE80672，优先把 GSE40279 跑稳并整理结果
 8. 每完成一个阶段，都给出当前可交付物、阻塞点和下一步建议
 
 硬性约束：
@@ -251,6 +244,7 @@
 4. 必须优先复用仓库已有目录结构、配置模式和输出风格
 5. 不要回退或覆盖用户现有未提交改动
 6. 遇到下载、注释或运行阻塞时，要给出精确文件名、路径和错误，而不是泛泛描述
+7. 真实数据实验必须保持 convergence-first：Bayesian 方法强制 until-converged，正式方法比较只看 common-converged paired 结果
 
 请直接在仓库里实施，不只写方案。
 ```

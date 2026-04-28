@@ -22,7 +22,17 @@ DEFAULT_DATASET_GROUP_COLS = (
     "notes",
 )
 DEFAULT_REQUIRED_METRICS = ("rmse_test", "mae_test", "lpd_test", "r2_test")
-DEFAULT_DELTA_METRICS = ("rmse_test", "mae_test", "lpd_test", "r2_test", "group_selected_count")
+DEFAULT_DELTA_METRICS = (
+    "rmse_test",
+    "mae_test",
+    "lpd_test",
+    "r2_test",
+    "pred_coverage_90",
+    "pred_coverage_95",
+    "avg_pred_interval_length_90",
+    "avg_pred_interval_length_95",
+    "group_selected_count",
+)
 
 
 def default_dataset_group_cols(raw=None) -> list[str]:
@@ -71,6 +81,10 @@ def _aggregate_metrics(valid, *, group_cols: Sequence[str], count_name: str):
         "mae_test": ("mae_test", "mean"),
         "r2_test": ("r2_test", "mean"),
         "lpd_test": ("lpd_test", "mean"),
+        "avg_pred_interval_length_90": ("avg_pred_interval_length_90", "mean"),
+        "pred_coverage_90": ("pred_coverage_90", "mean"),
+        "avg_pred_interval_length_95": ("avg_pred_interval_length_95", "mean"),
+        "pred_coverage_95": ("pred_coverage_95", "mean"),
         "runtime_mean": ("runtime_seconds", "mean"),
         "runtime_max": ("runtime_seconds", "max"),
         "fit_attempts_mean": ("fit_attempts", "mean"),
@@ -199,7 +213,7 @@ def build_paired_summary(
 
 def _metric_direction(metric: str) -> str:
     name = str(metric)
-    if name.startswith("lpd") or name.startswith("r2"):
+    if name.startswith("lpd") or name.startswith("r2") or ("coverage" in name):
         return "larger_is_better"
     return "smaller_is_better"
 

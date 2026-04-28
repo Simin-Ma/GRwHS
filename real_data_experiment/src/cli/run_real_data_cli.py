@@ -139,3 +139,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.error(f"Unknown command: {args.command!r}")
     return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -9,10 +9,10 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from simulation_project.src.experiments.runtime import _parallel_rows
-from simulation_project.src.utils import FitResult, load_pandas
+from simulation_project.src.utils import FitResult, load_pandas, save_fit_result_artifacts
 
 from .config import dataset_spec_from_dict, force_until_converged_gate
-from .dataset import load_prepared_real_dataset, prepare_split, save_prepared_split
+from .dataset import load_prepared_real_dataset, prepare_split, save_prepared_real_dataset, save_prepared_split
 from .evaluation import evaluate_method_result
 from .fitting import fit_real_data_methods
 from .reporting import (
@@ -95,6 +95,7 @@ def _task_payloads(config: RealDataConfig) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
     for dataset in config.datasets:
         dataset_methods = [method for method in config.methods.roster if method in set(dataset.methods)]
+        dataset_root = Path(config.runner.output_dir) / "datasets" / dataset.dataset_id
         for replicate_id in range(1, int(dataset.repeats) + 1):
             tasks.append(
                 {
@@ -106,8 +107,11 @@ def _task_payloads(config: RealDataConfig) -> list[dict[str, Any]]:
                     "grrhs_kwargs": dict(config.methods.grrhs_kwargs),
                     "gigg_config": dict(config.methods.gigg_config),
                     "method_jobs": int(config.runner.method_jobs),
-                    "save_splits": bool(config.runner.save_splits),
+                    "save_splits": True,
+                    "dataset_arrays_path": str(dataset_root / "dataset_arrays.npz"),
+                    "dataset_metadata_path": str(dataset_root / "dataset_metadata.json"),
                     "split_dir": str(Path(config.runner.output_dir) / "splits" / dataset.dataset_id / f"rep_{replicate_id:03d}"),
+                    "fit_detail_dir": str(Path(config.runner.output_dir) / "fit_details" / dataset.dataset_id / f"rep_{replicate_id:03d}"),
                 }
             )
     return tasks
@@ -119,16 +123,21 @@ def _gate_from_payload(payload: Mapping[str, Any]):
     return ConvergenceGateSpec(**dict(payload))
 
 
-def _run_replicate_task(task: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
     spec = dataset_spec_from_dict(task["dataset"], default_methods=tuple(task.get("methods", [])))
     dataset = load_prepared_real_dataset(spec)
+    dataset_artifacts = {
+        "dataset_arrays": str(task.get("dataset_arrays_path", "")),
+        "dataset_metadata": str(task.get("dataset_metadata_path", "")),
+    }
     split = prepare_split(
         dataset,
         replicate_id=int(task["replicate_id"]),
         master_seed=int(task["master_seed"]),
     )
-    if bool(task.get("save_splits", False)):
-        save_prepared_split(split, Path(str(task["split_dir"])))
+    split_artifacts: dict[str, str] = {}
+    if bool(task.get("save_splits", True)):
+        split_artifacts = save_prepared_split(split, Path(str(task["split_dir"])))
 
     if split.X_train_used is None or split.y_train_used is None:
         raise RuntimeError(f"Prepared split for dataset '{dataset.dataset_id}' is missing model-ready train arrays.")
@@ -158,9 +167,66 @@ def _run_replicate_task(task: Mapping[str, Any]) -> list[dict[str, Any]]:
 
     group_sizes = [int(len(group)) for group in split.groups]
     rows: list[dict[str, Any]] = []
+    artifact_rows: list[dict[str, Any]] = []
+    if dataset_artifacts:
+        artifact_rows.append(
+            {
+                "artifact_type": "dataset",
+                "dataset_id": str(dataset.dataset_id),
+                "replicate_id": int(split.replicate_id),
+                "seed": int(split.seed),
+                **dataset_artifacts,
+            }
+        )
+    if split_artifacts:
+        artifact_rows.append(
+            {
+                "artifact_type": "split",
+                "dataset_id": str(dataset.dataset_id),
+                "replicate_id": int(split.replicate_id),
+                "seed": int(split.seed),
+                **split_artifacts,
+            }
+        )
     for method in methods:
         result = results.get(method, _error_fit_result(method, "Missing result from fit_real_data_methods"))
         eval_row = evaluate_method_result(result, split)
+        fit_artifacts = save_fit_result_artifacts(
+            Path(str(task["fit_detail_dir"])) / str(method),
+            result=result,
+            run_context={
+                "dataset_id": str(dataset.dataset_id),
+                "dataset_label": str(dataset.label),
+                "replicate_id": int(split.replicate_id),
+                "seed": int(split.seed),
+                "split_hash": str(split.split_hash),
+                "method": str(method),
+                "task": str(spec.task),
+            },
+            extra_json={
+                "evaluation": eval_row,
+                "dataset_summary": dataset.to_summary(),
+                "split_manifest": {
+                    "replicate_id": int(split.replicate_id),
+                    "seed": int(split.seed),
+                    "split_hash": str(split.split_hash),
+                    "preprocessing": dict(split.preprocessing),
+                    "metadata": dict(split.metadata),
+                    "train_size": int(split.train_idx.size),
+                    "test_size": int(split.test_idx.size),
+                },
+            },
+        )
+        artifact_rows.append(
+            {
+                "artifact_type": "fit_result",
+                "dataset_id": str(dataset.dataset_id),
+                "replicate_id": int(split.replicate_id),
+                "method": str(method),
+                "seed": int(split.seed),
+                **fit_artifacts,
+            }
+        )
         rows.append(
             {
                 "dataset_id": str(dataset.dataset_id),
@@ -188,6 +254,10 @@ def _run_replicate_task(task: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "method": str(method),
                 "method_label": eval_row["method_label"],
                 "method_type": eval_row["method_type"],
+                "fit_artifact_dir": str(fit_artifacts.get("fit_dir", "")),
+                "dataset_arrays_path": str(dataset_artifacts.get("dataset_arrays", "")),
+                "dataset_metadata_path": str(dataset_artifacts.get("dataset_metadata", "")),
+                "split_manifest_path": str(split_artifacts.get("split_manifest", "")),
                 "status": str(result.status),
                 "converged": bool(result.converged),
                 "error": str(result.error),
@@ -198,7 +268,7 @@ def _run_replicate_task(task: Mapping[str, Any]) -> list[dict[str, Any]]:
                 **{key: value for key, value in eval_row.items() if key not in {"method_label", "method_type"}},
             }
         )
-    return rows
+    return {"raw_rows": rows, "artifact_rows": artifact_rows}
 
 
 def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
@@ -206,7 +276,7 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
     config = replace(config, convergence_gate=force_until_converged_gate(config.convergence_gate))
     requested_output_dir = str(config.runner.output_dir)
     history_root, out_dir, run_timestamp = prepare_history_run_dir(requested_output_dir)
-    config = replace(config, runner=replace(config.runner, output_dir=str(out_dir)))
+    config = replace(config, runner=replace(config.runner, output_dir=str(out_dir), save_splits=True))
     paper_dir = ensure_dir(out_dir / "paper_tables")
 
     spec_path = save_json(config.to_manifest(), out_dir / "real_data_spec.json")
@@ -218,6 +288,9 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
         summary["notes"] = str(dataset_spec.notes)
         summary["target_label"] = str(dataset_spec.target_label)
         summary["covariate_mode"] = str(dataset_spec.covariate_mode)
+        dataset_saved = save_prepared_real_dataset(prepared, out_dir / "datasets" / dataset_spec.dataset_id)
+        summary["dataset_arrays_path"] = str(dataset_saved.get("dataset_arrays", ""))
+        summary["dataset_metadata_path"] = str(dataset_saved.get("dataset_metadata", ""))
         dataset_manifest_rows.append(summary)
         save_json(summary, out_dir / "datasets" / dataset_spec.dataset_id / "dataset_summary.json")
 
@@ -232,8 +305,13 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
     )
 
     rows: list[dict[str, Any]] = []
+    artifact_rows: list[dict[str, Any]] = []
     for chunk in task_chunks:
-        rows.extend(chunk)
+        if isinstance(chunk, Mapping):
+            rows.extend(list(chunk.get("raw_rows", [])))
+            artifact_rows.extend(list(chunk.get("artifact_rows", [])))
+        else:
+            rows.extend(chunk)
 
     raw = pd.DataFrame(rows)
     if not raw.empty:
@@ -278,6 +356,7 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
     stability_path = out_dir / "selection_stability.csv"
     group_freq_path = out_dir / "group_selection_frequency.csv"
     dataset_catalog_path = out_dir / "dataset_catalog.json"
+    artifact_catalog_path = out_dir / "artifact_catalog.json"
 
     raw.to_csv(raw_path, index=False)
     summary.to_csv(summary_path, index=False)
@@ -288,6 +367,7 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
     selection_stability.to_csv(stability_path, index=False)
     group_selection_frequency.to_csv(group_freq_path, index=False)
     save_json(dataset_manifest_rows, dataset_catalog_path)
+    save_json(artifact_rows, artifact_catalog_path)
 
     result_paths: dict[str, str] = {
         "real_data_spec": str(spec_path),
@@ -300,6 +380,10 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
         "summary_paired_deltas": str(paired_deltas_path),
         "selection_stability": str(stability_path),
         "group_selection_frequency": str(group_freq_path),
+        "artifact_catalog": str(artifact_catalog_path),
+        "fit_details_dir": str(out_dir / "fit_details"),
+        "datasets_dir": str(out_dir / "datasets"),
+        "splits_dir": str(out_dir / "splits"),
     }
 
     if bool(config.runner.build_tables):

@@ -7,7 +7,7 @@ import numpy as np
 
 from simulation_project.src.utils import load_pandas, method_display_name
 
-from .utils import resolve_history_results_dir
+from .utils import ensure_dir, resolve_history_results_dir
 from .reporting import build_paired_summary, default_setting_group_cols
 
 
@@ -193,26 +193,57 @@ def build_method_table(paired_raw, *, group_cols: Sequence[str], method_order: S
     if paired_raw.empty:
         return pd.DataFrame()
 
-    agg = paired_raw.groupby(list(group_cols) + ["method"], as_index=False).agg(
-        n_paired=("replicate_id", "nunique"),
-        mse_overall_mean=("mse_overall", "mean"),
-        mse_signal_mean=("mse_signal", "mean"),
-        mse_null_mean=("mse_null", "mean"),
-        coverage_mean=("coverage_95", "mean"),
-        avg_ci_length_mean=("avg_ci_length", "mean"),
-        lpd_test_mean=("lpd_test", "mean"),
-        runtime_mean=("runtime_seconds", "mean"),
-    )
-    se_df = paired_raw.groupby(list(group_cols) + ["method"], as_index=False).agg(
-        mse_overall_se=("mse_overall", _se),
-        mse_signal_se=("mse_signal", _se),
-        mse_null_se=("mse_null", _se),
-        coverage_se=("coverage_95", _se),
-        avg_ci_length_se=("avg_ci_length", _se),
-        lpd_test_se=("lpd_test", _se),
-        runtime_se=("runtime_seconds", _se),
-    )
+    agg_spec = {
+        "n_paired": ("replicate_id", "nunique"),
+        "mse_overall_mean": ("mse_overall", "mean"),
+        "mse_signal_mean": ("mse_signal", "mean"),
+        "mse_null_mean": ("mse_null", "mean"),
+        "coverage_mean": ("coverage_95", "mean"),
+        "avg_ci_length_mean": ("avg_ci_length", "mean"),
+        "lpd_test_mean": ("lpd_test", "mean"),
+        "runtime_mean": ("runtime_seconds", "mean"),
+    }
+    agg_present = {
+        out_name: spec
+        for out_name, spec in agg_spec.items()
+        if spec[0] in paired_raw.columns
+    }
+    agg = paired_raw.groupby(list(group_cols) + ["method"], as_index=False).agg(**agg_present)
+
+    se_spec = {
+        "mse_overall_se": ("mse_overall", _se),
+        "mse_signal_se": ("mse_signal", _se),
+        "mse_null_se": ("mse_null", _se),
+        "coverage_se": ("coverage_95", _se),
+        "avg_ci_length_se": ("avg_ci_length", _se),
+        "lpd_test_se": ("lpd_test", _se),
+        "runtime_se": ("runtime_seconds", _se),
+    }
+    se_present = {
+        out_name: spec
+        for out_name, spec in se_spec.items()
+        if spec[0] in paired_raw.columns
+    }
+    se_df = paired_raw.groupby(list(group_cols) + ["method"], as_index=False).agg(**se_present)
     out = agg.merge(se_df, on=list(group_cols) + ["method"], how="left")
+    for col in [
+        "mse_overall_mean",
+        "mse_signal_mean",
+        "mse_null_mean",
+        "coverage_mean",
+        "avg_ci_length_mean",
+        "lpd_test_mean",
+        "runtime_mean",
+        "mse_overall_se",
+        "mse_signal_se",
+        "mse_null_se",
+        "coverage_se",
+        "avg_ci_length_se",
+        "lpd_test_se",
+        "runtime_se",
+    ]:
+        if col not in out.columns:
+            out[col] = np.nan
     out["method_label"] = out["method"].map(method_display_name)
     order_map = {str(method): idx for idx, method in enumerate(method_order)}
     out["method_order"] = out["method"].map(lambda x: order_map.get(str(x), len(order_map)))
@@ -351,6 +382,198 @@ def build_full_appendix_table(summary_paired, *, method_order: Sequence[str]):
     return out.drop(columns=[col for col in ["_method_order", "_rank_mse_overall"] if col in out.columns]).reset_index(drop=True)
 
 
+def build_figure1_coefficient_recovery_profile_data(coefficient_estimates, *, focal_method: str = "GR_RHS"):
+    pd = load_pandas()
+    if coefficient_estimates is None or coefficient_estimates.empty:
+        return pd.DataFrame()
+
+    frame = coefficient_estimates.copy()
+    needed = {
+        "setting_id",
+        "replicate_id",
+        "method",
+        "coefficient_index",
+        "group_id",
+        "true_beta",
+        "estimated_beta",
+        "is_active_coefficient",
+    }
+    if not needed.issubset(set(frame.columns)):
+        return pd.DataFrame()
+    if "paired_common_converged" in frame.columns:
+        frame = frame.loc[frame["paired_common_converged"].fillna(False).astype(bool)].copy()
+    if frame.empty:
+        return pd.DataFrame()
+
+    if "role" in frame.columns:
+        main_showcase = frame.loc[
+            frame["role"].astype(str).str.contains("main showcase", case=False, na=False),
+            "setting_id",
+        ].drop_duplicates()
+        setting_candidates = [str(item) for item in main_showcase.tolist()]
+    else:
+        setting_candidates = []
+    if not setting_candidates and "setting_5_multimode_equal" in set(frame["setting_id"].astype(str)):
+        setting_candidates = ["setting_5_multimode_equal"]
+    if not setting_candidates:
+        setting_candidates = sorted(frame["setting_id"].astype(str).drop_duplicates().tolist())
+    if not setting_candidates:
+        return pd.DataFrame()
+
+    focal_setting_id = str(setting_candidates[0])
+    setting_frame = frame.loc[frame["setting_id"].astype(str).eq(focal_setting_id)].copy()
+    if setting_frame.empty:
+        return pd.DataFrame()
+
+    rep_frame = setting_frame.loc[setting_frame["method"].astype(str).eq(str(focal_method))].copy()
+    if rep_frame.empty:
+        rep_frame = setting_frame.copy()
+
+    rep_rows: list[dict[str, Any]] = []
+    for replicate_id, sub in rep_frame.groupby("replicate_id", dropna=False, sort=False):
+        sq = pd.to_numeric(sub["sq_error"], errors="coerce") if "sq_error" in sub.columns else (
+            pd.to_numeric(sub["estimated_beta"], errors="coerce") - pd.to_numeric(sub["true_beta"], errors="coerce")
+        ) ** 2
+        active_mask = sub["is_active_coefficient"].fillna(False).astype(bool)
+        signal_vals = sq.loc[active_mask] if bool(active_mask.any()) else sq.iloc[0:0]
+        if bool(signal_vals.notna().any()):
+            signal_mse = float(signal_vals.mean())
+        elif bool(sq.notna().any()):
+            signal_mse = float(sq.mean())
+        else:
+            signal_mse = float("nan")
+        rep_rows.append(
+            {
+                "replicate_id": replicate_id,
+                "signal_mse": signal_mse,
+            }
+        )
+    rep_stats = pd.DataFrame(rep_rows)
+    if rep_stats.empty:
+        return pd.DataFrame()
+    rep_stats["distance_to_median"] = (
+        pd.to_numeric(rep_stats["signal_mse"], errors="coerce") - float(pd.to_numeric(rep_stats["signal_mse"], errors="coerce").median())
+    ).abs()
+    rep_pick = rep_stats.sort_values(["distance_to_median", "replicate_id"], kind="stable").iloc[0]
+    focal_replicate_id = rep_pick["replicate_id"]
+
+    profile = setting_frame.loc[setting_frame["replicate_id"].eq(focal_replicate_id)].copy()
+    if profile.empty:
+        return pd.DataFrame()
+
+    truth = profile.drop_duplicates(subset=["coefficient_index"]).copy()
+    truth["abs_true_beta"] = pd.to_numeric(truth["abs_true_beta"], errors="coerce")
+    truth["group_id"] = pd.to_numeric(truth["group_id"], errors="coerce")
+    truth["coefficient_index"] = pd.to_numeric(truth["coefficient_index"], errors="coerce")
+    truth["group_sort_active"] = truth.groupby("group_id")["is_active_coefficient"].transform(lambda s: bool(s.fillna(False).astype(bool).any()))
+    truth = truth.sort_values(
+        ["group_id", "is_active_coefficient", "abs_true_beta", "coefficient_index"],
+        ascending=[True, False, False, True],
+        kind="stable",
+    ).reset_index(drop=True)
+    truth["plot_order"] = np.arange(truth.shape[0], dtype=int)
+    truth["group_rank_within_plot"] = truth.groupby("group_id", sort=False).cumcount()
+
+    order_map = truth.set_index("coefficient_index")["plot_order"].to_dict()
+    rank_map = truth.set_index("coefficient_index")["group_rank_within_plot"].to_dict()
+    profile["plot_order"] = profile["coefficient_index"].map(order_map)
+    profile["group_rank_within_plot"] = profile["coefficient_index"].map(rank_map)
+
+    group_info = (
+        truth.groupby("group_id", as_index=False)
+        .agg(
+            group_plot_lo=("plot_order", "min"),
+            group_plot_hi=("plot_order", "max"),
+            group_size=("group_size", "first"),
+            is_active_group=("group_sort_active", "first"),
+        )
+        .sort_values(["group_id"], kind="stable")
+        .reset_index(drop=True)
+    )
+    group_info["group_plot_center"] = 0.5 * (
+        pd.to_numeric(group_info["group_plot_lo"], errors="coerce")
+        + pd.to_numeric(group_info["group_plot_hi"], errors="coerce")
+    )
+    profile = profile.merge(group_info, on="group_id", how="left")
+
+    method_stats = []
+    for method, sub in profile.groupby("method", dropna=False, sort=False):
+        sq = pd.to_numeric(sub["sq_error"], errors="coerce")
+        active_mask = sub["is_active_coefficient"].fillna(False).astype(bool)
+        signal_vals = sq.loc[active_mask]
+        method_stats.append(
+            {
+                "method": method,
+                "method_signal_rmse": float(np.sqrt(signal_vals.mean())) if bool(signal_vals.notna().any()) else float("nan"),
+                "method_overall_rmse": float(np.sqrt(sq.mean())) if bool(sq.notna().any()) else float("nan"),
+            }
+        )
+    method_stats_df = pd.DataFrame(method_stats)
+    profile = profile.merge(method_stats_df, on="method", how="left")
+
+    if "method_order" not in profile.columns:
+        order_map_method = {
+            "GR_RHS": 0,
+            "RHS": 1,
+            "GHS_plus": 2,
+            "GIGG_MMLE": 3,
+            "LASSO_CV": 4,
+            "OLS": 5,
+        }
+        profile["method_order"] = profile["method"].map(lambda x: order_map_method.get(str(x), len(order_map_method)))
+
+    profile["representative_setting_id"] = str(focal_setting_id)
+    profile["representative_replicate_id"] = int(focal_replicate_id)
+    profile["representative_selector_method"] = str(focal_method)
+    profile["representative_selector_signal_mse"] = float(rep_pick["signal_mse"]) if pd.notna(rep_pick["signal_mse"]) else float("nan")
+    profile["representative_selector_distance_to_median"] = float(rep_pick["distance_to_median"]) if pd.notna(rep_pick["distance_to_median"]) else float("nan")
+
+    out_cols = [
+        col
+        for col in [
+            "setting_id",
+            "setting_label",
+            "family",
+            "suite",
+            "role",
+            "replicate_id",
+            "seed",
+            "method",
+            "method_label",
+            "method_type",
+            "method_order",
+            "coefficient_index",
+            "group_id",
+            "group_size",
+            "within_group_index",
+            "group_rank_within_plot",
+            "plot_order",
+            "group_plot_lo",
+            "group_plot_hi",
+            "group_plot_center",
+            "is_active_group",
+            "is_active_coefficient",
+            "true_beta",
+            "estimated_beta",
+            "error",
+            "sq_error",
+            "abs_error",
+            "method_signal_rmse",
+            "method_overall_rmse",
+            "representative_setting_id",
+            "representative_replicate_id",
+            "representative_selector_method",
+            "representative_selector_signal_mse",
+            "representative_selector_distance_to_median",
+        ]
+        if col in profile.columns
+    ]
+    return profile.loc[:, out_cols].sort_values(
+        ["method_order", "method", "plot_order"],
+        kind="stable",
+    ).reset_index(drop=True)
+
+
 def write_markdown_main(df, path: Path | str) -> None:
     path_obj = Path(path)
     lines = [
@@ -466,9 +689,11 @@ def build_paper_tables(
     method_order: Sequence[str],
     group_cols: Sequence[str] | None = None,
     required_metric_cols: Sequence[str] = ("mse_null", "mse_signal", "mse_overall", "lpd_test"),
+    coefficient_estimates=None,
 ):
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
+    figure_dir = ensure_dir(out_path / "figure_data")
     use_group_cols = list(group_cols or default_setting_group_cols(raw))
     paired_raw, _, summary_paired = build_paired_summary(
         raw,
@@ -490,6 +715,7 @@ def build_paper_tables(
     appendix_md = out_path / "paper_table_appendix_full.md"
     main_tex = out_path / "paper_table_main.tex"
     appendix_tex = out_path / "paper_table_appendix_full.tex"
+    figure1_profile_csv = figure_dir / "figure1_coefficient_recovery_profile.csv"
 
     method_df.to_csv(method_csv, index=False, float_format=CSV_FLOAT_FORMAT)
     winloss_df.to_csv(winloss_csv, index=False, float_format=CSV_FLOAT_FORMAT)
@@ -500,6 +726,9 @@ def build_paper_tables(
     write_latex_main(main_df, main_tex)
     write_latex_full_table(appendix_df, appendix_tex, group_col="setting_id")
 
+    fig1_profile = build_figure1_coefficient_recovery_profile_data(coefficient_estimates)
+    fig1_profile.to_csv(figure1_profile_csv, index=False, float_format=CSV_FLOAT_FORMAT)
+
     return {
         "paper_table_method_means_se": str(method_csv),
         "paper_table_paired_winloss": str(winloss_csv),
@@ -509,6 +738,7 @@ def build_paper_tables(
         "paper_table_appendix_md": str(appendix_md),
         "paper_table_main_tex": str(main_tex),
         "paper_table_appendix_tex": str(appendix_tex),
+        "figure1_coefficient_recovery_profile": str(figure1_profile_csv),
     }
 
 
@@ -522,10 +752,19 @@ def build_paper_tables_from_results_dir(
     pd = load_pandas()
     base = resolve_history_results_dir(results_dir, required_files=("raw_results.csv",))
     raw = pd.read_csv(base / "raw_results.csv")
+    coefficient_estimates_path = base / "coefficient_estimates.csv"
+    if coefficient_estimates_path.exists():
+        try:
+            coefficient_estimates = pd.read_csv(coefficient_estimates_path)
+        except pd.errors.EmptyDataError:
+            coefficient_estimates = pd.DataFrame()
+    else:
+        coefficient_estimates = pd.DataFrame()
     return build_paper_tables(
         raw,
         out_dir=base / "paper_tables",
         method_order=method_order,
         group_cols=group_cols,
         required_metric_cols=required_metric_cols,
+        coefficient_estimates=coefficient_estimates,
     )

@@ -1,0 +1,701 @@
+\documentclass[11pt]{article}
+
+% ---------- packages ----------
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm,mathtools,bm}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{threeparttable}
+\usepackage{adjustbox}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{caption}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black
+}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\mathrm{Var}}
+\newcommand{\Cov}{\mathrm{Cov}}
+\newcommand{\Norm}{\mathcal{N}}
+
+\title{Simulation Experiments for the Group-Regularized Regularized Horseshoe}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Simulation design}
+
+All results reported here are based on \textbf{100 simulation replicates per
+setting}. For Bayesian methods, all runs are convergence-qualified under a
+common protocol using two chains, 250 warmup draws per chain, 250
+post-warmup draws per chain, and automatic retry-until-convergence logic.
+
+All experiments are based on the Gaussian linear model
+\[
+  y = X\beta + \varepsilon,
+  \qquad
+  \varepsilon \sim \Norm(0,\sigma^2 I_n).
+\]
+The coefficient vector \(\beta\in\R^p\) is partitioned into known groups,
+\[
+  \beta = (\beta_1^\top,\dots,\beta_G^\top)^\top,
+  \qquad
+  \beta_g \in \R^{p_g},
+  \qquad
+  \sum_{g=1}^G p_g = p.
+\]
+Within each setting, the design matrix \(X\) is sampled from a multivariate
+normal distribution with block correlation structure. Each column is then
+standardized. The diagonal entries of the covariance matrix are equal to one,
+the within-group correlations are fixed at a setting-specific value
+\(\rho_{\mathrm{within}}\), and the between-group correlations are fixed at
+\(\rho_{\mathrm{between}}=0.2\). Thus, groups are genuinely correlated
+internally but not independent of each other.
+
+When a target signal-to-noise ratio is specified, \(\sigma^2\) is chosen so
+that
+\[
+  \frac{\beta^\top \Sigma_X \beta}{\sigma^2}
+\]
+matches the desired population signal-to-noise ratio. When a target
+coefficient of determination is specified, \(\sigma^2\) is chosen so that
+\[
+  \frac{\beta^\top \Sigma_X \beta}{\beta^\top \Sigma_X \beta + \sigma^2}
+\]
+matches the desired population \(R^2\). Train and test samples are generated
+independently from the same design covariance.
+
+Two kinds of within-group signal patterns appear repeatedly in the experiments.
+In a \emph{concentrated} group, most of the group energy is carried by a small
+number of coordinates. In a \emph{distributed} group, signal is spread across
+many coordinates in the same group. This distinction plays the same conceptual
+role that sparse-versus-dense within-group signal plays in the grouped
+shrinkage literature: it determines whether a method should favor highly local
+escape or broader group-level retention.
+
+\section{Mechanism experiments}
+
+Every mechanism setting uses five groups of size ten, so \(p=50\), together
+with \(n_{\mathrm{train}}=100\) and \(n_{\mathrm{test}}=30\). The between-group
+correlation is fixed at \(0.2\), while the within-group correlation is either
+\(0.8\) or \(0.9\). This design keeps the problems small enough for the group
+mechanism to be visually interpretable while still preserving realistic within-
+group dependence.
+
+\subsection{Visual mechanism summary}
+
+Rather than listing all four mechanism settings separately, it is enough to keep
+the two figures that show the main empirical story. The first figure shows the
+group-separation pattern itself. The second figure shows that this pattern
+depends on the group-specific slab component of GR-RHS rather than on a generic
+increase in flexibility.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\textwidth]{../outputs/history/simulation_mechanism/mechanism_main/20260426_030600_638018/figures/figure_m1_group_separation_story.png}
+\caption{Group-separation mechanism under the clean ordered-signal setting.
+Panel A compares posterior mean \(\kappa_g\) values for null and signal groups
+across 100 replicates. Panel B orders the five groups by true group strength
+\((0,0,1.5,4,10)\) and shows the corresponding mean posterior retention. Null
+groups remain near zero, while weak, medium, and strong signal groups receive
+progressively larger retention.}
+\label{fig:m1-group-separation}
+\end{figure}
+
+Figure~\ref{fig:m1-group-separation} is the cleanest visualization of the
+retention-ceiling interpretation of \(\kappa_g\). Across the 100 replicates,
+GR-RHS achieves perfect group AUROC and a mean \texttt{kappa\_gap} of about
+\(0.29\). More importantly, the figure shows the mechanism in directly
+interpretable form: null groups are held close to zero, and the posterior
+retention rises monotonically with true group strength.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\textwidth]{../outputs/history/simulation_mechanism/mechanism_main/20260426_030600_638018/figures/figure_m4_mechanism_attribution.png}
+\caption{Mechanism attribution by ablation. Panel A reports the change in
+\texttt{kappa\_gap} relative to the full GR-RHS model. Panel B reports the
+effective \(\tau_0\) calibration relative to the oracle baseline. Oracle
+\(\tau_0\) and fixed \(10\times \tau_0\) preserve group separation, removing
+local scales weakens it, and forcing shared or absent \(\kappa\) eliminates it
+almost completely.}
+\label{fig:m4-ablation}
+\end{figure}
+
+Figure~\ref{fig:m4-ablation} explains where that pattern comes from. Changing
+the global calibration alone does not materially remove group separation: the
+oracle-\(\tau_0\) and fixed-\(10\times\tau_0\) variants stay close to the full
+model in Panel A. Removing local scales weakens the effect, but the decisive
+result is that shared \(\kappa\) and no \(\kappa\) both collapse the
+\texttt{kappa\_gap} by about \(0.41\), essentially wiping out the mechanism.
+This is the core empirical reason to interpret GR-RHS as a grouped slab model:
+the visible separation is created mainly by the group-specific slab ceiling,
+not by generic overparameterization.
+
+\section{Main benchmark experiments}
+
+\subsection{Generative model}
+
+The data-generating mechanism for the benchmark experiments is the Gaussian
+linear regression model
+\[
+  y = X\beta + \varepsilon,
+  \qquad
+  \varepsilon \sim \Norm(0,\sigma^2 I_n),
+\]
+where \(X\) is sampled from a multivariate normal distribution with mean zero
+and grouped block correlation matrix \(\Sigma_X\). The covariance matrix is
+constructed so that each regressor has unit variance, the within-group
+correlations are exchangeable, and the pairwise correlations across groups are
+equal to \(0.2\). For the medium-correlation benchmark settings,
+\(\rho_{\mathrm{within}}=0.6\), while for the high-correlation benchmark
+settings, \(\rho_{\mathrm{within}}=0.8\). In all settings, the residual error
+variance is chosen so that
+\[
+  \frac{\beta^\top \Sigma_X \beta}{\beta^\top \Sigma_X \beta + \sigma^2}=0.7.
+\]
+
+The benchmark settings in this paper are random-coefficient grouped regression
+settings rather than fixed-coefficient settings. In each replicate, the true
+coefficient vector is generated from a family-specific grouped signal blueprint.
+The benchmark contains a low-dimensional regime only, with
+\[
+  n_{\mathrm{train}}=500,\qquad n_{\mathrm{test}}=100,\qquad p=50,
+\]
+except that the grouping pattern varies across settings. The methods compared
+are GR-RHS, RHS, Grouped Horseshoe+, GIGG-MMLE, Lasso with cross-validation,
+and OLS.
+
+Three random signal families are used. In the \emph{classical reference}
+family, the active groups share a common mild within-group blueprint. The
+active support fraction is drawn uniformly from \((0.6,0.8)\), and the
+concentration parameter controlling the internal allocation of group energy is
+drawn uniformly from \((3,6)\). In the \emph{single-mode heterogeneous}
+family, the active groups still share a common blueprint, but the support
+fraction is drawn from \((0.4,0.8)\) and the concentration parameter is drawn
+from \((0.8,2)\), producing a more heterogeneous within-group signal profile.
+In the \emph{multimode heterogeneous} family, the active groups no longer share
+the same blueprint. Instead, each active group draws its own support fraction
+from \((0.2,0.8)\) and its own concentration parameter from a log-uniform
+distribution on \((0.2,6)\). Additional acceptance criteria are imposed so
+that the active groups do not collapse to the same signal mode; in particular,
+the generated active groups must display sufficient separation either in
+support fraction or in concentration.
+
+Conditional on the family draw, signal energy is allocated across the active
+groups by a Dirichlet distribution. Within each active group, the support set is
+sampled uniformly over coordinates and the active coefficients are assigned a
+common sign within group. The resulting coefficient vector therefore varies from
+replicate to replicate, but always preserves the grouped signal architecture of
+the benchmark family. The purpose of this random-coefficient benchmark is to
+measure average performance across many grouped sparse configurations rather
+than only on a small number of hand-tuned coefficient vectors.
+
+\subsection{Benchmark settings}
+
+The six benchmark settings are summarized in
+Table~\ref{tab:benchmark-settings}. All settings use
+\(n_{\mathrm{train}}=500\), \(n_{\mathrm{test}}=100\), target \(R^2=0.7\), and
+\(\rho_{\mathrm{between}}=0.2\).
+
+\begin{table}[H]
+\centering
+\caption{Benchmark setting definitions.}
+\label{tab:benchmark-settings}
+\begin{tabular}{cllccc}
+\toprule
+ID & Family & Group sizes & Active groups & \(\rho_{\mathrm{within}}\) & Main role \\
+\midrule
+1 & classical reference & \((10,10,10,10,10)\) & \(3/5\) & 0.6 & anchor \\
+2 & classical reference & \((10,10,10,10,10)\) & \(3/5\) & 0.8 & higher correlation \\
+3 & single-mode heterogeneous & \((10,10,10,10,10)\) & \(3/5\) & 0.6 & equal-size heterogeneous \\
+4 & single-mode heterogeneous & \((30,10,5,3,2)\) & \(3/5\) & 0.6 & unequal groups \\
+5 & multimode heterogeneous & \((10,10,10,10,10)\) & \(3/5\) & 0.8 & equal-size multimode \\
+6 & multimode heterogeneous & \((25,25)\) & \(2/2\) & 0.8 & large-group multimode \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Settings 1 and 2 are classical equal-group benchmarks and differ only by the
+strength of within-group correlation. Setting 3 keeps the equal-group geometry
+but replaces the classical signal family with a single-mode heterogeneous
+family. Setting 4 uses the same signal family as Setting 3 but changes the
+group sizes to \((30,10,5,3,2)\), creating a benchmark with substantial size
+imbalance across groups. Setting 5 is the equal-size multimode benchmark, in
+which the active groups are allowed to differ substantially in their internal
+signal structure. Setting 6 is the large-group multimode benchmark with two
+groups of size 25. These six settings move from relatively standard grouped
+regression designs toward settings in which a single global slab width is least
+well aligned with the true grouped signal geometry.
+
+\section{Evaluation criteria}
+
+The main evaluation metrics are test-set overall mean-squared error, signal
+mean-squared error, null mean-squared error, test log predictive density, and
+95\% posterior interval coverage for Bayesian methods. The overall MSE measures
+the average squared error across all coefficients, while signal MSE and null MSE
+separate the active and inactive coordinates. This distinction is useful because
+a method can attain a low overall error either by estimating active
+coefficients well or by aggressively shrinking null coefficients, and these are
+not the same behavior.
+
+For the mechanism experiments, additional group-level summaries are recorded.
+The most important are the group AUROC and the quantity called
+\texttt{kappa\_gap}, which measures the average difference between signal-group
+and null-group posterior retention. In the context of GR-RHS, these summaries
+are natural because the theory interprets \(\kappa_g\) as a group-level
+retention ceiling.
+
+\section{Benchmark results}
+
+The benchmark results are reported in two complementary forms. First,
+Table~\ref{tab:benchmark-full} gives the full six-setting by six-method summary
+for the main error criteria. For each method and setting, the table reports the
+replicate mean and replicate variance of overall MSE, signal MSE, and null MSE.
+It also reports the replicate mean and replicate variance of test LPD. For
+Bayesian methods, the table additionally reports empirical mean coverage and
+mean interval width for nominal 95\% intervals. Second,
+Figures~\ref{fig:bench-s1}--\ref{fig:bench-s6} provide setting-specific plots
+for the Bayesian methods, combining MSE and coverage in a single display.
+
+\begin{table}[H]
+\centering
+\caption{Method numbering used in the benchmark result displays.}
+\label{tab:method-index}
+\begin{tabular}{cl}
+\toprule
+Code & Method \\
+\midrule
+M1 & GR-RHS \\
+M2 & RHS \\
+M3 & Grouped Horseshoe+ \\
+M4 & GIGG-MMLE \\
+M5 & Lasso (CV) \\
+M6 & OLS \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[p]
+\centering
+\caption{Full benchmark summary for the six settings and six methods. Each MSE
+entry is reported in the form mean \(\pm\) variance across 100 replicates.
+LPD is also reported as mean \(\pm\) variance. Coverage and interval width are
+reported only for Bayesian methods.}
+\label{tab:benchmark-full}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{llccccccc}
+\toprule
+Setting & Method & Overall MSE & Signal MSE & Null MSE & LPD & Interval Width & Coverage \\
+\midrule
+Setting 1 & GR-RHS & 0.004691 $\pm$ 4.67e-06 & \textbf{0.008181 $\pm$ 1.59e-05} & 0.002139 $\pm$ 2.23e-06 & \textbf{-1.716177 $\pm$ 2.57e-02} & 0.2866 & \textbf{0.9732} \\
+Setting 1 & RHS & 0.005491 $\pm$ 5.74e-06 & 0.010106 $\pm$ 2.15e-05 & 0.002126 $\pm$ 2.37e-06 & -1.722641 $\pm$ 2.58e-02 & 0.2903 & 0.9670 \\
+Setting 1 & Grouped Horseshoe+ & 0.004895 $\pm$ 4.79e-06 & 0.009159 $\pm$ 1.73e-05 & 0.001776 $\pm$ 2.13e-06 & -1.717428 $\pm$ 2.55e-02 & 0.2808 & 0.9700 \\
+Setting 1 & GIGG-MMLE & 0.004920 $\pm$ 5.74e-06 & 0.009959 $\pm$ 1.99e-05 & \textbf{0.001210 $\pm$ 2.02e-06} & -1.718012 $\pm$ 2.67e-02 & 0.0583 & 0.2792 \\
+Setting 1 & Lasso (CV) & \textbf{0.004513 $\pm$ 4.54e-06} & 0.008552 $\pm$ 1.50e-05 & 0.001553 $\pm$ 2.33e-06 & -1.721452 $\pm$ 2.68e-02 & -- & -- \\
+Setting 1 & OLS & 0.009210 $\pm$ 1.76e-05 & 0.009257 $\pm$ 2.25e-05 & 0.009152 $\pm$ 2.03e-05 & -1.748034 $\pm$ 2.84e-02 & -- & -- \\
+\midrule
+Setting 2 & GR-RHS & 0.009878 $\pm$ 1.45e-05 & \textbf{0.016870 $\pm$ 4.37e-05} & 0.004792 $\pm$ 1.41e-05 & \textbf{-1.867236 $\pm$ 2.22e-02} & 0.4391 & \textbf{0.9772} \\
+Setting 2 & RHS & 0.011565 $\pm$ 1.80e-05 & 0.021111 $\pm$ 5.81e-05 & 0.004646 $\pm$ 1.61e-05 & -1.872078 $\pm$ 2.35e-02 & 0.4200 & 0.9672 \\
+Setting 2 & Grouped Horseshoe+ & 0.010440 $\pm$ 1.57e-05 & 0.018682 $\pm$ 4.74e-05 & 0.004446 $\pm$ 1.49e-05 & -1.868290 $\pm$ 2.23e-02 & 0.4357 & 0.9758 \\
+Setting 2 & GIGG-MMLE & 0.011585 $\pm$ 2.84e-05 & 0.022153 $\pm$ 5.63e-05 & 0.003831 $\pm$ 3.77e-05 & -1.871365 $\pm$ 2.46e-02 & 0.0842 & 0.2830 \\
+Setting 2 & Lasso (CV) & \textbf{0.009850 $\pm$ 1.37e-05} & 0.018215 $\pm$ 3.82e-05 & \textbf{0.003736 $\pm$ 1.24e-05} & -1.871942 $\pm$ 2.46e-02 & -- & -- \\
+Setting 2 & OLS & 0.025247 $\pm$ 9.13e-05 & 0.025268 $\pm$ 1.23e-04 & 0.025236 $\pm$ 1.28e-04 & -1.913207 $\pm$ 2.48e-02 & -- & -- \\
+\midrule
+Setting 3 & GR-RHS & 0.003697 $\pm$ 3.15e-06 & \textbf{0.006781 $\pm$ 1.02e-05} & 0.001813 $\pm$ 1.35e-06 & -1.644194 $\pm$ 3.85e-02 & 0.2618 & \textbf{0.9792} \\
+Setting 3 & RHS & 0.004046 $\pm$ 4.19e-06 & 0.007962 $\pm$ 1.38e-05 & 0.001664 $\pm$ 1.38e-06 & -1.647789 $\pm$ 3.92e-02 & 0.2588 & 0.9768 \\
+Setting 3 & Grouped Horseshoe+ & 0.003701 $\pm$ 3.37e-06 & 0.007241 $\pm$ 1.15e-05 & 0.001516 $\pm$ 1.12e-06 & -1.644024 $\pm$ 3.87e-02 & 0.2545 & 0.9780 \\
+Setting 3 & GIGG-MMLE & 0.003573 $\pm$ 5.04e-06 & 0.007679 $\pm$ 1.41e-05 & \textbf{0.001019 $\pm$ 2.18e-06} & \textbf{-1.642351 $\pm$ 4.02e-02} & 0.0544 & 0.3004 \\
+Setting 3 & Lasso (CV) & \textbf{0.003406 $\pm$ 3.26e-06} & 0.006838 $\pm$ 9.99e-06 & 0.001302 $\pm$ 1.66e-06 & -1.646136 $\pm$ 4.01e-02 & -- & -- \\
+Setting 3 & OLS & 0.007727 $\pm$ 1.16e-05 & 0.007239 $\pm$ 1.46e-05 & 0.007954 $\pm$ 1.44e-05 & -1.684711 $\pm$ 4.07e-02 & -- & -- \\
+\midrule
+Setting 4 & GR-RHS & \textbf{0.005155 $\pm$ 4.04e-06} & \textbf{0.006648 $\pm$ 6.80e-06} & 0.003386 $\pm$ 4.01e-06 & \textbf{-1.765877 $\pm$ 3.16e-02} & 0.3113 & \textbf{0.9754} \\
+Setting 4 & RHS & 0.005583 $\pm$ 5.26e-06 & 0.007860 $\pm$ 9.48e-06 & 0.002785 $\pm$ 3.79e-06 & -1.768928 $\pm$ 3.19e-02 & 0.2995 & 0.9664 \\
+Setting 4 & Grouped Horseshoe+ & 0.005492 $\pm$ 5.06e-06 & 0.007575 $\pm$ 9.00e-06 & 0.002924 $\pm$ 3.95e-06 & -1.766971 $\pm$ 3.17e-02 & 0.3078 & 0.9706 \\
+Setting 4 & GIGG-MMLE & 0.006229 $\pm$ 1.14e-05 & 0.008585 $\pm$ 1.43e-05 & 0.003308 $\pm$ 1.10e-05 & -1.773102 $\pm$ 3.41e-02 & 0.0798 & 0.3530 \\
+Setting 4 & Lasso (CV) & 0.005321 $\pm$ 5.09e-06 & 0.007494 $\pm$ 8.27e-06 & \textbf{0.002647 $\pm$ 4.60e-06} & -1.773274 $\pm$ 3.32e-02 & -- & -- \\
+Setting 4 & OLS & 0.010139 $\pm$ 1.92e-05 & 0.010209 $\pm$ 2.14e-05 & 0.010112 $\pm$ 2.81e-05 & -1.801798 $\pm$ 3.21e-02 & -- & -- \\
+\midrule
+Setting 5 & GR-RHS & 0.005347 $\pm$ 7.71e-06 & 0.012536 $\pm$ 4.35e-05 & 0.002451 $\pm$ 2.51e-06 & -1.587631 $\pm$ 3.58e-02 & 0.3234 & 0.9772 \\
+Setting 5 & RHS & 0.005695 $\pm$ 9.77e-06 & 0.014901 $\pm$ 5.99e-05 & 0.001971 $\pm$ 2.54e-06 & -1.590471 $\pm$ 3.72e-02 & 0.2946 & 0.9738 \\
+Setting 5 & Grouped Horseshoe+ & 0.005405 $\pm$ 8.00e-06 & 0.013070 $\pm$ 4.62e-05 & 0.002289 $\pm$ 2.36e-06 & -1.587934 $\pm$ 3.57e-02 & 0.3198 & \textbf{0.9774} \\
+Setting 5 & GIGG-MMLE & 0.004939 $\pm$ 8.90e-06 & 0.013500 $\pm$ 5.21e-05 & \textbf{0.001430 $\pm$ 2.24e-06} & \textbf{-1.585691 $\pm$ 3.70e-02} & 0.0663 & 0.3590 \\
+Setting 5 & Lasso (CV) & \textbf{0.004801 $\pm$ 7.11e-06} & \textbf{0.012219 $\pm$ 3.83e-05} & 0.001792 $\pm$ 2.41e-06 & -1.588458 $\pm$ 3.75e-02 & -- & -- \\
+Setting 5 & OLS & 0.013939 $\pm$ 3.98e-05 & 0.014418 $\pm$ 5.50e-05 & 0.013748 $\pm$ 4.68e-05 & -1.630197 $\pm$ 4.01e-02 & -- & -- \\
+\midrule
+Setting 6 & GR-RHS & \textbf{0.011911 $\pm$ 1.30e-05} & \textbf{0.013789 $\pm$ 2.18e-05} & 0.010161 $\pm$ 1.63e-05 & -2.025176 $\pm$ 4.05e-02 & 0.5511 & \textbf{0.9842} \\
+Setting 6 & RHS & 0.013383 $\pm$ 3.20e-05 & 0.020042 $\pm$ 6.80e-05 & \textbf{0.006450 $\pm$ 1.68e-05} & \textbf{-2.021275 $\pm$ 4.40e-02} & 0.4901 & 0.9734 \\
+Setting 6 & Grouped Horseshoe+ & 0.012939 $\pm$ 2.85e-05 & 0.018699 $\pm$ 5.97e-05 & 0.006921 $\pm$ 1.57e-05 & -2.024206 $\pm$ 4.21e-02 & 0.5375 & 0.9820 \\
+Setting 6 & GIGG-MMLE & 0.020460 $\pm$ 1.30e-04 & 0.026135 $\pm$ 1.60e-04 & 0.014624 $\pm$ 1.47e-04 & -2.031358 $\pm$ 4.75e-02 & 0.1210 & 0.3266 \\
+Setting 6 & Lasso (CV) & 0.013569 $\pm$ 3.29e-05 & 0.019816 $\pm$ 5.65e-05 & 0.006949 $\pm$ 2.42e-05 & -2.022468 $\pm$ 4.51e-02 & -- & -- \\
+Setting 6 & OLS & 0.038278 $\pm$ 2.62e-04 & 0.038405 $\pm$ 3.78e-04 & 0.037717 $\pm$ 3.08e-04 & -2.063961 $\pm$ 4.72e-02 & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Table~\ref{tab:benchmark-full} should be read as a joint comparison of point
+estimation quality, predictive performance, and uncertainty calibration. The
+overall MSE column measures aggregate coefficient recovery across all
+coordinates, whereas the signal and null MSE columns separate performance on
+truly active and truly inactive coefficients. This separation is important in
+grouped sparse regression because a low overall MSE can arise either from good
+recovery of the active coefficients or from aggressive shrinkage of the null
+coefficients, and these represent substantively different behaviors. The LPD
+column adds a predictive criterion based on the test distribution rather than
+only on coefficient error. Finally, the interval-width and coverage columns are
+meant to be interpreted together: narrower intervals are useful only when they
+retain coverage close to the nominal 95\% level.
+
+Several broad patterns are immediately visible. First, GR-RHS is the strongest
+method in signal recovery. It attains the best signal MSE in five of the six
+benchmark settings and is especially strong in the settings with more
+informative grouped structure. This is the most direct evidence that the method
+is helping for the right reason. Its main gain is not merely stronger shrinkage
+of null coefficients; rather, it more consistently preserves and estimates the
+nonzero part of the signal. The fact that this advantage appears across both
+equal-group and heterogeneous-group benchmarks suggests that the grouped slab
+layer is responding to signal geometry rather than to a single idiosyncratic
+design.
+
+Second, the overall-MSE ranking is more scope-dependent. Lasso is the best
+overall-MSE method in Settings 1, 2, 3, and 5, while GR-RHS is best in
+Settings 4 and 6. This pattern is substantively meaningful. In the more
+classical or only mildly heterogeneous settings, GR-RHS behaves like a strong
+Bayesian competitor but does not force an artificial advantage over well-tuned
+classical regularization. Once the grouped structure becomes more informative,
+however, the group-specific slab begins to translate into an overall-error
+advantage. Setting 4, with substantial group-size imbalance, and Setting 6,
+with large multimode groups, are the clearest examples of the regime for which
+GR-RHS was designed.
+
+Third, the null-MSE column shows that some methods can look attractive by
+shrinking inactive coordinates more aggressively. In particular, GIGG-MMLE and
+Lasso often have very favorable null-MSE values. This is useful information,
+but it should not be overinterpreted in isolation. Null MSE rewards strong
+suppression of noise coordinates, whereas signal MSE reveals whether the same
+method is preserving true effects. The benchmark therefore argues against any
+one-dimensional reading of sparsity performance. A method can be excellent at
+driving null coefficients toward zero and still be inferior at recovering the
+active part of the signal.
+
+The LPD column provides a predictive perspective that is related to, but not
+identical with, coefficient error. GR-RHS has the best LPD in Settings 1, 2,
+and 4, while GIGG-MMLE is best in Settings 3 and 5 and RHS is best in Setting
+6. This shows that predictive density does not mechanically track MSE. In some
+settings, a method can obtain competitive predictive scores even when its
+coefficient recovery is less favorable. For this reason, the benchmark is more
+informative when LPD is read together with the uncertainty summaries. A method
+that gains predictive sharpness at the expense of calibration should be treated
+differently from one that improves predictive fit while maintaining reliable
+uncertainty quantification.
+
+This is exactly where the interval-width and coverage columns become important.
+GR-RHS, RHS, and Grouped Horseshoe+ all maintain empirical coverage close to
+nominal across the six settings, with values roughly between 0.97 and 0.98.
+Their average interval widths are also of similar magnitude, indicating a
+comparable sharpness-calibration tradeoff. By contrast, GIGG-MMLE is much
+narrower in every setting, but its coverage collapses to roughly 0.28--0.36.
+That pattern should not be interpreted as superior efficiency. It is instead a
+classic sign of undercalibrated uncertainty: the intervals are narrow because
+they are overconfident, not because they are better matched to the data.
+
+Taken together, the table supports a scope-conditional interpretation of the
+benchmark. GR-RHS is not a universally dominant procedure in every low-
+dimensional grouped regression problem, and the table does not suggest that it
+should be. Rather, it is a method that becomes increasingly advantageous when
+the grouped structure is genuinely informative for shrinkage. In those regimes,
+it improves signal recovery, can improve overall error, often improves
+predictive fit, and does so without sacrificing calibration. That combination
+of strong signal MSE and reliable coverage is the central empirical argument in
+favor of the GR-RHS prior.
+
+The overall-MSE winners are:
+\[
+  \text{S1: M5},\quad
+  \text{S2: M5},\quad
+  \text{S3: M5},\quad
+  \text{S4: M1},\quad
+  \text{S5: M5},\quad
+  \text{S6: M1}.
+\]
+Thus GR-RHS is the overall winner in \(2/6\) settings, namely S4 and S6. The
+signal-MSE winners are:
+\[
+  \text{S1: M1},\quad
+  \text{S2: M1},\quad
+  \text{S3: M1},\quad
+  \text{S4: M1},\quad
+  \text{S5: M5},\quad
+  \text{S6: M1}.
+\]
+Hence GR-RHS is the signal-MSE winner in \(5/6\) settings.
+
+For coverage, the Bayesian methods satisfy the ordering
+\[
+  \text{GR-RHS} \approx \text{RHS} \approx \text{GHS+} \gg \text{GIGG-MMLE}
+\]
+in every setting. Numerically, GR-RHS coverage ranges from \(0.9732\) to
+\(0.9842\), RHS from \(0.9664\) to \(0.9768\), Grouped Horseshoe+ from
+\(0.9700\) to \(0.9820\), and GIGG-MMLE from \(0.2792\) to \(0.3590\).
+
+For interval width, the same table shows the usual calibration-sharpness tradeoff.
+GR-RHS, RHS, and Grouped Horseshoe+ have broadly similar average widths, while
+GIGG-MMLE is much narrower in every setting. The narrowness of GIGG-MMLE,
+however, comes together with severe undercoverage rather than better-calibrated
+uncertainty.
+
+The highest replicate-level MSE variances occur in Setting 6. For example,
+GIGG-MMLE reaches \(\Var(\mathrm{MSE}_{\mathrm{overall}})=1.30\times 10^{-4}\)
+and OLS reaches \(2.62\times 10^{-4}\), both substantially larger than in the
+other settings.
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.95\textwidth]{generated_figures/setting_1_classical_equal_medium_bayes_mse_coverage.png}
+\caption{Bayesian-method comparison for Setting 1. The left panel reports the
+mean overall, signal, and null MSE, with one-standard-deviation error bars
+across 100 replicates. The right panel reports empirical 95\% coverage for the
+Bayesian methods.}
+\label{fig:bench-s1}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.95\textwidth]{generated_figures/setting_2_classical_equal_high_bayes_mse_coverage.png}
+\caption{Bayesian-method comparison for Setting 2. The design is the same as
+Setting 1 except that within-group correlation increases from \(0.6\) to
+\(0.8\).}
+\label{fig:bench-s2}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.95\textwidth]{generated_figures/setting_3_single_mode_equal_bayes_mse_coverage.png}
+\caption{Bayesian-method comparison for Setting 3, the equal-size single-mode
+heterogeneous benchmark.}
+\label{fig:bench-s3}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.95\textwidth]{generated_figures/setting_4_single_mode_unequal_bayes_mse_coverage.png}
+\caption{Bayesian-method comparison for Setting 4, the unequal-group
+single-mode heterogeneous benchmark. This is one of the first settings in which
+the grouped layer becomes clearly useful in overall MSE.}
+\label{fig:bench-s4}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.95\textwidth]{generated_figures/setting_5_multimode_equal_bayes_mse_coverage.png}
+\caption{Bayesian-method comparison for Setting 5, the equal-size multimode
+heterogeneous showcase.}
+\label{fig:bench-s5}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.95\textwidth]{generated_figures/setting_6_multimode_large_groups_bayes_mse_coverage.png}
+\caption{Bayesian-method comparison for Setting 6, the large-group multimode
+benchmark. This is the most favorable benchmark regime for a grouped slab
+model, and it is also the regime with the clearest overall win for GR-RHS.}
+\label{fig:bench-s6}
+\end{figure}
+
+Figures~\ref{fig:bench-s1}--\ref{fig:bench-s6} present the same information
+from the viewpoint of the Bayesian competitors only. This is useful because the
+coverage comparison is most meaningful within the subset of methods that
+actually produce posterior intervals. Across all six settings, GR-RHS maintains
+coverage close to nominal. RHS and Grouped Horseshoe+ do the same, although
+their error levels are not always as favorable in the grouped settings. By
+contrast, GIGG-MMLE often attains competitive point error but exhibits very low
+coverage, with empirical values around \(0.28\) to \(0.36\), far below the
+nominal 0.95 line shown in the right panels.
+
+\section{Real data experiment}
+
+\subsection{Dataset source and response}
+
+To complement the synthetic benchmarks, we also evaluate the methods on a real
+DNA methylation age dataset derived from GEO accession \texttt{GSE40279}. This
+study contains human whole-blood methylation measurements profiled on the
+Illumina HumanMethylation450 array, together with chronological age for each
+sample. We use the processed beta-value matrix released with the series,
+together with the GEO sample key, the series-level metadata, and the Illumina
+450k platform annotation. The response variable is chronological age in years,
+parsed from the GEO sample metadata. After aligning the sample order between
+the age annotations and the beta-value matrix, the final dataset contains
+\(n=656\) subjects, with age ranging from \(19\) to \(101\) years and mean age
+approximately \(64.0\) years.
+
+\subsection{Preprocessing and cleaning}
+
+We work directly with the processed beta matrix distributed through GEO rather
+than reconstructing beta values from raw intensity files. Accordingly, the main
+preprocessing steps concern feature filtering and group construction.
+
+For the local-block micro variant, we first keep only autosomal CpGs with valid
+genomic coordinates in the Illumina 450k annotation. We drop non-\texttt{cg}
+rows, probes with missing genomic position, sex-chromosome probes, rows with
+non-finite beta values, and zero-variance rows. Feature screening is then
+performed in a fully unsupervised way: each retained CpG is ranked by its
+sample variance across the \(656\) subjects, and chronological age is not used
+at the screening stage. This avoids outcome-driven feature preselection and
+ensures that the subsequent comparison is carried out on a grouped methylation
+design defined independently of the response.
+
+\subsection{Grouping design: local methylation blocks}
+
+The grouping rule is chosen to reflect local methylation dependence rather than
+only broad gene-level annotation. We therefore sort autosomal CpGs by
+chromosome and genomic coordinate, and we start a new group
+whenever the next probe is more than \(1000\) base pairs away from the previous
+probe on the same chromosome. This produces \emph{local methylation blocks}.
+When a block contains an annotated gene label, we name it
+\texttt{gene@chr:start-end}; otherwise we retain the coordinate-only label.
+
+After block construction, blocks are ranked by the sum of the variances of
+their top ten CpGs. We then select a \emph{micro} subset of exactly \(p=200\)
+CpGs by first seeding each chosen block with at least three probes and then
+filling the remaining slots by variance within the selected blocks. Under this
+rule, the final real-data benchmark contains \(6\) groups with size summary
+\((10, 14, 16, 25, 30, 105)\). The dominant groups are concentrated in known
+methylation-dense regions, especially the MHC region on chromosome \(6\), with
+blocks labeled \texttt{HLA-DQA1}, \texttt{HLA-C}, \texttt{HLA-DRB1}, an
+unlabeled local block near \texttt{chr6:29.65Mb}, and a large
+\texttt{RNF39}-anchored block; the only non-chromosome-6 group in the micro
+subset is a compact \texttt{PM20D1} block on chromosome \(1\).
+
+\subsection{Correlation structure}
+
+Figure~\ref{fig:gse40279-local-block-corr} shows the empirical feature
+correlation matrix for the \(200\)-CpG local-block micro design. The grouped
+structure is visually clear: the matrix exhibits several dark diagonal blocks,
+indicating positive dependence among nearby CpGs within the same genomic
+segment, while off-diagonal correlations are comparatively weaker. This is
+exactly the kind of structure for which a grouped shrinkage prior is meant to
+be useful.
+
+The numerical summaries tell the same story. Across all CpG pairs within the
+same block, the mean correlation is approximately \(0.184\), whereas the mean
+between-block correlation is only \(0.014\). In absolute value, the contrast is
+also substantial: the mean within-block absolute correlation is about \(0.250\),
+compared with \(0.076\) between blocks. Thus the local-block construction does
+not simply impose a formal partition; it produces groups that correspond to a
+real empirical correlation pattern in the methylation design matrix.
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.92\textwidth]{../data/real/gse40279_methylation_age/processed/analysis_bundle/gse40279_micro_local_block_gap1000_feature_correlation_heatmap.pdf}
+\caption{Empirical feature correlation heatmap for the GSE40279 local-block
+micro design. The dataset contains \(656\) samples, \(200\) CpGs, and \(6\)
+genomic proximity groups obtained by merging adjacent autosomal probes whose
+genomic gap is at most \(1000\)bp. The visible block-diagonal structure shows
+that the grouping rule captures genuine local dependence rather than an
+arbitrary partition.}
+\label{fig:gse40279-local-block-corr}
+\end{figure}
+
+\subsection{Real-data benchmark outcome}
+
+We use this local-block micro dataset as a real-data benchmark for held-out age
+prediction under repeated random \(80/20\) train/test splits. The primary role
+of this experiment is to assess whether the grouped shrinkage methods behave
+reasonably on a biologically structured methylation design whose correlation
+pattern is induced by genomic proximity rather than by a synthetic covariance
+model.
+
+Table~\ref{tab:gse40279-realdata} reports the held-out prediction results on
+the completed common-converged repeats. In this real-data benchmark, all four
+methods converged on all \(10/10\) train/test splits, so the paired comparison
+uses the full repeated-split sample with no convergence-related attrition.
+
+\begin{table}[H]
+\centering
+\caption{GSE40279 local-block micro real-data benchmark on common-converged repeated splits. Entries are reported as mean \(\pm\) standard error across 10 paired repeats.}
+\label{tab:gse40279-realdata}
+\begin{tabular}{lccccc}
+\toprule
+Method & n paired & RMSE test & MAE test & \(R^2\) test & LPD test \\
+\midrule
+GR-RHS & 10 & \textbf{10.309089 $\pm$ 0.192506} & \textbf{8.186909 $\pm$ 0.128046} & \textbf{0.515040 $\pm$ 0.016848} & \textbf{-3.777973 $\pm$ 0.013380} \\
+Grouped Horseshoe+ & 10 & 10.337849 $\pm$ 0.189610 & 8.208446 $\pm$ 0.138453 & 0.512068 $\pm$ 0.017629 & -3.794836 $\pm$ 0.011130 \\
+RHS & 10 & 10.457437 $\pm$ 0.196312 & 8.315410 $\pm$ 0.145084 & 0.500544 $\pm$ 0.018878 & -3.778881 $\pm$ 0.028308 \\
+OLS & 10 & 11.704426 $\pm$ 0.206337 & 9.177280 $\pm$ 0.155274 & 0.371653 $\pm$ 0.030980 & -4.276215 $\pm$ 0.061055 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The real-data ranking is consistent across the main predictive criteria. The
+three Bayesian grouped-shrinkage procedures all substantially outperform OLS on
+held-out age prediction, and GR-RHS is the top method on mean RMSE, mean MAE,
+mean test \(R^2\), and mean test log predictive density. Grouped Horseshoe+ is
+very close to GR-RHS, while RHS remains competitive but slightly weaker on
+average across the paired splits.
+
+At this micro scale, the gap among the grouped Bayesian methods is modest,
+which is not surprising given that there are only six groups and one very large
+\texttt{RNF39}-anchored block contains more than half of the selected CpGs.
+Accordingly, the main conclusion is not that the local-block micro benchmark
+creates a dramatic separation among GR-RHS, RHS, and Grouped Horseshoe+.
+Rather, it shows that the grouped Bayesian framework remains stable and
+predictively useful when transferred from synthetic grouped designs to a real
+methylation dataset with a clear, empirically verifiable local correlation
+structure.
+
+We do not emphasize \texttt{GIGG\_MMLE} in this benchmark because its interval
+calibration is poor throughout the simulation study. In the current repository,
+\texttt{GIGG\_MMLE} follows an MMLE-style empirical-Bayes path aligned to the
+upstream reference implementation, so part of the group-level hyperparameter
+uncertainty is plugged in rather than fully propagated through the posterior.
+Empirically, this produces intervals that are much too narrow and therefore
+severely under-covered relative to the nominal level, even when point-prediction
+performance is competitive.
+
+\section{Interpretation}
+
+The simulation evidence supports a scope-conditional empirical statement about
+GR-RHS.
+
+When the grouped structure is mild and the active groups are not sharply
+distinguishable in their internal signal geometry, GR-RHS behaves like a strong
+Bayesian competitor but does not necessarily dominate classical procedures such
+as the lasso in overall MSE. This is exactly what one should want from a
+well-behaved grouped prior: the group layer does not create an artificial gain
+when the setting does not call for it.
+
+When the grouped structure is more informative, however, the GR-RHS mechanism
+becomes visible. The mechanism experiments show that this visibility is not a
+vague descriptive claim. The group-specific slab ceiling produces ordered
+group-level retention in the clean separation setting, suppresses a decoy null
+group in the ambiguity setting, and disappears when the group gate is removed.
+The broader benchmark then shows that the same mechanism translates into better
+performance in the settings where group heterogeneity is genuinely important.
+
+For this reason, the simulation section and the theory section should be read as
+paired pieces. The theory identifies \(\kappa_g\) as a group-specific retention
+ceiling and emphasizes that the model differs from existing grouped shrinkage
+priors by placing the group effect on the finite slab. The simulations show that
+this interpretation is not merely formal: it generates an empirically distinct
+pattern, and that pattern is most useful exactly in the settings for which the
+model was designed.
+
+\end{document}

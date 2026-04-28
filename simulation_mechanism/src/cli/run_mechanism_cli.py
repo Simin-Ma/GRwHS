@@ -4,14 +4,12 @@ import argparse
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
-from ..config import MechanismConfig, load_mechanism_config
-from ..dgp import generate_mechanism_dataset, save_mechanism_dataset
-from ..plotting import build_mechanism_figures_from_results_dir
-from ..runner import run_mechanism
-from ..table_builder import build_paper_tables_from_results_dir
 from ..utils import prepare_history_run_dir, save_json, write_history_run_index
+
+if TYPE_CHECKING:
+    from ..config import MechanismConfig
 
 
 def _print_settings(settings: Iterable[object]) -> None:
@@ -83,6 +81,15 @@ def _override_runner_from_args(config: MechanismConfig, args: argparse.Namespace
     if getattr(args, "no_build_tables", False):
         runner = replace(runner, build_tables=False)
     return replace(out, runner=runner)
+
+
+def _load_config_from_args(args: argparse.Namespace):
+    from ..config import load_mechanism_config
+
+    return load_mechanism_config(
+        args.config or None,
+        include_dense_ablation=getattr(args, "include_dense_ablation", None),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -161,17 +168,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    config = load_mechanism_config(
-        args.config or None,
-        include_dense_ablation=getattr(args, "include_dense_ablation", None),
-    )
 
     if args.command == "list-settings":
+        config = _load_config_from_args(args)
         config = _override_n_test(config, args.n_test)
         _print_settings(config.settings)
         return 0
 
     if args.command == "dump-manifest":
+        config = _load_config_from_args(args)
         config = _override_n_test(config, args.n_test)
         manifest = config.to_manifest()
         if str(args.save_path).strip():
@@ -182,6 +187,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "sample-setting":
+        from ..dgp import generate_mechanism_dataset, save_mechanism_dataset
+
+        config = _load_config_from_args(args)
         config = _override_n_test(config, args.n_test)
         setting_map = config.setting_map()
         if args.setting_id not in setting_map:
@@ -212,6 +220,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "sample-suite":
+        from ..dgp import generate_mechanism_dataset, save_mechanism_dataset
+
+        config = _load_config_from_args(args)
         suite_config = _filtered_config(
             config,
             setting_ids=args.settings,
@@ -252,6 +263,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run-mechanism":
+        from ..runner import run_mechanism
+
+        config = _load_config_from_args(args)
         run_config = _override_runner_from_args(config, args)
         if not run_config.settings:
             parser.error("No settings selected for run-mechanism.")
@@ -260,11 +274,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "build-tables":
+        from ..table_builder import build_paper_tables_from_results_dir
+
         result = build_paper_tables_from_results_dir(args.results_dir)
         print(json.dumps(result, indent=2))
         return 0
 
     if args.command == "build-figures":
+        from ..plotting import build_mechanism_figures_from_results_dir
+
         result = build_mechanism_figures_from_results_dir(args.results_dir)
         print(json.dumps(result, indent=2))
         return 0

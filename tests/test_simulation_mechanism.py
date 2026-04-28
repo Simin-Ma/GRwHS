@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -12,9 +13,11 @@ from simulation_mechanism.src.config import load_mechanism_config, mechanism_con
 from simulation_mechanism.src.dgp import generate_mechanism_dataset
 from simulation_mechanism.src.plotting import build_mechanism_figures_from_results_dir
 from simulation_mechanism.src.runner import run_mechanism
+from simulation_mechanism.src.table_builder import build_figure5_data
 from simulation_mechanism.src.schemas import active_group_mask
 from simulation_mechanism.src.suite import build_dense_ablation_settings, build_mechanism_suite, get_setting_by_id
 from simulation_mechanism.src.utils import mechanism_method_family
+from simulation_mechanism.src.cli import run_mechanism_cli
 
 
 def test_mechanism_suite_defaults_to_ten_primary_settings() -> None:
@@ -93,6 +96,7 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
         config,
         settings=(
             config.setting_map()["m2_mixed_decoy_rw080"],
+            config.setting_map()["m3_few_groups_concentrated"],
             config.setting_map()["m4_ablation_p0_05"],
             config.setting_map()["m4_ablation_p0_15"],
         ),
@@ -190,17 +194,415 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     mechanism_table = pd.read_csv(run_dir / "paper_tables" / "paper_table_mechanism.csv")
     mechanism_md = (run_dir / "paper_tables" / "paper_table_mechanism.md").read_text(encoding="utf-8")
 
-    assert set(raw["experiment_id"]) == {"M2", "M4"}
+    assert set(raw["experiment_id"]) == {"M2", "M3", "M4"}
     assert "paired_common_converged" in per_group.columns
     assert not fig4.empty
+    fig5 = pd.read_csv(run_dir / "paper_tables" / "figure_data" / "figure5_complexity_unit.csv")
     m4_deltas = paired_deltas.loc[paired_deltas["experiment_id"] == "M4"]
     assert not m4_deltas.empty
     assert set(m4_deltas["baseline_method"]) == {"GR_RHS"}
     assert "group_auroc" in mechanism_table.columns
     assert "m4_ablation_p0_15" not in set(mechanism_table["setting_id"].astype(str))
+    assert "m3_few_groups_concentrated" in set(fig5["setting_id"].astype(str))
     assert "m4_ablation_p0_15" in set(fig6["setting_id"].astype(str))
     assert "**" in mechanism_md
 
     rebuilt = build_mechanism_figures_from_results_dir(run_dir)
     assert Path(rebuilt["figure3_correlation_ambiguity"]).exists()
+    assert Path(rebuilt["figure5_complexity_unit"]).exists()
     assert Path(rebuilt["figure6_ablation"]).exists()
+
+
+def test_build_figure5_data_merges_m3_summary_and_paired_deltas() -> None:
+    summary_paired = pd.DataFrame(
+        [
+            {
+                "experiment_id": "M3",
+                "setting_id": "m3_few_groups_concentrated",
+                "setting_label": "M3 few_groups concentrated",
+                "complexity_pattern": "few_groups",
+                "within_group_pattern": "concentrated",
+                "total_active_coeff": 10,
+                "method": "GR_RHS",
+                "method_label": "GR-RHS",
+                "kappa_gap": 0.15,
+                "mse_overall": 0.29,
+                "mse_signal": 0.93,
+                "n_paired": 100,
+            },
+            {
+                "experiment_id": "M3",
+                "setting_id": "m3_few_groups_concentrated",
+                "setting_label": "M3 few_groups concentrated",
+                "complexity_pattern": "few_groups",
+                "within_group_pattern": "concentrated",
+                "total_active_coeff": 10,
+                "method": "RHS",
+                "method_label": "RHS",
+                "kappa_gap": np.nan,
+                "mse_overall": 0.57,
+                "mse_signal": 1.19,
+                "n_paired": 100,
+            },
+            {
+                "experiment_id": "M3",
+                "setting_id": "m3_many_groups_distributed",
+                "setting_label": "M3 many_groups distributed",
+                "complexity_pattern": "many_groups",
+                "within_group_pattern": "distributed",
+                "total_active_coeff": 10,
+                "method": "GR_RHS",
+                "method_label": "GR-RHS",
+                "kappa_gap": 0.07,
+                "mse_overall": 0.07,
+                "mse_signal": 0.17,
+                "n_paired": 100,
+            },
+            {
+                "experiment_id": "M3",
+                "setting_id": "m3_many_groups_distributed",
+                "setting_label": "M3 many_groups distributed",
+                "complexity_pattern": "many_groups",
+                "within_group_pattern": "distributed",
+                "total_active_coeff": 10,
+                "method": "RHS",
+                "method_label": "RHS",
+                "kappa_gap": np.nan,
+                "mse_overall": 0.08,
+                "mse_signal": 0.21,
+                "n_paired": 100,
+            },
+        ]
+    )
+    paired_deltas = pd.DataFrame(
+        [
+            {
+                "experiment_id": "M3",
+                "setting_id": "m3_few_groups_concentrated",
+                "method": "GR_RHS",
+                "baseline_method": "RHS",
+                "metric": "mse_overall",
+                "mean_diff": -0.28,
+                "ci95_lo": -0.34,
+                "ci95_hi": -0.23,
+                "wins_vs_baseline": 100,
+                "losses_vs_baseline": 0,
+                "ties_vs_baseline": 0,
+                "n_effective_pairs": 100,
+            },
+            {
+                "experiment_id": "M3",
+                "setting_id": "m3_many_groups_distributed",
+                "method": "GR_RHS",
+                "baseline_method": "RHS",
+                "metric": "mse_overall",
+                "mean_diff": -0.005,
+                "ci95_lo": -0.007,
+                "ci95_hi": -0.003,
+                "wins_vs_baseline": 61,
+                "losses_vs_baseline": 39,
+                "ties_vs_baseline": 0,
+                "n_effective_pairs": 100,
+            },
+        ]
+    )
+
+    result = build_figure5_data(summary_paired, paired_deltas).sort_values("setting_id", kind="stable").reset_index(drop=True)
+
+    assert result.shape[0] == 2
+    assert set(result.columns) >= {
+        "setting_id",
+        "complexity_pattern",
+        "within_group_pattern",
+        "kappa_gap",
+        "gr_mse_overall",
+        "rhs_mse_overall",
+        "gr_minus_rhs_mse_overall",
+        "gr_minus_rhs_mse_overall_ci95_lo",
+        "gr_minus_rhs_mse_overall_ci95_hi",
+        "gr_wins_vs_rhs",
+        "gr_losses_vs_rhs",
+        "n_effective_pairs",
+    }
+    first = result.loc[result["setting_id"] == "m3_few_groups_concentrated"].iloc[0]
+    assert first["kappa_gap"] == 0.15
+    assert first["gr_mse_overall"] == 0.29
+    assert first["rhs_mse_overall"] == 0.57
+    assert first["gr_minus_rhs_mse_overall"] == -0.28
+    assert first["gr_wins_vs_rhs"] == 100
+    assert first["gr_losses_vs_rhs"] == 0
+    assert first["n_effective_pairs"] == 100
+
+
+def test_build_figures_cli_avoids_loading_heavy_runner_modules(monkeypatch, tmp_path) -> None:
+    fig_data_dir = tmp_path / "paper_tables" / "figure_data"
+    fig_data_dir.mkdir(parents=True)
+    figures_dir = tmp_path / "figures"
+    figures_dir.mkdir(parents=True)
+
+    pd.DataFrame(
+        [
+            {"record_type": "method_summary", "experiment_id": "M1", "setting_id": "m1", "method": "GR_RHS", "method_label": "GR-RHS", "group_auroc": 1.0, "kappa_gap": 0.2, "mse_overall": 0.1, "n_paired": 1},
+            {"record_type": "group_kappa", "experiment_id": "M1", "setting_id": "m1", "method": "GR_RHS", "method_label": "GR-RHS", "replicate_id": 1, "group_id": 0, "group_role": "other_null", "is_active_group": False, "true_group_l2_norm": 0.0, "kappa_group_mean": 0.05, "kappa_group_prob_gt_0_5": 0.0},
+            {"record_type": "group_kappa", "experiment_id": "M1", "setting_id": "m1", "method": "GR_RHS", "method_label": "GR-RHS", "replicate_id": 1, "group_id": 1, "group_role": "active", "is_active_group": True, "true_group_l2_norm": 1.0, "kappa_group_mean": 0.35, "kappa_group_prob_gt_0_5": 0.2},
+        ]
+    ).to_csv(fig_data_dir / "figure2_group_separation.csv", index=False)
+    pd.DataFrame(
+        [
+            {"setting_id": "m2", "rho_within": 0.8, "within_group_pattern": "mixed_decoy", "kappa_gap": 0.1, "gr_minus_rhs_mse_overall": -0.02, "n_effective_pairs": 1},
+        ]
+    ).to_csv(fig_data_dir / "figure3_correlation_ambiguity.csv", index=False)
+    pd.DataFrame(
+        [
+            {"group_id": 0, "kappa_group_mean": 0.1, "group_role": "other_null", "method": "GR_RHS", "method_label": "GR-RHS", "is_active_group": False, "is_decoy_group": False},
+            {"group_id": 1, "kappa_group_mean": 0.6, "group_role": "active", "method": "RHS", "method_label": "RHS", "is_active_group": True, "is_decoy_group": False},
+        ]
+    ).to_csv(fig_data_dir / "figure4_representative_profile.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "setting_id": "m3_few_groups_concentrated",
+                "setting_label": "M3 few_groups concentrated",
+                "complexity_pattern": "few_groups",
+                "within_group_pattern": "concentrated",
+                "total_active_coeff": 10,
+                "kappa_gap": 0.15,
+                "gr_mse_overall": 0.29,
+                "rhs_mse_overall": 0.57,
+                "n_paired": 100,
+                "gr_minus_rhs_mse_overall": -0.28,
+                "gr_minus_rhs_mse_overall_ci95_lo": -0.34,
+                "gr_minus_rhs_mse_overall_ci95_hi": -0.23,
+                "gr_wins_vs_rhs": 100,
+                "gr_losses_vs_rhs": 0,
+                "gr_ties_vs_rhs": 0,
+                "n_effective_pairs": 100,
+            },
+            {
+                "setting_id": "m3_few_groups_distributed",
+                "setting_label": "M3 few_groups distributed",
+                "complexity_pattern": "few_groups",
+                "within_group_pattern": "distributed",
+                "total_active_coeff": 10,
+                "kappa_gap": 0.15,
+                "gr_mse_overall": 0.03,
+                "rhs_mse_overall": 0.04,
+                "n_paired": 100,
+                "gr_minus_rhs_mse_overall": -0.01,
+                "gr_minus_rhs_mse_overall_ci95_lo": -0.013,
+                "gr_minus_rhs_mse_overall_ci95_hi": -0.008,
+                "gr_wins_vs_rhs": 72,
+                "gr_losses_vs_rhs": 28,
+                "gr_ties_vs_rhs": 0,
+                "n_effective_pairs": 100,
+            },
+            {
+                "setting_id": "m3_many_groups_concentrated",
+                "setting_label": "M3 many_groups concentrated",
+                "complexity_pattern": "many_groups",
+                "within_group_pattern": "concentrated",
+                "total_active_coeff": 10,
+                "kappa_gap": 0.07,
+                "gr_mse_overall": 0.23,
+                "rhs_mse_overall": 0.28,
+                "n_paired": 100,
+                "gr_minus_rhs_mse_overall": -0.058,
+                "gr_minus_rhs_mse_overall_ci95_lo": -0.070,
+                "gr_minus_rhs_mse_overall_ci95_hi": -0.046,
+                "gr_wins_vs_rhs": 86,
+                "gr_losses_vs_rhs": 14,
+                "gr_ties_vs_rhs": 0,
+                "n_effective_pairs": 100,
+            },
+            {
+                "setting_id": "m3_many_groups_distributed",
+                "setting_label": "M3 many_groups distributed",
+                "complexity_pattern": "many_groups",
+                "within_group_pattern": "distributed",
+                "total_active_coeff": 10,
+                "kappa_gap": 0.07,
+                "gr_mse_overall": 0.071,
+                "rhs_mse_overall": 0.076,
+                "n_paired": 100,
+                "gr_minus_rhs_mse_overall": -0.005,
+                "gr_minus_rhs_mse_overall_ci95_lo": -0.007,
+                "gr_minus_rhs_mse_overall_ci95_hi": -0.003,
+                "gr_wins_vs_rhs": 61,
+                "gr_losses_vs_rhs": 39,
+                "gr_ties_vs_rhs": 0,
+                "n_effective_pairs": 100,
+            },
+        ]
+    ).to_csv(fig_data_dir / "figure5_complexity_unit.csv", index=False)
+    pd.DataFrame(
+        [
+            {"setting_id": "m4", "total_active_coeff": 5, "method": "GR_RHS", "method_label": "GR-RHS", "kappa_gap": 0.3, "mse_overall": 0.1, "mse_signal": 0.2, "tau_ratio_to_oracle": 1.0, "n_paired": 1},
+        ]
+    ).to_csv(fig_data_dir / "figure6_ablation.csv", index=False)
+    pd.DataFrame(
+        [
+            {"experiment_id": "M4", "setting_id": "m4", "total_active_coeff": 5, "method": "GR_RHS_no_kappa", "method_label": "GR-RHS (no kappa)", "baseline_method": "GR_RHS", "baseline_method_label": "GR-RHS", "metric": "kappa_gap", "metric_direction": "larger_is_better", "n_effective_pairs": 1, "mean_diff": -0.3, "std_diff": 0.0, "se_diff": 0.0, "ci95_lo": -0.3, "ci95_hi": -0.3, "wins_vs_baseline": 0, "losses_vs_baseline": 1, "ties_vs_baseline": 0},
+        ]
+    ).to_csv(fig_data_dir / "figure6_ablation_deltas.csv", index=False)
+
+    Path(tmp_path / "latest_run.txt").write_text(str(tmp_path), encoding="utf-8")
+
+    for mod in [
+        "simulation_mechanism.src.runner",
+        "simulation_mechanism.src.dgp",
+        "simulation_mechanism.src.fitting",
+    ]:
+        sys.modules.pop(mod, None)
+
+    exit_code = run_mechanism_cli.main(["build-figures", "--results-dir", str(tmp_path)])
+    assert exit_code == 0
+    assert (figures_dir / "figure1_mechanism_schematic.png").exists()
+    assert "simulation_mechanism.src.runner" not in sys.modules
+    assert "simulation_mechanism.src.dgp" not in sys.modules
+
+
+def test_build_tables_cli_avoids_loading_heavy_runner_modules(tmp_path) -> None:
+    pd.DataFrame(
+        [
+            {
+                "experiment_id": "M1",
+                "experiment_label": "Group Separation",
+                "scientific_question": "Does GR-RHS separate signal and null groups?",
+                "primary_metric": "kappa_gap",
+                "setting_id": "m1",
+                "setting_label": "M1",
+                "method": "GR_RHS",
+                "method_label": "GR-RHS",
+                "n_runs": 1,
+                "n_ok": 1,
+                "n_converged": 1,
+                "n_paired": 1,
+                "n_total_replicates": 1,
+                "n_common_replicates": 1,
+                "common_rate": 1.0,
+                "group_auroc": 1.0,
+                "kappa_gap": 0.2,
+                "mse_overall": 0.1,
+            },
+            {
+                "experiment_id": "M1",
+                "experiment_label": "Group Separation",
+                "scientific_question": "Does GR-RHS separate signal and null groups?",
+                "primary_metric": "kappa_gap",
+                "setting_id": "m1",
+                "setting_label": "M1",
+                "method": "RHS",
+                "method_label": "RHS",
+                "n_runs": 1,
+                "n_ok": 1,
+                "n_converged": 1,
+                "n_paired": 1,
+                "n_total_replicates": 1,
+                "n_common_replicates": 1,
+                "common_rate": 1.0,
+                "mse_overall": 0.2,
+            },
+        ]
+    ).to_csv(tmp_path / "summary_paired.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "experiment_id": "M1",
+                "setting_id": "m1",
+                "method": "GR_RHS",
+                "method_label": "GR-RHS",
+                "baseline_method": "RHS",
+                "baseline_method_label": "RHS",
+                "metric": "mse_overall",
+                "metric_direction": "smaller_is_better",
+                "n_effective_pairs": 1,
+                "mean_diff": -0.1,
+                "std_diff": 0.0,
+                "se_diff": 0.0,
+                "ci95_lo": -0.1,
+                "ci95_hi": -0.1,
+                "wins_vs_baseline": 1,
+                "losses_vs_baseline": 0,
+                "ties_vs_baseline": 0,
+            }
+        ]
+    ).to_csv(tmp_path / "summary_paired_deltas.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "experiment_id": "M2",
+                "setting_id": "m2",
+                "within_group_pattern": "mixed_decoy",
+                "method": "GR_RHS",
+                "rho_within": 0.9,
+                "replicate_id": 1,
+                "kappa_gap": 0.2,
+            }
+        ]
+    ).to_csv(tmp_path / "raw_results_paired.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "experiment_id": "M2",
+                "setting_id": "m2",
+                "replicate_id": 1,
+                "method": "GR_RHS",
+                "group_id": 0,
+                "group_role": "active",
+                "is_active_group": True,
+                "is_decoy_group": False,
+                "true_group_l2_norm": 1.0,
+                "kappa_group_mean": 0.4,
+                "paired_common_converged": True,
+            },
+            {
+                "experiment_id": "M2",
+                "setting_id": "m2",
+                "replicate_id": 1,
+                "method": "RHS",
+                "group_id": 0,
+                "group_role": "active",
+                "is_active_group": True,
+                "is_decoy_group": False,
+                "true_group_l2_norm": 1.0,
+                "kappa_group_mean": np.nan,
+                "paired_common_converged": True,
+            },
+        ]
+    ).to_csv(tmp_path / "per_group_kappa.csv", index=False)
+
+    for mod in [
+        "simulation_mechanism.src.runner",
+        "simulation_mechanism.src.dgp",
+        "simulation_mechanism.src.fitting",
+    ]:
+        sys.modules.pop(mod, None)
+
+    exit_code = run_mechanism_cli.main(["build-tables", "--results-dir", str(tmp_path)])
+    assert exit_code == 0
+    assert (tmp_path / "paper_tables" / "paper_table_mechanism.md").exists()
+    assert "simulation_mechanism.src.runner" not in sys.modules
+    assert "simulation_mechanism.src.dgp" not in sys.modules
+    assert "simulation_mechanism.src.fitting" not in sys.modules
+
+
+def test_build_figures_skips_empty_partial_figure_data(tmp_path) -> None:
+    fig_data_dir = tmp_path / "paper_tables" / "figure_data"
+    fig_data_dir.mkdir(parents=True)
+    figures_dir = tmp_path / "figures"
+    figures_dir.mkdir(parents=True)
+
+    for name in [
+        "figure2_group_separation.csv",
+        "figure3_correlation_ambiguity.csv",
+        "figure4_representative_profile.csv",
+        "figure5_complexity_unit.csv",
+        "figure6_ablation.csv",
+        "figure6_ablation_deltas.csv",
+    ]:
+        (fig_data_dir / name).write_text("", encoding="utf-8")
+
+    result = build_mechanism_figures_from_results_dir(tmp_path)
+    assert (figures_dir / "figure1_mechanism_schematic.png").exists()
+    assert "figure1_mechanism_schematic" in result
+    assert "figure2_group_separation" not in result

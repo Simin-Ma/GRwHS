@@ -38,7 +38,16 @@ DEFAULT_SETTING_GROUP_COLS = (
 )
 
 DEFAULT_REQUIRED_METRICS = ("group_auroc", "mse_null", "mse_signal", "mse_overall")
-DEFAULT_DELTA_METRICS = ("group_auroc", "kappa_gap", "mse_overall", "mse_signal", "mse_null", "lpd_test")
+DEFAULT_DELTA_METRICS = (
+    "group_auroc",
+    "kappa_gap",
+    "null_group_mse",
+    "signal_group_mse",
+    "mse_overall",
+    "mse_signal",
+    "mse_null",
+    "lpd_test",
+)
 
 
 def default_setting_group_cols(raw=None) -> list[str]:

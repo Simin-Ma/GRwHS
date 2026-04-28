@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
@@ -9,6 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
 
 from simulation_project.src.utils import load_pandas
 
@@ -16,22 +18,51 @@ from .utils import ensure_dir, resolve_history_results_dir
 
 
 _METHOD_COLORS: dict[str, str] = {
-    "GR_RHS": "#1f77b4",
-    "RHS": "#ff7f0e",
-    "RHS_oracle": "#ff7f0e",
-    "GR_RHS_fixed_10x": "#6b8e23",
-    "GR_RHS_oracle": "#2ca02c",
-    "GR_RHS_no_local_scales": "#8c564b",
-    "GR_RHS_shared_kappa": "#9467bd",
-    "GR_RHS_no_kappa": "#d62728",
+    "GR_RHS": "#2f6b73",
+    "RHS": "#c08a5c",
+    "RHS_oracle": "#b59c79",
+    "GR_RHS_fixed_10x": "#8a9a68",
+    "GR_RHS_oracle": "#6f879a",
+    "GR_RHS_no_local_scales": "#9e7c69",
+    "GR_RHS_shared_kappa": "#9a6b79",
+    "GR_RHS_no_kappa": "#b75d57",
 }
 
 
 _GROUP_ROLE_COLORS: dict[str, str] = {
-    "active": "#1f77b4",
-    "decoy_null": "#d62728",
-    "other_null": "#9aa0a6",
+    "active": "#2f6b73",
+    "decoy_null": "#ba7c4a",
+    "other_null": "#a8b4c1",
 }
+
+
+DIVERGING_CMAP = LinearSegmentedColormap.from_list(
+    "muted_diverging",
+    ["#3d6c80", "#f7f7f3", "#d3a074"],
+)
+SEQUENTIAL_CMAP = LinearSegmentedColormap.from_list(
+    "muted_sequential",
+    ["#f1efe7", "#bfd1cb", "#4f7a76"],
+)
+
+
+plt.rcParams.update(
+    {
+        "figure.facecolor": "#fcfcfa",
+        "axes.facecolor": "#f5f6f2",
+        "axes.edgecolor": "#c7cec8",
+        "axes.labelcolor": "#1f2933",
+        "axes.titlecolor": "#1f2933",
+        "axes.titleweight": "bold",
+        "xtick.color": "#5b6770",
+        "ytick.color": "#5b6770",
+        "text.color": "#1f2933",
+        "font.size": 10,
+        "axes.titlesize": 12,
+        "axes.labelsize": 10,
+        "legend.frameon": False,
+    }
+)
 
 
 def _method_color(name: str) -> str:
@@ -50,7 +81,7 @@ def _save(fig: plt.Figure, path: Path) -> None:
     history_dir = path.parent / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    fig.savefig(history_dir / f"{path.stem}_{ts}{path.suffix}", **save_kws)
+    shutil.copy2(path, history_dir / f"{path.stem}_{ts}{path.suffix}")
     plt.close(fig)
 
 
@@ -64,6 +95,61 @@ def _as_frame(df: Any):
         except TypeError:
             pass
     return pd.DataFrame(list(df))
+
+
+def _read_csv_or_empty(path: Path):
+    pd = load_pandas()
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
+def _draw_missing_panel(ax, title: str, message: str, *, xlabel: str | None = None, ylabel: str | None = None) -> None:
+    ax.set_title(title)
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_alpha(0.18)
+    ax.text(
+        0.5,
+        0.5,
+        message,
+        transform=ax.transAxes,
+        ha="center",
+        va="center",
+        fontsize=10,
+        color="#4b5563",
+        bbox=dict(boxstyle="round,pad=0.55", facecolor="#f8fafc", edgecolor="#d0d7de", linewidth=1.0),
+    )
+
+
+def _figure2_strength_labels(trend: Any) -> list[str]:
+    if trend.empty:
+        return []
+
+    ordered = trend.reset_index(drop=True).copy()
+    labels = ["active"] * len(ordered)
+    active_rank = 0
+    active_total = int(ordered["is_active_group"].fillna(False).astype(bool).sum()) if "is_active_group" in ordered.columns else 0
+    active_names = ["weak", "medium", "strong"]
+    for idx, row in ordered.iterrows():
+        is_active = bool(row.get("is_active_group", False))
+        if not is_active:
+            labels[idx] = "null"
+            continue
+        if active_total == 1:
+            labels[idx] = "active"
+        elif active_total <= len(active_names):
+            labels[idx] = active_names[active_rank]
+        else:
+            labels[idx] = f"active {active_rank + 1}"
+        active_rank += 1
+    return labels
 
 
 def _heatmap_panel(ax, matrix: np.ndarray, x_labels: Sequence[str], y_labels: Sequence[str], *, cmap: str, center: float | None = None, fmt: str = "{:.3f}", annotation: np.ndarray | None = None, title: str = ""):
@@ -95,6 +181,145 @@ def _heatmap_panel(ax, matrix: np.ndarray, x_labels: Sequence[str], y_labels: Se
                 if np.isfinite(ann):
                     label = label + f"\n(n={int(ann)})"
             ax.text(j, i, label, ha="center", va="center", fontsize=8, color="#111111")
+    return im
+
+
+def _card_kwargs(*, pad: float = 0.32, facecolor: str = "#ffffff") -> dict[str, object]:
+    return {
+        "boxstyle": f"round,pad={pad}",
+        "facecolor": facecolor,
+        "edgecolor": "#c7cec8",
+        "linewidth": 0.9,
+    }
+
+
+def _style_axis(ax: plt.Axes, *, grid_axis: str = "y") -> None:
+    ax.set_facecolor("#f5f6f2")
+    if grid_axis in {"x", "y", "both"}:
+        ax.grid(axis=grid_axis, color="#d9ddd6", alpha=0.72, linewidth=0.8)
+    ax.set_axisbelow(True)
+    for spine in ax.spines.values():
+        spine.set_color("#c7cec8")
+        spine.set_linewidth(1.0)
+    ax.tick_params(colors="#5b6770", labelcolor="#1f2933")
+
+
+def _panel_tag(ax: plt.Axes, tag: str) -> None:
+    ax.text(
+        -0.08,
+        1.04,
+        tag,
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=11,
+        fontweight="bold",
+        color="#8a949c",
+    )
+
+
+def _styled_heatmap(
+    ax: plt.Axes,
+    matrix: np.ndarray,
+    x_labels: Sequence[str],
+    y_labels: Sequence[str],
+    *,
+    cmap,
+    title: str,
+    cbar_label: str,
+    fmt: str = "{:+.3f}",
+    center_zero: bool = False,
+    extra_labels: dict[tuple[int, int], str] | None = None,
+    highlight: tuple[int, int] | None = None,
+    highlight_label: str | None = None,
+):
+    from matplotlib.patches import Rectangle
+
+    arr = np.asarray(matrix, dtype=float)
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        vmin, vmax = (-1.0, 1.0) if center_zero else (0.0, 1.0)
+    elif center_zero:
+        spread = float(np.nanmax(np.abs(finite)))
+        spread = spread if spread > 0 else 1.0
+        vmin, vmax = -spread, spread
+    else:
+        vmin = float(np.nanmin(finite))
+        vmax = float(np.nanmax(finite))
+        if np.isclose(vmin, vmax):
+            vmin -= 0.5
+            vmax += 0.5
+
+    im = ax.imshow(arr, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
+    ax.set_xticks(np.arange(len(x_labels)), labels=list(x_labels))
+    ax.set_yticks(np.arange(len(y_labels)), labels=list(y_labels))
+    ax.set_title(title, pad=10)
+    ax.set_facecolor("#f5f6f2")
+    for spine in ax.spines.values():
+        spine.set_color("#c7cec8")
+        spine.set_linewidth(1.0)
+    ax.tick_params(colors="#5b6770", labelcolor="#1f2933")
+
+    for yi in range(arr.shape[0]):
+        for xi in range(arr.shape[1]):
+            ax.add_patch(
+                Rectangle(
+                    (xi - 0.5, yi - 0.5),
+                    1.0,
+                    1.0,
+                    fill=False,
+                    edgecolor="#ffffff",
+                    linewidth=1.2,
+                )
+            )
+            value = arr[yi, xi]
+            if not np.isfinite(value):
+                continue
+            label = fmt.format(float(value))
+            if extra_labels and (yi, xi) in extra_labels:
+                label = f"{label}\n{extra_labels[(yi, xi)]}"
+            ax.text(
+                xi,
+                yi,
+                label,
+                ha="center",
+                va="center",
+                fontsize=9.5,
+                color="#1f2933",
+                fontweight="bold" if highlight == (yi, xi) else None,
+                linespacing=1.25,
+            )
+
+    if highlight is not None:
+        yi, xi = highlight
+        ax.add_patch(
+            Rectangle(
+                (xi - 0.5, yi - 0.5),
+                1.0,
+                1.0,
+                fill=False,
+                edgecolor="#244d57",
+                linewidth=2.6,
+            )
+        )
+        if highlight_label:
+            ax.text(
+                xi,
+                yi - 0.78,
+                highlight_label,
+                ha="center",
+                va="bottom",
+                fontsize=8.7,
+                color="#244d57",
+                fontweight="bold",
+                bbox=_card_kwargs(pad=0.18, facecolor="#fdfdfb"),
+            )
+
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label(cbar_label, fontsize=9)
+    cbar.ax.tick_params(labelsize=9, colors="#5b6770")
+    cbar.outline.set_edgecolor("#c7cec8")
+    cbar.outline.set_linewidth(0.9)
     return im
 
 
@@ -160,56 +385,181 @@ def plot_figure1_mechanism_schematic(out_dir: Path | str) -> str:
 def plot_figure2_group_separation(df: Any, out_dir: Path | str) -> str | None:
     frame = _as_frame(df)
     out_dir = ensure_dir(out_dir)
-    if frame.empty or "method" not in frame.columns:
+    if frame.empty or "record_type" not in frame.columns:
         return None
+    pd = load_pandas()
     frame = frame.copy()
-    frame["method_sort"] = frame["method"].map(lambda x: 0 if str(x) == "GR_RHS" else 1)
-    frame = frame.sort_values(["method_sort", "method"], kind="stable")
-    methods = frame["method_label"].astype(str).tolist()
-    x = np.arange(len(methods), dtype=float)
-    kappa_gap = frame["kappa_gap"].to_numpy(dtype=float) if "kappa_gap" in frame.columns else np.full(len(frame), np.nan)
-    group_auroc = frame["group_auroc"].to_numpy(dtype=float) if "group_auroc" in frame.columns else np.full(len(frame), np.nan)
-    mse_overall = frame["mse_overall"].to_numpy(dtype=float) if "mse_overall" in frame.columns else np.full(len(frame), np.nan)
-    n_eff = frame["n_paired"].to_numpy(dtype=float) if "n_paired" in frame.columns else np.full(len(frame), np.nan)
-    colors = [_method_color(m) for m in frame["method"].astype(str).tolist()]
+    summary = frame.loc[frame["record_type"].astype(str).eq("method_summary")].copy()
+    if {"metric", "method"}.issubset(set(frame.columns)):
+        delta = frame.loc[
+            frame["record_type"].astype(str).eq("paired_delta")
+            & frame["metric"].astype(str).eq("mse_overall")
+            & frame["method"].astype(str).eq("GR_RHS")
+        ].copy()
+    else:
+        delta = frame.iloc[0:0].copy()
+    group = frame.loc[
+        frame["record_type"].astype(str).eq("group_kappa")
+        & frame["method"].astype(str).eq("GR_RHS")
+    ].copy()
+    if group.empty:
+        return None
 
-    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.6), gridspec_kw={"width_ratios": [1.25, 1.0]})
-    ax = axes[0]
-    bar_heights = np.where(np.isfinite(kappa_gap), kappa_gap, 0.0)
-    bars = ax.bar(x, bar_heights, color=colors, alpha=0.90, width=0.62, edgecolor="white", linewidth=0.8)
-    ax.set_xticks(x, labels=methods)
-    ax.set_ylabel("kappa gap")
-    ax.set_title("Signal-null group separation")
-    ax.grid(axis="y", alpha=0.22)
-    y_max = np.nanmax(kappa_gap[np.isfinite(kappa_gap)]) if np.isfinite(kappa_gap).any() else 1.0
-    ax.set_ylim(min(0.0, np.nanmin(kappa_gap[np.isfinite(kappa_gap)]) if np.isfinite(kappa_gap).any() else 0.0) - 0.05, y_max * 1.25 + 0.08)
-    for idx, bar in enumerate(bars):
-        if np.isfinite(kappa_gap[idx]):
-            ax.text(bar.get_x() + bar.get_width() / 2.0, bar.get_height() + 0.02, f"{kappa_gap[idx]:.3f}", ha="center", va="bottom", fontsize=9)
-        else:
-            bar.set_hatch("//")
-            ax.text(bar.get_x() + bar.get_width() / 2.0, 0.03, "N/A", ha="center", va="bottom", fontsize=8, color="#444444")
-        text_bits = []
-        if np.isfinite(mse_overall[idx]):
-            text_bits.append(f"MSE={mse_overall[idx]:.3f}")
-        if np.isfinite(n_eff[idx]):
-            text_bits.append(f"n={int(n_eff[idx])}")
-        if text_bits:
-            ax.text(bar.get_x() + bar.get_width() / 2.0, ax.get_ylim()[0] + 0.03, "\n".join(text_bits), ha="center", va="bottom", fontsize=8, color="#444444")
+    group["kappa_group_mean"] = pd.to_numeric(group["kappa_group_mean"], errors="coerce")
+    group["true_group_l2_norm"] = pd.to_numeric(group["true_group_l2_norm"], errors="coerce")
+    group["group_id"] = pd.to_numeric(group["group_id"], errors="coerce")
+    group["replicate_id"] = pd.to_numeric(group["replicate_id"], errors="coerce")
+    if "is_active_group" in group.columns:
+        group["is_active_group"] = group["is_active_group"].fillna(False).astype(bool)
+    else:
+        group["is_active_group"] = group["group_role"].astype(str).eq("active")
 
-    ax2 = axes[1]
-    ax2.scatter(x, group_auroc, s=120, color=colors, zorder=3)
-    ax2.plot(x, group_auroc, color="#666666", lw=1.2, alpha=0.7, zorder=2)
-    ax2.set_xticks(x, labels=methods)
-    ax2.set_ylabel("group AUROC")
-    ax2.set_title("Group recovery ranking")
-    ax2.grid(axis="y", alpha=0.22)
-    ax2.set_ylim(0.45, 1.02)
-    for idx in range(len(x)):
-        if np.isfinite(group_auroc[idx]):
-            ax2.text(x[idx], group_auroc[idx] + 0.02, f"{group_auroc[idx]:.3f}", ha="center", va="bottom", fontsize=9)
+    fig = plt.figure(figsize=(10.8, 4.8))
+    fig.patch.set_facecolor("white")
+    outer = fig.add_gridspec(
+        1,
+        2,
+        width_ratios=[0.92, 1.25],
+        left=0.08,
+        right=0.985,
+        top=0.84,
+        bottom=0.22,
+        wspace=0.24,
+    )
+    ax0 = fig.add_subplot(outer[0, 0])
+    ax1 = fig.add_subplot(outer[0, 1])
 
-    fig.suptitle("Figure 2. Group-level separation in GA-V2-A", fontsize=13, fontweight="bold")
+    for ax in (ax0, ax1):
+        ax.set_facecolor("white")
+        ax.grid(True, which="major", color="#d9d9d9", linewidth=0.8)
+        ax.grid(True, which="minor", color="#ececec", linewidth=0.55)
+        ax.minorticks_on()
+        for spine in ax.spines.values():
+            spine.set_color("#333333")
+            spine.set_linewidth(1.1)
+        ax.tick_params(colors="#333333", labelsize=10)
+
+    rng = np.random.default_rng(20260427)
+    role_order = ["other_null", "active"]
+    role_names = {"other_null": "Null groups", "active": "Signal groups"}
+    role_positions = {"other_null": 0.0, "active": 1.0}
+    role_colors = {"other_null": "#ff6f61", "active": "#17becf"}
+    medians: dict[str, float] = {}
+    box_data: list[np.ndarray] = []
+    box_positions: list[float] = []
+    box_colors: list[str] = []
+    for role in role_order:
+        sub = group.loc[group["group_role"].astype(str).eq(role)].copy()
+        if sub.empty:
+            continue
+        values = sub["kappa_group_mean"].to_numpy(dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            continue
+        box_data.append(values)
+        box_positions.append(role_positions[role])
+        box_colors.append(role_colors[role])
+        medians[role] = float(np.nanmedian(values))
+
+    if box_data:
+        bp = ax0.boxplot(
+            box_data,
+            positions=box_positions,
+            widths=0.42,
+            patch_artist=True,
+            showfliers=False,
+            medianprops=dict(color="black", linewidth=1.8),
+            whiskerprops=dict(color="#4a4a4a", linewidth=1.2),
+            capprops=dict(color="#4a4a4a", linewidth=1.2),
+            boxprops=dict(edgecolor="#4a4a4a", linewidth=1.2),
+        )
+        for patch, color in zip(bp["boxes"], box_colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.18)
+
+    for role in role_order:
+        sub = group.loc[group["group_role"].astype(str).eq(role)].copy()
+        if sub.empty:
+            continue
+        values = pd.to_numeric(sub["kappa_group_mean"], errors="coerce").to_numpy(dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            continue
+        x = np.full(values.shape[0], role_positions[role], dtype=float) + rng.uniform(-0.085, 0.085, size=values.shape[0])
+        ax0.scatter(
+            x,
+            values,
+            s=13,
+            alpha=0.28,
+            color=role_colors[role],
+            edgecolors="none",
+            zorder=2,
+        )
+
+    median_gap = medians.get("active", np.nan) - medians.get("other_null", np.nan)
+    ax0.set_xlim(-0.48, 1.48)
+    ax0.set_ylim(-0.01, 0.56)
+    ax0.set_xticks([role_positions[r] for r in role_order], labels=[role_names[r] for r in role_order])
+    ax0.set_ylabel("Posterior mean $\\kappa_g$")
+    ax0.set_title("", fontsize=12)
+    _panel_tag(ax0, "A")
+
+    trend = (
+        group.groupby(["group_id", "true_group_l2_norm", "group_role", "is_active_group"], dropna=False, sort=True)["kappa_group_mean"]
+        .agg(["mean", "std", "count"])
+        .reset_index()
+        .sort_values(["true_group_l2_norm", "group_id"], kind="stable")
+        .reset_index(drop=True)
+    )
+    trend["se"] = trend["std"].fillna(0.0).astype(float) / np.sqrt(np.maximum(trend["count"].astype(float), 1.0))
+    trend["ci_lo"] = trend["mean"].astype(float) - 1.96 * trend["se"].astype(float)
+    trend["ci_hi"] = trend["mean"].astype(float) + 1.96 * trend["se"].astype(float)
+    xvals = np.arange(len(trend), dtype=float)
+    point_colors = [role_colors["active"] if flag else role_colors["other_null"] for flag in trend["is_active_group"].tolist()]
+    tick_labels = _figure2_strength_labels(trend)
+    ax1.plot(
+        xvals,
+        trend["mean"].to_numpy(dtype=float),
+        color="black",
+        linewidth=1.7,
+        zorder=2,
+    )
+    ax1.vlines(
+        xvals,
+        trend["ci_lo"].to_numpy(dtype=float),
+        trend["ci_hi"].to_numpy(dtype=float),
+        colors=point_colors,
+        linewidth=1.7,
+        zorder=2,
+    )
+    ax1.scatter(
+        xvals,
+        trend["mean"].to_numpy(dtype=float),
+        s=42,
+        c=point_colors,
+        edgecolors="white",
+        linewidths=0.7,
+        zorder=3,
+    )
+    ax1.set_xlim(-0.55, len(trend) - 0.45)
+    ax1.set_ylim(-0.01, 0.56)
+    ax1.set_xticks(xvals, labels=tick_labels)
+    ax1.set_xlabel("True group strength")
+    ax1.set_ylabel("Mean posterior $\\kappa_g$")
+    ax1.set_title("", fontsize=12)
+    ax1.legend(
+        handles=[
+            plt.Line2D([0], [0], color=role_colors["other_null"], marker="o", lw=1.5, markersize=5.5, label="null group"),
+            plt.Line2D([0], [0], color=role_colors["active"], marker="o", lw=1.5, markersize=5.5, label="active group"),
+            plt.Line2D([0], [0], color="black", lw=1.7, label="mean trend"),
+        ],
+        loc="upper left",
+        fontsize=8.8,
+        frameon=False,
+    )
+    _panel_tag(ax1, "B")
+
+    fig.suptitle("")
     out_path = out_dir / "figure2_group_separation.png"
     _save(fig, out_path)
     return str(out_path)
@@ -221,62 +571,113 @@ def plot_figure3_correlation_ambiguity(df: Any, out_dir: Path | str) -> str | No
     needed = {"rho_within", "within_group_pattern", "gr_minus_rhs_mse_overall", "kappa_gap"}
     if frame.empty or not needed.issubset(set(frame.columns)):
         return None
-    patterns = sorted(frame["within_group_pattern"].astype(str).unique().tolist())
-    rho_vals = sorted(frame["rho_within"].astype(float).unique().tolist())
-    mse_mat = np.full((len(patterns), len(rho_vals)), np.nan, dtype=float)
+    pd = load_pandas()
+    frame = frame.copy()
+    frame["rho_within"] = pd.to_numeric(frame["rho_within"], errors="coerce")
+    frame["kappa_gap"] = pd.to_numeric(frame["kappa_gap"], errors="coerce")
+    frame["gr_minus_rhs_mse_overall"] = pd.to_numeric(frame["gr_minus_rhs_mse_overall"], errors="coerce")
+
+    rho_vals = sorted(frame["rho_within"].dropna().unique().tolist())
+    pattern_priority = ["mixed_decoy", "concentrated"]
+    present_patterns = [p for p in pattern_priority if p in set(frame["within_group_pattern"].astype(str))]
+    extras = [p for p in sorted(frame["within_group_pattern"].astype(str).unique()) if p not in set(present_patterns)]
+    patterns = present_patterns + extras
+    if not rho_vals or not patterns:
+        return None
+
+    delta_mat = np.full((len(patterns), len(rho_vals)), np.nan, dtype=float)
     gap_mat = np.full((len(patterns), len(rho_vals)), np.nan, dtype=float)
-    ann = np.full((len(patterns), len(rho_vals)), np.nan, dtype=float)
-    for i, pat in enumerate(patterns):
-        for j, rho in enumerate(rho_vals):
-            sub = frame.loc[
+    for yi, pat in enumerate(patterns):
+        for xi, rho in enumerate(rho_vals):
+            cell = frame.loc[
                 frame["within_group_pattern"].astype(str).eq(pat)
                 & np.isclose(frame["rho_within"].astype(float), float(rho))
             ]
-            if sub.empty:
+            if cell.empty:
                 continue
-            mse_mat[i, j] = float(sub["gr_minus_rhs_mse_overall"].iloc[0])
-            gap_mat[i, j] = float(sub["kappa_gap"].iloc[0])
-            if "n_effective_pairs" in sub.columns and np.isfinite(pd := float(sub["n_effective_pairs"].iloc[0])):
-                ann[i, j] = pd
-            elif "n_paired" in sub.columns and np.isfinite(pd2 := float(sub["n_paired"].iloc[0])):
-                ann[i, j] = pd2
+            row = cell.iloc[0]
+            delta_mat[yi, xi] = float(row["gr_minus_rhs_mse_overall"])
+            gap_mat[yi, xi] = float(row["kappa_gap"])
 
-    fig, axes = plt.subplots(1, 2, figsize=(11.0, 4.8))
-    x_labels = [f"{rho:.2f}" for rho in rho_vals]
-    y_labels = [pat.replace("_", "\n") for pat in patterns]
-    im_a = _heatmap_panel(
-        axes[0],
-        mse_mat,
+    x_labels = [f"$\\rho_w = {rho:.1f}$" for rho in rho_vals]
+    y_labels = [pat.replace("_", " ") for pat in patterns]
+
+    finite_delta = delta_mat[np.isfinite(delta_mat)]
+    if finite_delta.size > 0:
+        flat_idx = int(np.nanargmin(delta_mat))
+        highlight = (flat_idx // delta_mat.shape[1], flat_idx % delta_mat.shape[1])
+    else:
+        highlight = None
+
+    fig = plt.figure(figsize=(12.6, 5.4))
+    fig.patch.set_facecolor("#fcfcfa")
+    outer = fig.add_gridspec(
+        1,
+        2,
+        width_ratios=[1.05, 1.0],
+        left=0.06,
+        right=0.985,
+        top=0.84,
+        bottom=0.20,
+        wspace=0.28,
+    )
+    ax0 = fig.add_subplot(outer[0, 0])
+    ax1 = fig.add_subplot(outer[0, 1])
+
+    _styled_heatmap(
+        ax0,
+        delta_mat,
         x_labels,
         y_labels,
-        cmap="RdBu_r",
-        center=0.0,
+        cmap=DIVERGING_CMAP,
+        title="Paired overall-MSE difference (negative favors GR-RHS)",
+        cbar_label="GR-RHS - RHS overall MSE",
         fmt="{:+.3f}",
-        annotation=ann,
-        title="GR-RHS - RHS on paired overall MSE",
+        center_zero=True,
+        highlight=highlight,
+        highlight_label="largest gain",
     )
-    axes[0].set_xlabel("rho_within")
-    axes[0].set_ylabel("within-group pattern")
-    cbar_a = fig.colorbar(im_a, ax=axes[0], fraction=0.046, pad=0.04)
-    cbar_a.set_label("negative = GR-RHS better")
+    _panel_tag(ax0, "A")
 
-    im_b = _heatmap_panel(
-        axes[1],
+    _styled_heatmap(
+        ax1,
         gap_mat,
         x_labels,
         y_labels,
-        cmap="YlGnBu",
-        center=None,
+        cmap=SEQUENTIAL_CMAP,
+        title="GR-RHS gate stays identifiable in every cell",
+        cbar_label="GR-RHS $\\kappa$ gap",
         fmt="{:.3f}",
-        annotation=ann,
-        title="GR-RHS kappa gap",
+        center_zero=False,
     )
-    axes[1].set_xlabel("rho_within")
-    axes[1].set_ylabel("within-group pattern")
-    cbar_b = fig.colorbar(im_b, ax=axes[1], fraction=0.046, pad=0.04)
-    cbar_b.set_label("kappa gap")
+    _panel_tag(ax1, "B")
 
-    fig.suptitle("Figure 3. Correlation stress under structural ambiguity", fontsize=13, fontweight="bold")
+    if "n_effective_pairs" in frame.columns and frame["n_effective_pairs"].notna().any():
+        n_eff = int(float(frame["n_effective_pairs"].dropna().iloc[0]))
+        n_text = f"{n_eff} paired replicates per cell"
+    elif "n_paired" in frame.columns and frame["n_paired"].notna().any():
+        n_text = f"{int(float(frame['n_paired'].dropna().iloc[0]))} paired replicates per cell"
+    else:
+        n_text = ""
+    if highlight is not None and finite_delta.size > 0:
+        edge = float(delta_mat[highlight])
+        footer_pieces = [
+            f"Largest gain at {y_labels[highlight[0]]} / {x_labels[highlight[1]]}: {edge:+.3f}",
+        ]
+        if n_text:
+            footer_pieces.append(n_text)
+        fig.text(
+            0.5,
+            0.07,
+            " | ".join(footer_pieces),
+            ha="center",
+            va="center",
+            fontsize=9.5,
+            color="#5b6770",
+            bbox=_card_kwargs(pad=0.28, facecolor="#ffffff"),
+        )
+
+    fig.suptitle("M2. Correlation stress: GR-RHS sharpens in the ambiguity regime", y=0.94, fontsize=15, fontweight="bold")
     out_path = out_dir / "figure3_correlation_ambiguity.png"
     _save(fig, out_path)
     return str(out_path)
@@ -288,39 +689,109 @@ def plot_figure4_representative_profile(df: Any, out_dir: Path | str) -> str | N
     needed = {"group_id", "kappa_group_mean", "group_role", "method"}
     if frame.empty or not needed.issubset(set(frame.columns)):
         return None
+    pd = load_pandas()
+    frame = frame.copy()
+    frame["group_id"] = pd.to_numeric(frame["group_id"], errors="coerce")
+    frame["kappa_group_mean"] = pd.to_numeric(frame["kappa_group_mean"], errors="coerce")
     methods = ["GR_RHS", "RHS"]
     present = [m for m in methods if m in set(frame["method"].astype(str))]
     if not present:
         present = sorted(frame["method"].astype(str).unique().tolist())
 
-    fig, axes = plt.subplots(1, len(present), figsize=(5.2 * len(present), 4.8), sharey=True)
-    if len(present) == 1:
-        axes = [axes]
-    for ax, method in zip(axes, present):
+    fig = plt.figure(figsize=(5.6 * len(present) + 0.4, 5.0))
+    fig.patch.set_facecolor("#fcfcfa")
+    outer = fig.add_gridspec(
+        1,
+        len(present),
+        left=0.07,
+        right=0.985,
+        top=0.84,
+        bottom=0.22,
+        wspace=0.18,
+    )
+    short_tags = {"active": "A", "decoy_null": "D", "other_null": "N"}
+    role_rank = {"other_null": 0, "decoy_null": 1, "active": 2}
+    panel_letters = ["A", "B", "C", "D"]
+    for idx, method in enumerate(present):
+        ax = fig.add_subplot(outer[0, idx])
         sub = frame.loc[frame["method"].astype(str).eq(method)].copy()
         sub = sub.sort_values(["group_id"], kind="stable")
-        xs = sub["group_id"].astype(int).to_numpy()
+        finite = sub["kappa_group_mean"].replace([np.inf, -np.inf], np.nan).notna()
+        title = str(sub["method_label"].iloc[0]) if "method_label" in sub.columns and not sub.empty else method.replace("_", "-")
+        title = title.replace(" [stan_rstanarm_hs]", "")
+        if not finite.any():
+            _draw_missing_panel(
+                ax,
+                title,
+                "Group-level $\\kappa_g$ is not defined for this method,\nso this profile is intentionally unavailable.",
+                xlabel="Group id",
+            )
+            ax.set_ylim(-0.02, 1.02)
+            ax.axhline(0.5, color="#8a949c", lw=1.0, ls="--")
+            _panel_tag(ax, panel_letters[idx])
+            continue
+
+        sub = sub.loc[finite].copy()
+        sub["role_rank"] = sub["group_role"].astype(str).map(lambda x: role_rank.get(str(x), 99))
+        sub["role_order"] = sub.groupby("group_role", dropna=False).cumcount() + 1
+        sub = sub.sort_values(["role_rank", "group_id"], kind="stable").reset_index(drop=True)
         ys = sub["kappa_group_mean"].astype(float).to_numpy()
-        colors = [_group_role_color(role) for role in sub["group_role"].astype(str).tolist()]
-        ax.plot(xs, ys, color="#888888", lw=1.4, zorder=1)
-        ax.scatter(xs, ys, s=120, c=colors, edgecolors="white", linewidths=0.8, zorder=3)
-        for _, row in sub.iterrows():
-            label = "A" if bool(row.get("is_active_group", False)) else ("D" if bool(row.get("is_decoy_group", False)) else "N")
-            ax.text(float(row["group_id"]), float(row["kappa_group_mean"]) + 0.025, label, ha="center", va="bottom", fontsize=8)
-        ax.set_title(str(sub["method_label"].iloc[0]) if "method_label" in sub.columns else method)
-        ax.set_xlabel("group id")
-        ax.set_xticks(xs)
-        ax.set_ylim(-0.02, 1.02)
-        ax.grid(axis="y", alpha=0.22)
-        ax.axhline(0.5, color="#444444", lw=1.0, ls="--")
-    axes[0].set_ylabel("posterior mean kappa_g")
+        roles = sub["group_role"].astype(str).tolist()
+        colors = [_group_role_color(role) for role in roles]
+        plot_x = np.arange(len(sub), dtype=float)
+
+        xtick_labels: list[str] = []
+        for row in sub.itertuples(index=False):
+            role = str(row.group_role)
+            order = int(row.role_order)
+            if role == "active":
+                xtick_labels.append(f"active {order}")
+            elif role == "decoy_null":
+                xtick_labels.append("decoy")
+            elif role == "other_null":
+                xtick_labels.append(f"null {order}")
+            else:
+                xtick_labels.append(f"group {int(row.group_id)}")
+
+        ax.plot(plot_x, ys, color="#8d98a6", lw=2.0, alpha=0.95, zorder=2)
+        ax.scatter(plot_x, ys, s=120, c=colors, edgecolors="white", linewidths=0.9, zorder=3)
+        for xi, yi, role in zip(plot_x, ys, roles):
+            ax.text(float(xi), float(yi) + 0.018, short_tags.get(role, "?"), ha="center", va="bottom", fontsize=8.5, color="#5b6770")
+
+        decoy_mask = np.array([role == "decoy_null" for role in roles])
+        if method == "GR_RHS" and decoy_mask.any():
+            di = int(np.argmax(decoy_mask))
+            ax.annotate(
+                "decoy stays low",
+                xy=(float(plot_x[di]), float(ys[di])),
+                xytext=(0.05, 0.92),
+                textcoords="axes fraction",
+                arrowprops={"arrowstyle": "->", "color": "#5b6770", "linewidth": 1.0},
+                fontsize=9,
+                color="#5b6770",
+                ha="left",
+                va="top",
+            )
+
+        ax.set_title(title)
+        ax.set_xlabel("Group role")
+        ax.set_xticks(plot_x, labels=xtick_labels)
+        ax.set_ylim(-0.02, max(0.42, float(np.nanmax(ys)) + 0.10))
+        ax.set_xlim(-0.45, len(sub) - 0.55 if len(sub) > 0 else 0.45)
+        if idx == 0:
+            ax.set_ylabel("Posterior mean $\\kappa_g$")
+        _style_axis(ax)
+        ax.tick_params(axis="x", labelrotation=0)
+        ax.axhline(0.5, color="#8a949c", lw=1.0, ls="--", alpha=0.7)
+        _panel_tag(ax, panel_letters[idx])
+
     legend_handles = [
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=_group_role_color("active"), markersize=9, label="active"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=_group_role_color("decoy_null"), markersize=9, label="decoy null"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=_group_role_color("other_null"), markersize=9, label="other null"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=_group_role_color("active"), markersize=9, label="active (A)"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=_group_role_color("decoy_null"), markersize=9, label="decoy null (D)"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=_group_role_color("other_null"), markersize=9, label="other null (N)"),
     ]
-    fig.legend(handles=legend_handles, loc="lower center", ncol=3, bbox_to_anchor=(0.5, -0.02), fontsize=9)
-    fig.suptitle("Figure 4. Posterior group shrinkage in a representative mixed-decoy replicate", fontsize=13, fontweight="bold")
+    fig.legend(handles=legend_handles, loc="lower center", ncol=3, bbox_to_anchor=(0.5, 0.05), fontsize=9)
+    fig.suptitle("Representative mixed-decoy replicate: posterior group shrinkage", y=0.94, fontsize=14, fontweight="bold")
     out_path = out_dir / "figure4_representative_profile.png"
     _save(fig, out_path)
     return str(out_path)
@@ -329,60 +800,148 @@ def plot_figure4_representative_profile(df: Any, out_dir: Path | str) -> str | N
 def plot_figure5_complexity_unit(df: Any, out_dir: Path | str) -> str | None:
     frame = _as_frame(df)
     out_dir = ensure_dir(out_dir)
-    needed = {"complexity_pattern", "within_group_pattern", "method", "kappa_gap", "mse_overall"}
+    needed = {"complexity_pattern", "within_group_pattern", "kappa_gap", "gr_minus_rhs_mse_overall"}
     if frame.empty or not needed.issubset(set(frame.columns)):
         return None
-    patterns = ["few_groups", "many_groups"]
-    within_levels = sorted(frame["within_group_pattern"].astype(str).unique().tolist())
-    methods = [m for m in ["GR_RHS", "RHS"] if m in set(frame["method"].astype(str))]
-    if not methods:
-        methods = sorted(frame["method"].astype(str).unique().tolist())
+    pd = load_pandas()
+    frame = frame.copy()
+    for col in [
+        "kappa_gap",
+        "gr_minus_rhs_mse_overall",
+        "gr_minus_rhs_mse_overall_ci95_lo",
+        "gr_minus_rhs_mse_overall_ci95_hi",
+        "gr_mse_overall",
+        "rhs_mse_overall",
+        "n_effective_pairs",
+        "n_paired",
+    ]:
+        if col in frame.columns:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    frame["complexity_pattern"] = frame["complexity_pattern"].astype(str)
+    frame["within_group_pattern"] = frame["within_group_pattern"].astype(str)
 
-    fig, axes = plt.subplots(2, max(len(within_levels), 1), figsize=(5.2 * max(len(within_levels), 1), 7.4), sharex=True)
-    if len(within_levels) == 1:
-        axes = np.asarray(axes).reshape(2, 1)
-    width = 0.34
-    for col_idx, within in enumerate(within_levels):
-        sub = frame.loc[frame["within_group_pattern"].astype(str).eq(within)].copy()
-        x = np.arange(len(patterns), dtype=float)
-        for row_idx, metric in enumerate(["kappa_gap", "mse_overall"]):
-            ax = axes[row_idx, col_idx]
-            for m_idx, method in enumerate(methods):
-                vals = []
-                for pat in patterns:
-                    cell = sub.loc[
-                        sub["complexity_pattern"].astype(str).eq(pat)
-                        & sub["method"].astype(str).eq(method)
-                    ]
-                    vals.append(float(cell[metric].iloc[0]) if not cell.empty else np.nan)
-                offset = (m_idx - (len(methods) - 1) / 2.0) * width
-                ax.bar(x + offset, vals, width=width, color=_method_color(method), alpha=0.88, label=method if row_idx == 0 else None)
-                for pos, val in zip(x + offset, vals):
-                    if np.isfinite(val):
-                        ax.text(pos, val + (0.02 if metric == "kappa_gap" else 0.005), f"{val:.3f}", ha="center", va="bottom", fontsize=8)
-            ax.set_title(within.replace("_", " "))
-            ax.set_xticks(x, labels=[pat.replace("_", "\n") for pat in patterns])
-            ax.grid(axis="y", alpha=0.22)
-            ax.set_ylabel("kappa gap" if metric == "kappa_gap" else "overall MSE")
-            if metric == "mse_overall":
-                tie_cell = sub.loc[
-                    sub["complexity_pattern"].astype(str).eq("many_groups")
-                    & sub["method"].astype(str).isin(methods)
-                ]
-                if tie_cell.shape[0] >= 2:
-                    vals = tie_cell.sort_values("method")["mse_overall"].astype(float).to_numpy()
-                    if np.isfinite(vals).all() and abs(vals.max() - vals.min()) < 0.03:
-                        ax.annotate(
-                            "near tie",
-                            xy=(1.0, float(np.nanmax(vals))),
-                            xytext=(1.12, float(np.nanmax(vals)) + 0.03),
-                            arrowprops=dict(arrowstyle="->", lw=1.0, color="#444444"),
-                            fontsize=8,
-                            color="#444444",
-                        )
-    handles = [plt.Line2D([0], [0], color=_method_color(m), lw=8, label=m.replace("_", "-")) for m in methods]
-    fig.legend(handles=handles, loc="lower center", ncol=len(handles), bbox_to_anchor=(0.5, -0.01), fontsize=9)
-    fig.suptitle("Figure 5. Complexity allocation under cleaned GA-V2-B", fontsize=13, fontweight="bold")
+    complexity_order = ["few_groups", "many_groups"]
+    within_order = ["concentrated", "distributed"]
+    complexity_levels = [c for c in complexity_order if c in set(frame["complexity_pattern"])]
+    within_levels = [w for w in within_order if w in set(frame["within_group_pattern"])]
+    if not complexity_levels or not within_levels:
+        return None
+
+    delta_mat = np.full((len(within_levels), len(complexity_levels)), np.nan, dtype=float)
+    gap_mat = np.full((len(within_levels), len(complexity_levels)), np.nan, dtype=float)
+    extra_labels: dict[tuple[int, int], str] = {}
+    for yi, within in enumerate(within_levels):
+        for xi, complexity in enumerate(complexity_levels):
+            cell = frame.loc[
+                frame["within_group_pattern"].eq(within)
+                & frame["complexity_pattern"].eq(complexity)
+            ]
+            if cell.empty:
+                continue
+            row = cell.iloc[0]
+            delta_mat[yi, xi] = float(row["gr_minus_rhs_mse_overall"])
+            gap_mat[yi, xi] = float(row["kappa_gap"])
+            extra_labels[(yi, xi)] = f"$\\kappa$ gap {float(row['kappa_gap']):.3f}"
+
+    x_labels = [c.replace("_", " ") for c in complexity_levels]
+    y_labels = [w for w in within_levels]
+    finite_delta = delta_mat[np.isfinite(delta_mat)]
+    highlight = None
+    if finite_delta.size > 0:
+        idx_min = int(np.nanargmin(delta_mat))
+        highlight = (idx_min // delta_mat.shape[1], idx_min % delta_mat.shape[1])
+
+    bar_rows = []
+    for yi, within in enumerate(within_levels):
+        for xi, complexity in enumerate(complexity_levels):
+            cell = frame.loc[
+                frame["within_group_pattern"].eq(within)
+                & frame["complexity_pattern"].eq(complexity)
+            ]
+            if cell.empty:
+                continue
+            row = cell.iloc[0]
+            bar_rows.append(
+                {
+                    "label": f"{complexity.replace('_', ' ')}\n{within}",
+                    "delta": float(row["gr_minus_rhs_mse_overall"]),
+                    "lo": float(row["gr_minus_rhs_mse_overall_ci95_lo"]) if "gr_minus_rhs_mse_overall_ci95_lo" in row.index else np.nan,
+                    "hi": float(row["gr_minus_rhs_mse_overall_ci95_hi"]) if "gr_minus_rhs_mse_overall_ci95_hi" in row.index else np.nan,
+                    "highlight": (yi, xi) == highlight,
+                }
+            )
+    bar_df = pd.DataFrame(bar_rows).sort_values("delta", kind="stable").reset_index(drop=True)
+
+    fig = plt.figure(figsize=(13.0, 5.6))
+    fig.patch.set_facecolor("#fcfcfa")
+    outer = fig.add_gridspec(
+        1,
+        2,
+        width_ratios=[1.0, 1.15],
+        left=0.06,
+        right=0.985,
+        top=0.84,
+        bottom=0.20,
+        wspace=0.28,
+    )
+    ax0 = fig.add_subplot(outer[0, 0])
+    ax1 = fig.add_subplot(outer[0, 1])
+
+    _styled_heatmap(
+        ax0,
+        delta_mat,
+        x_labels,
+        y_labels,
+        cmap=DIVERGING_CMAP,
+        title="Edge concentrates where signal is packed",
+        cbar_label="GR-RHS - RHS overall MSE",
+        fmt="{:+.3f}",
+        center_zero=True,
+        extra_labels=extra_labels,
+        highlight=highlight,
+        highlight_label="largest edge",
+    )
+    _panel_tag(ax0, "A")
+
+    y_positions = np.arange(len(bar_df), dtype=float)
+    colors = ["#244d57" if flag else "#91a9a4" for flag in bar_df["highlight"].tolist()]
+    ax1.hlines(y_positions, 0.0, bar_df["delta"], color="#d5dbd6", linewidth=3.0)
+    ax1.scatter(bar_df["delta"], y_positions, s=110, c=colors, edgecolors="white", linewidths=0.9, zorder=3)
+    has_ci = bar_df["lo"].notna().any() and bar_df["hi"].notna().any()
+    if has_ci:
+        for ypos, row in zip(y_positions, bar_df.itertuples(index=False)):
+            if np.isfinite(row.lo) and np.isfinite(row.hi):
+                ax1.hlines(ypos, row.lo, row.hi, color="#a8b4c1", linewidth=2.0, alpha=0.85, zorder=2)
+    for ypos, row in zip(y_positions, bar_df.itertuples(index=False)):
+        anchor = max(float(row.delta), float(row.hi) if np.isfinite(row.hi) else float(row.delta))
+        ax1.text(anchor + 0.004, ypos, f"{float(row.delta):+.3f}", ha="left", va="center", fontsize=9, color="#1f2933")
+    ax1.axvline(0.0, color="#5b6770", linewidth=1.0, linestyle="--")
+    ax1.set_yticks(y_positions, labels=bar_df["label"].tolist())
+    ax1.invert_yaxis()
+    ax1.set_xlabel("Paired overall-MSE difference (negative favors GR-RHS)")
+    ax1.set_title("Setting-level scope condition")
+    _style_axis(ax1, grid_axis="x")
+    _panel_tag(ax1, "B")
+
+    if highlight is not None and finite_delta.size > 0:
+        strongest = float(delta_mat[highlight])
+        weakest = float(np.nanmax(delta_mat))
+        footer = (
+            f"Strongest edge: {y_labels[highlight[0]]} / {x_labels[highlight[1]]} ({strongest:+.3f}). "
+            f"Weakest cell trends toward zero ({weakest:+.3f})."
+        )
+        fig.text(
+            0.5,
+            0.07,
+            footer,
+            ha="center",
+            va="center",
+            fontsize=9.5,
+            color="#5b6770",
+            bbox=_card_kwargs(pad=0.28, facecolor="#ffffff"),
+        )
+
+    fig.suptitle("M3. Scope condition: the advantage tracks group complexity", y=0.94, fontsize=15, fontweight="bold")
     out_path = out_dir / "figure5_complexity_unit.png"
     _save(fig, out_path)
     return str(out_path)
@@ -394,88 +953,152 @@ def plot_figure6_ablation(summary_df: Any, delta_df: Any, out_dir: Path | str) -
     out_dir = ensure_dir(out_dir)
     if delta.empty or "metric" not in delta.columns:
         return None
-    metrics = ["kappa_gap", "mse_overall", "mse_signal"]
-    delta = delta.loc[delta["metric"].astype(str).isin(metrics)].copy()
+    pd = load_pandas()
+    delta = delta.copy()
+    summary = summary.copy()
+    for col in ["mean_diff", "ci95_lo", "ci95_hi"]:
+        if col in delta.columns:
+            delta[col] = pd.to_numeric(delta[col], errors="coerce")
+    for col in ["kappa_gap", "null_group_mse", "signal_group_mse", "tau_ratio_to_oracle", "n_paired"]:
+        if col in summary.columns:
+            summary[col] = pd.to_numeric(summary[col], errors="coerce")
+
+    metrics = [
+        ("kappa_gap", "$\\Delta\\kappa$ gap", "Loss of group separation"),
+        ("null_group_mse", "$\\Delta$ null-group MSE", "Cost on null groups"),
+        ("signal_group_mse", "$\\Delta$ signal-group MSE", "Cost on signal groups"),
+    ]
+    delta = delta.loc[delta["metric"].astype(str).isin([m for m, _, _ in metrics])].copy()
     if delta.empty:
         return None
-    if not summary.empty:
-        baseline_rows = []
-        for metric in metrics:
-            metric_col = metric if metric in summary.columns else None
-            if metric_col is None:
-                continue
-            for p0_val, sub in summary.loc[summary["method"].astype(str).eq("GR_RHS")].groupby("total_active_coeff", dropna=False, sort=False):
-                if sub.empty:
-                    continue
-                n_eff = float(sub["n_paired"].iloc[0]) if "n_paired" in sub.columns and not sub["n_paired"].isna().all() else float("nan")
-                baseline_rows.append(
-                    {
-                        "experiment_id": "M4",
-                        "setting_id": str(sub["setting_id"].iloc[0]) if "setting_id" in sub.columns else "",
-                        "total_active_coeff": p0_val,
-                        "method": "GR_RHS",
-                        "method_label": str(sub["method_label"].iloc[0]) if "method_label" in sub.columns else "GR-RHS",
-                        "baseline_method": "GR_RHS",
-                        "baseline_method_label": "GR-RHS",
-                        "metric": metric,
-                        "metric_direction": "larger_is_better" if metric == "kappa_gap" else "smaller_is_better",
-                        "n_effective_pairs": n_eff,
-                        "mean_diff": 0.0,
-                        "std_diff": 0.0,
-                        "se_diff": 0.0,
-                        "ci95_lo": 0.0,
-                        "ci95_hi": 0.0,
-                        "wins_vs_baseline": 0,
-                        "losses_vs_baseline": 0,
-                        "ties_vs_baseline": int(n_eff) if np.isfinite(n_eff) else 0,
-                    }
-                )
-        if baseline_rows:
-            pd = load_pandas()
-            delta = pd.concat([delta, pd.DataFrame(baseline_rows)], ignore_index=True)
-    variants_order = [
-        "GR_RHS",
+
+    variant_order = [
+        "GR_RHS_oracle",
         "GR_RHS_fixed_10x",
-        "RHS_oracle",
         "GR_RHS_no_local_scales",
         "GR_RHS_shared_kappa",
         "GR_RHS_no_kappa",
+        "RHS_oracle",
     ]
+    label_map = {
+        "GR_RHS_oracle": "oracle $\\tau_0$",
+        "GR_RHS_fixed_10x": "fixed 10x $\\tau_0$",
+        "GR_RHS_no_local_scales": "no local scales",
+        "GR_RHS_shared_kappa": "shared $\\kappa$",
+        "GR_RHS_no_kappa": "no $\\kappa$",
+        "RHS_oracle": "RHS oracle",
+    }
     available = list(delta["method"].astype(str).unique())
-    variants = [v for v in variants_order if v in available]
-    extras = [v for v in available if v not in set(variants)]
+    variants = [v for v in variant_order if v in available]
+    extras = [v for v in available if v not in set(variants) and v != "GR_RHS"]
     variants.extend(sorted(extras))
-    fig, axes = plt.subplots(1, len(metrics), figsize=(12.5, 5.0), sharey=True)
-    p0_vals = sorted(delta["total_active_coeff"].dropna().astype(int).unique().tolist()) if "total_active_coeff" in delta.columns and delta["total_active_coeff"].notna().any() else []
-    for ax, metric in zip(axes, metrics):
-        sub = delta.loc[delta["metric"].astype(str).eq(metric)].copy()
-        y = np.arange(len(variants), dtype=float)
-        for idx, variant in enumerate(variants):
-            cell = sub.loc[sub["method"].astype(str).eq(variant)]
+    if not variants:
+        return None
+
+    fig = plt.figure(figsize=(11.6, 4.8))
+    fig.patch.set_facecolor("white")
+    outer = fig.add_gridspec(
+        1,
+        2,
+        left=0.08,
+        right=0.985,
+        top=0.88,
+        bottom=0.18,
+        wspace=0.22,
+    )
+    axes = {
+        "kappa_gap": fig.add_subplot(outer[0, 0]),
+        "tau": fig.add_subplot(outer[0, 1]),
+    }
+
+    def _draw_forest(ax, metric_key: str, metric_xlabel: str, metric_title: str, show_ylabels: bool):
+        sub = delta.loc[delta["metric"].astype(str).eq(metric_key)].copy()
+        finite = pd.concat([sub["mean_diff"], sub.get("ci95_lo"), sub.get("ci95_hi")]).dropna().astype(float)
+        if finite.empty:
+            xmin, xmax = -1.0, 1.0
+        else:
+            xmin, xmax = float(finite.min()), float(finite.max())
+            spread = max(xmax - xmin, 0.02)
+            pad = 0.18 * spread
+            xmin = min(xmin - pad, -0.02 if xmax >= 0 else xmin - pad)
+            xmax = max(xmax + pad, 0.02 if xmin <= 0 else xmax + pad)
+        ax.set_xlim(xmin, xmax)
+        for ypos, method in enumerate(variants):
+            row_q = sub.loc[sub["method"].astype(str).eq(method)]
+            color = _method_color(method)
+            if row_q.empty:
+                ax.text(xmax - 0.02 * (xmax - xmin), ypos, "N/A", ha="right", va="center", fontsize=8.6, color="#8a949c")
+                continue
+            row = row_q.iloc[0]
+            mean_val = float(row["mean_diff"])
+            lo = float(row["ci95_lo"]) if "ci95_lo" in row.index and np.isfinite(float(row["ci95_lo"])) else np.nan
+            hi = float(row["ci95_hi"]) if "ci95_hi" in row.index and np.isfinite(float(row["ci95_hi"])) else np.nan
+            if np.isfinite(lo) and np.isfinite(hi):
+                ax.hlines(ypos, lo, hi, color=color, linewidth=2.6, alpha=0.92, zorder=2)
+            ax.scatter(mean_val, ypos, s=100, color=color, edgecolors="white", linewidths=0.9, zorder=3)
+            x_pad = 0.02 * (xmax - xmin)
+            if mean_val >= 0:
+                ax.text(mean_val + x_pad, ypos, f"{mean_val:+.3f}", ha="left", va="center", fontsize=8.7, color="#1f2933")
+            else:
+                ax.text(mean_val - x_pad, ypos, f"{mean_val:+.3f}", ha="right", va="center", fontsize=8.7, color="#1f2933")
+        ax.axvline(0.0, color="#5b6770", linewidth=1.0, linestyle="--")
+        ax.set_title(metric_title, pad=10)
+        ax.set_xlabel(metric_xlabel)
+        ax.set_yticks(np.arange(len(variants)), labels=[label_map.get(v, v.replace("_", " ")) for v in variants] if show_ylabels else [])
+        ax.invert_yaxis()
+        _style_axis(ax, grid_axis="x")
+        ax.set_facecolor("white")
+
+    _draw_forest(axes["kappa_gap"], "kappa_gap", "$\\Delta$ $\\kappa$ gap (vs GR-RHS)", "Loss of group separation", show_ylabels=True)
+    _panel_tag(axes["kappa_gap"], "A")
+
+    ax_tau = axes["tau"]
+    tau_values: dict[str, float] = {}
+    if "tau_ratio_to_oracle" in summary.columns:
+        for method in variants:
+            cell = summary.loc[summary["method"].astype(str).eq(method)]
             if cell.empty:
                 continue
-            mean_val = float(cell["mean_diff"].mean())
-            lo = float(cell["ci95_lo"].mean()) if "ci95_lo" in cell.columns else np.nan
-            hi = float(cell["ci95_hi"].mean()) if "ci95_hi" in cell.columns else np.nan
-            ax.scatter(mean_val, y[idx], s=110, color=_method_color(variant), zorder=3)
-            if np.isfinite(lo) and np.isfinite(hi):
-                ax.hlines(y[idx], lo, hi, colors=_method_color(variant), lw=2.2, zorder=2)
-            if "wins_vs_baseline" in cell.columns and "losses_vs_baseline" in cell.columns:
-                wins = int(cell["wins_vs_baseline"].sum())
-                losses = int(cell["losses_vs_baseline"].sum())
-                ties = int(cell["ties_vs_baseline"].sum()) if "ties_vs_baseline" in cell.columns else 0
-                if variant != "GR_RHS":
-                    ax.text(mean_val, y[idx] + 0.18, f"{wins}-{losses}-{ties}", ha="center", va="bottom", fontsize=7, color="#444444")
-        ax.axvline(0.0, color="#444444", ls="--", lw=1.0)
-        ax.set_title(metric.replace("_", " "))
-        ax.grid(axis="x", alpha=0.22)
-        ax.set_xlabel("delta vs GR-RHS")
-    axes[0].set_yticks(np.arange(len(variants)), labels=[v.replace("_", " ") for v in variants])
-    axes[0].set_ylabel("variant")
-    fig.suptitle("Figure 6. Mechanism ablation for GR-RHS", fontsize=13, fontweight="bold")
+            val = float(cell["tau_ratio_to_oracle"].iloc[0])
+            if np.isfinite(val):
+                tau_values[method] = val
+    finite_tau = list(tau_values.values())
+    tau_max = max(finite_tau) if finite_tau else 1.0
+    ax_tau.set_xlim(0.0, tau_max + 0.7)
+    for ypos, method in enumerate(variants):
+        color = _method_color(method)
+        if method not in tau_values:
+            ax_tau.text(0.10, ypos, "N/A", ha="left", va="center", fontsize=8.6, color="#8a949c")
+            continue
+        ratio = tau_values[method]
+        ax_tau.hlines(ypos, 0.0, ratio, color="#d7ddd8", linewidth=2.4)
+        ax_tau.scatter(ratio, ypos, s=100, color=color, edgecolors="white", linewidths=0.9, zorder=3)
+        ax_tau.text(ratio + 0.10, ypos, f"{ratio:.2f}", ha="left", va="center", fontsize=8.7, color="#1f2933")
+    ax_tau.axvline(1.0, color="#5b6770", linewidth=1.0, linestyle="--")
+    ax_tau.text(
+        1.0,
+        1.02,
+        "oracle",
+        transform=ax_tau.get_xaxis_transform(),
+        ha="center",
+        va="bottom",
+        fontsize=8.5,
+        color="#5b6770",
+    )
+    ax_tau.set_title("$\\tau_0$ calibration", pad=10)
+    ax_tau.set_xlabel("$\\tau_0$ / oracle $\\tau_0$")
+    ax_tau.set_yticks(np.arange(len(variants)), labels=[])
+    ax_tau.invert_yaxis()
+    _style_axis(ax_tau, grid_axis="x")
+    ax_tau.set_facecolor("white")
+    _panel_tag(ax_tau, "B")
+
+    fig.suptitle("")
     out_path = out_dir / "figure6_ablation.png"
     _save(fig, out_path)
     return str(out_path)
+
+
 
 
 def build_mechanism_figures_from_results_dir(results_dir: Path | str) -> dict[str, str]:
@@ -498,20 +1121,20 @@ def build_mechanism_figures_from_results_dir(results_dir: Path | str) -> dict[st
     outputs: dict[str, str] = {}
     outputs["figure1_mechanism_schematic"] = plot_figure1_mechanism_schematic(fig_out_dir)
 
-    maybe = plot_figure2_group_separation(pd.read_csv(fig_data_dir / "figure2_group_separation.csv"), fig_out_dir)
+    maybe = plot_figure2_group_separation(_read_csv_or_empty(fig_data_dir / "figure2_group_separation.csv"), fig_out_dir)
     if maybe:
         outputs["figure2_group_separation"] = maybe
-    maybe = plot_figure3_correlation_ambiguity(pd.read_csv(fig_data_dir / "figure3_correlation_ambiguity.csv"), fig_out_dir)
+    maybe = plot_figure3_correlation_ambiguity(_read_csv_or_empty(fig_data_dir / "figure3_correlation_ambiguity.csv"), fig_out_dir)
     if maybe:
         outputs["figure3_correlation_ambiguity"] = maybe
-    maybe = plot_figure4_representative_profile(pd.read_csv(fig_data_dir / "figure4_representative_profile.csv"), fig_out_dir)
+    maybe = plot_figure4_representative_profile(_read_csv_or_empty(fig_data_dir / "figure4_representative_profile.csv"), fig_out_dir)
     if maybe:
         outputs["figure4_representative_profile"] = maybe
-    maybe = plot_figure5_complexity_unit(pd.read_csv(fig_data_dir / "figure5_complexity_unit.csv"), fig_out_dir)
+    maybe = plot_figure5_complexity_unit(_read_csv_or_empty(fig_data_dir / "figure5_complexity_unit.csv"), fig_out_dir)
     if maybe:
         outputs["figure5_complexity_unit"] = maybe
-    summary_df = pd.read_csv(fig_data_dir / "figure6_ablation.csv")
-    delta_df = pd.read_csv(fig_data_dir / "figure6_ablation_deltas.csv")
+    summary_df = _read_csv_or_empty(fig_data_dir / "figure6_ablation.csv")
+    delta_df = _read_csv_or_empty(fig_data_dir / "figure6_ablation_deltas.csv")
     maybe = plot_figure6_ablation(summary_df, delta_df, fig_out_dir)
     if maybe:
         outputs["figure6_ablation"] = maybe

@@ -116,3 +116,51 @@ datasets:
     repeats: 10
     shuffle: true
     notes: Direct grouped-design comparison without extra covariates.
+
+  - dataset_id: gse40279_age_gene_groups_smoke
+    label: GSE40279 Methylation Age (smoke)
+    description: Human methylation-age regression with disjoint single-gene proxy groups from 450k CpGs.
+    loader:
+      path_X: data/real/gse40279_methylation_age/processed/runner_ready_smoke/X.npy
+      path_y: data/real/gse40279_methylation_age/processed/runner_ready_smoke/y.npy
+      path_feature_names: data/real/gse40279_methylation_age/processed/runner_ready_smoke/feature_names.txt
+      path_group_map: data/real/gse40279_methylation_age/processed/runner_ready_smoke/group_map.json
+      path_group_labels: data/real/gse40279_methylation_age/processed/runner_ready_smoke/group_labels.txt
+    task: gaussian
+    methods:
+      - GR_RHS
+      - RHS
+    target_label: chronological_age
+    target_transform: none
+    response_standardization: train_center
+    covariate_mode: none
+    p0_strategy: sqrt_p
+    p0_groups_strategy: half_groups
+    test_fraction: 0.2
+    repeats: 2
+    shuffle: true
+    notes: Smoke runner uses top-variance CpGs grouped by a single-gene proxy derived from the Illumina 450k UCSC_RefGene_Name annotation.
+
+  - dataset_id: gse40279_age_gene_groups_micro
+    label: GSE40279 Methylation Age (micro)
+    description: Micro runner-verification subset from GSE40279 with the same grouping rule but 200 CpGs.
+    loader:
+      path_X: data/real/gse40279_methylation_age/processed/runner_ready_micro/X.npy
+      path_y: data/real/gse40279_methylation_age/processed/runner_ready_micro/y.npy
+      path_feature_names: data/real/gse40279_methylation_age/processed/runner_ready_micro/feature_names.txt
+      path_group_map: data/real/gse40279_methylation_age/processed/runner_ready_micro/group_map.json
+      path_group_labels: data/real/gse40279_methylation_age/processed/runner_ready_micro/group_labels.txt
+    task: gaussian
+    methods:
+      - GR_RHS
+      - RHS
+    target_label: chronological_age
+    target_transform: none
+    response_standardization: train_center
+    covariate_mode: none
+    p0_strategy: sqrt_p
+    p0_groups_strategy: half_groups
+    test_fraction: 0.2
+    repeats: 1
+    shuffle: true
+    notes: Micro runner is a lightweight real-data closure check derived from the same GSE40279 preprocessing pipeline as the 2000-feature smoke asset.

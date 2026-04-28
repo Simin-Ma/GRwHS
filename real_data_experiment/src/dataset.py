@@ -9,7 +9,13 @@ import numpy as np
 from data.loaders import load_real_dataset
 
 from .schemas import DatasetSpec, PreparedRealDataset, PreparedSplit
-from .utils import center_train_test, standardize_train_test
+from .utils import (
+    center_scale_train_test,
+    center_train_test,
+    ensure_dir,
+    save_json,
+    standardize_train_test,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -38,10 +44,16 @@ def _default_group_labels(groups: list[list[int]]) -> list[str]:
     return [f"group_{gid + 1}" for gid in range(len(groups))]
 
 
-def _resolve_group_labels(spec: DatasetSpec, n_groups: int) -> list[str]:
+def _resolve_group_labels(
+    spec: DatasetSpec,
+    loaded_group_labels: list[str] | None,
+    n_groups: int,
+) -> list[str]:
     labels = [str(item) for item in spec.group_labels]
     if labels and len(labels) == int(n_groups):
         return labels
+    if loaded_group_labels and len(loaded_group_labels) == int(n_groups):
+        return [str(item) for item in loaded_group_labels]
     return [f"group_{gid + 1}" for gid in range(int(n_groups))]
 
 
@@ -67,7 +79,11 @@ def load_prepared_real_dataset(spec: DatasetSpec) -> PreparedRealDataset:
 
     feature_names = list(loaded.feature_names or _default_feature_names(X.shape[1]))
     groups = [[int(idx) for idx in group] for group in (loaded.groups or [])]
-    group_labels = _resolve_group_labels(spec, len(groups)) if groups else _default_group_labels(groups)
+    group_labels = (
+        _resolve_group_labels(spec, loaded.group_labels, len(groups))
+        if groups
+        else _default_group_labels(groups)
+    )
     covariate_feature_names = None
     if covariates is not None:
         covariate_feature_names = list(
@@ -245,6 +261,11 @@ def prepare_split(
     if response_mode == "train_center":
         y_train_used, y_test_used, y_offset = center_train_test(y_model_train_raw, y_model_test_raw)
         y_scale = 1.0
+    elif response_mode == "train_center_scale":
+        y_train_used, y_test_used, y_offset, y_scale = center_scale_train_test(
+            y_model_train_raw,
+            y_model_test_raw,
+        )
     elif response_mode == "none":
         y_train_used = np.asarray(y_model_train_raw, dtype=float).reshape(-1)
         y_test_used = np.asarray(y_model_test_raw, dtype=float).reshape(-1)
@@ -297,14 +318,60 @@ def prepare_split(
     )
 
 
+def save_prepared_real_dataset(dataset: PreparedRealDataset, out_dir: Path | str) -> dict[str, str]:
+    root = ensure_dir(out_dir)
+    arrays_path = root / "dataset_arrays.npz"
+    metadata_path = root / "dataset_metadata.json"
+
+    arrays: dict[str, np.ndarray] = {
+        "X": np.asarray(dataset.X, dtype=float),
+        "y": np.asarray(dataset.y, dtype=float).reshape(-1),
+    }
+    if dataset.covariates is not None:
+        arrays["covariates"] = np.asarray(dataset.covariates, dtype=float)
+    np.savez_compressed(arrays_path, **arrays)
+
+    save_json(
+        {
+            **dataset.to_summary(),
+            "feature_names": list(dataset.feature_names),
+            "covariate_feature_names": None
+            if dataset.covariate_feature_names is None
+            else list(dataset.covariate_feature_names),
+            "groups": [[int(idx) for idx in group] for group in dataset.groups],
+        },
+        metadata_path,
+    )
+    return {
+        "dataset_arrays": str(arrays_path),
+        "dataset_metadata": str(metadata_path),
+    }
+
+
 def save_prepared_split(split: PreparedSplit, out_dir: Path) -> dict[str, str]:
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = ensure_dir(out_dir)
     np.save(out_dir / "train_idx.npy", np.asarray(split.train_idx, dtype=int))
     np.save(out_dir / "test_idx.npy", np.asarray(split.test_idx, dtype=int))
+    np.save(out_dir / "X_train_raw.npy", np.asarray(split.X_train, dtype=float))
+    np.save(out_dir / "X_test_raw.npy", np.asarray(split.X_test, dtype=float))
+    np.save(out_dir / "y_train_raw.npy", np.asarray(split.y_train, dtype=float))
+    np.save(out_dir / "y_test_raw.npy", np.asarray(split.y_test, dtype=float))
     np.save(out_dir / "X_train_used.npy", np.asarray(split.X_train_used, dtype=float))
     np.save(out_dir / "X_test_used.npy", np.asarray(split.X_test_used, dtype=float))
     np.save(out_dir / "y_train_used.npy", np.asarray(split.y_train_used, dtype=float))
     np.save(out_dir / "y_test_used.npy", np.asarray(split.y_test_used, dtype=float))
+    if split.covariates_train is not None:
+        np.save(out_dir / "covariates_train.npy", np.asarray(split.covariates_train, dtype=float))
+    if split.covariates_test is not None:
+        np.save(out_dir / "covariates_test.npy", np.asarray(split.covariates_test, dtype=float))
+    if split.prediction_offset_train is not None:
+        np.save(out_dir / "prediction_offset_train.npy", np.asarray(split.prediction_offset_train, dtype=float))
+    if split.prediction_offset_test is not None:
+        np.save(out_dir / "prediction_offset_test.npy", np.asarray(split.prediction_offset_test, dtype=float))
+    if split.x_center is not None:
+        np.save(out_dir / "x_center.npy", np.asarray(split.x_center, dtype=float))
+    if split.x_scale is not None:
+        np.save(out_dir / "x_scale.npy", np.asarray(split.x_scale, dtype=float))
     manifest = {
         "dataset_id": str(split.dataset.dataset_id),
         "dataset_label": str(split.dataset.label),
@@ -317,17 +384,40 @@ def save_prepared_split(split: PreparedSplit, out_dir: Path) -> dict[str, str]:
         "group_count": int(len(split.groups)),
         "group_sizes": [int(len(group)) for group in split.groups],
         "group_labels": list(split.dataset.group_labels),
+        "groups": [[int(idx) for idx in group] for group in split.groups],
+        "feature_names": list(split.dataset.feature_names),
+        "covariate_feature_names": None
+        if split.dataset.covariate_feature_names is None
+        else list(split.dataset.covariate_feature_names),
         "preprocessing": dict(split.preprocessing),
         "metadata": dict(split.metadata),
+        "y_offset": float(split.y_offset),
+        "y_scale": float(split.y_scale),
     }
-    path = out_dir / "split_manifest.json"
-    path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-    return {
+    path = save_json(manifest, out_dir / "split_manifest.json")
+    saved = {
         "split_manifest": str(path),
         "train_idx": str(out_dir / "train_idx.npy"),
         "test_idx": str(out_dir / "test_idx.npy"),
+        "X_train_raw": str(out_dir / "X_train_raw.npy"),
+        "X_test_raw": str(out_dir / "X_test_raw.npy"),
+        "y_train_raw": str(out_dir / "y_train_raw.npy"),
+        "y_test_raw": str(out_dir / "y_test_raw.npy"),
         "X_train_used": str(out_dir / "X_train_used.npy"),
         "X_test_used": str(out_dir / "X_test_used.npy"),
         "y_train_used": str(out_dir / "y_train_used.npy"),
         "y_test_used": str(out_dir / "y_test_used.npy"),
     }
+    if split.covariates_train is not None:
+        saved["covariates_train"] = str(out_dir / "covariates_train.npy")
+    if split.covariates_test is not None:
+        saved["covariates_test"] = str(out_dir / "covariates_test.npy")
+    if split.prediction_offset_train is not None:
+        saved["prediction_offset_train"] = str(out_dir / "prediction_offset_train.npy")
+    if split.prediction_offset_test is not None:
+        saved["prediction_offset_test"] = str(out_dir / "prediction_offset_test.npy")
+    if split.x_center is not None:
+        saved["x_center"] = str(out_dir / "x_center.npy")
+    if split.x_scale is not None:
+        saved["x_scale"] = str(out_dir / "x_scale.npy")
+    return saved

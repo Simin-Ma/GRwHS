@@ -27,6 +27,7 @@ from ..utils import (
     load_pandas,
     method_result_label,
     print_experiment_result,
+    save_fit_result_artifacts,
     save_dataframe,
     save_json,
     setup_logger,
@@ -54,7 +55,7 @@ def _exp2_worker(
         int,
         str,
     ]
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict]]:
     from .dgp.grouped_linear import generate_heterogeneity_dataset
     from .analysis.metrics import group_auroc, group_l2_error, group_l2_score
     from ..utils import sample_correlated_design
@@ -116,7 +117,48 @@ def _exp2_worker(
 
     rep_rows: list[dict] = []
     kappa_rows: list[dict] = []
+    artifact_rows: list[dict] = []
     n_groups = len(group_sizes)
+    dataset_dir = ensure_dir(Path(log_path).resolve().parents[1] / "results" / "exp2_group_separation" / "datasets" / f"rep_{int(r):03d}")
+    dataset_arrays_path = dataset_dir / "dataset_arrays.npz"
+    dataset_metadata_path = dataset_dir / "dataset_metadata.json"
+    np.savez_compressed(
+        dataset_arrays_path,
+        X_train=np.asarray(ds["X"], dtype=float),
+        y_train=np.asarray(ds["y"], dtype=float),
+        X_test=np.asarray(X_test, dtype=float),
+        y_test=np.asarray(y_test, dtype=float),
+        beta_true=np.asarray(ds["beta0"], dtype=float),
+        cov_x=np.asarray(ds["cov_x"], dtype=float),
+    )
+    save_json(
+        {
+            "experiment": "exp2",
+            "replicate_id": int(r),
+            "seed": int(s),
+            "group_sizes": [int(v) for v in group_sizes],
+            "groups": [[int(idx) for idx in group] for group in ds["groups"]],
+            "mu": [float(v) for v in np.asarray(ds["mu"], dtype=float).tolist()],
+            "xi_ratios": [float(v) for v in xi_ratios],
+            "rho_within": float(rho_within),
+            "rho_between": float(rho_between),
+            "sigma2": float(sigma2),
+            "n_train": int(n_train),
+            "n_test": int(n_test),
+            "p0_signal_groups": int(p0_signal_groups),
+        },
+        dataset_metadata_path,
+    )
+    artifact_rows.append(
+        {
+            "artifact_type": "dataset",
+            "experiment": "exp2",
+            "replicate_id": int(r),
+            "seed": int(s),
+            "dataset_arrays": str(dataset_arrays_path),
+            "dataset_metadata": str(dataset_metadata_path),
+        }
+    )
 
     for method, res in fits.items():
         is_valid = bool(res.beta_mean is not None)
@@ -146,6 +188,44 @@ def _exp2_worker(
             **bridge_diag,
             **metrics,
         })
+        fit_artifacts = save_fit_result_artifacts(
+            dataset_dir.parent.parent / "fit_details" / f"rep_{int(r):03d}" / str(method),
+            result=res,
+            run_context={
+                "experiment": "exp2",
+                "replicate_id": int(r),
+                "seed": int(s),
+                "method": str(method),
+                "rho_within": float(rho_within),
+                "rho_between": float(rho_between),
+                "sigma2": float(sigma2),
+                "n_train": int(n_train),
+                "n_test": int(n_test),
+            },
+            coefficient_truth=ds["beta0"],
+            extra_json={
+                "metrics": rep_rows[-1],
+                "dataset_context": {
+                    "group_sizes": [int(v) for v in group_sizes],
+                    "mu": [float(v) for v in np.asarray(ds["mu"], dtype=float).tolist()],
+                    "xi_ratios": [float(v) for v in xi_ratios],
+                    "groups": [[int(idx) for idx in group] for group in ds["groups"]],
+                },
+            },
+        )
+        rep_rows[-1]["fit_artifact_dir"] = str(fit_artifacts.get("fit_dir", ""))
+        rep_rows[-1]["dataset_arrays_path"] = str(dataset_arrays_path)
+        rep_rows[-1]["dataset_metadata_path"] = str(dataset_metadata_path)
+        artifact_rows.append(
+            {
+                "artifact_type": "fit_result",
+                "experiment": "exp2",
+                "replicate_id": int(r),
+                "seed": int(s),
+                "method": str(method),
+                **fit_artifacts,
+            }
+        )
         print_experiment_result(
             "Exp2",
             rep_rows[-1],
@@ -165,7 +245,7 @@ def _exp2_worker(
                     "post_mean_kappa_g": kmeans[gid],
                     "post_prob_kappa_g_gt_0_5": kprobs[gid],
                 })
-    return rep_rows, kappa_rows
+    return rep_rows, kappa_rows, artifact_rows
 
 
 def run_exp2_group_separation(
@@ -288,9 +368,11 @@ def run_exp2_group_separation(
 
     rep_rows: list[dict] = []
     kappa_rows: list[dict] = []
-    for rep_chunk, kappa_chunk in results:
+    artifact_rows: list[dict] = []
+    for rep_chunk, kappa_chunk, artifact_chunk in results:
         rep_rows.extend(rep_chunk)
         kappa_rows.extend(kappa_chunk)
+        artifact_rows.extend(artifact_chunk)
 
     raw = pd.DataFrame(rep_rows)
     if not raw.empty and "method" in raw.columns:
@@ -454,6 +536,8 @@ def run_exp2_group_separation(
         out_dir / "paired_stats.json",
     )
     _record_produced_paths(produced, out_dir / "paired_stats.json")
+    save_json(artifact_rows, out_dir / "artifact_catalog.json")
+    _record_produced_paths(produced, out_dir / "artifact_catalog.json")
 
     try:
         from .analysis.plotting import plot_exp2_separation
@@ -470,6 +554,9 @@ def run_exp2_group_separation(
         "paired_deltas": str(out_dir / "paired_deltas.csv"),
         "table": str(tab_dir / "table_group_separation.csv"),
         "kappa_realizations": str(out_dir / "kappa_realizations.csv"),
+        "artifact_catalog": str(out_dir / "artifact_catalog.json"),
+        "fit_details_dir": str(out_dir / "fit_details"),
+        "datasets_dir": str(out_dir / "datasets"),
         "meta": str(out_dir / "exp2_meta.json"),
         "fig2a_method_comparison": str(fig_dir / "fig2a_method_comparison.png"),
         "fig2b_kappa_by_group": str(fig_dir / "fig2b_kappa_by_group.png"),

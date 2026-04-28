@@ -143,10 +143,22 @@ def center_train_test(
     return train - mu, test - mu, mu
 
 
+def center_scale_train_test(
+    y_train: np.ndarray,
+    y_test: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, float, float]:
+    train = np.asarray(y_train, dtype=float).reshape(-1)
+    test = np.asarray(y_test, dtype=float).reshape(-1)
+    mu = float(np.mean(train))
+    sd = float(np.std(train, ddof=0))
+    if sd < 1e-10:
+        sd = 1.0
+    return (train - mu) / sd, (test - mu) / sd, mu, sd
+
+
 def stringify_groups(groups: Sequence[Sequence[int]]) -> str:
     return "[" + ",".join("[" + ",".join(str(int(i)) for i in group) + "]" for group in groups) + "]"
 
 
 def group_sizes_from_groups(groups: Sequence[Sequence[int]]) -> list[int]:
     return [int(len(group)) for group in groups]
-

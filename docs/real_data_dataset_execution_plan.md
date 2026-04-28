@@ -11,6 +11,13 @@
 
 本文档优先服务于当前仓库，而不是抽象论文设想。
 
+本方案同样遵循 `convergence-first` 原则：
+
+- Bayesian 方法必须开启 convergence gate，并以 until-converged 模式运行
+- 只有 `status = ok` 且 `converged = True` 的结果才有正式讨论价值
+- 跨方法主结论应基于 common-converged paired subset，而不是各方法单独过滤后的边际 summary
+- smoke 可以用于打通链路和调参，但未收敛结果不算正式实验完成
+
 ## 2. 当前仓库可直接复用的骨架
 
 当前工作区已经具备一套真实数据接入骨架，核心入口包括：
@@ -46,7 +53,6 @@
 | 路线 | 数据集 | 响应变量 | 分组方式 | 与当前架构匹配度 | 工程成本 | 建议 |
 |---|---|---|---|---|---|---|
 | A1 | `GSE40279` 人类甲基化年龄 | 年龄，连续 | `CpG -> gene` 或 `CpG -> promoter/gene-region` | 很高 | 中等 | 主路线 |
-| A2 | `GSE80672` 小鼠甲基化年龄 | 年龄，连续 | `region/CpG -> nearest gene` 或 `region -> genomic block` | 高 | 中高 | 主路线补充验证 |
 | B1 | `TCGA` RNA-seq + pathway groups | 生存或连续风险分数 | `gene -> pathway` | 当前版本中等偏低 | 高 | 第二阶段 |
 | C1 | `ADNI` ROI / imaging genetics | MMSE / ADAS-Cog / diagnosis | `feature -> ROI/network/gene` | 中等 | 高 | 可选扩展 |
 
@@ -57,14 +63,12 @@
 优先执行：
 
 - 主数据集：`GSE40279`
-- 确认性数据集：`GSE80672`
-
 原因：
 
-- 两者都天然支持连续响应
-- 都具有高维、强相关、自然 grouped structure
-- 都比普通 UCI 表格数据更能支持 `GR-RHS` 的结构性叙事
-- 都能较自然地接入当前 `real_data_experiment` 的 `group_map.json` 设计
+- 天然支持连续响应
+- 具有高维、强相关、自然 grouped structure
+- 比普通 UCI 表格数据更能支持 `GR-RHS` 的结构性叙事
+- 能较自然地接入当前 `real_data_experiment` 的 `group_map.json` 设计
 
 ### 4.2 为什么不把 TCGA 放在第一阶段
 
@@ -220,56 +224,6 @@ loader:
 - 增加 `C.npy`
 - 设置 `covariate_mode: residualize`
 
-## 6. 主路线二：GSE80672 小鼠甲基化年龄
-
-## 6.1 角色定位
-
-`GSE80672` 适合作为第二个成熟补充数据集，用来说明第一阶段结果不是只在人类 450k array 上成立。
-
-优点：
-
-- 也是甲基化年龄任务
-- 连续响应，和当前 Gaussian 主干兼容
-- 公开、成熟、审稿语境友好
-
-难点：
-
-- 该数据来自 RRBS / sequencing，预处理复杂度高于 450k array
-- 注释、region 对齐和稀疏区域过滤工作量更大
-
-## 6.2 推荐任务定义
-
-- 任务类型：`gaussian`
-- 响应变量：年龄，建议统一到 `days` 或 `weeks`
-- 特征：methylation regions 或 coverage-filtered CpG loci
-- 主分组：`region -> nearest gene`
-
-## 6.3 推荐执行策略
-
-把 `GSE80672` 明确为“确认性真实数据”，不要作为第一条工程路径。
-
-建议顺序：
-
-1. 先用 `GSE40279` 跑通完整 `runner_ready -> config -> split -> fit -> summary`
-2. 再复制同一套目录与配置规范到 `GSE80672`
-
-建议目录：
-
-```text
-data/real/gse80672_mouse_methylation_age/
-  raw/
-  processed/
-    analysis_bundle/
-    runner_ready_smoke/
-    runner_ready_main/
-    dataset_summary.json
-```
-
-建议 `dataset_id`：
-
-- `gse80672_age_gene_groups_smoke`
-- `gse80672_age_gene_groups_main`
-
 ## 7. 第二阶段扩展：TCGA
 
 ## 7.1 学术价值
@@ -341,7 +295,7 @@ data/real/gse80672_mouse_methylation_age/
 - `main`: `repeats = 10`
 - `paper`: `repeats = 20`，如果算力允许
 
-所有比较都尽量保持 paired split。
+所有比较都尽量保持 paired split，正式结论以 common-converged paired subset 为准。
 
 ## 10. 分阶段执行计划
 
@@ -350,7 +304,6 @@ data/real/gse80672_mouse_methylation_age/
 结论已经足够明确：
 
 - 先做 `GSE40279`
-- 再做 `GSE80672`
 - `TCGA` 放到第二阶段
 
 ## 阶段 1：构造 `GSE40279` 的 `runner_ready_smoke`
@@ -379,17 +332,22 @@ data/real/gse80672_mouse_methylation_age/
 
 - 新数据集在 manifest 中可见
 - split 与 metadata 可保存
+- convergence gate 配置继续保持 `enforce_bayes_convergence = true` 与 `max_convergence_retries = -1`
 
-## 阶段 3：补齐 runner/CLI 缺口
+## 阶段 3：核对并加固 runner/CLI 闭环
 
-当前工作区中 `real_data_experiment` 骨架看起来尚未完全闭环；至少从可见文件列表看，还没有稳定的 `runner.py` / `cli/` 落地文件。
+当前工作区已经有 `real_data_experiment/src/runner.py` 与 `real_data_experiment/src/cli/run_real_data_cli.py`，但真实执行前仍应核对它们是否继续保持闭环与 convergence-first 约束。
 
-因此真实执行前应先检查并补齐：
+因此真实执行前应先检查并必要时补强：
 
 - `real_data_experiment/src/runner.py`
 - `real_data_experiment/src/cli/run_real_data_cli.py`
 
-如果这些文件其实已在别处存在，则按现有结构接入即可；若不存在，则应仿照 `simulation_second` 或 `simulation_mechanism` 的模式补一版最小 runner。
+完成标准：
+
+- `run-real-data` 会强制启用 until-converged gate
+- 输出结果继续保留 paired summary 与 paper-table 闭环
+- 正式比较路径默认落到 common-converged paired summary
 
 ## 阶段 4：`smoke` 运行
 
@@ -404,6 +362,8 @@ data/real/gse80672_mouse_methylation_age/
 - 能稳定出 split
 - 能完成至少 `GR_RHS` 与 `RHS` 的成对比较
 - 能输出结果表和 summary csv/json
+- Bayesian 方法的正式结果必须满足 `status = ok` 且 `converged = True`
+- 至少产出一组 common-converged paired 比较；若没有共同收敛 repeat，则该 smoke 只能算链路验证，不算正式实验完成
 
 ## 阶段 5：`main` 运行
 
@@ -411,14 +371,18 @@ data/real/gse80672_mouse_methylation_age/
 
 - `GSE40279 main`
 - `repeats = 10`
-- 再做 `GSE80672 smoke/main`
+
+完成标准：
+
+- 主结论使用 common-converged paired summary / paper tables
+- 明确报告 `n_converged`、`n_paired` 与 common-rate
+- 如果共同收敛覆盖率不足，先诊断收敛问题，再决定是否扩大 repeats 或调整预算
 
 ## 阶段 6：论文级整理
 
 输出建议：
 
 - 主文：`GSE40279 main`
-- 附录：`GSE80672 main`
 - 结构性图表：组选择、`kappa_g`、top groups、bridge ratio
 
 ## 11. 主要风险与规避
@@ -455,7 +419,6 @@ data/real/gse80672_mouse_methylation_age/
 ## 12. 外部参考链接
 
 - GEO `GSE40279`: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE40279
-- GEO `GSE80672`: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE80672
 - Illumina 450k annotation package: https://bioconductor.org/packages/IlluminaHumanMethylation450kanno.ilmn12.hg19/
 - `seagull` / sparse-group lasso real-data甲基化示例: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-020-03725-w
 - TCGA 路径型 group lasso 示例: https://pmc.ncbi.nlm.nih.gov/articles/PMC8667553/

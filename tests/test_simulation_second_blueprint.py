@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -11,8 +12,10 @@ from simulation_project.src.utils import FitResult
 from simulation_second.src.blueprint import sample_signal_blueprint
 from simulation_second.src.config import benchmark_config_from_payload, load_benchmark_config
 from simulation_second.src.dataset import generate_grouped_dataset
+from simulation_second.src.plotting import build_benchmark_figures_from_results_dir
 from simulation_second.src.runner import run_benchmark
 from simulation_second.src.suite import build_main_suite, get_setting_by_id
+from simulation_second.src.cli import run_blueprint_cli
 
 
 def test_main_suite_has_six_settings() -> None:
@@ -149,25 +152,316 @@ def test_run_benchmark_pipeline_smoke(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("simulation_second.src.runner.fit_benchmark_methods", fake_fit_benchmark_methods)
 
     result_paths = run_benchmark(config)
-    assert (tmp_path / "raw_results.csv").exists()
-    assert (tmp_path / "summary.csv").exists()
-    assert (tmp_path / "summary_paired.csv").exists()
-    assert (tmp_path / "summary_paired_deltas.csv").exists()
-    assert (tmp_path / "paper_tables" / "paper_table_main.md").exists()
-    assert (tmp_path / "paper_tables" / "paper_table_appendix_full.md").exists()
+    run_dir = Path(result_paths["run_dir"])
+    assert (run_dir / "raw_results.csv").exists()
+    assert (run_dir / "summary.csv").exists()
+    assert (run_dir / "summary_paired.csv").exists()
+    assert (run_dir / "summary_paired_deltas.csv").exists()
+    assert (run_dir / "coefficient_estimates.csv").exists()
+    assert (run_dir / "coefficient_estimates_paired.csv").exists()
+    assert (run_dir / "paper_tables" / "paper_table_main.md").exists()
+    assert (run_dir / "paper_tables" / "paper_table_appendix_full.md").exists()
+    assert (run_dir / "paper_tables" / "figure_data" / "figure1_coefficient_recovery_profile.csv").exists()
+    assert (run_dir / "figures" / "figure1_coefficient_recovery_profile.png").exists()
     assert (tmp_path / "latest_run.json").exists()
     assert Path(result_paths["summary_paired"]).exists()
     assert Path(result_paths["run_dir"]).exists()
-    assert Path(result_paths["run_archive_manifest"]).exists()
+    assert Path(result_paths["run_manifest"]).exists()
 
-    raw = pd.read_csv(tmp_path / "raw_results.csv")
-    summary_paired = pd.read_csv(tmp_path / "summary_paired.csv")
-    appendix = pd.read_csv(tmp_path / "paper_tables" / "paper_table_appendix_full.csv")
-    appendix_md = (tmp_path / "paper_tables" / "paper_table_appendix_full.md").read_text(encoding="utf-8")
+    raw = pd.read_csv(run_dir / "raw_results.csv")
+    summary_paired = pd.read_csv(run_dir / "summary_paired.csv")
+    appendix = pd.read_csv(run_dir / "paper_tables" / "paper_table_appendix_full.csv")
+    coef = pd.read_csv(run_dir / "coefficient_estimates.csv")
+    fig1 = pd.read_csv(run_dir / "paper_tables" / "figure_data" / "figure1_coefficient_recovery_profile.csv")
+    appendix_md = (run_dir / "paper_tables" / "paper_table_appendix_full.md").read_text(encoding="utf-8")
 
     assert raw.shape[0] == 12
     assert set(raw["method"]) == set(config.methods.roster)
     assert summary_paired.shape[0] == 6
     assert appendix.shape[0] == 6
+    assert set(coef["method"]) == set(config.methods.roster)
+    assert "true_beta" in coef.columns
+    assert not fig1.empty
+    assert "plot_order" in fig1.columns
     assert "rhat_max_mean" in appendix.columns
     assert "**" in appendix_md
+
+    rebuilt = build_benchmark_figures_from_results_dir(tmp_path)
+    assert Path(rebuilt["figure1_coefficient_recovery_profile"]).exists()
+
+
+def test_build_figures_cli_avoids_loading_heavy_runner_modules(tmp_path) -> None:
+    fig_data_dir = tmp_path / "paper_tables" / "figure_data"
+    fig_data_dir.mkdir(parents=True)
+    figures_dir = tmp_path / "figures"
+    figures_dir.mkdir(parents=True)
+
+    pd.DataFrame(
+        [
+            {
+                "setting_id": "setting_5_multimode_equal",
+                "setting_label": "Setting 5: Main Showcase, Multi-Mode Heterogeneous Active Groups",
+                "replicate_id": 3,
+                "method": "GR_RHS",
+                "method_label": "GR-RHS",
+                "method_type": "bayesian",
+                "method_order": 0,
+                "coefficient_index": 0,
+                "group_id": 0,
+                "group_size": 10,
+                "within_group_index": 0,
+                "group_rank_within_plot": 0,
+                "plot_order": 0,
+                "group_plot_lo": 0,
+                "group_plot_hi": 1,
+                "group_plot_center": 0.5,
+                "is_active_group": True,
+                "is_active_coefficient": True,
+                "true_beta": 1.0,
+                "estimated_beta": 0.9,
+                "error": -0.1,
+                "sq_error": 0.01,
+                "abs_error": 0.1,
+                "method_signal_rmse": 0.1,
+                "method_overall_rmse": 0.1,
+                "representative_setting_id": "setting_5_multimode_equal",
+                "representative_replicate_id": 3,
+                "representative_selector_method": "GR_RHS",
+                "representative_selector_signal_mse": 0.01,
+                "representative_selector_distance_to_median": 0.0,
+            },
+            {
+                "setting_id": "setting_5_multimode_equal",
+                "setting_label": "Setting 5: Main Showcase, Multi-Mode Heterogeneous Active Groups",
+                "replicate_id": 3,
+                "method": "GR_RHS",
+                "method_label": "GR-RHS",
+                "method_type": "bayesian",
+                "method_order": 0,
+                "coefficient_index": 1,
+                "group_id": 0,
+                "group_size": 10,
+                "within_group_index": 1,
+                "group_rank_within_plot": 1,
+                "plot_order": 1,
+                "group_plot_lo": 0,
+                "group_plot_hi": 1,
+                "group_plot_center": 0.5,
+                "is_active_group": True,
+                "is_active_coefficient": False,
+                "true_beta": 0.0,
+                "estimated_beta": 0.05,
+                "error": 0.05,
+                "sq_error": 0.0025,
+                "abs_error": 0.05,
+                "method_signal_rmse": 0.1,
+                "method_overall_rmse": 0.1,
+                "representative_setting_id": "setting_5_multimode_equal",
+                "representative_replicate_id": 3,
+                "representative_selector_method": "GR_RHS",
+                "representative_selector_signal_mse": 0.01,
+                "representative_selector_distance_to_median": 0.0,
+            },
+            {
+                "setting_id": "setting_5_multimode_equal",
+                "setting_label": "Setting 5: Main Showcase, Multi-Mode Heterogeneous Active Groups",
+                "replicate_id": 3,
+                "method": "RHS",
+                "method_label": "RHS",
+                "method_type": "bayesian",
+                "method_order": 1,
+                "coefficient_index": 0,
+                "group_id": 0,
+                "group_size": 10,
+                "within_group_index": 0,
+                "group_rank_within_plot": 0,
+                "plot_order": 0,
+                "group_plot_lo": 0,
+                "group_plot_hi": 1,
+                "group_plot_center": 0.5,
+                "is_active_group": True,
+                "is_active_coefficient": True,
+                "true_beta": 1.0,
+                "estimated_beta": 0.8,
+                "error": -0.2,
+                "sq_error": 0.04,
+                "abs_error": 0.2,
+                "method_signal_rmse": 0.2,
+                "method_overall_rmse": 0.2,
+                "representative_setting_id": "setting_5_multimode_equal",
+                "representative_replicate_id": 3,
+                "representative_selector_method": "GR_RHS",
+                "representative_selector_signal_mse": 0.01,
+                "representative_selector_distance_to_median": 0.0,
+            },
+            {
+                "setting_id": "setting_5_multimode_equal",
+                "setting_label": "Setting 5: Main Showcase, Multi-Mode Heterogeneous Active Groups",
+                "replicate_id": 3,
+                "method": "RHS",
+                "method_label": "RHS",
+                "method_type": "bayesian",
+                "method_order": 1,
+                "coefficient_index": 1,
+                "group_id": 0,
+                "group_size": 10,
+                "within_group_index": 1,
+                "group_rank_within_plot": 1,
+                "plot_order": 1,
+                "group_plot_lo": 0,
+                "group_plot_hi": 1,
+                "group_plot_center": 0.5,
+                "is_active_group": True,
+                "is_active_coefficient": False,
+                "true_beta": 0.0,
+                "estimated_beta": 0.10,
+                "error": 0.10,
+                "sq_error": 0.01,
+                "abs_error": 0.10,
+                "method_signal_rmse": 0.2,
+                "method_overall_rmse": 0.2,
+                "representative_setting_id": "setting_5_multimode_equal",
+                "representative_replicate_id": 3,
+                "representative_selector_method": "GR_RHS",
+                "representative_selector_signal_mse": 0.01,
+                "representative_selector_distance_to_median": 0.0,
+            },
+        ]
+    ).to_csv(fig_data_dir / "figure1_coefficient_recovery_profile.csv", index=False)
+
+    Path(tmp_path / "latest_run.txt").write_text(str(tmp_path), encoding="utf-8")
+
+    for mod in [
+        "simulation_second.src.runner",
+        "simulation_second.src.fitting",
+        "simulation_second.src.dataset",
+    ]:
+        sys.modules.pop(mod, None)
+
+    exit_code = run_blueprint_cli.main(["build-figures", "--results-dir", str(tmp_path)])
+    assert exit_code == 0
+    assert (figures_dir / "figure1_coefficient_recovery_profile.png").exists()
+    assert "simulation_second.src.runner" not in sys.modules
+    assert "simulation_second.src.fitting" not in sys.modules
+
+
+def test_build_tables_recreates_coefficient_figure_data(tmp_path) -> None:
+    raw = pd.DataFrame(
+        [
+            {
+                "setting_id": "setting_5_multimode_equal",
+                "setting_label": "Setting 5: Main Showcase, Multi-Mode Heterogeneous Active Groups",
+                "family": "multimode_heterogeneous",
+                "suite": "main",
+                "role": "main showcase setting",
+                "notes": "demo",
+                "group_config": "G10x5",
+                "group_sizes": "[10,10,10,10,10]",
+                "active_groups": "[0,1,2]",
+                "n_train": 500,
+                "n_test": 100,
+                "rho_within": 0.8,
+                "rho_between": 0.2,
+                "target_r2": 0.7,
+                "replicate_id": 1,
+                "seed": 20260425,
+                "method": "GR_RHS",
+                "method_label": "GR-RHS",
+                "status": "ok",
+                "converged": True,
+                "mse_null": 0.01,
+                "mse_signal": 0.02,
+                "mse_overall": 0.015,
+                "lpd_test": -1.0,
+                "runtime_seconds": 1.0,
+            },
+            {
+                "setting_id": "setting_5_multimode_equal",
+                "setting_label": "Setting 5: Main Showcase, Multi-Mode Heterogeneous Active Groups",
+                "family": "multimode_heterogeneous",
+                "suite": "main",
+                "role": "main showcase setting",
+                "notes": "demo",
+                "group_config": "G10x5",
+                "group_sizes": "[10,10,10,10,10]",
+                "active_groups": "[0,1,2]",
+                "n_train": 500,
+                "n_test": 100,
+                "rho_within": 0.8,
+                "rho_between": 0.2,
+                "target_r2": 0.7,
+                "replicate_id": 1,
+                "seed": 20260425,
+                "method": "RHS",
+                "method_label": "RHS",
+                "status": "ok",
+                "converged": True,
+                "mse_null": 0.02,
+                "mse_signal": 0.03,
+                "mse_overall": 0.025,
+                "lpd_test": -1.1,
+                "runtime_seconds": 2.0,
+            },
+        ]
+    )
+    raw.to_csv(tmp_path / "raw_results.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "setting_id": "setting_5_multimode_equal",
+                "replicate_id": 1,
+                "method": "GR_RHS",
+                "method_label": "GR-RHS",
+                "method_type": "bayesian",
+                "method_order": 0,
+                "setting_label": "Setting 5: Main Showcase, Multi-Mode Heterogeneous Active Groups",
+                "family": "multimode_heterogeneous",
+                "suite": "main",
+                "role": "main showcase setting",
+                "coefficient_index": 0,
+                "group_id": 0,
+                "group_size": 10,
+                "within_group_index": 0,
+                "is_active_group": True,
+                "is_active_coefficient": True,
+                "true_beta": 1.0,
+                "estimated_beta": 0.9,
+                "abs_true_beta": 1.0,
+                "abs_estimated_beta": 0.9,
+                "error": -0.1,
+                "sq_error": 0.01,
+                "abs_error": 0.1,
+                "paired_common_converged": True,
+            },
+            {
+                "setting_id": "setting_5_multimode_equal",
+                "replicate_id": 1,
+                "method": "RHS",
+                "method_label": "RHS",
+                "method_type": "bayesian",
+                "method_order": 1,
+                "setting_label": "Setting 5: Main Showcase, Multi-Mode Heterogeneous Active Groups",
+                "family": "multimode_heterogeneous",
+                "suite": "main",
+                "role": "main showcase setting",
+                "coefficient_index": 0,
+                "group_id": 0,
+                "group_size": 10,
+                "within_group_index": 0,
+                "is_active_group": True,
+                "is_active_coefficient": True,
+                "true_beta": 1.0,
+                "estimated_beta": 0.8,
+                "abs_true_beta": 1.0,
+                "abs_estimated_beta": 0.8,
+                "error": -0.2,
+                "sq_error": 0.04,
+                "abs_error": 0.2,
+                "paired_common_converged": True,
+            },
+        ]
+    ).to_csv(tmp_path / "coefficient_estimates.csv", index=False)
+
+    result = run_blueprint_cli.main(["build-tables", "--results-dir", str(tmp_path)])
+    assert result == 0
+    assert (tmp_path / "paper_tables" / "figure_data" / "figure1_coefficient_recovery_profile.csv").exists()
