@@ -155,6 +155,8 @@ class GRRHS_NUTS:
     chain_method: str = "sequential"
     progress_bar: bool = True
     seed: int = 42
+    step_size: Optional[float] = None
+    find_heuristic_step_size: bool = False
     init_params: Optional[Dict[str, Any]] = None
     resume_no_warmup: bool = False
 
@@ -2406,6 +2408,9 @@ class GRRHS_CollapsedNUTS:
     beta_kappa: float = 8.0
     use_local_scale: bool = True
     shared_kappa: bool = False
+    kappa_reparameterization: str = "prior_logit_affine"
+    tau_parameterization: str = "sigma_scaled"
+    lambda_parameterization: str = "prior_log_affine"
     auto_calibrate_tau: bool = True
     tau_target: str = "coefficients"
     p0: Optional[float] = None
@@ -2421,6 +2426,8 @@ class GRRHS_CollapsedNUTS:
     chain_method: str = "sequential"
     progress_bar: bool = True
     seed: int = 42
+    step_size: Optional[float] = None
+    find_heuristic_step_size: bool = False
     init_params: Optional[Dict[str, Any]] = None
     resume_no_warmup: bool = False
     beta_draws_per_sample: int = 1   # posterior beta draws per hyperparameter sample
@@ -2452,6 +2459,22 @@ class GRRHS_CollapsedNUTS:
         n_term = jnp.maximum(jnp.asarray(float(max(n, 1)), dtype=X_dtype), jnp.asarray(1.0, dtype=X_dtype))
         return jnp.maximum(base, sigma_term * jnp.sqrt(n_term) * jnp.asarray(1e-8, dtype=X_dtype))
 
+    @staticmethod
+    def _beta_logit_moments(alpha: float, beta: float) -> tuple[float, float]:
+        # Moment-matched logit-Beta approximation used only as an exact
+        # reparameterization aid for NUTS geometry; the target posterior stays
+        # unchanged because the Jacobian/prior correction is applied explicitly.
+        a = float(max(alpha, 1e-8))
+        b = float(max(beta, 1e-8))
+        mean = math.log(a) - math.log(b)
+        var = max(1.0 / a + 1.0 / b, 1e-8)
+        return float(mean), float(math.sqrt(var))
+
+    @staticmethod
+    def _half_cauchy_log_density_on_log(x: Any) -> Any:
+        log_two_over_pi = jnp.asarray(math.log(2.0 / math.pi), dtype=jnp.asarray(x).dtype)
+        return log_two_over_pi + x - jnp.logaddexp(jnp.asarray(0.0, dtype=jnp.asarray(x).dtype), 2.0 * x)
+
     # ------------------------------------------------------------------ model
 
     def _build_model(
@@ -2465,8 +2488,22 @@ class GRRHS_CollapsedNUTS:
         beta_kappa = float(self.beta_kappa)
         use_local = bool(self.use_local_scale)
         shared_kappa = bool(self.shared_kappa)
+        kappa_reparam = str(self.kappa_reparameterization).strip().lower()
+        if kappa_reparam not in {"standard", "prior_logit_affine"}:
+            kappa_reparam = "prior_logit_affine"
+        tau_reparam = str(self.tau_parameterization).strip().lower()
+        if tau_reparam not in {"standard", "sigma_scaled"}:
+            tau_reparam = "sigma_scaled"
+        lambda_reparam = str(self.lambda_parameterization).strip().lower()
+        if lambda_reparam not in {"standard", "prior_log_affine"}:
+            lambda_reparam = "prior_log_affine"
         # capture static helper as local reference (avoids self-capture inside JAX trace)
         _lbeta = GRRHS_NUTS._log_beta_on_logit
+        _log_half_cauchy_on_log = GRRHS_CollapsedNUTS._half_cauchy_log_density_on_log
+        logit_loc, logit_scale = self._beta_logit_moments(alpha_kappa, beta_kappa)
+        logit_loc_jnp = jnp.asarray(logit_loc)
+        logit_scale_jnp = jnp.asarray(logit_scale)
+        log_lambda_scale_jnp = jnp.asarray(math.pi / 2.0)
 
         def model(X, y, group_id, group_sizes, tau0_eff):
             n, p = X.shape
@@ -2476,31 +2513,80 @@ class GRRHS_CollapsedNUTS:
             sigma2 = sigma * sigma
 
             tau_scale = jnp.maximum(jnp.asarray(tau0_eff, dtype=X.dtype) * sigma, _EPS)
-            tau = numpyro.sample("tau", dist.HalfCauchy(tau_scale))
+            if tau_reparam == "sigma_scaled":
+                tau_raw = numpyro.sample("tau_raw", dist.HalfCauchy(jnp.asarray(1.0, dtype=X.dtype)))
+                tau = numpyro.deterministic("tau", jnp.maximum(tau_scale * tau_raw, _EPS))
+            else:
+                tau = numpyro.sample("tau", dist.HalfCauchy(tau_scale))
 
             if use_local:
-                lam = numpyro.sample("lambda", dist.HalfCauchy(jnp.ones(p, dtype=X.dtype)).to_event(1))
+                if lambda_reparam == "prior_log_affine":
+                    log_lambda_latent = numpyro.sample(
+                        "log_lambda_raw",
+                        dist.Normal(jnp.zeros(p, dtype=X.dtype), jnp.ones(p, dtype=X.dtype)).to_event(1),
+                    )
+                    log_lambda = numpyro.deterministic(
+                        "log_lambda",
+                        jnp.asarray(log_lambda_scale_jnp, dtype=X.dtype) * log_lambda_latent,
+                    )
+                    lam = numpyro.deterministic("lambda", jnp.exp(log_lambda))
+                    proposal_log_prob = jnp.sum(
+                        dist.Normal(jnp.zeros(p, dtype=X.dtype), jnp.ones(p, dtype=X.dtype)).log_prob(log_lambda_latent)
+                    ) - p * jnp.log(jnp.asarray(log_lambda_scale_jnp, dtype=X.dtype))
+                    numpyro.factor(
+                        "prior_log_lambda",
+                        jnp.sum(_log_half_cauchy_on_log(log_lambda)) - proposal_log_prob,
+                    )
+                else:
+                    lam = numpyro.sample("lambda", dist.HalfCauchy(jnp.ones(p, dtype=X.dtype)).to_event(1))
             else:
                 lam = numpyro.deterministic("lambda", jnp.ones(p, dtype=X.dtype))
 
             if shared_kappa:
-                logit_kappa_raw = numpyro.sample("logit_kappa_shared_raw", dist.Normal(0.0, 1.0))
+                logit_kappa_latent = numpyro.sample("logit_kappa_shared_raw", dist.Normal(0.0, 1.0))
+                if kappa_reparam == "prior_logit_affine":
+                    logit_kappa_raw = numpyro.deterministic(
+                        "logit_kappa",
+                        jnp.asarray(logit_loc_jnp, dtype=X.dtype)
+                        + jnp.asarray(logit_scale_jnp, dtype=X.dtype) * logit_kappa_latent,
+                    )
+                    proposal_log_prob = (
+                        dist.Normal(0.0, 1.0).log_prob(logit_kappa_latent)
+                        - jnp.log(jnp.asarray(logit_scale_jnp, dtype=X.dtype))
+                    )
+                else:
+                    logit_kappa_raw = numpyro.deterministic("logit_kappa", logit_kappa_latent)
+                    proposal_log_prob = dist.Normal(0.0, 1.0).log_prob(logit_kappa_latent)
                 kappa_shared = sigmoid(logit_kappa_raw)
                 kappa = numpyro.deterministic("kappa", jnp.full((G,), kappa_shared, dtype=X.dtype))
                 numpyro.factor(
                     "prior_logit_kappa",
                     _lbeta(logit_kappa_raw, alpha_kappa, beta_kappa)
-                    - dist.Normal(0.0, 1.0).log_prob(logit_kappa_raw),
+                    - proposal_log_prob,
                 )
             else:
-                logit_kappa = numpyro.sample("logit_kappa_raw", dist.Normal(jnp.zeros(G), jnp.ones(G)).to_event(1))
+                logit_kappa_latent = numpyro.sample(
+                    "logit_kappa_raw",
+                    dist.Normal(jnp.zeros(G, dtype=X.dtype), jnp.ones(G, dtype=X.dtype)).to_event(1),
+                )
+                if kappa_reparam == "prior_logit_affine":
+                    logit_kappa = numpyro.deterministic(
+                        "logit_kappa",
+                        jnp.asarray(logit_loc_jnp, dtype=X.dtype)
+                        + jnp.asarray(logit_scale_jnp, dtype=X.dtype) * logit_kappa_latent,
+                    )
+                    proposal_log_prob = jnp.sum(
+                        dist.Normal(jnp.zeros(G, dtype=X.dtype), jnp.ones(G, dtype=X.dtype)).log_prob(logit_kappa_latent)
+                    ) - G * jnp.log(jnp.asarray(logit_scale_jnp, dtype=X.dtype))
+                else:
+                    logit_kappa = numpyro.deterministic("logit_kappa", logit_kappa_latent)
+                    proposal_log_prob = jnp.sum(
+                        dist.Normal(jnp.zeros(G, dtype=X.dtype), jnp.ones(G, dtype=X.dtype)).log_prob(logit_kappa_latent)
+                    )
                 kappa = numpyro.deterministic("kappa", sigmoid(logit_kappa))
                 numpyro.factor(
                     "prior_logit_kappa",
-                    jnp.sum(
-                        _lbeta(logit_kappa, alpha_kappa, beta_kappa)
-                        - dist.Normal(0.0, 1.0).log_prob(logit_kappa)
-                    ),
+                    jnp.sum(_lbeta(logit_kappa, alpha_kappa, beta_kappa)) - proposal_log_prob,
                 )
 
             numpyro.deterministic("c2", sigma2 * kappa / (1.0 - kappa + _EPS))
@@ -2584,10 +2670,13 @@ class GRRHS_CollapsedNUTS:
         )
         kernel = NUTS(
             model_fn,
+            step_size=1.0 if self.step_size is None else float(max(self.step_size, 1e-6)),
             target_accept_prob=float(self.target_accept_prob),
             dense_mass=bool(self.dense_mass),
             max_tree_depth=int(self.max_tree_depth),
             init_strategy=init_strategy,
+            find_heuristic_step_size=bool(self.find_heuristic_step_size),
+            regularize_mass_matrix=True,
         )
         warmup_use = int(self.num_warmup)
         if bool(self.resume_no_warmup) and init_params_use is not None:
@@ -2618,9 +2707,11 @@ class GRRHS_CollapsedNUTS:
         runtime_nuts = time.perf_counter() - start
 
         samples = mcmc.get_samples(group_by_chain=True)
-        latent_keys = ["sigma", "tau"]
+        tau_reparam = str(self.tau_parameterization).strip().lower()
+        latent_keys = ["sigma", "tau_raw" if tau_reparam == "sigma_scaled" else "tau"]
+        lambda_reparam = str(self.lambda_parameterization).strip().lower()
         if bool(self.use_local_scale):
-            latent_keys.append("lambda")
+            latent_keys.append("log_lambda_raw" if lambda_reparam == "prior_log_affine" else "lambda")
         if bool(self.shared_kappa):
             latent_keys.append("logit_kappa_shared_raw")
         else:
@@ -2648,13 +2739,22 @@ class GRRHS_CollapsedNUTS:
         beta_draws = np.zeros((S * beta_rep, p), dtype=np.float64)
 
         for i in range(S):
-            sig2_i = float(sigma_flat[i]) ** 2 if sigma_flat is not None else 1.0
-            tau2_i = float(tau_flat[i]) ** 2 if tau_flat is not None else 1.0
+            sig_i = float(sigma_flat[i]) if sigma_flat is not None else 1.0
+            tau_i = float(tau_flat[i]) if tau_flat is not None else 1.0
+            sig_i = sig_i if np.isfinite(sig_i) else 1.0
+            tau_i = tau_i if np.isfinite(tau_i) else 1.0
+            sig2_i = max(sig_i ** 2, 1e-12)
+            tau2_i = max(tau_i ** 2, 1e-12)
             lam2_i = lam_flat[i] ** 2 if lam_flat is not None else np.ones(p)
+            lam2_i = np.nan_to_num(np.asarray(lam2_i, dtype=np.float64), nan=1.0, posinf=1.0, neginf=1.0)
+            lam2_i = np.maximum(lam2_i, 1e-12)
             kappa_j_i = kappa_flat[i][gid] if kappa_flat is not None else np.full(p, 0.5)
+            kappa_j_i = np.nan_to_num(np.asarray(kappa_j_i, dtype=np.float64), nan=0.5, posinf=0.999, neginf=1e-3)
+            kappa_j_i = np.clip(kappa_j_i, 1e-6, 1.0 - 1e-6)
 
             r_i = tau2_i * lam2_i / (sig2_i + 1e-12)
             v_i = sig2_i * kappa_j_i * r_i / (kappa_j_i + (1.0 - kappa_j_i) * r_i + 1e-12)
+            v_i = np.nan_to_num(np.asarray(v_i, dtype=np.float64), nan=1e-12, posinf=1e6, neginf=1e-12)
             v_i = np.maximum(v_i, 1e-12)
 
             XtX = None
@@ -2727,6 +2827,16 @@ class GRRHS_CollapsedNUTS:
             beta_sampler="woodbury_bhattacharya" if n < p else "cholesky",
             tau0_effective=float(tau0_eff),
         )
+        self.sampler_diagnostics_["parameterization"] = {
+            "kappa_reparameterization": str(self.kappa_reparameterization).strip().lower(),
+            "tau_parameterization": str(self.tau_parameterization).strip().lower(),
+            "lambda_parameterization": str(self.lambda_parameterization).strip().lower(),
+            "shared_kappa": bool(self.shared_kappa),
+            "use_local_scale": bool(self.use_local_scale),
+            "profile_mode": bool(profile_mode),
+            "step_size": None if self.step_size is None else float(self.step_size),
+            "find_heuristic_step_size": bool(self.find_heuristic_step_size),
+        }
         return self
 
     def _extract_diagnostics(

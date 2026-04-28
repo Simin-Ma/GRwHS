@@ -81,13 +81,14 @@ def _filter_nuts_init_params(
     if not isinstance(init_params, dict) or not init_params:
         return None
     gaussian = str(task).strip().lower() != "logistic"
-    allowed = {"tau"}
+    allowed = {"tau", "tau_raw"}
     if gaussian:
         allowed.add("sigma")
     if gaussian:
         allowed.add("beta_raw")
     if bool(use_local_scale):
         allowed.add("lambda")
+        allowed.add("log_lambda_raw")
     if bool(shared_kappa):
         allowed.add("logit_kappa_shared_raw")
     else:
@@ -124,6 +125,54 @@ def _clip_prob(value: float, *, eps: float = 1e-4) -> float:
 def _safe_logit(value: float, *, eps: float = 1e-4) -> float:
     p = _clip_prob(value, eps=eps)
     return float(math.log(p / (1.0 - p)))
+
+
+def _beta_logit_moments(alpha: float, beta: float) -> tuple[float, float]:
+    a = max(float(alpha), 1e-8)
+    b = max(float(beta), 1e-8)
+    mean = math.log(a) - math.log(b)
+    var = max(1.0 / a + 1.0 / b, 1e-8)
+    return float(mean), float(math.sqrt(var))
+
+
+def _collapsed_profile_init_params(
+    init_params: dict[str, np.ndarray] | None,
+    *,
+    alpha_kappa: float,
+    beta_kappa: float,
+    shared_kappa: bool,
+    kappa_reparameterization: str,
+    tau_parameterization: str = "sigma_scaled",
+    lambda_parameterization: str = "prior_log_affine",
+) -> dict[str, np.ndarray] | None:
+    if not isinstance(init_params, dict) or not init_params:
+        return None
+    out = _clone_numeric_dict(init_params) or {}
+    tau_mode = str(tau_parameterization).strip().lower()
+    if tau_mode == "sigma_scaled" and "tau_raw" not in out and "tau" in out and "sigma" in out:
+        sigma = float(np.asarray(out["sigma"], dtype=float))
+        tau = float(np.asarray(out["tau"], dtype=float))
+        denom = max(abs(sigma), 1e-8)
+        out["tau_raw"] = np.asarray(max(tau / denom, 1e-4), dtype=np.float32)
+        out.pop("tau", None)
+    lambda_mode = str(lambda_parameterization).strip().lower()
+    if lambda_mode == "prior_log_affine" and "log_lambda_raw" not in out and "lambda" in out:
+        lam = np.asarray(out["lambda"], dtype=float)
+        lam = np.maximum(np.nan_to_num(lam, nan=1.0, posinf=1.0, neginf=1.0), 1e-6)
+        out["log_lambda_raw"] = np.asarray(np.log(lam) / (math.pi / 2.0), dtype=np.float32)
+        out.pop("lambda", None)
+    mode = str(kappa_reparameterization).strip().lower()
+    if mode != "prior_logit_affine":
+        return out or None
+    loc, scale = _beta_logit_moments(alpha_kappa, beta_kappa)
+    if not np.isfinite(scale) or scale <= 0.0:
+        return out or None
+    key = "logit_kappa_shared_raw" if bool(shared_kappa) else "logit_kappa_raw"
+    if key not in out:
+        return out or None
+    raw = np.asarray(out[key], dtype=float)
+    out[key] = np.asarray((raw - float(loc)) / float(scale), dtype=np.float32)
+    return out or None
 
 
 def _ridge_beta_mean(
@@ -217,6 +266,92 @@ def _ridge_init_params(
         out["logit_kappa_raw"] = np.asarray(logit_kappa, dtype=np.float32)
     if str(task).strip().lower() != "logistic":
         out["beta_raw"] = beta_raw
+    return out
+
+
+def _collapsed_profile_ridge_init_params(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    *,
+    task: str,
+    p0: int,
+    alpha_kappa: float,
+    beta_kappa: float,
+    tau_target: str,
+    sigma_reference: float,
+    shared_kappa: bool,
+    use_local_scale: bool,
+    kappa_reparameterization: str,
+    ridge: float = 1.0,
+) -> dict[str, np.ndarray]:
+    X_arr = np.asarray(X, dtype=float)
+    y_arr = np.asarray(y, dtype=float).reshape(-1)
+    p = int(X_arr.shape[1])
+    group_list = [np.asarray(g, dtype=int) for g in groups]
+    G = max(len(group_list), 1)
+    beta_ridge = _ridge_beta_mean(X_arr, y_arr, task=task, ridge=ridge)
+
+    resid = y_arr - X_arr @ beta_ridge
+    sigma_guess = float(np.sqrt(max(np.mean(resid * resid), 1e-6)))
+    if str(task).strip().lower() == "logistic":
+        sigma_guess = float(max(sigma_reference, 1.0))
+
+    target_dim = p if str(tau_target).strip().lower() == "coefficients" else max(G, 1)
+    tau0_eff = GRRHS_NUTS.calibrate_tau0(
+        p0=max(float(p0), 1.0),
+        D=max(int(target_dim), 1),
+        n=max(int(X_arr.shape[0]), 1),
+        sigma_ref=float(max(sigma_reference, 1e-6)),
+    )
+
+    group_mass = np.zeros(G, dtype=float)
+    for gid, idxs in enumerate(group_list):
+        if idxs.size == 0:
+            continue
+        beta_g = beta_ridge[idxs]
+        group_mass[gid] = float(np.linalg.norm(beta_g) / math.sqrt(max(int(idxs.size), 1)))
+    total_mass = float(np.sum(group_mass))
+    if total_mass > 0.0 and np.isfinite(total_mass):
+        group_share = group_mass / total_mass
+    else:
+        group_share = np.full(G, 1.0 / max(G, 1), dtype=float)
+
+    active_score = float(np.sum(group_share > (1.0 / max(2 * G, 1))))
+    tau_guess = float(max(tau0_eff, np.linalg.norm(beta_ridge) / math.sqrt(max(p, 1)), 1e-4))
+    if str(tau_target).strip().lower() == "groups":
+        tau_guess = float(max(tau_guess, tau0_eff * max(1.0, math.sqrt(max(active_score, 1.0)))))
+
+    prior_mean_kappa = float(alpha_kappa / max(alpha_kappa + beta_kappa, 1e-8))
+    centered_share = group_share - float(np.mean(group_share))
+    share_scale = float(max(np.std(group_share), 1e-6))
+    kappa_guess = np.clip(
+        prior_mean_kappa + 0.30 * centered_share / share_scale,
+        0.02,
+        0.98,
+    )
+    if not np.any(np.isfinite(kappa_guess)):
+        kappa_guess = np.full(G, _clip_prob(prior_mean_kappa), dtype=float)
+    kappa_guess = np.where(np.isfinite(kappa_guess), kappa_guess, _clip_prob(prior_mean_kappa))
+    logit_kappa = np.asarray([_safe_logit(v) for v in kappa_guess], dtype=np.float32)
+
+    key = "logit_kappa_shared_raw" if bool(shared_kappa) else "logit_kappa_raw"
+    if str(kappa_reparameterization).strip().lower() == "prior_logit_affine":
+        loc, scale = _beta_logit_moments(alpha_kappa, beta_kappa)
+        scale_use = float(max(scale, 1e-6))
+        logit_kappa = ((logit_kappa.astype(float) - float(loc)) / scale_use).astype(np.float32)
+
+    out: dict[str, np.ndarray] = {
+        "sigma": np.asarray(float(max(sigma_guess, 1e-4)), dtype=np.float32),
+        "tau": np.asarray(float(max(tau_guess, 1e-4)), dtype=np.float32),
+    }
+    if use_local_scale:
+        local_scale = np.sqrt(np.clip(np.abs(beta_ridge) / max(tau_guess, 1e-4), 0.05, 5.0))
+        out["lambda"] = np.asarray(local_scale, dtype=np.float32)
+    if shared_kappa:
+        out[key] = np.asarray(float(np.mean(logit_kappa)), dtype=np.float32)
+    else:
+        out[key] = np.asarray(logit_kappa, dtype=np.float32)
     return out
 
 
@@ -490,6 +625,12 @@ def _build_collapsed_profile(
     resume_no_warmup: bool = False,
     adapt_delta: float | None = None,
     max_treedepth: int | None = None,
+    kappa_reparameterization: str = "prior_logit_affine",
+    tau_parameterization: str = "sigma_scaled",
+    lambda_parameterization: str = "prior_log_affine",
+    step_size: float | None = None,
+    find_heuristic_step_size: bool = False,
+    dense_mass: bool = False,
 ) -> GRRHS_CollapsedNUTS:
     """Build GR-RHS-CaP: collapsed-and-profile GR-RHS for high-dimensional Gaussian runs."""
     return GRRHS_CollapsedNUTS(
@@ -508,12 +649,17 @@ def _build_collapsed_profile(
         num_chains=int(sampler.chains),
         target_accept_prob=float(sampler.adapt_delta if adapt_delta is None else adapt_delta),
         max_tree_depth=int(sampler.max_treedepth if max_treedepth is None else max_treedepth),
-        dense_mass=False,
+        dense_mass=bool(dense_mass),
         chain_method="sequential",
         progress_bar=bool(progress_bar),
         seed=int(seed),
+        step_size=None if step_size is None else float(step_size),
+        find_heuristic_step_size=bool(find_heuristic_step_size),
         init_params=_clone_numeric_dict(init_params),
         resume_no_warmup=bool(resume_no_warmup),
+        kappa_reparameterization=str(kappa_reparameterization),
+        tau_parameterization=str(tau_parameterization),
+        lambda_parameterization=str(lambda_parameterization),
     )
 
 
@@ -539,6 +685,8 @@ def fit_gr_rhs(
     warm_start_strategy: str = "ridge",
     sampler_backend: str | None = None,
     gibbs_budget_scale: float | None = None,
+    collapsed_kappa_reparameterization: str = "prior_logit_affine",
+    collapsed_dense_mass: bool | None = None,
 ) -> FitResult:
     tracked = ["beta", "tau", "kappa"]
     groups_use = as_int_groups(groups)
@@ -610,6 +758,22 @@ def fit_gr_rhs(
                 shared_kappa=shared_kappa,
                 use_local_scale=use_local_scale,
             )
+        collapsed_ridge_init = None
+        if warm_mode == "ridge":
+            collapsed_ridge_init = _collapsed_profile_ridge_init_params(
+                X,
+                y,
+                groups_use,
+                task=task,
+                p0=p0,
+                alpha_kappa=alpha_kappa,
+                beta_kappa=beta_kappa,
+                tau_target=tau_target,
+                sigma_reference=float(pseudo_sigma),
+                shared_kappa=shared_kappa,
+                use_local_scale=use_local_scale,
+                kappa_reparameterization=str(collapsed_kappa_reparameterization),
+            )
 
         def _make_nuts(
             seed_: int,
@@ -671,10 +835,45 @@ def fit_gr_rhs(
             init_params = _resume_init_params(resume_payload)
             warm_init = init_params
             if warm_init is None:
+                base_init = collapsed_ridge_init if collapsed_ridge_init is not None else ridge_init
                 warm_init = _expand_manual_init_params_for_chains(
-                    _clone_numeric_dict(ridge_init),
+                    _clone_numeric_dict(base_init),
                     num_chains=int(sampler.chains),
                 )
+            warm_init = _collapsed_profile_init_params(
+                _filter_nuts_init_params(
+                    warm_init,
+                    task=task,
+                    use_local_scale=use_local_scale,
+                    shared_kappa=shared_kappa,
+                ),
+                alpha_kappa=alpha_kappa,
+                beta_kappa=beta_kappa,
+                shared_kappa=shared_kappa,
+                kappa_reparameterization=str(collapsed_kappa_reparameterization),
+                tau_parameterization="sigma_scaled",
+                lambda_parameterization="prior_log_affine",
+            )
+            dense_mass_use = bool(collapsed_dense_mass) if collapsed_dense_mass is not None else (
+                bool(design_profile.get("hard_design", False))
+                and str(task).strip().lower() != "logistic"
+                and str(tau_target).strip().lower() == "groups"
+            )
+            hard_profile = bool(design_profile.get("hard_design", False))
+            within_corr = float(design_profile.get("within_mean_abs_corr", 0.0))
+            corr_gap = float(design_profile.get("corr_gap", 0.0))
+            step_size_use = None
+            heuristic_step_size = False
+            if (
+                hard_profile
+                and bool(use_local_scale)
+                and str(task).strip().lower() != "logistic"
+            ):
+                heuristic_step_size = True
+                if within_corr >= 0.7 or corr_gap >= 0.5:
+                    step_size_use = 0.01
+                elif within_corr >= 0.55 or corr_gap >= 0.35:
+                    step_size_use = 0.02
             return _build_collapsed_profile(
                 seed=seed_,
                 p0=p0,
@@ -688,15 +887,16 @@ def fit_gr_rhs(
                 sigma_reference=float(pseudo_sigma),
                 sampler=sampler,
                 progress_bar=bool(progress_bar),
-                init_params=_filter_nuts_init_params(
-                    warm_init,
-                    task=task,
-                    use_local_scale=use_local_scale,
-                    shared_kappa=shared_kappa,
-                ),
+                init_params=warm_init,
                 resume_no_warmup=bool(init_params),
                 adapt_delta=float(adapt_delta),
                 max_treedepth=int(max_treedepth),
+                kappa_reparameterization=str(collapsed_kappa_reparameterization),
+                tau_parameterization="sigma_scaled",
+                lambda_parameterization="prior_log_affine",
+                step_size=step_size_use,
+                find_heuristic_step_size=bool(heuristic_step_size),
+                dense_mass=bool(dense_mass_use),
             )
 
         if backend_name == "gibbs_staged":
@@ -770,6 +970,8 @@ def fit_gr_rhs(
             "hard_design": bool(design_profile.get("hard_design", False)),
             "design_profile": design_profile,
             "gibbs_budget_scale": None if gibbs_budget_scale is None else float(gibbs_budget_scale),
+            "collapsed_kappa_reparameterization": str(collapsed_kappa_reparameterization),
+            "collapsed_dense_mass": None if collapsed_dense_mass is None else bool(collapsed_dense_mass),
         }
         sampler_diag = diagnostics.get("sampler_diagnostics")
         if backend_name == "gibbs_staged" and isinstance(sampler_diag, dict):
