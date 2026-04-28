@@ -159,7 +159,7 @@ def test_fit_gr_rhs_gaussian_staged_gibbs_small_problem_not_clearly_worse_than_n
 
 def test_fit_gr_rhs_gaussian_collapsed_profile_backend_runs() -> None:
     X, y, groups, _beta_true = _tiny_gaussian_problem(seed=6)
-    sampler = SamplerConfig(chains=1, warmup=15, post_warmup_draws=15, ess_threshold=1.0)
+    sampler = SamplerConfig(chains=2, warmup=15, post_warmup_draws=15, ess_threshold=1.0)
 
     out = fit_gr_rhs(
         X,
@@ -184,6 +184,10 @@ def test_fit_gr_rhs_gaussian_collapsed_profile_backend_runs() -> None:
     assert sampler_diag.get("backend") == "simcore_collapsed_nuts"
     assert sampler_diag.get("profile_mode") is True
     assert sampler_diag.get("nuts_dim") == len(groups) + 2
+    assert "hmc" in sampler_diag
+    assert "posterior_quality" in sampler_diag
+    assert out.beta_draws is not None
+    assert np.asarray(out.beta_draws).ndim == 3
 
 
 def test_fit_gr_rhs_logistic_does_not_silently_route_to_nuts() -> None:

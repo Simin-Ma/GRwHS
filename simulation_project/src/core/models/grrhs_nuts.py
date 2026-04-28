@@ -2446,6 +2446,12 @@ class GRRHS_CollapsedNUTS:
     sampler_diagnostics_: Dict[str, Any] = field(default_factory=dict, init=False)
     last_init_params_: Optional[Dict[str, np.ndarray]] = field(default=None, init=False)
 
+    def _scaled_sigma_jitter(self, *, X_dtype: Any, sigma2: Any, n: int) -> Any:
+        base = jnp.asarray(float(max(self.sigma_jitter, 0.0)), dtype=X_dtype)
+        sigma_term = jnp.maximum(jnp.asarray(sigma2, dtype=X_dtype), jnp.asarray(_EPS, dtype=X_dtype))
+        n_term = jnp.maximum(jnp.asarray(float(max(n, 1)), dtype=X_dtype), jnp.asarray(1.0, dtype=X_dtype))
+        return jnp.maximum(base, sigma_term * jnp.sqrt(n_term) * jnp.asarray(1e-8, dtype=X_dtype))
+
     # ------------------------------------------------------------------ model
 
     def _build_model(
@@ -2459,7 +2465,6 @@ class GRRHS_CollapsedNUTS:
         beta_kappa = float(self.beta_kappa)
         use_local = bool(self.use_local_scale)
         shared_kappa = bool(self.shared_kappa)
-        sig_jit = float(self.sigma_jitter)
         # capture static helper as local reference (avoids self-capture inside JAX trace)
         _lbeta = GRRHS_NUTS._log_beta_on_logit
 
@@ -2518,6 +2523,7 @@ class GRRHS_CollapsedNUTS:
                 XD = X * v        # n x p
                 Sigma_y = XD @ X.T + sigma2 * jnp.eye(n, dtype=X.dtype)
 
+            sig_jit = self._scaled_sigma_jitter(X_dtype=X.dtype, sigma2=sigma2, n=int(n))
             Sigma_y = Sigma_y + sig_jit * jnp.eye(n, dtype=X.dtype)
             numpyro.sample("y", dist.MultivariateNormal(jnp.zeros(n, dtype=X.dtype), Sigma_y), obs=y)
 
@@ -2531,8 +2537,8 @@ class GRRHS_CollapsedNUTS:
         y: np.ndarray,
         groups: Optional[List[List[int]]] = None,
     ) -> "GRRHS_CollapsedNUTS":
-        X_arr = np.asarray(X, dtype=np.float32)
-        y_arr = np.asarray(y, dtype=np.float32).reshape(-1)
+        X_arr = np.asarray(X, dtype=np.float64)
+        y_arr = np.asarray(y, dtype=np.float64).reshape(-1)
         n, p = X_arr.shape
 
         groups_use = [[j] for j in range(p)] if groups is None else [list(map(int, g)) for g in groups]
@@ -2560,7 +2566,7 @@ class GRRHS_CollapsedNUTS:
             for g_idx, members in enumerate(groups_use):
                 Xg = X_arr[:, np.asarray(members, dtype=int)]
                 M_list.append(Xg @ Xg.T)  # n x n
-            group_XXT_jnp = jnp.asarray(np.stack(M_list, axis=0))  # G x n x n
+            group_XXT_jnp = jnp.asarray(np.stack(M_list, axis=0), dtype=jnp.asarray(X_arr).dtype)  # G x n x n
 
         model_fn = self._build_model(profile_mode=profile_mode, group_XXT=group_XXT_jnp)
 
@@ -2638,7 +2644,8 @@ class GRRHS_CollapsedNUTS:
         kappa_flat = _get_flat("kappa")          # (S, G)
 
         S = sigma_flat.shape[0] if sigma_flat is not None else 0
-        beta_draws = np.zeros((S, p))
+        beta_rep = max(1, int(self.beta_draws_per_sample))
+        beta_draws = np.zeros((S * beta_rep, p), dtype=np.float64)
 
         for i in range(S):
             sig2_i = float(sigma_flat[i]) ** 2 if sigma_flat is not None else 1.0
@@ -2650,12 +2657,17 @@ class GRRHS_CollapsedNUTS:
             v_i = sig2_i * kappa_j_i * r_i / (kappa_j_i + (1.0 - kappa_j_i) * r_i + 1e-12)
             v_i = np.maximum(v_i, 1e-12)
 
-            if n < p:
-                beta_draws[i] = beta_sample_woodbury(X64, y64, sig2_i, v_i, rng_post)
-            else:
+            XtX = None
+            Xty = None
+            if n >= p:
                 XtX = X64.T @ X64
                 Xty = X64.T @ y64
-                beta_draws[i] = beta_sample_cholesky(XtX, Xty, sig2_i, v_i, rng_post)
+            for rep in range(beta_rep):
+                out_idx = i * beta_rep + rep
+                if n < p:
+                    beta_draws[out_idx] = beta_sample_woodbury(X64, y64, sig2_i, v_i, rng_post)
+                else:
+                    beta_draws[out_idx] = beta_sample_cholesky(XtX, Xty, sig2_i, v_i, rng_post)
 
         runtime_sec = time.perf_counter() - start
 
@@ -2666,11 +2678,30 @@ class GRRHS_CollapsedNUTS:
             step = int(self.thinning)
             return arr if step <= 1 else arr[::step]
 
-        self.coef_samples_ = _thin_flat(beta_draws)
-        self.sigma_samples_ = _thin_flat(sigma_flat)
-        self.tau_samples_ = _thin_flat(tau_flat)
-        self.lambda_samples_ = _thin_flat(lam_flat)
-        self.kappa_samples_ = _thin_flat(kappa_flat)
+        def _thin_chain(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+            if arr is None:
+                return None
+            step = int(self.thinning)
+            out = np.asarray(arr, dtype=np.float64)
+            if step > 1:
+                out = out[:, ::step, ...]
+            if out.shape[0] == 1:
+                return out[0]
+            return out
+
+        def _reshape_beta_draws(beta_flat: np.ndarray) -> np.ndarray:
+            chains = max(1, int(self.num_chains))
+            draws = max(1, int(self.num_samples))
+            rep = max(1, int(self.beta_draws_per_sample))
+            shaped = np.asarray(beta_flat, dtype=np.float64).reshape(chains, draws, rep, p)
+            shaped = shaped.reshape(chains, draws * rep, p)
+            return shaped[0] if chains == 1 else shaped
+
+        self.coef_samples_ = _thin_chain(_reshape_beta_draws(beta_draws))
+        self.sigma_samples_ = _thin_chain(np.asarray(samples["sigma"], dtype=np.float64)) if "sigma" in samples else None
+        self.tau_samples_ = _thin_chain(np.asarray(samples["tau"], dtype=np.float64)) if "tau" in samples else None
+        self.lambda_samples_ = _thin_chain(np.asarray(samples["lambda"], dtype=np.float64)) if "lambda" in samples else None
+        self.kappa_samples_ = _thin_chain(np.asarray(samples["kappa"], dtype=np.float64)) if "kappa" in samples else None
         c2_flat = _get_flat("c2")
         self.c2_samples_ = _thin_flat(c2_flat)
 
@@ -2687,23 +2718,114 @@ class GRRHS_CollapsedNUTS:
         self.c2_mean_ = _mean2(self.c2_samples_)
         self.intercept_ = 0.0
 
-        extra = {}
+        self.sampler_diagnostics_ = self._extract_diagnostics(
+            mcmc,
+            runtime_sec=float(runtime_sec),
+            runtime_nuts_sec=float(runtime_nuts),
+            profile_mode=bool(profile_mode),
+            nuts_dim=int(G + 2 if profile_mode else p + G + 2),
+            beta_sampler="woodbury_bhattacharya" if n < p else "cholesky",
+            tau0_effective=float(tau0_eff),
+        )
+        return self
+
+    def _extract_diagnostics(
+        self,
+        mcmc: MCMC,
+        *,
+        runtime_sec: float,
+        runtime_nuts_sec: float,
+        profile_mode: bool,
+        nuts_dim: int,
+        beta_sampler: str,
+        tau0_effective: float,
+    ) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "backend": "simcore_collapsed_nuts",
+            "runtime_sec": float(runtime_sec),
+            "runtime_nuts_sec": float(runtime_nuts_sec),
+            "profile_mode": bool(profile_mode),
+            "nuts_dim": int(nuts_dim),
+            "beta_sampler": str(beta_sampler),
+            "tau0_effective": float(tau0_effective),
+            "beta_draws_per_sample": int(max(1, int(self.beta_draws_per_sample))),
+        }
         try:
             extra = mcmc.get_extra_fields(group_by_chain=True)
         except Exception:
-            pass
-        div = int(np.sum(np.asarray(extra.get("diverging", []), dtype=float) > 0.5)) if "diverging" in extra else -1
-        self.sampler_diagnostics_ = {
-            "backend": "simcore_collapsed_nuts",
-            "runtime_sec": float(runtime_sec),
-            "runtime_nuts_sec": float(runtime_nuts),
-            "profile_mode": bool(profile_mode),
-            "nuts_dim": G + 2 if profile_mode else p + G + 2,
-            "beta_sampler": "woodbury_bhattacharya" if n < p else "cholesky",
-            "divergences": div,
-            "tau0_effective": float(tau0_eff),
+            extra = {}
+
+        diverging_raw = np.asarray(extra.get("diverging", []), dtype=float)
+        num_steps_raw = np.asarray(extra.get("num_steps", []), dtype=float)
+        energy_raw = np.asarray(extra.get("energy", []), dtype=float)
+        if diverging_raw.ndim == 1 and diverging_raw.size:
+            diverging_raw = diverging_raw.reshape(1, -1)
+        if num_steps_raw.ndim == 1 and num_steps_raw.size:
+            num_steps_raw = num_steps_raw.reshape(1, -1)
+        if energy_raw.ndim == 1 and energy_raw.size:
+            energy_raw = energy_raw.reshape(1, -1)
+
+        divergences = int(np.sum(diverging_raw > 0.5)) if diverging_raw.size else -1
+        if num_steps_raw.size:
+            treedepth_limit = float(2 ** int(self.max_tree_depth))
+            treedepth_hits = int(np.sum(num_steps_raw >= treedepth_limit))
+            max_num_steps = int(np.max(num_steps_raw))
+        else:
+            treedepth_hits = -1
+            max_num_steps = -1
+
+        ebfmi_vals: list[float] = []
+        if energy_raw.size:
+            for chain_energy in energy_raw:
+                if chain_energy.size < 3:
+                    ebfmi_vals.append(float("nan"))
+                    continue
+                num = float(np.mean(np.diff(chain_energy) ** 2))
+                den = float(np.var(chain_energy))
+                ebfmi_vals.append(float("nan") if den <= 0.0 or not np.isfinite(den) else num / den)
+        ebfmi_min = _safe_nanmin(ebfmi_vals)
+        out["hmc"] = {
+            "divergences": int(divergences),
+            "treedepth_hits": int(treedepth_hits),
+            "max_num_steps": int(max_num_steps),
+            "ebfmi_per_chain": ebfmi_vals,
+            "ebfmi_min": ebfmi_min,
         }
-        return self
+
+        try:
+            samples = mcmc.get_samples(group_by_chain=True)
+            diag = diagnostics_summary(samples, group_by_chain=True)
+            blocks = ["tau", "sigma", "kappa", "lambda", "c2"]
+            rhat_vals: list[float] = []
+            ess_vals: list[float] = []
+            for b in blocks:
+                if b not in diag:
+                    continue
+                entry = diag[b]
+                if isinstance(entry, dict):
+                    if "r_hat" in entry:
+                        rhat_vals.extend(np.asarray(entry["r_hat"], dtype=float).reshape(-1).tolist())
+                    if "n_eff" in entry:
+                        ess_vals.extend(np.asarray(entry["n_eff"], dtype=float).reshape(-1).tolist())
+            if self.coef_samples_ is not None and np.asarray(self.coef_samples_).ndim >= 3:
+                beta_diag = diagnostics_summary({"beta": jnp.asarray(np.asarray(self.coef_samples_, dtype=float))}, group_by_chain=True)
+                entry = beta_diag.get("beta", {})
+                if isinstance(entry, dict):
+                    if "r_hat" in entry:
+                        rhat_vals.extend(np.asarray(entry["r_hat"], dtype=float).reshape(-1).tolist())
+                    if "n_eff" in entry:
+                        ess_vals.extend(np.asarray(entry["n_eff"], dtype=float).reshape(-1).tolist())
+            rhat_vals = [float(v) for v in rhat_vals if np.isfinite(v)]
+            ess_vals = [float(v) for v in ess_vals if np.isfinite(v)]
+            min_ess = float(min(ess_vals)) if ess_vals else float("nan")
+            out["posterior_quality"] = {
+                "max_rhat": float(max(rhat_vals)) if rhat_vals else float("nan"),
+                "min_ess": min_ess,
+                "ess_per_sec": float(min_ess / max(runtime_sec, 1e-12)) if np.isfinite(min_ess) else float("nan"),
+            }
+        except Exception:
+            out["posterior_quality"] = {}
+        return out
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         if self.coef_mean_ is None:
