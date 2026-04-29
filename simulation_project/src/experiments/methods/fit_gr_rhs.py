@@ -958,14 +958,16 @@ def fit_gr_rhs(
                 heuristic_step_size = True
                 dense_mass_use = bool(collapsed_dense_mass) if collapsed_dense_mass is not None else False
                 if int(sampler.chains) > 1:
-                    warmup_use = max(warmup_use, int(round(max(warmup_use, 1) * 0.9)))
-                    adapt_delta_use = max(adapt_delta_use, 0.88)
+                    adapt_delta_use = max(adapt_delta_use, 0.90)
                     max_treedepth_use = max(max_treedepth_use, 9)
-                    if within_corr >= 0.55 or corr_gap >= 0.35:
-                        step_size_use = 0.03
                     if within_corr < 0.70 and corr_gap < 0.50:
-                        step_size_use = 0.0318
-                        draws_use = max(draws_use, int(round(max(draws_use, 1) * 1.08)))
+                        step_size_use = 0.03
+                        warmup_use = max(warmup_use, 175)
+                        draws_use = max(draws_use, 540)
+                    elif within_corr >= 0.70 or corr_gap >= 0.50:
+                        step_size_use = 0.03
+                        warmup_use = max(warmup_use, 180)
+                        draws_use = max(draws_use, 520)
                 else:
                     if within_corr >= 0.7 or corr_gap >= 0.5:
                         step_size_use = 0.025
