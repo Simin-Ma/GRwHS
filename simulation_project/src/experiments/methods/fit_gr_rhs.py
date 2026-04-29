@@ -118,6 +118,35 @@ def _expand_manual_init_params_for_chains(
     return out or None
 
 
+def _jitter_init_params_across_chains(
+    init_params: dict[str, np.ndarray] | None,
+    *,
+    num_chains: int,
+    seed: int,
+    jitter_scale: float = 0.08,
+) -> dict[str, np.ndarray] | None:
+    if not isinstance(init_params, dict) or not init_params:
+        return None
+    chains = max(1, int(num_chains))
+    if chains <= 1:
+        return _clone_numeric_dict(init_params)
+    rng = np.random.default_rng(int(seed))
+    out: dict[str, np.ndarray] = {}
+    scale = float(max(jitter_scale, 0.0))
+    for key, value in init_params.items():
+        arr = np.asarray(value, dtype=float).copy()
+        if arr.ndim == 0 or arr.shape[0] != chains:
+            out[str(key)] = arr
+            continue
+        noise = rng.normal(loc=0.0, scale=scale, size=arr.shape)
+        if str(key) in {"sigma", "tau", "tau_raw", "lambda"}:
+            arr = np.maximum(arr * np.exp(0.35 * noise), 1e-6)
+        elif str(key) in {"log_lambda_raw", "logit_kappa_raw", "logit_kappa_shared_raw", "beta_raw"}:
+            arr = arr + noise
+        out[str(key)] = np.asarray(arr, dtype=float)
+    return out or None
+
+
 def _clip_prob(value: float, *, eps: float = 1e-4) -> float:
     return float(min(max(float(value), eps), 1.0 - eps))
 
@@ -150,10 +179,13 @@ def _collapsed_profile_init_params(
     out = _clone_numeric_dict(init_params) or {}
     tau_mode = str(tau_parameterization).strip().lower()
     if tau_mode == "sigma_scaled" and "tau_raw" not in out and "tau" in out and "sigma" in out:
-        sigma = float(np.asarray(out["sigma"], dtype=float))
-        tau = float(np.asarray(out["tau"], dtype=float))
-        denom = max(abs(sigma), 1e-8)
-        out["tau_raw"] = np.asarray(max(tau / denom, 1e-4), dtype=np.float32)
+        sigma = np.asarray(out["sigma"], dtype=float)
+        tau = np.asarray(out["tau"], dtype=float)
+        sigma = np.nan_to_num(sigma, nan=1.0, posinf=1.0, neginf=1.0)
+        tau = np.nan_to_num(tau, nan=1.0, posinf=1.0, neginf=1.0)
+        denom = np.maximum(np.abs(sigma), 1e-8)
+        tau_raw = np.maximum(tau / denom, 1e-4)
+        out["tau_raw"] = np.asarray(tau_raw, dtype=np.float32)
         out.pop("tau", None)
     lambda_mode = str(lambda_parameterization).strip().lower()
     if lambda_mode == "prior_log_affine" and "log_lambda_raw" not in out and "lambda" in out:
@@ -840,13 +872,26 @@ def fit_gr_rhs(
                     _clone_numeric_dict(base_init),
                     num_chains=int(sampler.chains),
                 )
+            filtered_warm_init = _filter_nuts_init_params(
+                warm_init,
+                task=task,
+                use_local_scale=use_local_scale,
+                shared_kappa=shared_kappa,
+            )
+            hard_profile = bool(design_profile.get("hard_design", False))
+            if (
+                resume_payload is None
+                and hard_profile
+                and int(sampler.chains) > 1
+            ):
+                filtered_warm_init = _jitter_init_params_across_chains(
+                    filtered_warm_init,
+                    num_chains=int(sampler.chains),
+                    seed=int(seed_) + 1701,
+                    jitter_scale=0.0,
+                )
             warm_init = _collapsed_profile_init_params(
-                _filter_nuts_init_params(
-                    warm_init,
-                    task=task,
-                    use_local_scale=use_local_scale,
-                    shared_kappa=shared_kappa,
-                ),
+                filtered_warm_init,
                 alpha_kappa=alpha_kappa,
                 beta_kappa=beta_kappa,
                 shared_kappa=shared_kappa,
@@ -858,22 +903,64 @@ def fit_gr_rhs(
                 bool(design_profile.get("hard_design", False))
                 and str(task).strip().lower() != "logistic"
                 and str(tau_target).strip().lower() == "groups"
+                and not bool(use_local_scale)
             )
-            hard_profile = bool(design_profile.get("hard_design", False))
             within_corr = float(design_profile.get("within_mean_abs_corr", 0.0))
             corr_gap = float(design_profile.get("corr_gap", 0.0))
             step_size_use = None
             heuristic_step_size = False
+            warmup_use = int(sampler.warmup)
+            adapt_delta_use = float(adapt_delta)
+            max_treedepth_use = int(max_treedepth)
+            if (
+                hard_profile
+                and not bool(use_local_scale)
+                and str(task).strip().lower() != "logistic"
+            ):
+                heuristic_step_size = True
+                dense_mass_use = bool(collapsed_dense_mass) if collapsed_dense_mass is not None else False
+                if int(sampler.chains) > 1:
+                    warmup_use = max(warmup_use, int(round(max(warmup_use, 1) * 0.9)))
+                    adapt_delta_use = max(adapt_delta_use, 0.88)
+                    max_treedepth_use = max(max_treedepth_use, 9)
+                    if within_corr >= 0.7 or corr_gap >= 0.5:
+                        step_size_use = 0.03
+                    elif within_corr >= 0.55 or corr_gap >= 0.35:
+                        step_size_use = 0.04
+                else:
+                    if within_corr >= 0.7 or corr_gap >= 0.5:
+                        step_size_use = 0.025
+                    elif within_corr >= 0.55 or corr_gap >= 0.35:
+                        step_size_use = 0.035
             if (
                 hard_profile
                 and bool(use_local_scale)
                 and str(task).strip().lower() != "logistic"
             ):
                 heuristic_step_size = True
+                if int(sampler.chains) > 1:
+                    warmup_use = max(warmup_use, int(round(max(warmup_use, 1) * 1.1)))
+                    adapt_delta_use = max(adapt_delta_use, 0.88)
+                    max_treedepth_use = max(max_treedepth_use, 10)
+                else:
+                    warmup_use = max(warmup_use, int(round(max(warmup_use, 1) * 1.15)))
+                    adapt_delta_use = max(adapt_delta_use, 0.90)
                 if within_corr >= 0.7 or corr_gap >= 0.5:
-                    step_size_use = 0.01
+                    step_size_use = 0.012 if int(sampler.chains) > 1 else 0.01
                 elif within_corr >= 0.55 or corr_gap >= 0.35:
-                    step_size_use = 0.02
+                    step_size_use = 0.016 if int(sampler.chains) > 1 else 0.02
+            sampler_cap = SamplerConfig(
+                chains=int(sampler.chains),
+                warmup=int(warmup_use),
+                post_warmup_draws=int(sampler.post_warmup_draws),
+                adapt_delta=float(sampler.adapt_delta),
+                max_treedepth=int(sampler.max_treedepth),
+                strict_adapt_delta=float(sampler.strict_adapt_delta),
+                strict_max_treedepth=int(sampler.strict_max_treedepth),
+                max_divergence_ratio=float(sampler.max_divergence_ratio),
+                rhat_threshold=float(sampler.rhat_threshold),
+                ess_threshold=float(sampler.ess_threshold),
+            )
             return _build_collapsed_profile(
                 seed=seed_,
                 p0=p0,
@@ -885,12 +972,12 @@ def fit_gr_rhs(
                 tau0=tau0,
                 tau_target=tau_target,
                 sigma_reference=float(pseudo_sigma),
-                sampler=sampler,
+                sampler=sampler_cap,
                 progress_bar=bool(progress_bar),
                 init_params=warm_init,
                 resume_no_warmup=bool(init_params),
-                adapt_delta=float(adapt_delta),
-                max_treedepth=int(max_treedepth),
+                adapt_delta=float(adapt_delta_use),
+                max_treedepth=int(max_treedepth_use),
                 kappa_reparameterization=str(collapsed_kappa_reparameterization),
                 tau_parameterization="sigma_scaled",
                 lambda_parameterization="prior_log_affine",
