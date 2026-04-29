@@ -2810,7 +2810,11 @@ class GRRHS_CollapsedNUTS:
         def _mean2(arr):
             return None if arr is None else np.asarray(arr, dtype=float).reshape(-1, arr.shape[-1]).mean(axis=0)
 
-        self.coef_mean_ = np.asarray(self.coef_samples_, dtype=float).mean(axis=0) if self.coef_samples_ is not None else None
+        self.coef_mean_ = (
+            None
+            if self.coef_samples_ is None
+            else _mean2(self.coef_samples_)
+        )
         self.sigma_mean_ = _mean1(self.sigma_samples_)
         self.tau_mean_ = _mean1(self.tau_samples_)
         self.lambda_mean_ = _mean2(self.lambda_samples_)
