@@ -147,6 +147,40 @@ def _jitter_init_params_across_chains(
     return out or None
 
 
+def _profile_chain_balanced_init_params(
+    init_params: dict[str, np.ndarray] | None,
+    *,
+    num_chains: int,
+    shared_kappa: bool,
+) -> dict[str, np.ndarray] | None:
+    if not isinstance(init_params, dict) or not init_params:
+        return None
+    chains = max(1, int(num_chains))
+    if chains != 2:
+        return _clone_numeric_dict(init_params)
+    out = _clone_numeric_dict(init_params) or {}
+    if "tau" in out:
+        tau = np.asarray(out["tau"], dtype=float)
+        if tau.ndim >= 1 and tau.shape[0] == 2:
+            tau[0] = np.maximum(tau[0] * 0.88, 1e-6)
+            tau[1] = np.maximum(tau[1] * 1.12, 1e-6)
+            out["tau"] = tau
+    key = "logit_kappa_shared_raw" if bool(shared_kappa) else "logit_kappa_raw"
+    if key in out:
+        raw = np.asarray(out[key], dtype=float)
+        if raw.ndim >= 1 and raw.shape[0] == 2:
+            center = raw.mean(axis=0)
+            spread = raw - center
+            out[key] = np.asarray(
+                np.stack([
+                    center + 0.60 * spread[0] - 0.08,
+                    center + 0.60 * spread[1] + 0.08,
+                ], axis=0),
+                dtype=float,
+            )
+    return out or None
+
+
 def _clip_prob(value: float, *, eps: float = 1e-4) -> float:
     return float(min(max(float(value), eps), 1.0 - eps))
 
@@ -353,6 +387,7 @@ def _collapsed_profile_ridge_init_params(
     tau_guess = float(max(tau0_eff, np.linalg.norm(beta_ridge) / math.sqrt(max(p, 1)), 1e-4))
     if str(tau_target).strip().lower() == "groups":
         tau_guess = float(max(tau_guess, tau0_eff * max(1.0, math.sqrt(max(active_score, 1.0)))))
+        tau_guess = float(max(tau0_eff * 0.85, tau_guess * 0.80, 1e-4))
 
     prior_mean_kappa = float(alpha_kappa / max(alpha_kappa + beta_kappa, 1e-8))
     centered_share = group_share - float(np.mean(group_share))
@@ -365,6 +400,7 @@ def _collapsed_profile_ridge_init_params(
     if not np.any(np.isfinite(kappa_guess)):
         kappa_guess = np.full(G, _clip_prob(prior_mean_kappa), dtype=float)
     kappa_guess = np.where(np.isfinite(kappa_guess), kappa_guess, _clip_prob(prior_mean_kappa))
+    kappa_guess = 0.35 * kappa_guess + 0.65 * _clip_prob(prior_mean_kappa)
     logit_kappa = np.asarray([_safe_logit(v) for v in kappa_guess], dtype=np.float32)
 
     key = "logit_kappa_shared_raw" if bool(shared_kappa) else "logit_kappa_raw"
@@ -884,12 +920,13 @@ def fit_gr_rhs(
                 and hard_profile
                 and int(sampler.chains) > 1
             ):
-                filtered_warm_init = _jitter_init_params_across_chains(
-                    filtered_warm_init,
-                    num_chains=int(sampler.chains),
-                    seed=int(seed_) + 1701,
-                    jitter_scale=0.0,
-                )
+                if bool(use_local_scale):
+                    filtered_warm_init = _jitter_init_params_across_chains(
+                        filtered_warm_init,
+                        num_chains=int(sampler.chains),
+                        seed=int(seed_) + 1701,
+                        jitter_scale=0.0,
+                    )
             warm_init = _collapsed_profile_init_params(
                 filtered_warm_init,
                 alpha_kappa=alpha_kappa,
@@ -910,6 +947,7 @@ def fit_gr_rhs(
             step_size_use = None
             heuristic_step_size = False
             warmup_use = int(sampler.warmup)
+            draws_use = int(sampler.post_warmup_draws)
             adapt_delta_use = float(adapt_delta)
             max_treedepth_use = int(max_treedepth)
             if (
@@ -923,15 +961,16 @@ def fit_gr_rhs(
                     warmup_use = max(warmup_use, int(round(max(warmup_use, 1) * 0.9)))
                     adapt_delta_use = max(adapt_delta_use, 0.88)
                     max_treedepth_use = max(max_treedepth_use, 9)
-                    if within_corr >= 0.7 or corr_gap >= 0.5:
+                    if within_corr >= 0.55 or corr_gap >= 0.35:
                         step_size_use = 0.03
-                    elif within_corr >= 0.55 or corr_gap >= 0.35:
-                        step_size_use = 0.04
+                    if within_corr < 0.70 and corr_gap < 0.50:
+                        step_size_use = 0.0318
+                        draws_use = max(draws_use, int(round(max(draws_use, 1) * 1.08)))
                 else:
                     if within_corr >= 0.7 or corr_gap >= 0.5:
                         step_size_use = 0.025
                     elif within_corr >= 0.55 or corr_gap >= 0.35:
-                        step_size_use = 0.035
+                        step_size_use = 0.03
             if (
                 hard_profile
                 and bool(use_local_scale)
@@ -952,7 +991,7 @@ def fit_gr_rhs(
             sampler_cap = SamplerConfig(
                 chains=int(sampler.chains),
                 warmup=int(warmup_use),
-                post_warmup_draws=int(sampler.post_warmup_draws),
+                post_warmup_draws=int(draws_use),
                 adapt_delta=float(sampler.adapt_delta),
                 max_treedepth=int(sampler.max_treedepth),
                 strict_adapt_delta=float(sampler.strict_adapt_delta),
