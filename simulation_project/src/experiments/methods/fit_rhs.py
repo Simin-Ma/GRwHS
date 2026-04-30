@@ -30,6 +30,7 @@ def _build_rhs(
     sampler: SamplerConfig,
     adapt_delta: float,
     max_treedepth: int,
+    metric: str,
     progress_bar: bool,
 ) -> RegularizedHorseshoeRegression:
     """Build the single project RHS baseline aligned with rstanarm::hs()."""
@@ -51,6 +52,7 @@ def _build_rhs(
         num_chains=int(sampler.chains),
         target_accept_prob=float(adapt_delta),
         max_tree_depth=int(max_treedepth),
+        metric=str(metric),
         progress_bar=bool(progress_bar),
         seed=int(seed),
     )
@@ -71,6 +73,7 @@ def fit_rhs(
 
     tracked = ["beta", "tau", "lambda", "c"]
     n, p = int(X.shape[0]), int(X.shape[1])
+    metric = "diag_e"
 
     try:
         pseudo_sigma = 1.0
@@ -86,6 +89,7 @@ def fit_rhs(
             sampler=sampler,
             adapt_delta=float(sampler.adapt_delta),
             max_treedepth=int(sampler.max_treedepth),
+            metric=metric,
             progress_bar=bool(progress_bar),
         )
         if str(getattr(model, "backend", "")).strip().lower() != _SIMULATION_RHS_BACKEND:
@@ -105,6 +109,7 @@ def fit_rhs(
         )
         details = dict(details or {})
         details["rhs_impl"] = "stan_rstanarm_hs"
+        details["metric"] = str(metric)
         details["rhs_defaults"] = {
             "global_df": 1.0,
             "local_df": 1.0,
@@ -123,6 +128,7 @@ def fit_rhs(
                 sampler=sampler,
                 adapt_delta=float(sampler.strict_adapt_delta),
                 max_treedepth=int(sampler.strict_max_treedepth),
+                metric=metric,
                 progress_bar=bool(progress_bar),
             )
             if str(getattr(strict, "backend", "")).strip().lower() != _SIMULATION_RHS_BACKEND:
@@ -141,6 +147,7 @@ def fit_rhs(
             )
             details = dict(details or {})
             details["rhs_impl"] = "stan_rstanarm_hs"
+            details["metric"] = str(metric)
             details["rhs_defaults"] = {
                 "global_df": 1.0,
                 "local_df": 1.0,

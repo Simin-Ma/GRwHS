@@ -117,7 +117,11 @@ def _add_metric_ranks(summary, *, group_cols: Sequence[str], method_order: Seque
         block["rank_mse_signal"] = np.nan
         block["_method_order"] = block["method"].map(lambda x: order_map.get(str(x), len(order_map)))
 
-        overall_valid = block["mse_overall"].notna()
+        overall_valid = (
+            block["mse_overall"].notna()
+            if "mse_overall" in block.columns
+            else np.zeros(len(block), dtype=bool)
+        )
         if bool(overall_valid.any()):
             ordered = block.loc[overall_valid].sort_values(
                 ["mse_overall", "mse_signal", "runtime_mean", "_method_order", "method"],
@@ -125,7 +129,11 @@ def _add_metric_ranks(summary, *, group_cols: Sequence[str], method_order: Seque
             )
             block.loc[ordered.index, "rank_mse_overall"] = np.arange(1, len(ordered) + 1, dtype=float)
 
-        signal_valid = block["mse_signal"].notna()
+        signal_valid = (
+            block["mse_signal"].notna()
+            if "mse_signal" in block.columns
+            else np.zeros(len(block), dtype=bool)
+        )
         if bool(signal_valid.any()):
             ordered = block.loc[signal_valid].sort_values(
                 ["mse_signal", "mse_overall", "runtime_mean", "_method_order", "method"],

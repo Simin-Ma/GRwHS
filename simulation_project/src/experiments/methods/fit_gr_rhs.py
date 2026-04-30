@@ -960,14 +960,14 @@ def fit_gr_rhs(
                 if int(sampler.chains) > 1:
                     adapt_delta_use = max(adapt_delta_use, 0.90)
                     max_treedepth_use = max(max_treedepth_use, 9)
-                    if within_corr < 0.70 and corr_gap < 0.50:
+                    if within_corr < 0.70 and 0.35 <= corr_gap < 0.50:
+                        step_size_use = 0.0315
+                        warmup_use = max(warmup_use, 205)
+                        draws_use = max(draws_use, 590)
+                    else:
                         step_size_use = 0.03
-                        warmup_use = max(warmup_use, 175)
-                        draws_use = max(draws_use, 540)
-                    elif within_corr >= 0.70 or corr_gap >= 0.50:
-                        step_size_use = 0.03
-                        warmup_use = max(warmup_use, 180)
-                        draws_use = max(draws_use, 520)
+                        warmup_use = max(warmup_use, 220)
+                        draws_use = max(draws_use, 620)
                 else:
                     if within_corr >= 0.7 or corr_gap >= 0.5:
                         step_size_use = 0.025

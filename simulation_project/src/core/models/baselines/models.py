@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
@@ -45,6 +46,57 @@ WeightsLike = Optional[Sequence[float]]
 FeatureWeightsLike = Optional[Sequence[float]]
 ArrayLike = Any
 _CMDSTAN_MODEL_CACHE: dict[str, Any] = {}
+
+
+def _safe_response_scale(y: np.ndarray) -> float:
+    arr = np.asarray(y, dtype=np.float64).reshape(-1)
+    if arr.size == 0:
+        return 1.0
+    sd = float(np.std(arr, ddof=0))
+    if (not np.isfinite(sd)) or sd <= 1e-8:
+        return 1.0
+    return sd
+
+
+def _standardize_design_exact(
+    X: np.ndarray,
+    *,
+    center: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    arr = np.asarray(X, dtype=np.float64)
+    if arr.ndim != 2:
+        raise ValueError("X must be a 2D array.")
+    if center:
+        x_center = arr.mean(axis=0)
+    else:
+        x_center = np.zeros(arr.shape[1], dtype=np.float64)
+    centered = arr - x_center
+    x_scale = centered.std(axis=0, ddof=0)
+    x_scale = np.where(x_scale < 1e-8, 1.0, x_scale)
+    x_std = centered / x_scale
+    return x_std, x_center.astype(np.float64), x_scale.astype(np.float64)
+
+
+def _ridge_seed_beta(
+    X: np.ndarray,
+    y: np.ndarray,
+    *,
+    alpha: float = 1.0,
+) -> tuple[np.ndarray, float]:
+    X_std, _, x_scale = _standardize_design_exact(X, center=True)
+    y_arr = np.asarray(y, dtype=np.float64).reshape(-1)
+    y_mean = float(np.mean(y_arr)) if y_arr.size else 0.0
+    y_ctr = y_arr - y_mean
+    p = int(X_std.shape[1])
+    xtx = X_std.T @ X_std
+    rhs = X_std.T @ y_ctr
+    beta_std = np.linalg.solve(xtx + float(alpha) * np.eye(p, dtype=np.float64), rhs)
+    beta = beta_std / x_scale
+    resid = y_ctr - X_std @ beta_std
+    sigma = float(np.std(resid, ddof=0)) if resid.size else 1.0
+    if (not np.isfinite(sigma)) or sigma <= 1e-8:
+        sigma = _safe_response_scale(y_arr)
+    return np.asarray(beta, dtype=np.float64), float(max(sigma, 1e-3))
 
 
 class _SkglmRegressorBase:
@@ -558,6 +610,7 @@ class RegularizedHorseshoeRegression:
     seed: Optional[int] = None
     target_accept_prob: float = 0.99
     max_tree_depth: int = 10
+    metric: str = "diag_e"
     progress_bar: bool = True
     stan_file: Optional[str] = None
 
@@ -600,6 +653,10 @@ class RegularizedHorseshoeRegression:
             raise ValueError("target_accept_prob must lie in (0, 1).")
         if self.max_tree_depth <= 0:
             raise ValueError("max_tree_depth must be a positive integer.")
+        metric = str(self.metric).strip().lower()
+        if metric not in {"diag_e", "dense_e"}:
+            raise ValueError("metric must be either 'diag_e' or 'dense_e'.")
+        self.metric = metric
 
     def _default_stan_file(self) -> Optional[Path]:
         filename = "rhs_gaussian_regression.stan" if self.likelihood == "gaussian" else "rhs_logistic_regression.stan"
@@ -718,24 +775,75 @@ class RegularizedHorseshoeRegression:
         }
         return diagnostics
 
+    def _cmdstan_init(self, X: np.ndarray, y: np.ndarray, *, chain_id: int = 0) -> Dict[str, Any]:
+        n, d = X.shape
+        y_mean = float(np.mean(y)) if y.size else 0.0
+        tau_guess = float(max(min(float(self.scale_global), 0.25), 1e-4))
+        beta_guess, sigma_guess = _ridge_seed_beta(X, y, alpha=1.0)
+        rng = np.random.default_rng(None if self.seed is None else int(self.seed) + 1009 * int(chain_id + 1))
+        local_1 = np.full(d, 0.5, dtype=float)
+        local_2 = np.full(d, 1.0, dtype=float)
+        lambda_guess = local_1 * np.sqrt(local_2)
+        c_guess = float(self.slab_scale)
+        z_beta = np.zeros(d, dtype=float)
+        tau_eff = float(max(float(self.scale_global) * sigma_guess, 1e-8))
+        for j in range(d):
+            a = tau_eff * lambda_guess[j]
+            if a > c_guess:
+                ratio = c_guess / a
+                shrink = c_guess / math.sqrt(1.0 + ratio * ratio)
+            elif a > 0.0:
+                ratio = a / c_guess
+                shrink = a / math.sqrt(1.0 + ratio * ratio)
+            else:
+                shrink = 0.0
+            if shrink > 1e-8 and np.isfinite(beta_guess[j]):
+                z_beta[j] = float(np.clip(beta_guess[j] / shrink, -3.0, 3.0))
+        z_beta += rng.normal(loc=0.0, scale=0.04, size=d)
+        z_beta = np.clip(z_beta, -3.5, 3.5)
+        sigma_init = float(max(sigma_guess * math.exp(float(rng.normal(0.0, 0.025))), 1e-3))
+        global_scale = float(max(math.sqrt(tau_guess / max(float(self.scale_global) * sigma_init, 1e-8)), 1e-6))
+        global_scale *= float(math.exp(rng.normal(0.0, 0.02)))
+        local_1 = np.clip(local_1 * np.exp(rng.normal(0.0, 0.015, size=d)), 1e-4, 5.0)
+        local_2 = np.clip(local_2 * np.exp(rng.normal(0.0, 0.015, size=d)), 1e-4, 5.0)
+        return {
+            "beta0": float(y_mean + rng.normal(0.0, 0.02 * max(sigma_guess, 1.0))),
+            "z_beta": z_beta,
+            "sigma": sigma_init,
+            "global": np.asarray([global_scale, 1.0], dtype=float),
+            "local": np.vstack([local_1, local_2]),
+            "caux": 1.0,
+        }
+
     def _fit_with_cmdstan(self, X: np.ndarray, y: np.ndarray) -> None:
         model = self._load_cmdstan_model()
-        n, d = X.shape
+        X_std, x_center, x_scale = _standardize_design_exact(X, center=True)
+        n, d = X_std.shape
         data: Dict[str, Any] = {
             "n": int(n),
             "d": int(d),
-            "X": np.asarray(X, dtype=float),
+            "X": np.asarray(X_std, dtype=float),
             "scale_icept": float(self.scale_intercept),
             "scale_global": float(self.scale_global),
             "nu_global": float(self.nu_global),
             "nu_local": float(self.nu_local),
             "slab_scale": float(self.slab_scale),
             "slab_df": float(self.slab_df),
+            "x_center": np.asarray(x_center, dtype=float),
+            "x_scale": np.asarray(x_scale, dtype=float),
         }
         if self.likelihood == "gaussian":
             data["y"] = np.asarray(y, dtype=float).reshape(-1)
         else:
             data["y"] = np.asarray(y, dtype=int).reshape(-1).tolist()
+        init_payload = [
+            self._cmdstan_init(
+                X=np.asarray(X, dtype=float),
+                y=np.asarray(y, dtype=float).reshape(-1),
+                chain_id=chain_idx,
+            )
+            for chain_idx in range(int(self.num_chains))
+        ]
         fit = model.sample(
             data=data,
             seed=0 if self.seed is None else int(self.seed),
@@ -743,8 +851,10 @@ class RegularizedHorseshoeRegression:
             parallel_chains=max(1, min(int(self.num_chains), 4)),
             iter_warmup=int(self.num_warmup),
             iter_sampling=int(self.num_samples),
+            metric=str(self.metric),
             adapt_delta=float(self.target_accept_prob),
             max_treedepth=int(self.max_tree_depth),
+            inits=init_payload,
             show_progress=bool(self.progress_bar),
         )
         draws_df = fit.draws_pd()
@@ -779,6 +889,12 @@ class RegularizedHorseshoeRegression:
         self.intercept_ = 0.0 if intercept_draws is None else float(intercept_draws.mean())
         diagnostics = self._extract_cmdstan_diagnostics(draws_df)
         diagnostics["backend"] = "stan_hmc"
+        diagnostics["metric"] = str(self.metric)
+        diagnostics["standardization"] = {
+            "x_center": True,
+            "x_scale": "column_std",
+            "posterior_preserving_reparameterization": True,
+        }
         self.sampler_diagnostics_ = diagnostics
 
     def fit(

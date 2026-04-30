@@ -27,7 +27,7 @@ method_config:
 
 convergence_gate:
   enforce_bayes_convergence: true
-  max_convergence_retries: -1
+  max_convergence_retries: 1
   bayes_min_chains: 2
   chains: 2
   warmup: 250

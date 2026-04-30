@@ -55,6 +55,26 @@ def _validate_gigg_master_alignment(
         raise ValueError("GIGG is locked to gigg-master alignment: q_constraint_mode must be 'hard'.")
 
 
+def _resolve_exact_highdim_gigg_toggles(
+    *,
+    X: np.ndarray,
+    sampler: SamplerConfig,
+    btrick: bool,
+    num_chains: int,
+    lambda_vectorized_update: bool,
+    stable_solve: bool,
+) -> dict[str, object]:
+    n, p = map(int, X.shape)
+    highdim = bool(p > n and p >= 150)
+    return {
+        "use_btrick": bool(btrick or highdim),
+        "num_chains": int(max(num_chains, 2 if highdim else num_chains)),
+        "lambda_vectorized_update": bool(lambda_vectorized_update or highdim),
+        "stable_solve": bool(stable_solve),
+        "mmle_highdim_fastpath": bool(highdim),
+    }
+
+
 def _gigg_iters(
     sampler: SamplerConfig,
     *,
@@ -130,6 +150,7 @@ def fit_gigg_mmle(
     mmle_window: int = 1,
     lambda_constraint_mode: str = "none",
     q_constraint_mode: str = "hard",
+    exact_highdim_fastpath: bool = False,
     no_retry: bool = False,
     progress_bar: bool = True,
 ) -> FitResult:
@@ -147,18 +168,19 @@ def fit_gigg_mmle(
             "GIGG_MMLE",
             "NotImplementedError: GIGG_MMLE is gaussian-only in this repository",
         )
-    _validate_gigg_master_alignment(
-        init_strategy=init_strategy,
-        init_scale_blend=init_scale_blend,
-        randomize_group_order=randomize_group_order,
-        lambda_vectorized_update=lambda_vectorized_update,
-        extra_beta_refresh_prob=extra_beta_refresh_prob,
-        mmle_step_size=mmle_step_size,
-        mmle_update_every=mmle_update_every,
-        mmle_window=mmle_window,
-        lambda_constraint_mode=lambda_constraint_mode,
-        q_constraint_mode=q_constraint_mode,
-    )
+    if not bool(exact_highdim_fastpath):
+        _validate_gigg_master_alignment(
+            init_strategy=init_strategy,
+            init_scale_blend=init_scale_blend,
+            randomize_group_order=randomize_group_order,
+            lambda_vectorized_update=lambda_vectorized_update,
+            extra_beta_refresh_prob=extra_beta_refresh_prob,
+            mmle_step_size=mmle_step_size,
+            mmle_update_every=mmle_update_every,
+            mmle_window=mmle_window,
+            lambda_constraint_mode=lambda_constraint_mode,
+            q_constraint_mode=q_constraint_mode,
+        )
 
     n, _ = X.shape
     gigg_burnin, gigg_draws = _gigg_iters(
@@ -168,6 +190,20 @@ def fit_gigg_mmle(
         iter_cap=iter_cap,
     )
     groups_use = as_int_groups(groups)
+    toggles = _resolve_exact_highdim_gigg_toggles(
+        X=np.asarray(X, dtype=float),
+        sampler=sampler,
+        btrick=bool(btrick),
+        num_chains=1,
+        lambda_vectorized_update=bool(lambda_vectorized_update),
+        stable_solve=True,
+    ) if bool(exact_highdim_fastpath) else {
+        "use_btrick": bool(btrick),
+        "num_chains": 1,
+        "lambda_vectorized_update": bool(lambda_vectorized_update),
+        "stable_solve": True,
+        "mmle_highdim_fastpath": False,
+    }
 
     try:
         model = GIGGRegression(
@@ -176,18 +212,19 @@ def fit_gigg_mmle(
             n_samples=gigg_draws,
             n_thin=1,
             seed=int(seed),
-            num_chains=1,
+            num_chains=int(toggles["num_chains"]),
             fit_intercept=False,
             store_lambda=True,
             tau_sq_init=1.0,
-            btrick=bool(btrick),
-            stable_solve=True,
+            btrick=bool(toggles["use_btrick"]),
+            stable_solve=bool(toggles["stable_solve"]),
             mmle_burnin_only=bool(mmle_burnin_only),
+            mmle_highdim_fastpath=bool(toggles["mmle_highdim_fastpath"]),
             init_strategy=str(init_strategy),
             init_ridge=float(init_ridge),
             init_scale_blend=float(init_scale_blend),
             randomize_group_order=bool(randomize_group_order),
-            lambda_vectorized_update=bool(lambda_vectorized_update),
+            lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
             extra_beta_refresh_prob=float(extra_beta_refresh_prob),
             mmle_step_size=float(mmle_step_size),
             mmle_update_every=int(mmle_update_every),
@@ -205,6 +242,14 @@ def fit_gigg_mmle(
                 "q_estimate": np.asarray(b_hat, dtype=float).reshape(-1).tolist(),
                 "a_estimate": (np.full(len(groups_use), 1.0 / max(int(n), 1), dtype=float)).tolist(),
             }
+        diag["exact_highdim_fastpath"] = bool(exact_highdim_fastpath)
+        diag["gigg_runtime_toggles"] = {
+            "btrick": bool(toggles["use_btrick"]),
+            "num_chains": int(toggles["num_chains"]),
+            "lambda_vectorized_update": bool(toggles["lambda_vectorized_update"]),
+            "stable_solve": bool(toggles["stable_solve"]),
+            "mmle_highdim_fastpath": bool(toggles["mmle_highdim_fastpath"]),
+        }
         result.diagnostics = diag
         result.group_scale_draws = None if result.group_scale_draws is None else np.asarray(result.group_scale_draws, dtype=float)
         result.method = "GIGG_MMLE"
@@ -239,6 +284,7 @@ def fit_gigg_fixed(
     extra_beta_refresh_prob: float = 0.0,
     lambda_constraint_mode: str = "none",
     q_constraint_mode: str = "hard",
+    exact_highdim_fastpath: bool = False,
     no_retry: bool = False,
     progress_bar: bool = True,
 ) -> FitResult:
@@ -259,15 +305,16 @@ def fit_gigg_fixed(
             method_label,
             "NotImplementedError: GIGG_fixed is gaussian-only in this repository",
         )
-    _validate_gigg_master_alignment(
-        init_strategy=init_strategy,
-        init_scale_blend=init_scale_blend,
-        randomize_group_order=randomize_group_order,
-        lambda_vectorized_update=lambda_vectorized_update,
-        extra_beta_refresh_prob=extra_beta_refresh_prob,
-        lambda_constraint_mode=lambda_constraint_mode,
-        q_constraint_mode=q_constraint_mode,
-    )
+    if not bool(exact_highdim_fastpath):
+        _validate_gigg_master_alignment(
+            init_strategy=init_strategy,
+            init_scale_blend=init_scale_blend,
+            randomize_group_order=randomize_group_order,
+            lambda_vectorized_update=lambda_vectorized_update,
+            extra_beta_refresh_prob=extra_beta_refresh_prob,
+            lambda_constraint_mode=lambda_constraint_mode,
+            q_constraint_mode=q_constraint_mode,
+        )
 
     n, _ = X.shape
     a_fixed = float(a_val) if a_val is not None else 1.0 / max(n, 1)
@@ -278,6 +325,20 @@ def fit_gigg_fixed(
         iter_cap=iter_cap,
     )
     n_groups = len(list(groups))
+    toggles = _resolve_exact_highdim_gigg_toggles(
+        X=np.asarray(X, dtype=float),
+        sampler=sampler,
+        btrick=bool(btrick),
+        num_chains=1,
+        lambda_vectorized_update=bool(lambda_vectorized_update),
+        stable_solve=True,
+    ) if bool(exact_highdim_fastpath) else {
+        "use_btrick": bool(btrick),
+        "num_chains": 1,
+        "lambda_vectorized_update": bool(lambda_vectorized_update),
+        "stable_solve": True,
+        "mmle_highdim_fastpath": False,
+    }
 
     try:
         model = GIGGRegression(
@@ -286,20 +347,20 @@ def fit_gigg_fixed(
             n_samples=gigg_draws,
             n_thin=1,
             seed=int(seed),
-            num_chains=1,
+            num_chains=int(toggles["num_chains"]),
             fit_intercept=False,
             store_lambda=True,
             a_value=a_fixed,
             b_init=float(b_val),
             force_a_1_over_n=False,
             tau_sq_init=1.0,
-            btrick=bool(btrick),
-            stable_solve=True,
+            btrick=bool(toggles["use_btrick"]),
+            stable_solve=bool(toggles["stable_solve"]),
             init_strategy=str(init_strategy),
             init_ridge=float(init_ridge),
             init_scale_blend=float(init_scale_blend),
             randomize_group_order=bool(randomize_group_order),
-            lambda_vectorized_update=bool(lambda_vectorized_update),
+            lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
             extra_beta_refresh_prob=float(extra_beta_refresh_prob),
             lambda_constraint_mode=str(lambda_constraint_mode),
             q_constraint_mode=str(q_constraint_mode),
@@ -315,7 +376,18 @@ def fit_gigg_fixed(
             a=a_arr,
             b=b_arr,
         )
-        return _extract_and_diagnose(model, method_label, sampler, runtime)
+        result = _extract_and_diagnose(model, method_label, sampler, runtime)
+        diag = dict(result.diagnostics or {})
+        diag["exact_highdim_fastpath"] = bool(exact_highdim_fastpath)
+        diag["gigg_runtime_toggles"] = {
+            "btrick": bool(toggles["use_btrick"]),
+            "num_chains": int(toggles["num_chains"]),
+            "lambda_vectorized_update": bool(toggles["lambda_vectorized_update"]),
+            "stable_solve": bool(toggles["stable_solve"]),
+            "mmle_highdim_fastpath": bool(toggles["mmle_highdim_fastpath"]),
+        }
+        result.diagnostics = diag
+        return result
     except Exception as exc:
         return fit_error_result(method_label, f"{type(exc).__name__}: {exc}")
 

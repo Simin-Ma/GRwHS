@@ -28,14 +28,12 @@ DEFAULT_PAIRING_METRICS = (
 def force_until_converged_gate(gate: ConvergenceGateSpec) -> ConvergenceGateSpec:
     """
     Package-level policy for simulation_second:
-    all Bayesian methods are always run with convergence enforcement enabled and
-    the retry budget set to the "until converged" mode used by the legacy
-    runtime (`max_convergence_retries = -1` sentinel).
+    keep Bayesian convergence enforcement enabled, but preserve any explicit
+    retry budget chosen by the calling benchmark config.
     """
     return replace(
         gate,
         enforce_bayes_convergence=True,
-        max_convergence_retries=-1,
     )
 
 

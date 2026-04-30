@@ -688,6 +688,7 @@ class GIGGRegression:
     mmle_samp_size: int = 1000
     mmle_tol_scale: float = 1e-4
     mmle_max_iters: int = 50000
+    mmle_highdim_fastpath: bool = False
     mmle_step_size: float = 1.0
     mmle_update_every: int = 1
     mmle_window: int = 1
@@ -762,6 +763,7 @@ class GIGGRegression:
         self.mmle_step_size = float(min(max(self.mmle_step_size, 0.0), 1.0))
         self.mmle_update_every = int(max(1, self.mmle_update_every))
         self.mmle_window = int(max(1, self.mmle_window))
+        self.mmle_highdim_fastpath = bool(self.mmle_highdim_fastpath)
         self.extra_beta_refresh_prob = float(min(max(self.extra_beta_refresh_prob, 0.0), 1.0))
         mode = str(self.lambda_constraint_mode).strip().lower()
         if mode not in {"hard", "soft", "none"}:
@@ -1314,13 +1316,14 @@ class GIGGRegression:
             _gibbs_step()
 
         if method_eff == "mmle":
-            mmle_samp_size = int(max(1, self.mmle_samp_size))
-            terminate_mmle = float(self.mmle_tol_scale) * float(G)
+            highdim_fast = bool(self.mmle_highdim_fastpath and p > n and p >= 150)
+            mmle_samp_size = int(max(1, min(self.mmle_samp_size, 150 if highdim_fast else self.mmle_samp_size)))
+            terminate_mmle = float((5.0 if highdim_fast else 1.0) * self.mmle_tol_scale) * float(G)
             delta_mmle = float("inf")
             mmle_cnt = 0
             lambda_mmle_store = np.zeros((mmle_samp_size, p), dtype=float)
             eta_mmle_store = np.ones((mmle_samp_size, G), dtype=float)
-            max_mmle_iters = max(1, int(self.mmle_max_iters))
+            max_mmle_iters = max(1, int(min(self.mmle_max_iters, 1200 if highdim_fast else self.mmle_max_iters)))
             mmle_iter = range(max_mmle_iters)
             if _progress is not None:
                 mmle_iter = _progress(mmle_iter, total=int(max_mmle_iters), desc="GIGG MMLE")
@@ -1344,6 +1347,8 @@ class GIGGRegression:
                     q_vec[:] = self._stabilize_q_array(q_new)
                     p_vec[:] = p_new
                     if delta_mmle < terminate_mmle:
+                        break
+                    if highdim_fast and mmle_cnt >= 3 * mmle_samp_size:
                         break
 
         sample_iters = kept * self.n_thin

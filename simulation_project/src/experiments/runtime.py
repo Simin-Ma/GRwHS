@@ -20,6 +20,12 @@ _UNTIL_CONVERGED_RETRY_HARD_CAP = 12
 _RETRY_MAX_WARMUP = 8000
 _RETRY_MAX_POST_DRAWS = 8000
 _RETRY_MAX_GIGG_ITER = 50000
+_RETRY_WARMUP_ADD = 40
+_RETRY_POST_DRAWS_ADD = 140
+_RETRY_ADAPT_DELTA_ADD = 0.02
+_RETRY_MAX_TREEDEPTH_ADD = 1
+_RETRY_STRICT_ADAPT_DELTA_ADD = 0.01
+_RETRY_STRICT_MAX_TREEDEPTH_ADD = 1
 _GHS_PLUS_DEFAULT_CHAINS = 4
 _GHS_PLUS_DEFAULT_WARMUP = 2500
 _GHS_PLUS_DEFAULT_POST_DRAWS = 2500
@@ -222,17 +228,16 @@ def _scale_sampler_for_retry(base: SamplerConfig, attempt: int) -> SamplerConfig
     k = max(0, int(attempt))
     if k == 0:
         return base
-    mul = int(2 ** k)
     # Keep convergence criteria fixed across retries to enforce a uniform
     # Bayesian quality standard. Retries only increase sampling budget.
     return SamplerConfig(
         chains=max(1, int(base.chains)),
-        warmup=min(_RETRY_MAX_WARMUP, max(50, int(base.warmup) * mul)),
-        post_warmup_draws=min(_RETRY_MAX_POST_DRAWS, max(50, int(base.post_warmup_draws) * mul)),
-        adapt_delta=min(0.995, float(base.adapt_delta) + 0.02 * k),
-        max_treedepth=min(15, int(base.max_treedepth) + k),
-        strict_adapt_delta=min(0.999, float(base.strict_adapt_delta) + 0.01 * k),
-        strict_max_treedepth=min(16, int(base.strict_max_treedepth) + k),
+        warmup=min(_RETRY_MAX_WARMUP, max(50, int(base.warmup) + _RETRY_WARMUP_ADD * k)),
+        post_warmup_draws=min(_RETRY_MAX_POST_DRAWS, max(50, int(base.post_warmup_draws) + _RETRY_POST_DRAWS_ADD * k)),
+        adapt_delta=min(0.995, float(base.adapt_delta) + _RETRY_ADAPT_DELTA_ADD * k),
+        max_treedepth=min(15, int(base.max_treedepth) + _RETRY_MAX_TREEDEPTH_ADD * k),
+        strict_adapt_delta=min(0.999, float(base.strict_adapt_delta) + _RETRY_STRICT_ADAPT_DELTA_ADD * k),
+        strict_max_treedepth=min(16, int(base.strict_max_treedepth) + _RETRY_STRICT_MAX_TREEDEPTH_ADD * k),
         max_divergence_ratio=float(base.max_divergence_ratio),
         rhat_threshold=float(base.rhat_threshold),
         ess_threshold=float(base.ess_threshold),
