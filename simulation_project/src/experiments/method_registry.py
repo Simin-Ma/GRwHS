@@ -19,6 +19,7 @@ class MethodContext:
     grrhs_p0: int
     n: int
     sampler: SamplerConfig
+    rhs_sampler_strategy: str
     grrhs_kwargs: dict
     gigg_mmle_kwargs: dict
     gigg_fixed_kwargs: dict
@@ -58,6 +59,30 @@ def build_default_method_registry() -> MethodRegistry:
 
     reg = MethodRegistry()
 
+    def _fit_rhs_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
+        return fit_rhs(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.p0,
+            sampler=c.sampler,
+            method_name=str(method_name),
+        )
+
+    def _fit_rhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
+        return fit_rhs_gibbs(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.p0,
+            sampler=c.sampler,
+            method_name=str(method_name),
+        )
+
     reg.register(
         "GR_RHS",
         lambda c: fit_gr_rhs(
@@ -73,27 +98,23 @@ def build_default_method_registry() -> MethodRegistry:
     )
     reg.register(
         "RHS",
-        lambda c: fit_rhs(
-            c.X,
-            c.y,
-            c.groups,
-            task=c.task,
-            seed=c.seed,
-            p0=c.p0,
-            sampler=c.sampler,
+        lambda c: (
+            _fit_rhs_highdim(c, method_name="RHS")
+            if str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
+            else _fit_rhs_lowdim(c, method_name="RHS")
         ),
     )
     reg.register(
+        "RHS_LowDim",
+        lambda c: _fit_rhs_lowdim(c, method_name="RHS_LowDim"),
+    )
+    reg.register(
+        "RHS_HighDim",
+        lambda c: _fit_rhs_highdim(c, method_name="RHS_HighDim"),
+    )
+    reg.register(
         "RHS_Gibbs",
-        lambda c: fit_rhs_gibbs(
-            c.X,
-            c.y,
-            c.groups,
-            task=c.task,
-            seed=c.seed,
-            p0=c.p0,
-            sampler=c.sampler,
-        ),
+        lambda c: _fit_rhs_highdim(c, method_name="RHS_Gibbs"),
     )
     reg.register(
         "GIGG_MMLE",

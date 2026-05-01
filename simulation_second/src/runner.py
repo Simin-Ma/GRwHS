@@ -155,6 +155,7 @@ def _task_payloads(config: BenchmarkConfig) -> list[dict[str, Any]]:
         for replicate_id in range(1, int(config.runner.repeats) + 1):
             tasks.append(
                 {
+                    "package": str(config.package),
                     "setting": setting.to_dict(),
                     "family_specs": family_payload,
                     "replicate_id": int(replicate_id),
@@ -207,6 +208,7 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
             grrhs_kwargs=dict(task.get("grrhs_kwargs", {})),
             gigg_config=dict(task.get("gigg_config", {})),
             method_jobs=int(task.get("method_jobs", 1)),
+            benchmark_package=str(task.get("package", "simulation_second")),
         )
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"

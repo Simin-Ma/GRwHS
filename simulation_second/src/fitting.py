@@ -10,6 +10,13 @@ from simulation_project.src.utils import FitResult, SamplerConfig
 from .schemas import ConvergenceGateSpec
 
 
+def _rhs_sampler_strategy_for_package(package: str | None) -> str:
+    text = str("" if package is None else package).strip().lower()
+    if "highdimension" in text:
+        return "high_dim"
+    return "low_dim"
+
+
 def sampler_config_from_gate(gate: ConvergenceGateSpec) -> SamplerConfig:
     return SamplerConfig(
         chains=int(gate.chains),
@@ -39,6 +46,7 @@ def fit_benchmark_methods(
     grrhs_kwargs: dict[str, Any] | None = None,
     gigg_config: dict[str, Any] | None = None,
     method_jobs: int = 1,
+    benchmark_package: str = "simulation_second",
 ) -> dict[str, FitResult]:
     return legacy_fit_all_methods(
         X,
@@ -56,5 +64,5 @@ def fit_benchmark_methods(
         enforce_bayes_convergence=bool(gate.enforce_bayes_convergence),
         max_convergence_retries=int(gate.max_convergence_retries),
         method_jobs=int(method_jobs),
+        rhs_sampler_strategy=_rhs_sampler_strategy_for_package(benchmark_package),
     )
-

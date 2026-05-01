@@ -551,6 +551,8 @@ def method_display_name(name: str) -> str:
     mapping = {
         "GR_RHS": "GR-RHS",
         "RHS": "RHS",
+        "RHS_LowDim": "RHS-LowDim",
+        "RHS_HighDim": "RHS-HighDim",
         "RHS_Gibbs": "RHS-Gibbs",
         "GIGG_MMLE": "GIGG-MMLE",
         "GIGG_b_small": "GIGG (b=1/n)",
@@ -568,7 +570,9 @@ def method_display_name(name: str) -> str:
 
 def method_result_label(name: str) -> str:
     mapping = {
-        "RHS": "RHS [stan_rstanarm_hs]",
+        "RHS": "RHS",
+        "RHS_LowDim": "RHS-LowDim [stan_rstanarm_hs]",
+        "RHS_HighDim": "RHS-HighDim [woodbury_slice]",
         "RHS_Gibbs": "RHS-Gibbs [woodbury_slice]",
         "RHS_oracle": "RHS_oracle [stan_rstanarm_hs]",
     }

@@ -38,6 +38,7 @@ def _fit_all_methods(
     enforce_bayes_convergence: bool = True,
     max_convergence_retries: int = 2,
     method_jobs: int = 1,
+    rhs_sampler_strategy: str = "auto",
 ) -> dict[str, FitResult]:
     n = X.shape[0]
     grrhs_kwargs = grrhs_kwargs or {}
@@ -77,6 +78,8 @@ def _fit_all_methods(
             "GR_RHS": 1,
             "RHS": 2,
             "RHS_Gibbs": 3,
+            "RHS_LowDim": 11,
+            "RHS_HighDim": 12,
             "GIGG_MMLE": 4,
             "GHS_plus": 5,
             "GIGG_b_small": 6,
@@ -97,6 +100,7 @@ def _fit_all_methods(
             grrhs_p0=int(grrhs_p0),
             n=int(n),
             sampler=sampler_try,
+            rhs_sampler_strategy=str(rhs_sampler_strategy),
             grrhs_kwargs={**dict(grrhs_kwargs), "retry_attempt": int(attempt)},
             gigg_mmle_kwargs=gigg_mmle_try,
             gigg_fixed_kwargs=gigg_fixed_try,

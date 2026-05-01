@@ -623,6 +623,7 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         init_ridge=float(payload.get("init_ridge", 1.0)),
         init_scale_blend=float(payload.get("init_scale_blend", 0.0)),
         randomize_group_order=bool(payload.get("randomize_group_order", False)),
+        locals_first_beta_update=bool(payload.get("locals_first_beta_update", False)),
         lambda_vectorized_update=bool(payload.get("lambda_vectorized_update", False)),
         extra_beta_refresh_prob=float(payload.get("extra_beta_refresh_prob", 0.0)),
         lambda_constraint_mode=str(payload.get("lambda_constraint_mode", "none")),
@@ -700,6 +701,7 @@ class GIGGRegression:
     init_ridge: float = 1.0
     init_scale_blend: float = 0.0
     randomize_group_order: bool = False
+    locals_first_beta_update: bool = False
     lambda_vectorized_update: bool = False
     extra_beta_refresh_prob: float = 0.0
     lambda_constraint_mode: str = "none"  # original R sampler does not cap lambda_sq
@@ -940,6 +942,7 @@ class GIGGRegression:
                         "init_ridge": self.init_ridge,
                         "init_scale_blend": self.init_scale_blend,
                         "randomize_group_order": self.randomize_group_order,
+                        "locals_first_beta_update": self.locals_first_beta_update,
                         "lambda_vectorized_update": self.lambda_vectorized_update,
                         "extra_beta_refresh_prob": self.extra_beta_refresh_prob,
                         "lambda_constraint_mode": self.lambda_constraint_mode,
@@ -1216,6 +1219,55 @@ class GIGGRegression:
 
         def _gibbs_step() -> None:
             nonlocal alpha, beta, lambda_sq, gamma_sq, tau_sq, sigma_sq, nu
+            def _update_group_scales() -> None:
+                nonlocal lambda_sq, gamma_sq
+                gid_iter = rng.permutation(group_order) if self.randomize_group_order and G > 1 else group_order
+                for gid in gid_iter:
+                    idxs = group_arrays[int(gid)]
+                    psi = _clip_positive_scalar(
+                        float(np.sum((beta[idxs] ** 2) / np.maximum(lambda_sq[idxs], self.jitter)))
+                        / _clip_positive_scalar(tau_sq, floor=self.jitter),
+                        floor=self.jitter,
+                    )
+                    group_half = 0.5 * float(group_sizes[gid])
+                    shape_gap = float(abs(float(p_vec[gid]) - group_half))
+                    if shape_gap < self.jitter:
+                        shape_gap = self.jitter
+                    if group_half < float(p_vec[gid]):
+                        gamma_draw = _sample_gig_scalar(
+                            lambda_param=shape_gap,
+                            chi=psi,
+                            psi=max(2.0 * float(eta[gid]), self.jitter),
+                            rng=rng,
+                        )
+                    else:
+                        inv_draw = _sample_gig_scalar(
+                            lambda_param=shape_gap,
+                            chi=max(2.0 * float(eta[gid]), self.jitter),
+                            psi=psi,
+                            rng=rng,
+                        )
+                        gamma_draw = 1.0 / _clip_positive_scalar(float(inv_draw), floor=self.jitter)
+                    gamma_sq[gid] = max(float(gamma_draw), self.jitter)
+
+                    lam_shape = max(float(q_vec[gid]) + 0.5, 1e-6)
+                    lam_denom = _clip_positive_scalar(2.0 * tau_sq * gamma_sq[gid], floor=self.jitter)
+                    lam_scale_vec = np.maximum(float(eta[gid]) + (beta[idxs] ** 2) / lam_denom, self.jitter)
+                    if self.lambda_vectorized_update:
+                        try:
+                            draw_vec = _sample_invgamma_vector(lam_shape, lam_scale_vec, rng, floor=self.jitter)
+                        except Exception:
+                            draw_vec = lambda_sq[idxs]
+                        lambda_sq[idxs] = np.maximum(np.asarray(draw_vec, dtype=float), self.jitter)
+                    else:
+                        for j in idxs:
+                            lam_scale = _clip_positive_scalar(float(eta[gid]) + float(beta[j] ** 2) / lam_denom, floor=self.jitter)
+                            try:
+                                draw = _sample_invgamma_scalar(lam_shape, lam_scale, rng, floor=self.jitter)
+                            except Exception:
+                                draw = lambda_sq[j]
+                            lambda_sq[j] = max(float(draw), self.jitter)
+
             if k > 0:
                 resid_alpha = y_arr - X @ beta
                 if self.stable_solve:
@@ -1228,6 +1280,8 @@ class GIGGRegression:
                     alpha = mean_alpha + math.sqrt(sigma_sq) * (np.linalg.cholesky(cov_alpha) @ rng.normal(size=k))
 
             y_tilde = y_arr - (C_arr @ alpha if k > 0 else 0.0)
+            if self.locals_first_beta_update:
+                _update_group_scales()
             local_scale = np.maximum(tau_sq * gamma_sq[group_id] * lambda_sq, self.jitter)
             if self.btrick:
                 beta = self._draw_beta_btrick(
@@ -1267,53 +1321,8 @@ class GIGGRegression:
                 sigma_sq = scale_sigma / max(sigma_shape + 1.0, 1.0)
             sigma_sq = _clip_positive_scalar(sigma_sq, floor=self.jitter)
 
-            gid_iter = rng.permutation(group_order) if self.randomize_group_order and G > 1 else group_order
-
-            for gid in gid_iter:
-                idxs = group_arrays[int(gid)]
-                psi = _clip_positive_scalar(
-                    float(np.sum((beta[idxs] ** 2) / np.maximum(lambda_sq[idxs], self.jitter)))
-                    / _clip_positive_scalar(tau_sq, floor=self.jitter),
-                    floor=self.jitter,
-                )
-                group_half = 0.5 * float(group_sizes[gid])
-                shape_gap = float(abs(float(p_vec[gid]) - group_half))
-                if shape_gap < self.jitter:
-                    shape_gap = self.jitter
-                if group_half < float(p_vec[gid]):
-                    gamma_draw = _sample_gig_scalar(
-                        lambda_param=shape_gap,
-                        chi=psi,
-                        psi=max(2.0 * float(eta[gid]), self.jitter),
-                        rng=rng,
-                    )
-                else:
-                    inv_draw = _sample_gig_scalar(
-                        lambda_param=shape_gap,
-                        chi=max(2.0 * float(eta[gid]), self.jitter),
-                        psi=psi,
-                        rng=rng,
-                    )
-                    gamma_draw = 1.0 / _clip_positive_scalar(float(inv_draw), floor=self.jitter)
-                gamma_sq[gid] = max(float(gamma_draw), self.jitter)
-
-                lam_shape = max(float(q_vec[gid]) + 0.5, 1e-6)
-                lam_denom = _clip_positive_scalar(2.0 * tau_sq * gamma_sq[gid], floor=self.jitter)
-                lam_scale_vec = np.maximum(float(eta[gid]) + (beta[idxs] ** 2) / lam_denom, self.jitter)
-                if self.lambda_vectorized_update:
-                    try:
-                        draw_vec = _sample_invgamma_vector(lam_shape, lam_scale_vec, rng, floor=self.jitter)
-                    except Exception:
-                        draw_vec = lambda_sq[idxs]
-                    lambda_sq[idxs] = np.maximum(np.asarray(draw_vec, dtype=float), self.jitter)
-                else:
-                    for j in idxs:
-                        lam_scale = _clip_positive_scalar(float(eta[gid]) + float(beta[j] ** 2) / lam_denom, floor=self.jitter)
-                        try:
-                            draw = _sample_invgamma_scalar(lam_shape, lam_scale, rng, floor=self.jitter)
-                        except Exception:
-                            draw = lambda_sq[j]
-                        lambda_sq[j] = max(float(draw), self.jitter)
+            if not self.locals_first_beta_update:
+                _update_group_scales()
             eta.fill(1.0)
             nu_scale = _clip_positive_scalar(1.0 / _clip_positive_scalar(tau_sq, floor=self.jitter) + 1.0 / _clip_positive_scalar(sigma_sq, floor=self.jitter), floor=self.jitter)
             try:

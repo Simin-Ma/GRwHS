@@ -7,6 +7,7 @@ from simulation_project.src.experiments.fitting import _fit_all_methods
 from simulation_project.src.experiments.methods.fit_rhs_gibbs import fit_rhs_gibbs
 from simulation_project.src.experiments.runtime import _resolve_method_list
 from simulation_project.src.utils import SamplerConfig, method_display_name, method_result_label
+from simulation_second.src.fitting import _rhs_sampler_strategy_for_package
 
 
 def _tiny_gaussian_problem(seed: int = 0) -> tuple[np.ndarray, np.ndarray, list[list[int]], np.ndarray]:
@@ -48,7 +49,7 @@ def test_fit_rhs_gibbs_gaussian_runs_and_returns_draws() -> None:
     )
 
     assert out.status == "ok"
-    assert out.method == "RHS_Gibbs"
+    assert out.method == "RHS_HighDim"
     assert out.beta_mean is not None
     assert out.beta_draws is not None
     assert out.tau_draws is not None
@@ -116,6 +117,36 @@ def test_rhs_gibbs_coupled_refresh_options_do_not_break_fit() -> None:
     assert refresh.get("warmup_full_refresh") is False
 
 
+def test_rhs_gibbs_collapsed_hyperparameter_updates_stabilize_high_dimensional_fit() -> None:
+    rng = np.random.default_rng(41)
+    n = 28
+    p = 96
+    X = rng.normal(size=(n, p))
+    beta_true = np.zeros(p, dtype=float)
+    beta_true[:8] = np.asarray([1.5, -1.2, 0.9, -0.8, 0.6, 0.5, -0.4, 0.3], dtype=float)
+    y = X @ beta_true + rng.normal(scale=0.85, size=n)
+
+    model = RegularizedHorseshoeGibbs(
+        num_warmup=18,
+        num_samples=18,
+        num_chains=1,
+        progress_bar=False,
+        seed=41,
+        lambda_active_fraction=0.2,
+        lambda_active_min=12,
+        lambda_full_refresh_every=4,
+    )
+    model.fit(X, y)
+
+    diag = dict(model.sampler_diagnostics_)
+    param = dict(diag.get("parameterization") or {})
+    assert param.get("tau_refresh_after_local") is True
+    assert param.get("beta_refresh_after_hyper") is True
+    assert np.all(np.isfinite(np.asarray(model.coef_mean_, dtype=float)))
+    assert np.isfinite(float(model.tau_mean_))
+    assert np.isfinite(float(model.sigma_mean_))
+
+
 def test_fit_rhs_gibbs_logistic_returns_explicit_error() -> None:
     X, _y, groups, _beta_true = _tiny_gaussian_problem(seed=12)
     rng = np.random.default_rng(12)
@@ -156,8 +187,63 @@ def test_rhs_gibbs_selectable_via_experiment_entrypoint() -> None:
     assert out["RHS_Gibbs"].beta_mean is not None
 
 
+def test_rhs_highdim_explicit_name_selectable_via_experiment_entrypoint() -> None:
+    X, y, groups, _beta_true = _tiny_gaussian_problem(seed=17)
+    sampler = SamplerConfig(chains=1, warmup=12, post_warmup_draws=12, ess_threshold=5.0)
+    out = _fit_all_methods(
+        X,
+        y,
+        groups,
+        task="gaussian",
+        seed=17,
+        p0=5,
+        sampler=sampler,
+        methods=["RHS_HighDim"],
+        enforce_bayes_convergence=False,
+        rhs_sampler_strategy="high_dim",
+    )
+
+    assert list(out.keys()) == ["RHS_HighDim"]
+    assert out["RHS_HighDim"].status == "ok"
+    assert out["RHS_HighDim"].method == "RHS_HighDim"
+
+
+def test_rhs_auto_alias_routes_to_highdim_sampler_when_requested() -> None:
+    X, y, groups, _beta_true = _tiny_gaussian_problem(seed=18)
+    sampler = SamplerConfig(chains=1, warmup=12, post_warmup_draws=12, ess_threshold=5.0)
+    out = _fit_all_methods(
+        X,
+        y,
+        groups,
+        task="gaussian",
+        seed=18,
+        p0=5,
+        sampler=sampler,
+        methods=["RHS"],
+        enforce_bayes_convergence=False,
+        rhs_sampler_strategy="high_dim",
+    )
+
+    res = out["RHS"]
+    diag = dict(res.diagnostics or {})
+    sampler_diag = dict(diag.get("sampler_diagnostics") or {})
+    assert res.method == "RHS"
+    assert diag.get("rhs_sampler_name") == "RHS"
+    assert diag.get("rhs_sampler_strategy") == "high_dim"
+    assert sampler_diag.get("backend") == "rhs_gibbs_woodbury"
+
+
+def test_rhs_package_strategy_helper_distinguishes_low_vs_high_dimension_suites() -> None:
+    assert _rhs_sampler_strategy_for_package("simulation_second") == "low_dim"
+    assert _rhs_sampler_strategy_for_package("Simulation_highdimension") == "high_dim"
+
+
 def test_rhs_gibbs_method_name_helpers_and_resolution() -> None:
     assert _resolve_method_list(["RHS_Gibbs"]) == ["RHS_Gibbs"]
-    assert _resolve_method_list(["RHS", "RHS_Gibbs"]) == ["RHS", "RHS_Gibbs"]
+    assert _resolve_method_list(["RHS", "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs"]) == ["RHS", "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs"]
+    assert method_display_name("RHS_LowDim") == "RHS-LowDim"
+    assert method_display_name("RHS_HighDim") == "RHS-HighDim"
     assert method_display_name("RHS_Gibbs") == "RHS-Gibbs"
+    assert method_result_label("RHS_LowDim") == "RHS-LowDim [stan_rstanarm_hs]"
+    assert method_result_label("RHS_HighDim") == "RHS-HighDim [woodbury_slice]"
     assert method_result_label("RHS_Gibbs") == "RHS-Gibbs [woodbury_slice]"

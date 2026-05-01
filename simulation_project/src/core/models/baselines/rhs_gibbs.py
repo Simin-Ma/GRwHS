@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, Optional
 
 import numpy as np
+from scipy.linalg import solve_triangular
 from numpy.random import Generator, default_rng
 
 from simulation_project.src.core.inference.samplers import slice_sample_1d
@@ -86,6 +87,29 @@ def _rhs_single_lambda_tilde(
 ) -> float:
     denom = max(float(c2) + max(float(sigma2) * float(tau2) * float(lam2), float(jitter)), float(jitter))
     return float(math.sqrt(max((float(c2) * float(lam2)) / denom, float(jitter))))
+
+
+def _log_marginal_gaussian(
+    *,
+    X: np.ndarray,
+    y: np.ndarray,
+    sigma2: float,
+    prior_var: np.ndarray,
+    jitter: float,
+) -> float:
+    sigma2_use = max(float(sigma2), float(jitter))
+    prior_var_use = np.maximum(np.asarray(prior_var, dtype=float).reshape(-1), float(jitter))
+    weighted_x = X * prior_var_use
+    cov = np.eye(int(X.shape[0]), dtype=float) + (weighted_x @ X.T) / sigma2_use
+    cov = 0.5 * (cov + cov.T)
+    try:
+        chol = np.linalg.cholesky(cov + float(jitter) * np.eye(cov.shape[0], dtype=float))
+    except np.linalg.LinAlgError:
+        chol = np.linalg.cholesky(cov + (10.0 * float(jitter)) * np.eye(cov.shape[0], dtype=float))
+    logdet = 2.0 * float(np.sum(np.log(np.diag(chol))))
+    alpha = solve_triangular(chol, np.asarray(y, dtype=float).reshape(-1), lower=True, check_finite=False)
+    quad = float(alpha @ alpha) / sigma2_use
+    return float(-0.5 * (int(X.shape[0]) * math.log(2.0 * math.pi) + int(X.shape[0]) * math.log(sigma2_use) + logdet + quad))
 
 
 @dataclass
@@ -306,6 +330,8 @@ class RegularizedHorseshoeGibbs:
                 )
             )
 
+            sigma2 = max(float(sigma) ** 2, self.jitter)
+
             def _logpost_log_tau(value: float) -> float:
                 tau_use = math.exp(float(value))
                 prior_var_use, _, _ = self._prior_var(
@@ -314,8 +340,13 @@ class RegularizedHorseshoeGibbs:
                     lam=lam,
                     caux=caux,
                 )
-                lp = -0.5 * float(np.sum(np.log(np.maximum(prior_var_use, self.jitter))))
-                lp -= 0.5 * float(np.sum((beta * beta) / np.maximum(prior_var_use, self.jitter)))
+                lp = _log_marginal_gaussian(
+                    X=X_std,
+                    y=y_ctr,
+                    sigma2=sigma2,
+                    prior_var=prior_var_use,
+                    jitter=float(self.jitter),
+                )
                 lp += _log_half_cauchy(tau_use, float(self.scale_global))
                 lp += float(value)
                 return float(lp)
@@ -330,7 +361,6 @@ class RegularizedHorseshoeGibbs:
                 )
             )
 
-            sigma2 = max(float(sigma) ** 2, self.jitter)
             tau2 = max(float(tau_raw) ** 2, self.jitter)
             c2 = max((float(self.slab_scale) ** 2) * float(max(caux, self.jitter)), self.jitter)
 
@@ -382,8 +412,13 @@ class RegularizedHorseshoeGibbs:
                 )
                 alpha = 0.5 * float(self.slab_df)
                 rate = 0.5 * float(self.slab_df)
-                lp = -0.5 * float(np.sum(np.log(np.maximum(prior_var_use, self.jitter))))
-                lp -= 0.5 * float(np.sum((beta * beta) / np.maximum(prior_var_use, self.jitter)))
+                lp = _log_marginal_gaussian(
+                    X=X_std,
+                    y=y_ctr,
+                    sigma2=sigma2,
+                    prior_var=prior_var_use,
+                    jitter=float(self.jitter),
+                )
                 lp -= alpha * float(value)
                 lp -= rate / max(caux_use, self.jitter)
                 return float(lp)
@@ -407,8 +442,13 @@ class RegularizedHorseshoeGibbs:
                         lam=lam,
                         caux=caux,
                     )
-                    lp = -0.5 * float(np.sum(np.log(np.maximum(prior_var_use, self.jitter))))
-                    lp -= 0.5 * float(np.sum((beta * beta) / np.maximum(prior_var_use, self.jitter)))
+                    lp = _log_marginal_gaussian(
+                        X=X_std,
+                        y=y_ctr,
+                        sigma2=sigma2,
+                        prior_var=prior_var_use,
+                        jitter=float(self.jitter),
+                    )
                     lp += _log_half_cauchy(tau_use, float(self.scale_global))
                     lp += float(value)
                     return float(lp)

@@ -68,6 +68,7 @@ def fit_rhs(
     p0: int,
     sampler: SamplerConfig,
     progress_bar: bool = True,
+    method_name: str = "RHS_LowDim",
 ) -> FitResult:
     """Fit the single Stan/HMC RHS baseline used throughout the simulation pipeline."""
 
@@ -109,6 +110,8 @@ def fit_rhs(
         )
         details = dict(details or {})
         details["rhs_impl"] = "stan_rstanarm_hs"
+        details["rhs_sampler_name"] = str(method_name)
+        details["rhs_sampler_strategy"] = "low_dim"
         details["metric"] = str(metric)
         details["rhs_defaults"] = {
             "global_df": 1.0,
@@ -147,6 +150,8 @@ def fit_rhs(
             )
             details = dict(details or {})
             details["rhs_impl"] = "stan_rstanarm_hs"
+            details["rhs_sampler_name"] = str(method_name)
+            details["rhs_sampler_strategy"] = "low_dim"
             details["metric"] = str(metric)
             details["rhs_defaults"] = {
                 "global_df": 1.0,
@@ -157,7 +162,7 @@ def fit_rhs(
             runtime += runtime2
 
         return FitResult(
-            method="RHS",
+            method=str(method_name),
             status="ok",
             beta_mean=None if beta_mean is None else np.asarray(beta_mean, dtype=float),
             beta_draws=None if beta_draws is None else np.asarray(beta_draws, dtype=float),
@@ -171,5 +176,5 @@ def fit_rhs(
             diagnostics=details,
         )
     except Exception as exc:
-        return fit_error_result("RHS", f"{type(exc).__name__}: {exc}")
+        return fit_error_result(str(method_name), f"{type(exc).__name__}: {exc}")
 

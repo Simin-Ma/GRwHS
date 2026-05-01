@@ -40,10 +40,11 @@ def fit_rhs_gibbs(
     p0: int,
     sampler: SamplerConfig,
     progress_bar: bool = True,
+    method_name: str = "RHS_HighDim",
 ) -> FitResult:
     del groups
     if str(task).strip().lower() != "gaussian":
-        return fit_error_result("RHS_Gibbs", "NotImplementedError: RHS_Gibbs currently supports Gaussian likelihood only.")
+        return fit_error_result(str(method_name), "NotImplementedError: RHS_HighDim currently supports Gaussian likelihood only.")
 
     tracked = ["beta", "tau", "lambda", "c", "sigma"]
     n, p = int(X.shape[0]), int(X.shape[1])
@@ -69,6 +70,8 @@ def fit_rhs_gibbs(
         )
         details = dict(details or {})
         details["rhs_impl"] = "rhs_gibbs_woodbury"
+        details["rhs_sampler_name"] = str(method_name)
+        details["rhs_sampler_strategy"] = "high_dim"
         details["rhs_defaults"] = {
             "slab_df": float(model.slab_df),
             "slab_scale": float(model.slab_scale),
@@ -76,7 +79,7 @@ def fit_rhs_gibbs(
         }
 
         return FitResult(
-            method="RHS_Gibbs",
+            method=str(method_name),
             status="ok",
             beta_mean=None if beta_mean is None else np.asarray(beta_mean, dtype=float),
             beta_draws=None if beta_draws is None else np.asarray(beta_draws, dtype=float),
@@ -91,4 +94,4 @@ def fit_rhs_gibbs(
             diagnostics=details,
         )
     except Exception as exc:
-        return fit_error_result("RHS_Gibbs", f"{type(exc).__name__}: {exc}")
+        return fit_error_result(str(method_name), f"{type(exc).__name__}: {exc}")

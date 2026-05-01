@@ -12,10 +12,10 @@ from ..utils import FitResult, SamplerConfig
 # Method lists
 # ---------------------------------------------------------------------------
 METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus", "OLS", "LASSO_CV"]
-KNOWN_METHODS = [*METHODS, "RHS_Gibbs"]
+KNOWN_METHODS = [*METHODS, "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs"]
 EXP3_GIGG_MODES = ("paper_ref",)
 
-_BAYESIAN_METHODS = {"GR_RHS", "RHS", "RHS_Gibbs", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
+_BAYESIAN_METHODS = {"GR_RHS", "RHS", "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
 _BAYESIAN_DEFAULT_CHAINS = 4
 _UNTIL_CONVERGED_RETRY_HARD_CAP = 12
 _RETRY_MAX_WARMUP = 8000

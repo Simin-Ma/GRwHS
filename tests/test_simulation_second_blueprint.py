@@ -79,7 +79,7 @@ def test_benchmark_config_forces_until_convergence_even_if_payload_disables_it()
     }
     config = benchmark_config_from_payload(payload)
     assert config.convergence_gate.enforce_bayes_convergence is True
-    assert config.convergence_gate.max_convergence_retries == -1
+    assert config.convergence_gate.max_convergence_retries == 0
     assert config.convergence_gate.chains == 3
 
 
@@ -121,7 +121,9 @@ def test_run_benchmark_pipeline_smoke(monkeypatch, tmp_path) -> None:
         grrhs_kwargs,
         gigg_config,
         method_jobs,
+        benchmark_package,
     ):
+        assert str(benchmark_package) == "simulation_second"
         out = {}
         p = int(X.shape[1])
         n_groups = int(len(groups))
