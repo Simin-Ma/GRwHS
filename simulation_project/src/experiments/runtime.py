@@ -12,9 +12,10 @@ from ..utils import FitResult, SamplerConfig
 # Method lists
 # ---------------------------------------------------------------------------
 METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus", "OLS", "LASSO_CV"]
+KNOWN_METHODS = [*METHODS, "RHS_Gibbs"]
 EXP3_GIGG_MODES = ("paper_ref",)
 
-_BAYESIAN_METHODS = {"GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
+_BAYESIAN_METHODS = {"GR_RHS", "RHS", "RHS_Gibbs", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
 _BAYESIAN_DEFAULT_CHAINS = 4
 _UNTIL_CONVERGED_RETRY_HARD_CAP = 12
 _RETRY_MAX_WARMUP = 8000
@@ -91,10 +92,11 @@ def _resolve_method_list(methods: Sequence[str] | None) -> list[str]:
     if methods is None:
         return list(METHODS)
     requested = [str(m).strip() for m in methods]
-    unknown = sorted(set(requested) - set(METHODS))
+    unknown = sorted(set(requested) - set(KNOWN_METHODS))
     if unknown:
         raise ValueError(f"unknown methods: {unknown}")
-    return [m for m in METHODS if m in set(requested)]
+    ordered = [m for m in KNOWN_METHODS if m in set(requested)]
+    return ordered
 
 
 def _sampler_for_standard(*, experiment: str = "") -> SamplerConfig:

@@ -63,16 +63,74 @@ def _resolve_exact_highdim_gigg_toggles(
     num_chains: int,
     lambda_vectorized_update: bool,
     stable_solve: bool,
+    min_highdim_chains: int = 2,
 ) -> dict[str, object]:
     n, p = map(int, X.shape)
     highdim = bool(p > n and p >= 150)
     return {
         "use_btrick": bool(btrick or highdim),
-        "num_chains": int(max(num_chains, 2 if highdim else num_chains)),
+        "num_chains": int(max(num_chains, min_highdim_chains if highdim else num_chains)),
         "lambda_vectorized_update": bool(lambda_vectorized_update or highdim),
         "stable_solve": bool(stable_solve),
         "mmle_highdim_fastpath": bool(highdim),
     }
+
+
+def _is_highdim_case(X: np.ndarray) -> bool:
+    n, p = map(int, X.shape)
+    return bool(p > n and p >= 150)
+
+
+def _highdim_mmle_stage_a_iters(gigg_burnin: int, gigg_draws: int) -> tuple[int, int]:
+    burnin = int(min(gigg_burnin, max(40, min(120, gigg_burnin // 4 if gigg_burnin > 0 else 40))))
+    draws = int(min(gigg_draws, max(40, min(120, gigg_draws // 4 if gigg_draws > 0 else 40))))
+    return max(10, burnin), max(10, draws)
+
+
+def _run_gigg_model(
+    model: GIGGRegression,
+    X: np.ndarray,
+    y: np.ndarray,
+    *,
+    groups: Sequence[Sequence[int]],
+    method: str | None = None,
+    a: Sequence[float] | None = None,
+    b: Sequence[float] | None = None,
+    beta_inits: np.ndarray | None = None,
+) -> tuple[GIGGRegression, float]:
+    fit_kwargs: dict[str, object] = {
+        "groups": as_int_groups(groups),
+    }
+    if method is not None:
+        fit_kwargs["method"] = method
+    if a is not None:
+        fit_kwargs["a"] = a
+    if b is not None:
+        fit_kwargs["b"] = b
+    if beta_inits is not None:
+        fit_kwargs["beta_inits"] = np.asarray(beta_inits, dtype=float)
+    return timed_call(model.fit, X, y, **fit_kwargs)
+
+
+def _select_stage_a_beta_inits(
+    beta_draws: np.ndarray | None,
+    *,
+    num_chains: int,
+) -> np.ndarray | None:
+    if beta_draws is None:
+        return None
+    arr = np.asarray(beta_draws, dtype=float)
+    if arr.ndim == 3:
+        arr = arr.reshape(-1, arr.shape[-1])
+    elif arr.ndim != 2:
+        return None
+    if arr.shape[0] <= 0:
+        return None
+    if int(num_chains) <= 1:
+        return np.asarray(arr[-1], dtype=float)
+    grid = np.linspace(0.25, 0.75, int(num_chains))
+    idx = np.clip(np.round(grid * max(arr.shape[0] - 1, 0)).astype(int), 0, arr.shape[0] - 1)
+    return np.asarray(arr[idx], dtype=float)
 
 
 def _gigg_iters(
@@ -190,13 +248,15 @@ def fit_gigg_mmle(
         iter_cap=iter_cap,
     )
     groups_use = as_int_groups(groups)
+    highdim_case = bool(exact_highdim_fastpath) and _is_highdim_case(np.asarray(X, dtype=float))
     toggles = _resolve_exact_highdim_gigg_toggles(
         X=np.asarray(X, dtype=float),
         sampler=sampler,
         btrick=bool(btrick),
-        num_chains=1,
+        num_chains=max(1, int(getattr(sampler, "chains", 1))),
         lambda_vectorized_update=bool(lambda_vectorized_update),
         stable_solve=True,
+        min_highdim_chains=2,
     ) if bool(exact_highdim_fastpath) else {
         "use_btrick": bool(btrick),
         "num_chains": 1,
@@ -206,37 +266,166 @@ def fit_gigg_mmle(
     }
 
     try:
-        model = GIGGRegression(
-            method="mmle",
-            n_burn_in=gigg_burnin,
-            n_samples=gigg_draws,
-            n_thin=1,
-            seed=int(seed),
-            num_chains=int(toggles["num_chains"]),
-            fit_intercept=False,
-            store_lambda=True,
-            tau_sq_init=1.0,
-            btrick=bool(toggles["use_btrick"]),
-            stable_solve=bool(toggles["stable_solve"]),
-            mmle_burnin_only=bool(mmle_burnin_only),
-            mmle_highdim_fastpath=bool(toggles["mmle_highdim_fastpath"]),
-            init_strategy=str(init_strategy),
-            init_ridge=float(init_ridge),
-            init_scale_blend=float(init_scale_blend),
-            randomize_group_order=bool(randomize_group_order),
-            lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
-            extra_beta_refresh_prob=float(extra_beta_refresh_prob),
-            mmle_step_size=float(mmle_step_size),
-            mmle_update_every=int(mmle_update_every),
-            mmle_window=int(mmle_window),
-            lambda_constraint_mode=str(lambda_constraint_mode),
-            q_constraint_mode=str(q_constraint_mode),
-            progress_bar=bool(progress_bar),
-        )
-        model, runtime = timed_call(model.fit, X, y, groups=groups_use, method="mmle")
-        result = _extract_and_diagnose(model, "GIGG_MMLE", sampler, runtime)
+        b_hat = None
+        stage_info: dict[str, object] = {}
+        total_runtime = 0.0
+        final_model: GIGGRegression
+
+        if highdim_case:
+            stage_a_burnin, stage_a_draws = _highdim_mmle_stage_a_iters(gigg_burnin, gigg_draws)
+            stage_a_toggles = _resolve_exact_highdim_gigg_toggles(
+                X=np.asarray(X, dtype=float),
+                sampler=sampler,
+                btrick=bool(btrick),
+                num_chains=1,
+                lambda_vectorized_update=bool(lambda_vectorized_update),
+                stable_solve=True,
+                min_highdim_chains=1,
+            )
+            stage_a_model = GIGGRegression(
+                method="mmle",
+                n_burn_in=stage_a_burnin,
+                n_samples=stage_a_draws,
+                n_thin=1,
+                seed=int(seed),
+                num_chains=1,
+                fit_intercept=False,
+                store_lambda=True,
+                tau_sq_init=1.0,
+                btrick=bool(stage_a_toggles["use_btrick"]),
+                stable_solve=bool(stage_a_toggles["stable_solve"]),
+                mmle_burnin_only=bool(mmle_burnin_only),
+                mmle_highdim_fastpath=bool(stage_a_toggles["mmle_highdim_fastpath"]),
+                init_strategy=str(init_strategy),
+                init_ridge=float(init_ridge),
+                init_scale_blend=float(init_scale_blend),
+                randomize_group_order=bool(randomize_group_order),
+                lambda_vectorized_update=bool(stage_a_toggles["lambda_vectorized_update"]),
+                extra_beta_refresh_prob=float(extra_beta_refresh_prob),
+                mmle_step_size=float(mmle_step_size),
+                mmle_update_every=int(mmle_update_every),
+                mmle_window=int(mmle_window),
+                lambda_constraint_mode=str(lambda_constraint_mode),
+                q_constraint_mode=str(q_constraint_mode),
+                progress_bar=bool(progress_bar),
+            )
+            stage_a_model, stage_a_runtime = _run_gigg_model(
+                stage_a_model,
+                X,
+                y,
+                groups=groups_use,
+                method="mmle",
+            )
+            total_runtime += float(stage_a_runtime)
+            b_hat = getattr(stage_a_model, "b_mean_", None)
+            if b_hat is None:
+                raise RuntimeError("High-dimensional MMLE stage did not produce a q estimate.")
+            a_hat = np.full(len(groups_use), 1.0 / max(int(n), 1), dtype=float)
+            b_hat_arr = np.asarray(b_hat, dtype=float).reshape(-1)
+            beta_seed = _select_stage_a_beta_inits(
+                getattr(stage_a_model, "coef_samples_", None),
+                num_chains=int(toggles["num_chains"]),
+            )
+            tau2_stage_a = getattr(stage_a_model, "tau2_samples_", None)
+            sigma2_stage_a = getattr(stage_a_model, "sigma2_samples_", None)
+            tau_sq_seed = float(np.mean(np.asarray(tau2_stage_a, dtype=float))) if tau2_stage_a is not None else 1.0
+            sigma_sq_seed = float(np.mean(np.asarray(sigma2_stage_a, dtype=float))) if sigma2_stage_a is not None else 1.0
+            stage_b_model = GIGGRegression(
+                method="fixed",
+                n_burn_in=gigg_burnin,
+                n_samples=gigg_draws,
+                n_thin=1,
+                seed=int(seed),
+                num_chains=int(toggles["num_chains"]),
+                fit_intercept=False,
+                store_lambda=True,
+                a_value=None,
+                b_init=float(np.mean(b_hat_arr)) if b_hat_arr.size else float(max(1.0 / max(int(n), 1), 1e-6)),
+                tau_sq_init=float(max(tau_sq_seed, 1e-8)),
+                sigma_sq_init=float(max(sigma_sq_seed, 1e-8)),
+                btrick=bool(toggles["use_btrick"]),
+                stable_solve=bool(toggles["stable_solve"]),
+                init_strategy=str(init_strategy),
+                init_ridge=float(init_ridge),
+                init_scale_blend=float(init_scale_blend),
+                randomize_group_order=bool(randomize_group_order or highdim_case),
+                lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
+                extra_beta_refresh_prob=float(max(extra_beta_refresh_prob, 0.20 if highdim_case else extra_beta_refresh_prob)),
+                lambda_constraint_mode=str(lambda_constraint_mode),
+                q_constraint_mode=str(q_constraint_mode),
+                progress_bar=bool(progress_bar),
+            )
+            final_model, stage_b_runtime = _run_gigg_model(
+                stage_b_model,
+                X,
+                y,
+                groups=groups_use,
+                a=a_hat.tolist(),
+                b=b_hat_arr.tolist(),
+                beta_inits=None if beta_seed is None else np.asarray(beta_seed, dtype=float),
+            )
+            total_runtime += float(stage_b_runtime)
+            stage_info = {
+                "highdim_two_stage": True,
+                "stage_a_mmle": {
+                    "num_chains": 1,
+                    "burnin": int(stage_a_burnin),
+                    "draws": int(stage_a_draws),
+                    "runtime_seconds": float(stage_a_runtime),
+                },
+                "stage_b_fixed": {
+                    "num_chains": int(toggles["num_chains"]),
+                    "burnin": int(gigg_burnin),
+                    "draws": int(gigg_draws),
+                    "runtime_seconds": float(stage_b_runtime),
+                    "tau_sq_init": float(max(tau_sq_seed, 1e-8)),
+                    "sigma_sq_init": float(max(sigma_sq_seed, 1e-8)),
+                    "beta_init_mode": "stage_a_draw_quantiles" if beta_seed is not None and np.asarray(beta_seed).ndim == 2 else "stage_a_draw_last",
+                    "randomize_group_order": bool(randomize_group_order or highdim_case),
+                    "extra_beta_refresh_prob": float(max(extra_beta_refresh_prob, 0.20 if highdim_case else extra_beta_refresh_prob)),
+                },
+            }
+        else:
+            model = GIGGRegression(
+                method="mmle",
+                n_burn_in=gigg_burnin,
+                n_samples=gigg_draws,
+                n_thin=1,
+                seed=int(seed),
+                num_chains=int(toggles["num_chains"]),
+                fit_intercept=False,
+                store_lambda=True,
+                tau_sq_init=1.0,
+                btrick=bool(toggles["use_btrick"]),
+                stable_solve=bool(toggles["stable_solve"]),
+                mmle_burnin_only=bool(mmle_burnin_only),
+                mmle_highdim_fastpath=bool(toggles["mmle_highdim_fastpath"]),
+                init_strategy=str(init_strategy),
+                init_ridge=float(init_ridge),
+                init_scale_blend=float(init_scale_blend),
+                randomize_group_order=bool(randomize_group_order),
+                lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
+                extra_beta_refresh_prob=float(extra_beta_refresh_prob),
+                mmle_step_size=float(mmle_step_size),
+                mmle_update_every=int(mmle_update_every),
+                mmle_window=int(mmle_window),
+                lambda_constraint_mode=str(lambda_constraint_mode),
+                q_constraint_mode=str(q_constraint_mode),
+                progress_bar=bool(progress_bar),
+            )
+            final_model, total_runtime = _run_gigg_model(
+                model,
+                X,
+                y,
+                groups=groups_use,
+                method="mmle",
+            )
+            b_hat = getattr(final_model, "b_mean_", None)
+
+        result = _extract_and_diagnose(final_model, "GIGG_MMLE", sampler, float(total_runtime))
         diag = dict(result.diagnostics or {})
-        b_hat = getattr(model, "b_mean_", None)
+        if stage_info:
+            diag["staged_runtime"] = stage_info
         if b_hat is not None:
             diag["mmle_estimate"] = {
                 "q_estimate": np.asarray(b_hat, dtype=float).reshape(-1).tolist(),
@@ -249,6 +438,7 @@ def fit_gigg_mmle(
             "lambda_vectorized_update": bool(toggles["lambda_vectorized_update"]),
             "stable_solve": bool(toggles["stable_solve"]),
             "mmle_highdim_fastpath": bool(toggles["mmle_highdim_fastpath"]),
+            "highdim_two_stage_mmle": bool(highdim_case),
         }
         result.diagnostics = diag
         result.group_scale_draws = None if result.group_scale_draws is None else np.asarray(result.group_scale_draws, dtype=float)

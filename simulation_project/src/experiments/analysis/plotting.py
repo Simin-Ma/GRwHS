@@ -18,6 +18,7 @@ from ..runtime import kappa_star_xi_ratio_u0_rho
 _METHOD_COLORS: dict[str, str] = {
     "GR_RHS":       "#1f77b4",   # blue   �� the proposed method
     "RHS":          "#ff7f0e",   # orange �� individual-level baseline
+    "RHS_Gibbs":    "#bc6c25",   # ochre  �� high-dimensional RHS sampler
     "GIGG_MMLE":    "#2ca02c",   # green
     "GIGG_b_small": "#98df8a",   # light green
     "GIGG_GHS":     "#17becf",   # cyan
@@ -26,7 +27,7 @@ _METHOD_COLORS: dict[str, str] = {
     "OLS":          "#8c564b",   # brown
     "LASSO_CV":     "#d62728",   # red
 }
-_METHOD_ORDER = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus", "OLS", "LASSO_CV"]
+_METHOD_ORDER = ["GR_RHS", "RHS", "RHS_Gibbs", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus", "OLS", "LASSO_CV"]
 
 # Descriptive labels for (alpha_kappa, beta_kappa) prior configurations
 _PRIOR_LABELS: dict[tuple[float, float], str] = {

@@ -53,6 +53,7 @@ def build_default_method_registry() -> MethodRegistry:
     from .methods.fit_gigg import fit_gigg_fixed, fit_gigg_mmle
     from .methods.fit_ghs_plus import fit_ghs_plus
     from .methods.fit_gr_rhs import fit_gr_rhs
+    from .methods.fit_rhs_gibbs import fit_rhs_gibbs
     from .methods.fit_rhs import fit_rhs
 
     reg = MethodRegistry()
@@ -73,6 +74,18 @@ def build_default_method_registry() -> MethodRegistry:
     reg.register(
         "RHS",
         lambda c: fit_rhs(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.p0,
+            sampler=c.sampler,
+        ),
+    )
+    reg.register(
+        "RHS_Gibbs",
+        lambda c: fit_rhs_gibbs(
             c.X,
             c.y,
             c.groups,

@@ -884,14 +884,6 @@ class GIGGRegression:
                         c_path = tmpdir / "C.npy"
                         np.save(c_path, np.asarray(C, dtype=float), allow_pickle=False)
                         data_paths["C_file"] = c_path
-                    if alpha_inits is not None:
-                        ai_path = tmpdir / "alpha_inits.npy"
-                        np.save(ai_path, np.asarray(alpha_inits, dtype=float), allow_pickle=False)
-                        data_paths["alpha_inits_file"] = ai_path
-                    if beta_inits is not None:
-                        bi_path = tmpdir / "beta_inits.npy"
-                        np.save(bi_path, np.asarray(beta_inits, dtype=float), allow_pickle=False)
-                        data_paths["beta_inits_file"] = bi_path
                     if a is not None:
                         a_path = tmpdir / "a.npy"
                         np.save(a_path, np.asarray(a, dtype=float), allow_pickle=False)
@@ -903,6 +895,20 @@ class GIGGRegression:
 
             payloads: List[dict] = []
             for chain_idx in range(int(self.num_chains)):
+                alpha_init_payload = None
+                if alpha_inits is not None:
+                    alpha_inits_arr = np.asarray(alpha_inits, dtype=float)
+                    if alpha_inits_arr.ndim == 2:
+                        alpha_init_payload = np.asarray(alpha_inits_arr[chain_idx], dtype=float)
+                    else:
+                        alpha_init_payload = np.asarray(alpha_inits_arr, dtype=float)
+                beta_init_payload = None
+                if beta_inits is not None:
+                    beta_inits_arr = np.asarray(beta_inits, dtype=float)
+                    if beta_inits_arr.ndim == 2:
+                        beta_init_payload = np.asarray(beta_inits_arr[chain_idx], dtype=float)
+                    else:
+                        beta_init_payload = np.asarray(beta_inits_arr, dtype=float)
                 payloads.append(
                     {
                         "method": method,
@@ -945,15 +951,15 @@ class GIGGRegression:
                         "y": None if data_paths else np.asarray(y, dtype=float),
                         "C": None if data_paths else (None if C is None else np.asarray(C, dtype=float)),
                         "groups": [list(g) for g in groups],
-                        "alpha_inits": None if data_paths else (None if alpha_inits is None else np.asarray(alpha_inits, dtype=float)),
-                        "beta_inits": None if data_paths else (None if beta_inits is None else np.asarray(beta_inits, dtype=float)),
+                        "alpha_inits": alpha_init_payload,
+                        "beta_inits": beta_init_payload,
                         "a": None if data_paths else (None if a is None else np.asarray(a, dtype=float)),
                         "b": None if data_paths else (None if b is None else np.asarray(b, dtype=float)),
                         "X_file": str(data_paths["X_file"]) if "X_file" in data_paths else None,
                         "y_file": str(data_paths["y_file"]) if "y_file" in data_paths else None,
                         "C_file": str(data_paths["C_file"]) if "C_file" in data_paths else None,
-                        "alpha_inits_file": str(data_paths["alpha_inits_file"]) if "alpha_inits_file" in data_paths else None,
-                        "beta_inits_file": str(data_paths["beta_inits_file"]) if "beta_inits_file" in data_paths else None,
+                        "alpha_inits_file": None,
+                        "beta_inits_file": None,
                         "a_file": str(data_paths["a_file"]) if "a_file" in data_paths else None,
                         "b_file": str(data_paths["b_file"]) if "b_file" in data_paths else None,
                     }
@@ -1139,16 +1145,28 @@ class GIGGRegression:
             b_vec = np.full(G, max(self.b_init, self.b_floor), dtype=float)
 
         if beta_inits is not None:
-            beta = np.asarray(beta_inits, dtype=float).reshape(-1)
-            if beta.size != p:
-                raise ValueError("beta_inits must have length p.")
+            beta_arr = np.asarray(beta_inits, dtype=float)
+            if self.num_chains > 1 and beta_arr.ndim == 2:
+                if beta_arr.shape != (int(self.num_chains), p):
+                    raise ValueError("beta_inits for multichain fit must have shape (num_chains, p).")
+                beta = beta_arr
+            else:
+                beta = beta_arr.reshape(-1)
+                if beta.size != p:
+                    raise ValueError("beta_inits must have length p.")
         else:
             beta = np.zeros(p, dtype=float)
 
         if alpha_inits is not None:
-            alpha = np.asarray(alpha_inits, dtype=float).reshape(-1)
-            if alpha.size != k:
-                raise ValueError("alpha_inits must have length ncol(C).")
+            alpha_arr = np.asarray(alpha_inits, dtype=float)
+            if self.num_chains > 1 and alpha_arr.ndim == 2:
+                if alpha_arr.shape != (int(self.num_chains), k):
+                    raise ValueError("alpha_inits for multichain fit must have shape (num_chains, ncol(C)).")
+                alpha = alpha_arr
+            else:
+                alpha = alpha_arr.reshape(-1)
+                if alpha.size != k:
+                    raise ValueError("alpha_inits must have length ncol(C).")
         else:
             alpha = np.zeros(k, dtype=float)
 
@@ -1249,7 +1267,7 @@ class GIGGRegression:
                 sigma_sq = scale_sigma / max(sigma_shape + 1.0, 1.0)
             sigma_sq = _clip_positive_scalar(sigma_sq, floor=self.jitter)
 
-            gid_iter = group_order
+            gid_iter = rng.permutation(group_order) if self.randomize_group_order and G > 1 else group_order
 
             for gid in gid_iter:
                 idxs = group_arrays[int(gid)]
@@ -1303,6 +1321,25 @@ class GIGGRegression:
             except Exception:
                 nu = nu_scale / 2.0
             nu = _clip_positive_scalar(nu, floor=self.jitter)
+
+            if self.extra_beta_refresh_prob > 0.0 and float(rng.random()) < float(self.extra_beta_refresh_prob):
+                refresh_local_scale = np.maximum(tau_sq * gamma_sq[group_id] * lambda_sq, self.jitter)
+                if self.btrick:
+                    beta = self._draw_beta_btrick(
+                        X=X,
+                        y_tilde=y_tilde,
+                        sigma_sq=sigma_sq,
+                        local_scale=refresh_local_scale,
+                        rng=rng,
+                    )
+                else:
+                    beta = self._draw_beta_standard(
+                        X=X,
+                        y_tilde=y_tilde,
+                        sigma_sq=sigma_sq,
+                        local_scale=refresh_local_scale,
+                        rng=rng,
+                    )
 
             lambda_sq = np.maximum(lambda_sq, self.jitter)
             gamma_sq = np.maximum(gamma_sq, self.jitter)

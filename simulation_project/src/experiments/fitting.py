@@ -76,13 +76,14 @@ def _fit_all_methods(
         offset_map = {
             "GR_RHS": 1,
             "RHS": 2,
-            "GIGG_MMLE": 3,
-            "GHS_plus": 4,
-            "GIGG_b_small": 5,
-            "GIGG_GHS": 6,
-            "GIGG_b_large": 7,
-            "OLS": 8,
-            "LASSO_CV": 9,
+            "RHS_Gibbs": 3,
+            "GIGG_MMLE": 4,
+            "GHS_plus": 5,
+            "GIGG_b_small": 6,
+            "GIGG_GHS": 7,
+            "GIGG_b_large": 8,
+            "OLS": 9,
+            "LASSO_CV": 10,
         }
         if method not in offset_map:
             raise ValueError(f"Unsupported method: {method}")

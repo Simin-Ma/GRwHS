@@ -1,7 +1,9 @@
-﻿from .models import RegularizedHorseshoeRegression
 from .grouped_horseshoe import GroupedHorseshoePlus
+from .models import RegularizedHorseshoeRegression
+from .rhs_gibbs import RegularizedHorseshoeGibbs
 
 __all__ = [
-    "RegularizedHorseshoeRegression",
     "GroupedHorseshoePlus",
+    "RegularizedHorseshoeGibbs",
+    "RegularizedHorseshoeRegression",
 ]
