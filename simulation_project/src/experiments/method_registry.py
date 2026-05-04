@@ -126,6 +126,36 @@ def build_default_method_registry() -> MethodRegistry:
             **_grrhs_kwargs_for_strategy(c, high_dim=True),
         )
 
+    def _fit_gigg_mmle_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
+        kwargs = dict(c.gigg_mmle_kwargs)
+        kwargs["exact_highdim_fastpath"] = False
+        return fit_gigg_mmle(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            sampler=c.sampler,
+            p0=c.p0,
+            method_label=str(method_name),
+            **kwargs,
+        )
+
+    def _fit_gigg_mmle_highdim(c: MethodContext, *, method_name: str) -> FitResult:
+        kwargs = dict(c.gigg_mmle_kwargs)
+        kwargs["exact_highdim_fastpath"] = True
+        return fit_gigg_mmle(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            sampler=c.sampler,
+            p0=c.p0,
+            method_label=str(method_name),
+            **kwargs,
+        )
+
     reg.register(
         "GR_RHS",
         lambda c: (
@@ -164,16 +194,19 @@ def build_default_method_registry() -> MethodRegistry:
     )
     reg.register(
         "GIGG_MMLE",
-        lambda c: fit_gigg_mmle(
-            c.X,
-            c.y,
-            c.groups,
-            task=c.task,
-            seed=c.seed,
-            sampler=c.sampler,
-            p0=c.p0,
-            **c.gigg_mmle_kwargs,
+        lambda c: (
+            _fit_gigg_mmle_highdim(c, method_name="GIGG_MMLE")
+            if str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
+            else _fit_gigg_mmle_lowdim(c, method_name="GIGG_MMLE")
         ),
+    )
+    reg.register(
+        "GIGG_MMLE_LowDim",
+        lambda c: _fit_gigg_mmle_lowdim(c, method_name="GIGG_MMLE_LowDim"),
+    )
+    reg.register(
+        "GIGG_MMLE_HighDim",
+        lambda c: _fit_gigg_mmle_highdim(c, method_name="GIGG_MMLE_HighDim"),
     )
     reg.register(
         "GIGG_b_small",

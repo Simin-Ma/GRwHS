@@ -582,6 +582,8 @@ def method_display_name(name: str) -> str:
         "RHS_HighDim": "RHS-HighDim",
         "RHS_Gibbs": "RHS-Gibbs",
         "GIGG_MMLE": "GIGG-MMLE",
+        "GIGG_MMLE_LowDim": "GIGG-MMLE-LowDim",
+        "GIGG_MMLE_HighDim": "GIGG-MMLE-HighDim",
         "GIGG_b_small": "GIGG (b=1/n)",
         "GIGG_GHS": "GIGG-GHS (b=1/2)",
         "GIGG_b_large": "GIGG (b=1)",
@@ -604,6 +606,9 @@ def method_result_label(name: str) -> str:
         "RHS_LowDim": "RHS-LowDim [stan_rstanarm_hs]",
         "RHS_HighDim": "RHS-HighDim [woodbury_slice]",
         "RHS_Gibbs": "RHS-Gibbs [woodbury_slice]",
+        "GIGG_MMLE": "GIGG-MMLE",
+        "GIGG_MMLE_LowDim": "GIGG-MMLE-LowDim [mmle_direct]",
+        "GIGG_MMLE_HighDim": "GIGG-MMLE-HighDim [two_stage_fixed]",
         "RHS_oracle": "RHS_oracle [stan_rstanarm_hs]",
     }
     return mapping.get(name, method_display_name(name))

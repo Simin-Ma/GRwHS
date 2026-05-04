@@ -239,6 +239,7 @@ def fit_gigg_mmle(
     lambda_constraint_mode: str = "none",
     q_constraint_mode: str = "hard",
     exact_highdim_fastpath: bool = False,
+    method_label: str = "GIGG_MMLE",
     no_retry: bool = False,
     progress_bar: bool = True,
 ) -> FitResult:
@@ -253,8 +254,8 @@ def fit_gigg_mmle(
     _ = bool(no_retry)  # caller-level flag; intentionally unused here
     if str(task).lower() == "logistic":
         return fit_error_result(
-            "GIGG_MMLE",
-            "NotImplementedError: GIGG_MMLE is gaussian-only in this repository",
+            str(method_label),
+            f"NotImplementedError: {method_label} is gaussian-only in this repository",
         )
     if not bool(exact_highdim_fastpath):
         _validate_gigg_master_alignment(
@@ -471,7 +472,7 @@ def fit_gigg_mmle(
             )
             b_hat = getattr(final_model, "b_mean_", None)
 
-        result = _extract_and_diagnose(final_model, "GIGG_MMLE", sampler, float(total_runtime))
+        result = _extract_and_diagnose(final_model, str(method_label), sampler, float(total_runtime))
         diag = dict(result.diagnostics or {})
         if stage_info:
             diag["staged_runtime"] = stage_info
@@ -481,6 +482,8 @@ def fit_gigg_mmle(
                 "a_estimate": (np.full(len(groups_use), 1.0 / max(int(n), 1), dtype=float)).tolist(),
             }
         diag["exact_highdim_fastpath"] = bool(exact_highdim_fastpath)
+        diag["gigg_sampler_name"] = str(method_label)
+        diag["gigg_sampler_strategy"] = "high_dim" if bool(highdim_case) else "low_dim"
         diag["gigg_runtime_toggles"] = {
             "btrick": bool(toggles["use_btrick"]),
             "num_chains": int(toggles["num_chains"]),
@@ -488,13 +491,14 @@ def fit_gigg_mmle(
             "stable_solve": bool(toggles["stable_solve"]),
             "mmle_highdim_fastpath": bool(toggles["mmle_highdim_fastpath"]),
             "highdim_two_stage_mmle": bool(highdim_case),
+            "path_name": "GIGG_MMLE_HighDim" if bool(highdim_case) else "GIGG_MMLE_LowDim",
         }
         result.diagnostics = diag
         result.group_scale_draws = None if result.group_scale_draws is None else np.asarray(result.group_scale_draws, dtype=float)
-        result.method = "GIGG_MMLE"
+        result.method = str(method_label)
         return result
     except Exception as exc:
-        return fit_error_result("GIGG_MMLE", f"{type(exc).__name__}: {exc}")
+        return fit_error_result(str(method_label), f"{type(exc).__name__}: {exc}")
 
 
 # GIGG Fixed

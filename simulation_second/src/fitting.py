@@ -33,6 +33,17 @@ def _grrhs_defaults_for_package(package: str | None) -> dict[str, Any]:
     }
 
 
+def _gigg_mmle_defaults_for_package(package: str | None) -> dict[str, Any]:
+    strategy = _rhs_sampler_strategy_for_package(package)
+    if strategy == "high_dim":
+        return {
+            "exact_highdim_fastpath": True,
+        }
+    return {
+        "exact_highdim_fastpath": False,
+    }
+
+
 def sampler_config_from_gate(gate: ConvergenceGateSpec) -> SamplerConfig:
     return SamplerConfig(
         chains=int(gate.chains),
@@ -68,6 +79,10 @@ def fit_benchmark_methods(
         **_grrhs_defaults_for_package(benchmark_package),
         **dict(grrhs_kwargs or {}),
     }
+    gigg_merged = {
+        **_gigg_mmle_defaults_for_package(benchmark_package),
+        **dict(gigg_config or {}),
+    }
     return legacy_fit_all_methods(
         X,
         y,
@@ -79,7 +94,7 @@ def fit_benchmark_methods(
         sampler=sampler_config_from_gate(gate),
         grrhs_kwargs=grrhs_merged,
         methods=[str(method) for method in methods],
-        gigg_config=dict(gigg_config or {}),
+        gigg_config=gigg_merged,
         bayes_min_chains=int(gate.bayes_min_chains),
         enforce_bayes_convergence=bool(gate.enforce_bayes_convergence),
         max_convergence_retries=int(gate.max_convergence_retries),
