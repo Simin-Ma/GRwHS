@@ -449,3 +449,119 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
         )
     )
     return result_paths
+
+
+def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        records.append(dict(json.loads(text)))
+    return records
+
+
+def finalize_real_data_results_dir(
+    results_dir: Path | str,
+    *,
+    method_order: Sequence[str],
+    baseline_method: str = "",
+    required_metrics_for_pairing: Sequence[str] = DEFAULT_REQUIRED_METRICS,
+    build_tables: bool = True,
+) -> dict[str, str]:
+    pd = load_pandas()
+    out_dir = Path(results_dir)
+    raw_path = out_dir / "raw_results.csv"
+    artifact_catalog_path = out_dir / "artifact_catalog.json"
+    incremental_raw_path = out_dir / "raw_results_incremental.jsonl"
+    incremental_artifacts_path = out_dir / "artifact_catalog_incremental.jsonl"
+
+    if raw_path.exists():
+        raw = pd.read_csv(raw_path)
+    else:
+        raw = pd.DataFrame(_load_jsonl_records(incremental_raw_path))
+    if raw.empty:
+        raise ValueError(f"No raw result rows found in {out_dir}")
+    if {"dataset_id", "replicate_id", "method"}.issubset(raw.columns):
+        raw = raw.sort_values(["dataset_id", "replicate_id", "method"], kind="stable").reset_index(drop=True)
+
+    artifact_rows = _load_jsonl_records(incremental_artifacts_path)
+    group_cols = default_dataset_group_cols(raw)
+    summary = build_summary(
+        raw,
+        group_cols=group_cols,
+        method_order=method_order,
+        required_metric_cols=DEFAULT_REQUIRED_METRICS,
+    )
+    paired_raw, paired_stats, summary_paired = build_paired_summary(
+        raw,
+        group_cols=group_cols,
+        method_levels=method_order,
+        required_metric_cols=required_metrics_for_pairing,
+        method_order=method_order,
+    )
+    paired_deltas = build_paired_deltas(
+        paired_raw,
+        group_cols=group_cols,
+        baseline_method=baseline_method,
+    )
+    selection_stability = build_selection_stability(
+        raw,
+        group_cols=group_cols,
+        required_metric_cols=required_metrics_for_pairing,
+    )
+    group_selection_frequency = build_group_selection_frequency(
+        raw,
+        group_cols=group_cols,
+        required_metric_cols=required_metrics_for_pairing,
+    )
+
+    paths = {
+        "raw_results": str(raw_path),
+        "summary": str(out_dir / "summary.csv"),
+        "raw_results_paired": str(out_dir / "raw_results_paired.csv"),
+        "paired_replicate_stats": str(out_dir / "paired_replicate_stats.csv"),
+        "summary_paired": str(out_dir / "summary_paired.csv"),
+        "summary_paired_deltas": str(out_dir / "summary_paired_deltas.csv"),
+        "selection_stability": str(out_dir / "selection_stability.csv"),
+        "group_selection_frequency": str(out_dir / "group_selection_frequency.csv"),
+        "artifact_catalog": str(artifact_catalog_path),
+    }
+    raw.to_csv(raw_path, index=False)
+    summary.to_csv(paths["summary"], index=False)
+    paired_raw.to_csv(paths["raw_results_paired"], index=False)
+    paired_stats.to_csv(paths["paired_replicate_stats"], index=False)
+    summary_paired.to_csv(paths["summary_paired"], index=False)
+    paired_deltas.to_csv(paths["summary_paired_deltas"], index=False)
+    selection_stability.to_csv(paths["selection_stability"], index=False)
+    group_selection_frequency.to_csv(paths["group_selection_frequency"], index=False)
+    save_json(artifact_rows, artifact_catalog_path)
+
+    if bool(build_tables):
+        paths.update(
+            build_paper_tables(
+                raw,
+                out_dir=out_dir / "paper_tables",
+                method_order=method_order,
+                group_cols=group_cols,
+                required_metric_cols=required_metrics_for_pairing,
+            )
+        )
+
+    manifest_path = write_json_manifest(
+        {
+            "package": "real_data_experiment",
+            "finalized_at": datetime.now().isoformat(timespec="seconds"),
+            "run_dir": str(out_dir),
+            "n_rows": int(raw.shape[0]),
+            "methods": list(method_order),
+            "group_cols": list(group_cols),
+            "result_paths": dict(paths),
+        },
+        out_dir / "run_manifest.json",
+    )
+    paths["run_dir"] = str(out_dir)
+    paths["run_manifest"] = str(manifest_path)
+    return paths

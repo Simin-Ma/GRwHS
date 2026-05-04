@@ -231,8 +231,8 @@ def benchmark_config_from_payload(payload: Mapping[str, Any]) -> BenchmarkConfig
                     gate_payload.get("enforce_bayes_convergence", True)
                 ),
                 max_convergence_retries=int(gate_payload.get("max_convergence_retries", -1)),
-                bayes_min_chains=int(gate_payload.get("bayes_min_chains", 2)),
-                chains=int(gate_payload.get("chains", 2)),
+                bayes_min_chains=int(gate_payload.get("bayes_min_chains", 4)),
+                chains=int(gate_payload.get("chains", 4)),
                 warmup=int(gate_payload.get("warmup", 250)),
                 post_warmup_draws=int(gate_payload.get("post_warmup_draws", 250)),
                 adapt_delta=float(gate_payload.get("adapt_delta", 0.90)),

@@ -4,8 +4,8 @@ description: Real-data comparison suite for GR-RHS and baseline methods.
 convergence_gate:
   enforce_bayes_convergence: true
   max_convergence_retries: -1
-  bayes_min_chains: 2
-  chains: 2
+  bayes_min_chains: 4
+  chains: 4
   warmup: 250
   post_warmup_draws: 250
   adapt_delta: 0.9
@@ -164,3 +164,59 @@ datasets:
     repeats: 1
     shuffle: true
     notes: Micro runner is a lightweight real-data closure check derived from the same GSE40279 preprocessing pipeline as the 2000-feature smoke asset.
+
+  - dataset_id: tcga_brca_xena_multiomics_age_blocks
+    label: TCGA-BRCA Xena Multi-Omics Age
+    description: TCGA breast cancer primary-tumor multi-omics regression from UCSC Xena with mRNA, miRNA, and gene-level copy-number blocks.
+    loader:
+      path_X: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_blocks/X.npy
+      path_y: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_blocks/y.npy
+      path_feature_names: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_blocks/feature_names.txt
+      path_group_map: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_blocks/group_map.json
+      path_group_labels: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_blocks/group_labels.txt
+    task: gaussian
+    methods:
+      - GR_RHS
+      - RHS
+      - GHS_plus
+      - GIGG_MMLE
+      - LASSO_CV
+      - OLS
+    target_label: age_at_initial_pathologic_diagnosis
+    target_transform: none
+    response_standardization: train_center
+    covariate_mode: none
+    p0_strategy: sqrt_p
+    p0_groups_strategy: half_groups
+    test_fraction: 0.2
+    repeats: 10
+    shuffle: true
+    notes: Runner-ready open-access TCGA-BRCA benchmark prepared by scripts/prepare_tcga_brca_xena_multiomics.py; PAM50 labels are retained in the analysis bundle for future subtype experiments.
+
+  - dataset_id: tcga_brca_xena_multiomics_age_omics_chromosome
+    label: TCGA-BRCA Xena Multi-Omics Age (omics x chromosome)
+    description: TCGA breast cancer primary-tumor multi-omics regression using disjoint omics-by-chromosome groups from UCSC Xena mRNA, miRNA, and gene-level copy-number data.
+    loader:
+      path_X: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/X.npy
+      path_y: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/y.npy
+      path_feature_names: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/feature_names.txt
+      path_group_map: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/group_map.json
+      path_group_labels: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/group_labels.txt
+    task: gaussian
+    methods:
+      - GR_RHS
+      - RHS
+      - GHS_plus
+      - GIGG_MMLE
+      - LASSO_CV
+      - OLS
+    target_label: age_at_initial_pathologic_diagnosis
+    target_transform: none
+    response_standardization: train_center
+    covariate_mode: none
+    p0_strategy: sqrt_p
+    p0_groups_strategy: half_groups
+    test_fraction: 0.2
+    repeats: 10
+    shuffle: true
+    notes: Disjoint refinement of omics-level blocks by chromosome. HGNC maps mRNA/CNV gene symbols; miRBase v22 maps mature miRNA MIMAT accessions. Unmapped or ambiguous features are excluded from this refined asset.

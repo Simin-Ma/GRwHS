@@ -5,7 +5,7 @@ methods:
   - GIGG_MMLE
   - GHS_plus
 sampler:
-  chains: 2
+  chains: 4
   warmup: 500
   post_warmup_draws: 500
   adapt_delta: 0.95

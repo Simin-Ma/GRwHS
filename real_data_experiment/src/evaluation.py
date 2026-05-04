@@ -188,6 +188,18 @@ def _overall_mean(values: Sequence[float]) -> float:
     return float(np.mean(finite)) if finite.size else float("nan")
 
 
+def _diagnostic_float(result: FitResult, section: str, key: str) -> float:
+    diag = result.diagnostics if isinstance(result.diagnostics, dict) else {}
+    payload = diag.get(section) if isinstance(diag, dict) else None
+    if not isinstance(payload, dict):
+        return float("nan")
+    try:
+        value = float(payload.get(key, float("nan")))
+    except (TypeError, ValueError):
+        return float("nan")
+    return value if np.isfinite(value) else float("nan")
+
+
 def evaluate_method_result(
     result: FitResult,
     split: PreparedSplit,
@@ -197,6 +209,10 @@ def evaluate_method_result(
         "method_label": method_display_name(result.method),
         "method_type": "bayesian" if _is_bayesian_method(result.method) else "classical",
         "fit_attempts": int(_attempts_used(result)),
+        "predictive_rhat_max": _diagnostic_float(result, "convergence_partition", "predictive_rhat_max"),
+        "predictive_ess_min": _diagnostic_float(result, "convergence_partition", "predictive_ess_min"),
+        "global_scale_rhat_max": _diagnostic_float(result, "convergence_partition", "global_scale_rhat_max"),
+        "global_scale_ess_min": _diagnostic_float(result, "convergence_partition", "global_scale_ess_min"),
     }
     if result.beta_mean is None:
         return {

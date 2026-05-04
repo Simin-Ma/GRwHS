@@ -83,9 +83,25 @@ def build_default_method_registry() -> MethodRegistry:
             method_name=str(method_name),
         )
 
-    reg.register(
-        "GR_RHS",
-        lambda c: fit_gr_rhs(
+    def _grrhs_kwargs_for_strategy(c: MethodContext, *, high_dim: bool) -> dict:
+        base = dict(c.grrhs_kwargs)
+        if high_dim:
+            defaults = {
+                "tau_target": "groups",
+                "sampler_backend": "collapsed_profile",
+                "use_local_scale": False,
+                "progress_bar": False,
+            }
+        else:
+            defaults = {
+                "tau_target": "groups",
+                "sampler_backend": "gibbs_staged",
+                "progress_bar": False,
+            }
+        return {**defaults, **base}
+
+    def _fit_grrhs_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
+        return fit_gr_rhs(
             c.X,
             c.y,
             c.groups,
@@ -93,8 +109,38 @@ def build_default_method_registry() -> MethodRegistry:
             seed=c.seed,
             p0=c.grrhs_p0,
             sampler=c.sampler,
-            **c.grrhs_kwargs,
+            method_name=str(method_name),
+            **_grrhs_kwargs_for_strategy(c, high_dim=False),
+        )
+
+    def _fit_grrhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
+        return fit_gr_rhs(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.grrhs_p0,
+            sampler=c.sampler,
+            method_name=str(method_name),
+            **_grrhs_kwargs_for_strategy(c, high_dim=True),
+        )
+
+    reg.register(
+        "GR_RHS",
+        lambda c: (
+            _fit_grrhs_highdim(c, method_name="GR_RHS")
+            if str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
+            else _fit_grrhs_lowdim(c, method_name="GR_RHS")
         ),
+    )
+    reg.register(
+        "GR_RHS_LowDim",
+        lambda c: _fit_grrhs_lowdim(c, method_name="GR_RHS_LowDim"),
+    )
+    reg.register(
+        "GR_RHS_HighDim",
+        lambda c: _fit_grrhs_highdim(c, method_name="GR_RHS_HighDim"),
     )
     reg.register(
         "RHS",

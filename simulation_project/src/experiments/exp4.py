@@ -239,7 +239,7 @@ def run_exp4_variant_ablation(
     log_path = str(base / "logs" / "exp4_variant_ablation.log")
 
     sampler = _sampler_for_exp4(_sampler_for_standard())
-    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else 2
+    bayes_min_chains_use = int(bayes_min_chains) if bayes_min_chains is not None else 4
     if not bool(enforce_bayes_convergence):
         sampler = _smoke_sampler_for_exp4(sampler)
         if bayes_min_chains is None:

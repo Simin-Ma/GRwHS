@@ -19,7 +19,7 @@ MASTER_SEED = 20260415
 
 @dataclass(frozen=True)
 class SamplerConfig:
-    chains: int = 2
+    chains: int = 4
     warmup: int = 500
     post_warmup_draws: int = 500
     adapt_delta: float = 0.95
@@ -248,6 +248,31 @@ def diagnostics_summary_for_method(
     merged = {
         "convergence_detail": detail,
         "sampler_diagnostics": getattr(model, "sampler_diagnostics_", {}),
+    }
+    predictive_rhats: List[float] = []
+    predictive_esses: List[float] = []
+    global_scale_rhats: List[float] = []
+    global_scale_esses: List[float] = []
+    for name, item in detail.items():
+        if not isinstance(item, Mapping):
+            continue
+        rv = item.get("rhat_max", float("nan"))
+        ev = item.get("ess_min", float("nan"))
+        if str(name) in {"beta", "kappa", "group_scale", "lambda"}:
+            if np.isfinite(rv):
+                predictive_rhats.append(float(rv))
+            if np.isfinite(ev):
+                predictive_esses.append(float(ev))
+        if str(name) in {"tau", "tau2", "sigma", "sigma2"}:
+            if np.isfinite(rv):
+                global_scale_rhats.append(float(rv))
+            if np.isfinite(ev):
+                global_scale_esses.append(float(ev))
+    merged["convergence_partition"] = {
+        "predictive_rhat_max": float(max(predictive_rhats)) if predictive_rhats else float("nan"),
+        "predictive_ess_min": float(min(predictive_esses)) if predictive_esses else float("nan"),
+        "global_scale_rhat_max": float(max(global_scale_rhats)) if global_scale_rhats else float("nan"),
+        "global_scale_ess_min": float(min(global_scale_esses)) if global_scale_esses else float("nan"),
     }
     return rhat_max, ess_min, div_ratio, converged, merged
 
@@ -550,6 +575,8 @@ def logistic_pseudo_sigma(y: np.ndarray, *, clip_eps: float = 1e-3) -> float:
 def method_display_name(name: str) -> str:
     mapping = {
         "GR_RHS": "GR-RHS",
+        "GR_RHS_LowDim": "GR-RHS-LowDim",
+        "GR_RHS_HighDim": "GR-RHS-HighDim",
         "RHS": "RHS",
         "RHS_LowDim": "RHS-LowDim",
         "RHS_HighDim": "RHS-HighDim",
@@ -570,6 +597,9 @@ def method_display_name(name: str) -> str:
 
 def method_result_label(name: str) -> str:
     mapping = {
+        "GR_RHS": "GR-RHS",
+        "GR_RHS_LowDim": "GR-RHS-LowDim [gibbs_staged]",
+        "GR_RHS_HighDim": "GR-RHS-HighDim [collapsed_profile]",
         "RHS": "RHS",
         "RHS_LowDim": "RHS-LowDim [stan_rstanarm_hs]",
         "RHS_HighDim": "RHS-HighDim [woodbury_slice]",

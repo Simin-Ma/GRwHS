@@ -591,6 +591,14 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         b_arr = np.load(str(payload["b_file"]), allow_pickle=False)
     else:
         b_arr = np.asarray(payload["b"], dtype=float) if payload["b"] is not None else None
+    if payload.get("lambda_sq_inits_file"):
+        lambda_sq_inits_arr = np.load(str(payload["lambda_sq_inits_file"]), allow_pickle=False)
+    else:
+        lambda_sq_inits_arr = np.asarray(payload["lambda_sq_inits"], dtype=float) if payload.get("lambda_sq_inits") is not None else None
+    if payload.get("gamma_sq_inits_file"):
+        gamma_sq_inits_arr = np.load(str(payload["gamma_sq_inits_file"]), allow_pickle=False)
+    else:
+        gamma_sq_inits_arr = np.asarray(payload["gamma_sq_inits"], dtype=float) if payload.get("gamma_sq_inits") is not None else None
 
     model = GIGGRegression(
         method=str(payload["method"]),
@@ -624,6 +632,7 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         init_scale_blend=float(payload.get("init_scale_blend", 0.0)),
         randomize_group_order=bool(payload.get("randomize_group_order", False)),
         locals_first_beta_update=bool(payload.get("locals_first_beta_update", False)),
+        extra_local_scale_sweeps=int(payload.get("extra_local_scale_sweeps", 0)),
         lambda_vectorized_update=bool(payload.get("lambda_vectorized_update", False)),
         extra_beta_refresh_prob=float(payload.get("extra_beta_refresh_prob", 0.0)),
         lambda_constraint_mode=str(payload.get("lambda_constraint_mode", "none")),
@@ -639,6 +648,8 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         C=C_arr,
         alpha_inits=alpha_inits_arr,
         beta_inits=beta_inits_arr,
+        lambda_sq_inits=lambda_sq_inits_arr,
+        gamma_sq_inits=gamma_sq_inits_arr,
         a=a_arr,
         b=b_arr,
         method=str(payload["method"]),
@@ -702,6 +713,7 @@ class GIGGRegression:
     init_scale_blend: float = 0.0
     randomize_group_order: bool = False
     locals_first_beta_update: bool = False
+    extra_local_scale_sweeps: int = 0
     lambda_vectorized_update: bool = False
     extra_beta_refresh_prob: float = 0.0
     lambda_constraint_mode: str = "none"  # original R sampler does not cap lambda_sq
@@ -767,6 +779,7 @@ class GIGGRegression:
         self.mmle_window = int(max(1, self.mmle_window))
         self.mmle_highdim_fastpath = bool(self.mmle_highdim_fastpath)
         self.extra_beta_refresh_prob = float(min(max(self.extra_beta_refresh_prob, 0.0), 1.0))
+        self.extra_local_scale_sweeps = int(max(0, self.extra_local_scale_sweeps))
         mode = str(self.lambda_constraint_mode).strip().lower()
         if mode not in {"hard", "soft", "none"}:
             raise ValueError("lambda_constraint_mode must be one of {'hard','soft','none'}.")
@@ -862,6 +875,8 @@ class GIGGRegression:
         C: Optional[np.ndarray],
         alpha_inits: Optional[np.ndarray],
         beta_inits: Optional[np.ndarray],
+        lambda_sq_inits: Optional[np.ndarray],
+        gamma_sq_inits: Optional[np.ndarray],
         a: Optional[np.ndarray],
         b: Optional[np.ndarray],
         method: str,
@@ -911,6 +926,20 @@ class GIGGRegression:
                         beta_init_payload = np.asarray(beta_inits_arr[chain_idx], dtype=float)
                     else:
                         beta_init_payload = np.asarray(beta_inits_arr, dtype=float)
+                lambda_sq_init_payload = None
+                if lambda_sq_inits is not None:
+                    lambda_sq_inits_arr = np.asarray(lambda_sq_inits, dtype=float)
+                    if lambda_sq_inits_arr.ndim == 2:
+                        lambda_sq_init_payload = np.asarray(lambda_sq_inits_arr[chain_idx], dtype=float)
+                    else:
+                        lambda_sq_init_payload = np.asarray(lambda_sq_inits_arr, dtype=float)
+                gamma_sq_init_payload = None
+                if gamma_sq_inits is not None:
+                    gamma_sq_inits_arr = np.asarray(gamma_sq_inits, dtype=float)
+                    if gamma_sq_inits_arr.ndim == 2:
+                        gamma_sq_init_payload = np.asarray(gamma_sq_inits_arr[chain_idx], dtype=float)
+                    else:
+                        gamma_sq_init_payload = np.asarray(gamma_sq_inits_arr, dtype=float)
                 payloads.append(
                     {
                         "method": method,
@@ -943,6 +972,7 @@ class GIGGRegression:
                         "init_scale_blend": self.init_scale_blend,
                         "randomize_group_order": self.randomize_group_order,
                         "locals_first_beta_update": self.locals_first_beta_update,
+                        "extra_local_scale_sweeps": self.extra_local_scale_sweeps,
                         "lambda_vectorized_update": self.lambda_vectorized_update,
                         "extra_beta_refresh_prob": self.extra_beta_refresh_prob,
                         "lambda_constraint_mode": self.lambda_constraint_mode,
@@ -956,6 +986,8 @@ class GIGGRegression:
                         "groups": [list(g) for g in groups],
                         "alpha_inits": alpha_init_payload,
                         "beta_inits": beta_init_payload,
+                        "lambda_sq_inits": lambda_sq_init_payload,
+                        "gamma_sq_inits": gamma_sq_init_payload,
                         "a": None if data_paths else (None if a is None else np.asarray(a, dtype=float)),
                         "b": None if data_paths else (None if b is None else np.asarray(b, dtype=float)),
                         "X_file": str(data_paths["X_file"]) if "X_file" in data_paths else None,
@@ -963,6 +995,8 @@ class GIGGRegression:
                         "C_file": str(data_paths["C_file"]) if "C_file" in data_paths else None,
                         "alpha_inits_file": None,
                         "beta_inits_file": None,
+                        "lambda_sq_inits_file": None,
+                        "gamma_sq_inits_file": None,
                         "a_file": str(data_paths["a_file"]) if "a_file" in data_paths else None,
                         "b_file": str(data_paths["b_file"]) if "b_file" in data_paths else None,
                     }
@@ -1095,6 +1129,8 @@ class GIGGRegression:
         grp_idx: Optional[Sequence[int]] = None,
         alpha_inits: Optional[np.ndarray] = None,
         beta_inits: Optional[np.ndarray] = None,
+        lambda_sq_inits: Optional[np.ndarray] = None,
+        gamma_sq_inits: Optional[np.ndarray] = None,
         a: Optional[Sequence[float]] = None,
         b: Optional[Sequence[float]] = None,
         method: Optional[str] = None,
@@ -1173,6 +1209,32 @@ class GIGGRegression:
         else:
             alpha = np.zeros(k, dtype=float)
 
+        if lambda_sq_inits is not None:
+            lambda_sq_arr = np.asarray(lambda_sq_inits, dtype=float)
+            if self.num_chains > 1 and lambda_sq_arr.ndim == 2:
+                if lambda_sq_arr.shape != (int(self.num_chains), p):
+                    raise ValueError("lambda_sq_inits for multichain fit must have shape (num_chains, p).")
+                lambda_sq_seed = lambda_sq_arr
+            else:
+                lambda_sq_seed = lambda_sq_arr.reshape(-1)
+                if lambda_sq_seed.size != p:
+                    raise ValueError("lambda_sq_inits must have length p.")
+        else:
+            lambda_sq_seed = np.ones(p, dtype=float)
+
+        if gamma_sq_inits is not None:
+            gamma_sq_arr = np.asarray(gamma_sq_inits, dtype=float)
+            if self.num_chains > 1 and gamma_sq_arr.ndim == 2:
+                if gamma_sq_arr.shape != (int(self.num_chains), G):
+                    raise ValueError("gamma_sq_inits for multichain fit must have shape (num_chains, G).")
+                gamma_sq_seed = gamma_sq_arr
+            else:
+                gamma_sq_seed = gamma_sq_arr.reshape(-1)
+                if gamma_sq_seed.size != G:
+                    raise ValueError("gamma_sq_inits must have length G.")
+        else:
+            gamma_sq_seed = np.ones(G, dtype=float)
+
         if self.num_chains > 1:
             return self._fit_multichain(
                 X,
@@ -1181,6 +1243,8 @@ class GIGGRegression:
                 C=C_arr,
                 alpha_inits=alpha,
                 beta_inits=beta,
+                lambda_sq_inits=lambda_sq_seed,
+                gamma_sq_inits=gamma_sq_seed,
                 a=a_vec,
                 b=b_vec,
                 method=method_eff,
@@ -1194,8 +1258,8 @@ class GIGGRegression:
         rng = self.rng_
         group_arrays = [np.asarray(idxs, dtype=int) for idxs in normalised_groups]
         group_order = np.arange(G, dtype=int)
-        lambda_sq = np.ones(p, dtype=float)
-        gamma_sq = np.ones(G, dtype=float)
+        lambda_sq = np.maximum(np.asarray(lambda_sq_seed, dtype=float).reshape(-1), self.jitter)
+        gamma_sq = np.maximum(np.asarray(gamma_sq_seed, dtype=float).reshape(-1), self.jitter)
         eta = np.ones(G, dtype=float)
         p_vec = _clip_positive_array(a_vec, floor=self.jitter, cap=_POS_CAP)
         q_vec = self._stabilize_q_array(b_vec)
@@ -1322,6 +1386,8 @@ class GIGGRegression:
             sigma_sq = _clip_positive_scalar(sigma_sq, floor=self.jitter)
 
             if not self.locals_first_beta_update:
+                _update_group_scales()
+            for _ in range(int(self.extra_local_scale_sweeps)):
                 _update_group_scales()
             eta.fill(1.0)
             nu_scale = _clip_positive_scalar(1.0 / _clip_positive_scalar(tau_sq, floor=self.jitter) + 1.0 / _clip_positive_scalar(sigma_sq, floor=self.jitter), floor=self.jitter)

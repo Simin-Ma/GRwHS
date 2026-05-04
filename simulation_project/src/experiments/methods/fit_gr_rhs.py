@@ -544,6 +544,13 @@ def _build_gibbs_staged(
     resume_no_burnin: bool = False,
     hard_design: bool = False,
     budget_scale: float | None = None,
+    lambda_active_fraction: float | None = None,
+    lambda_active_min: int | None = None,
+    lambda_full_refresh_every: int | None = None,
+    lambda_warmup_full_refresh: bool | None = None,
+    lambda_random_fraction: float | None = None,
+    grouped_tau_refresh_repeats: int | None = None,
+    grouped_sigma_tau_block_repeats: int | None = None,
 ) -> GRRHS_Gibbs_Staged:
     warmup = max(40, int(sampler.warmup))
     draws = max(20, int(sampler.post_warmup_draws))
@@ -586,8 +593,8 @@ def _build_gibbs_staged(
     transition_window = int(max(window_floor, min(transition_window_cap, round(min_phase_b * 0.62))))
     total_iters = int(max(4, phase_a_max + phase_b_max + draws))
     burnin = int(max(0, min(phase_a_max + phase_b_max, total_iters - 1)))
-    grouped_tau_refresh_repeats = 1
-    grouped_sigma_tau_block_repeats = 2
+    grouped_tau_refresh_repeats_use = 1
+    grouped_sigma_tau_block_repeats_use = 2
     slice_max_steps = 200
     phase_a_late_beta_refresh = True
     phase_b_extra_beta_refresh = True
@@ -605,8 +612,8 @@ def _build_gibbs_staged(
 
     if light_budget:
         slice_max_steps = 96 if not micro_budget else 56
-        grouped_tau_refresh_repeats = 0 if micro_budget else 1
-        grouped_sigma_tau_block_repeats = 0 if micro_budget else 1
+        grouped_tau_refresh_repeats_use = 0 if micro_budget else 1
+        grouped_sigma_tau_block_repeats_use = 0 if micro_budget else 1
         phase_a_refresh_interval = 18 if not micro_budget else 999999
         phase_a_refresh_repeats = 0 if micro_budget else 1
         phase_b_initial_extra_refresh_steps = 8 if not micro_budget else 0
@@ -657,8 +664,41 @@ def _build_gibbs_staged(
         geometry_tol=0.075 if not bool(hard_design) else 0.095,
         transition_tol=0.09 if not bool(hard_design) else 0.11,
         slice_max_steps=int(slice_max_steps),
-        grouped_tau_refresh_repeats=int(grouped_tau_refresh_repeats),
-        grouped_sigma_tau_block_repeats=int(grouped_sigma_tau_block_repeats),
+        grouped_tau_refresh_repeats=(
+            int(grouped_tau_refresh_repeats)
+            if grouped_tau_refresh_repeats is not None
+            else int(grouped_tau_refresh_repeats_use)
+        ),
+        grouped_sigma_tau_block_repeats=(
+            int(grouped_sigma_tau_block_repeats)
+            if grouped_sigma_tau_block_repeats is not None
+            else int(grouped_sigma_tau_block_repeats_use)
+        ),
+        lambda_active_fraction=(
+            float(lambda_active_fraction)
+            if lambda_active_fraction is not None
+            else (0.35 if bool(use_local_scale) and hard_design else 1.0)
+        ),
+        lambda_active_min=(
+            int(lambda_active_min)
+            if lambda_active_min is not None
+            else (64 if bool(use_local_scale) and hard_design else 32)
+        ),
+        lambda_full_refresh_every=(
+            int(lambda_full_refresh_every)
+            if lambda_full_refresh_every is not None
+            else (6 if bool(use_local_scale) and hard_design else 1)
+        ),
+        lambda_warmup_full_refresh=(
+            bool(lambda_warmup_full_refresh)
+            if lambda_warmup_full_refresh is not None
+            else True
+        ),
+        lambda_random_fraction=(
+            float(lambda_random_fraction)
+            if lambda_random_fraction is not None
+            else (0.45 if bool(use_local_scale) and hard_design else 0.35)
+        ),
         phase_a_late_beta_refresh=bool(phase_a_late_beta_refresh),
         phase_b_extra_beta_refresh=bool(phase_b_extra_beta_refresh),
         phase_a_refresh_interval=int(phase_a_refresh_interval),
@@ -753,8 +793,16 @@ def fit_gr_rhs(
     warm_start_strategy: str = "ridge",
     sampler_backend: str | None = None,
     gibbs_budget_scale: float | None = None,
+    lambda_active_fraction: float | None = None,
+    lambda_active_min: int | None = None,
+    lambda_full_refresh_every: int | None = None,
+    lambda_warmup_full_refresh: bool | None = None,
+    lambda_random_fraction: float | None = None,
+    grouped_tau_refresh_repeats: int | None = None,
+    grouped_sigma_tau_block_repeats: int | None = None,
     collapsed_kappa_reparameterization: str = "prior_logit_affine",
     collapsed_dense_mass: bool | None = None,
+    method_name: str = "GR_RHS",
 ) -> FitResult:
     tracked = ["beta", "tau", "kappa"]
     groups_use = as_int_groups(groups)
@@ -892,6 +940,13 @@ def fit_gr_rhs(
                 resume_no_burnin=bool(init_states),
                 hard_design=bool(design_profile.get("hard_design", False)),
                 budget_scale=gibbs_budget_scale,
+                lambda_active_fraction=lambda_active_fraction,
+                lambda_active_min=lambda_active_min,
+                lambda_full_refresh_every=lambda_full_refresh_every,
+                lambda_warmup_full_refresh=lambda_warmup_full_refresh,
+                lambda_random_fraction=lambda_random_fraction,
+                grouped_tau_refresh_repeats=grouped_tau_refresh_repeats,
+                grouped_sigma_tau_block_repeats=grouped_sigma_tau_block_repeats,
             )
 
         def _make_collapsed_profile(
@@ -1091,6 +1146,8 @@ def fit_gr_rhs(
         diagnostics = dict(details or {})
         if resume_payload_out is not None:
             diagnostics["retry_resume_payload"] = resume_payload_out
+        diagnostics["grrhs_sampler_name"] = str(method_name)
+        diagnostics["grrhs_sampler_strategy"] = "high_dim" if backend_name == "collapsed_profile" else "low_dim"
         diagnostics["sampling_strategy"] = {
             "backend": str(backend_name),
             "retry_attempt": int(max(retry_attempt, 0)),
@@ -1115,7 +1172,7 @@ def fit_gr_rhs(
             }
 
         return FitResult(
-            method="GR_RHS",
+            method=str(method_name),
             status="ok",
             beta_mean=None if beta_mean is None else np.asarray(beta_mean, dtype=float),
             beta_draws=None if beta_draws is None else np.asarray(beta_draws, dtype=float),
@@ -1130,7 +1187,7 @@ def fit_gr_rhs(
             diagnostics=diagnostics,
         )
     except Exception as exc:
-        res = fit_error_result("GR_RHS", f"{type(exc).__name__}: {exc}")
+        res = fit_error_result(str(method_name), f"{type(exc).__name__}: {exc}")
         res.tau_draws = None
         return res
 

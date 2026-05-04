@@ -87,6 +87,13 @@ def _highdim_mmle_stage_a_iters(gigg_burnin: int, gigg_draws: int) -> tuple[int,
     return max(10, burnin), max(10, draws)
 
 
+def _highdim_stage_b_schedule(gigg_burnin: int, gigg_draws: int) -> tuple[int, int]:
+    total = int(max(20, gigg_burnin + gigg_draws))
+    burnin = int(min(max(50, gigg_burnin // 12 if gigg_burnin > 0 else 50), max(50, total // 8)))
+    draws = int(max(20, total - burnin))
+    return burnin, draws
+
+
 def _run_gigg_model(
     model: GIGGRegression,
     X: np.ndarray,
@@ -97,6 +104,8 @@ def _run_gigg_model(
     a: Sequence[float] | None = None,
     b: Sequence[float] | None = None,
     beta_inits: np.ndarray | None = None,
+    lambda_sq_inits: np.ndarray | None = None,
+    gamma_sq_inits: np.ndarray | None = None,
 ) -> tuple[GIGGRegression, float]:
     fit_kwargs: dict[str, object] = {
         "groups": as_int_groups(groups),
@@ -109,6 +118,10 @@ def _run_gigg_model(
         fit_kwargs["b"] = b
     if beta_inits is not None:
         fit_kwargs["beta_inits"] = np.asarray(beta_inits, dtype=float)
+    if lambda_sq_inits is not None:
+        fit_kwargs["lambda_sq_inits"] = np.asarray(lambda_sq_inits, dtype=float)
+    if gamma_sq_inits is not None:
+        fit_kwargs["gamma_sq_inits"] = np.asarray(gamma_sq_inits, dtype=float)
     return timed_call(model.fit, X, y, **fit_kwargs)
 
 
@@ -120,6 +133,23 @@ def _select_stage_a_beta_inits(
     if beta_draws is None:
         return None
     arr = np.asarray(beta_draws, dtype=float)
+    if arr.ndim == 3:
+        arr = arr.reshape(-1, arr.shape[-1])
+    elif arr.ndim != 2:
+        return None
+    if arr.shape[0] <= 0:
+        return None
+    if int(num_chains) <= 1:
+        return np.asarray(arr[-1], dtype=float)
+    grid = np.linspace(0.25, 0.75, int(num_chains))
+    idx = np.clip(np.round(grid * max(arr.shape[0] - 1, 0)).astype(int), 0, arr.shape[0] - 1)
+    return np.asarray(arr[idx], dtype=float)
+
+
+def _select_stage_a_group_inits(draws: np.ndarray | None, *, num_chains: int) -> np.ndarray | None:
+    if draws is None:
+        return None
+    arr = np.asarray(draws, dtype=float)
     if arr.ndim == 3:
         arr = arr.reshape(-1, arr.shape[-1])
     elif arr.ndim != 2:
@@ -273,14 +303,15 @@ def fit_gigg_mmle(
 
         if highdim_case:
             stage_a_burnin, stage_a_draws = _highdim_mmle_stage_a_iters(gigg_burnin, gigg_draws)
+            stage_a_chain_count = 1
             stage_a_toggles = _resolve_exact_highdim_gigg_toggles(
                 X=np.asarray(X, dtype=float),
                 sampler=sampler,
                 btrick=bool(btrick),
-                num_chains=1,
+                num_chains=stage_a_chain_count,
                 lambda_vectorized_update=bool(lambda_vectorized_update),
                 stable_solve=True,
-                min_highdim_chains=1,
+                min_highdim_chains=stage_a_chain_count,
             )
             stage_a_model = GIGGRegression(
                 method="mmle",
@@ -288,7 +319,7 @@ def fit_gigg_mmle(
                 n_samples=stage_a_draws,
                 n_thin=1,
                 seed=int(seed),
-                num_chains=1,
+                num_chains=stage_a_chain_count,
                 fit_intercept=False,
                 store_lambda=True,
                 tau_sq_init=1.0,
@@ -326,14 +357,23 @@ def fit_gigg_mmle(
                 getattr(stage_a_model, "coef_samples_", None),
                 num_chains=int(toggles["num_chains"]),
             )
+            lambda_sq_seed = _select_stage_a_group_inits(
+                getattr(stage_a_model, "lambda_samples_", None),
+                num_chains=int(toggles["num_chains"]),
+            )
+            gamma_sq_seed = _select_stage_a_group_inits(
+                getattr(stage_a_model, "gamma2_samples_", None),
+                num_chains=int(toggles["num_chains"]),
+            )
             tau2_stage_a = getattr(stage_a_model, "tau2_samples_", None)
             sigma2_stage_a = getattr(stage_a_model, "sigma2_samples_", None)
             tau_sq_seed = float(np.mean(np.asarray(tau2_stage_a, dtype=float))) if tau2_stage_a is not None else 1.0
             sigma_sq_seed = float(np.mean(np.asarray(sigma2_stage_a, dtype=float))) if sigma2_stage_a is not None else 1.0
+            stage_b_burnin, stage_b_draws = _highdim_stage_b_schedule(gigg_burnin, gigg_draws)
             stage_b_model = GIGGRegression(
                 method="fixed",
-                n_burn_in=gigg_burnin,
-                n_samples=gigg_draws,
+                n_burn_in=stage_b_burnin,
+                n_samples=stage_b_draws,
                 n_thin=1,
                 seed=int(seed),
                 num_chains=int(toggles["num_chains"]),
@@ -348,8 +388,9 @@ def fit_gigg_mmle(
                 init_strategy=str(init_strategy),
                 init_ridge=float(init_ridge),
                 init_scale_blend=float(init_scale_blend),
-                randomize_group_order=bool(randomize_group_order),
-                locals_first_beta_update=bool(highdim_case),
+                randomize_group_order=bool(highdim_case or randomize_group_order),
+                locals_first_beta_update=False,
+                extra_local_scale_sweeps=0,
                 lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
                 extra_beta_refresh_prob=float(extra_beta_refresh_prob),
                 lambda_constraint_mode=str(lambda_constraint_mode),
@@ -364,26 +405,32 @@ def fit_gigg_mmle(
                 a=a_hat.tolist(),
                 b=b_hat_arr.tolist(),
                 beta_inits=None if beta_seed is None else np.asarray(beta_seed, dtype=float),
+                lambda_sq_inits=None if lambda_sq_seed is None else np.asarray(lambda_sq_seed, dtype=float),
+                gamma_sq_inits=None if gamma_sq_seed is None else np.asarray(gamma_sq_seed, dtype=float),
             )
             total_runtime += float(stage_b_runtime)
             stage_info = {
                 "highdim_two_stage": True,
                 "stage_a_mmle": {
-                    "num_chains": 1,
+                    "num_chains": int(stage_a_chain_count),
                     "burnin": int(stage_a_burnin),
                     "draws": int(stage_a_draws),
                     "runtime_seconds": float(stage_a_runtime),
                 },
                 "stage_b_fixed": {
                     "num_chains": int(toggles["num_chains"]),
-                    "burnin": int(gigg_burnin),
-                    "draws": int(gigg_draws),
+                    "burnin": int(stage_b_burnin),
+                    "draws": int(stage_b_draws),
+                    "total_iters": int(stage_b_burnin + stage_b_draws),
                     "runtime_seconds": float(stage_b_runtime),
                     "tau_sq_init": float(max(tau_sq_seed, 1e-8)),
                     "sigma_sq_init": float(max(sigma_sq_seed, 1e-8)),
                     "beta_init_mode": "stage_a_draw_quantiles" if beta_seed is not None and np.asarray(beta_seed).ndim == 2 else "stage_a_draw_last",
-                    "randomize_group_order": bool(randomize_group_order),
-                    "locals_first_beta_update": bool(highdim_case),
+                    "lambda_sq_seeded": bool(lambda_sq_seed is not None),
+                    "gamma_sq_seeded": bool(gamma_sq_seed is not None),
+                    "randomize_group_order": bool(highdim_case or randomize_group_order),
+                    "locals_first_beta_update": False,
+                    "extra_local_scale_sweeps": 0,
                     "extra_beta_refresh_prob": float(extra_beta_refresh_prob),
                 },
             }

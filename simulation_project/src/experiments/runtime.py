@@ -12,10 +12,10 @@ from ..utils import FitResult, SamplerConfig
 # Method lists
 # ---------------------------------------------------------------------------
 METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus", "OLS", "LASSO_CV"]
-KNOWN_METHODS = [*METHODS, "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs"]
+KNOWN_METHODS = [*METHODS, "GR_RHS_LowDim", "GR_RHS_HighDim", "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs"]
 EXP3_GIGG_MODES = ("paper_ref",)
 
-_BAYESIAN_METHODS = {"GR_RHS", "RHS", "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
+_BAYESIAN_METHODS = {"GR_RHS", "GR_RHS_LowDim", "GR_RHS_HighDim", "RHS", "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs", "GIGG_MMLE", "GIGG_b_small", "GIGG_GHS", "GIGG_b_large", "GHS_plus"}
 _BAYESIAN_DEFAULT_CHAINS = 4
 _UNTIL_CONVERGED_RETRY_HARD_CAP = 12
 _RETRY_MAX_WARMUP = 8000
@@ -44,7 +44,7 @@ _SCREENING_RHAT_THRESHOLD = 1.02
 _SCREENING_ESS_THRESHOLD = 250.0
 _GHS_PLUS_DEFAULT_RHAT_THRESHOLD = _DEFAULT_BAYES_RHAT_THRESHOLD
 _GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
-_EXP4_DEFAULT_CHAINS = 2
+_EXP4_DEFAULT_CHAINS = 4
 _EXP4_DEFAULT_WARMUP = 400
 _EXP4_DEFAULT_POST_DRAWS = 400
 _EXP4_DEFAULT_MAX_CONV_RETRIES = 2
@@ -140,7 +140,7 @@ def _gigg_config_default() -> dict[str, Any]:
 def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
     # Unified robust budget for prior-sensitivity in the single-default protocol.
     return SamplerConfig(
-        chains=max(2, int(base.chains)),
+        chains=max(4, int(base.chains)),
         warmup=max(800, int(base.warmup)),
         post_warmup_draws=max(800, int(base.post_warmup_draws)),
         adapt_delta=max(0.95, float(base.adapt_delta)),
@@ -262,14 +262,17 @@ def _invalidate_unconverged_result(res: FitResult, *, method: str, attempts: int
     msg = f"ConvergenceError: {method} did not converge after {attempts} attempt(s)"
     if str(res.error).strip():
         msg = f"{msg}; last_error={res.error}"
-    res.status = "error"
+    diag = dict(res.diagnostics or {})
+    diag["convergence_warning"] = {
+        "method": str(method),
+        "attempts": int(attempts),
+        "message": msg,
+        "posterior_draws_retained": bool(res.beta_mean is not None),
+    }
+    res.diagnostics = diag
+    res.status = "warning"
     res.error = msg
     res.converged = False
-    res.beta_mean = None
-    res.beta_draws = None
-    res.kappa_draws = None
-    res.group_scale_draws = None
-    res.tau_draws = None
     return res
 
 

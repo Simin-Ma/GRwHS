@@ -8,7 +8,7 @@ from typing import Iterable
 
 from ..config import load_real_data_config
 from ..dataset import load_prepared_real_dataset
-from ..runner import run_real_data_experiment
+from ..runner import finalize_real_data_results_dir, run_real_data_experiment
 from ..table_builder import build_paper_tables_from_results_dir
 from ..utils import save_json
 
@@ -90,6 +90,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory containing raw_results.csv or a history root with latest_run.json.",
     )
 
+    finalize = sub.add_parser(
+        "finalize-results",
+        help="Build CSV summaries and paper tables from an existing run directory, including incremental JSONL checkpoints.",
+    )
+    finalize.add_argument(
+        "--results-dir",
+        required=True,
+        help="Run directory containing raw_results.csv or raw_results_incremental.jsonl.",
+    )
+    finalize.add_argument("--baseline-method", default="", help="Optional baseline method for paired deltas.")
+    finalize.add_argument("--no-build-tables", action="store_true", help="Skip paper-table generation.")
+
     return parser
 
 
@@ -133,6 +145,17 @@ def main(argv: list[str] | None = None) -> int:
         result = build_paper_tables_from_results_dir(
             args.results_dir,
             method_order=config.methods.roster,
+        )
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "finalize-results":
+        result = finalize_real_data_results_dir(
+            args.results_dir,
+            method_order=config.methods.roster,
+            baseline_method=str(args.baseline_method or config.runner.baseline_method),
+            required_metrics_for_pairing=config.runner.required_metrics_for_pairing,
+            build_tables=not bool(args.no_build_tables),
         )
         print(json.dumps(result, indent=2))
         return 0

@@ -46,10 +46,15 @@ def _status_is_ok(series) -> Any:
     return series.astype(str).str.strip().str.lower().eq("ok")
 
 
+def _status_is_evaluable(series) -> Any:
+    status = series.astype(str).str.strip().str.lower()
+    return status.isin({"ok", "warning"})
+
+
 def _filter_valid_rows(raw, *, required_metric_cols: Sequence[str]) -> Any:
-    if raw.empty or "status" not in raw.columns or "converged" not in raw.columns:
+    if raw.empty or "status" not in raw.columns:
         return raw.iloc[0:0].copy()
-    valid = _status_is_ok(raw["status"]) & raw["converged"].fillna(False).astype(bool)
+    valid = _status_is_evaluable(raw["status"])
     for col in required_metric_cols:
         if col in raw.columns:
             valid &= raw[col].notna()
@@ -193,7 +198,8 @@ def build_paired_summary(
         required_cols=required_metric_cols,
         method_levels=method_levels,
         status_col="status",
-        status_ok_values=("ok",),
+        status_ok_values=("ok", "warning"),
+        require_converged=False,
     )
     counts = _aggregate_counts(raw, group_cols=group_cols)
     metrics = _aggregate_metrics(paired_raw, group_cols=group_cols, count_name="n_paired")
@@ -206,7 +212,7 @@ def build_paired_summary(
                 continue
             summary[col] = paired_stats[col].iloc[0] if not paired_stats.empty else np.nan
     summary["method_label"] = summary["method"].map(method_display_name)
-    summary["summary_scope"] = "common_converged_paired"
+    summary["summary_scope"] = "common_evaluable_paired"
     summary = _add_metric_ranks(summary, group_cols=group_cols, method_order=method_order)
     return paired_raw, paired_stats, summary
 
@@ -248,12 +254,15 @@ def build_paired_deltas(
         )
 
     for setting_vals, sub in paired_raw.groupby(list(group_cols), dropna=False, sort=False):
-        wide_setting = sub.pivot_table(index="replicate_id", columns="method", values=list(metrics), aggfunc="mean")
+        available_metrics = [str(metric) for metric in metrics if str(metric) in sub.columns]
+        if not available_metrics:
+            continue
+        wide_setting = sub.pivot_table(index="replicate_id", columns="method", values=available_metrics, aggfunc="mean")
         if baseline_method not in wide_setting.columns.get_level_values(1):
             continue
         vals = setting_vals if isinstance(setting_vals, tuple) else (setting_vals,)
         base = {key: value for key, value in zip(group_cols, vals)}
-        for metric in metrics:
+        for metric in available_metrics:
             if metric not in wide_setting.columns.get_level_values(0):
                 continue
             wide = wide_setting[metric]
@@ -356,7 +365,10 @@ def build_selection_stability(
         values = key if isinstance(key, tuple) else (key,)
         base = {name: values[idx] for idx, name in enumerate(list(group_cols) + ["method"])}
         masks = [np.asarray(_parse_json_list(item), dtype=bool) for item in sub["group_selected_json"].tolist()]
-        top_labels = [str(item) for item in sub["top_group_label"].fillna("").astype(str).tolist() if str(item)]
+        if "top_group_label" in sub.columns:
+            top_labels = [str(item) for item in sub["top_group_label"].fillna("").astype(str).tolist() if str(item)]
+        else:
+            top_labels = []
         selected_counts = [int(np.sum(mask)) for mask in masks if mask.size]
         if top_labels:
             label_counts: dict[str, int] = {}

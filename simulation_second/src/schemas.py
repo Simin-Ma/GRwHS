@@ -25,8 +25,8 @@ OPERATIONAL_METRICS: Tuple[str, ...] = ("runtime_mean", "n_runs", "n_ok", "n_con
 class ConvergenceGateSpec:
     enforce_bayes_convergence: bool = True
     max_convergence_retries: int = -1
-    bayes_min_chains: int = 2
-    chains: int = 2
+    bayes_min_chains: int = 4
+    chains: int = 4
     warmup: int = 250
     post_warmup_draws: int = 250
     adapt_delta: float = 0.90
@@ -141,4 +141,3 @@ class GroupedRegressionDataset:
         out["train_shape"] = [int(x) for x in self.X_train.shape]
         out["test_shape"] = [int(x) for x in self.X_test.shape]
         return out
-

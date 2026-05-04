@@ -17,6 +17,22 @@ def _rhs_sampler_strategy_for_package(package: str | None) -> str:
     return "low_dim"
 
 
+def _grrhs_defaults_for_package(package: str | None) -> dict[str, Any]:
+    strategy = _rhs_sampler_strategy_for_package(package)
+    if strategy == "high_dim":
+        return {
+            "tau_target": "groups",
+            "sampler_backend": "collapsed_profile",
+            "use_local_scale": False,
+            "progress_bar": False,
+        }
+    return {
+        "tau_target": "groups",
+        "sampler_backend": "gibbs_staged",
+        "progress_bar": False,
+    }
+
+
 def sampler_config_from_gate(gate: ConvergenceGateSpec) -> SamplerConfig:
     return SamplerConfig(
         chains=int(gate.chains),
@@ -48,6 +64,10 @@ def fit_benchmark_methods(
     method_jobs: int = 1,
     benchmark_package: str = "simulation_second",
 ) -> dict[str, FitResult]:
+    grrhs_merged = {
+        **_grrhs_defaults_for_package(benchmark_package),
+        **dict(grrhs_kwargs or {}),
+    }
     return legacy_fit_all_methods(
         X,
         y,
@@ -57,7 +77,7 @@ def fit_benchmark_methods(
         p0=int(p0),
         p0_groups=int(p0_groups),
         sampler=sampler_config_from_gate(gate),
-        grrhs_kwargs=dict(grrhs_kwargs or {}),
+        grrhs_kwargs=grrhs_merged,
         methods=[str(method) for method in methods],
         gigg_config=dict(gigg_config or {}),
         bayes_min_chains=int(gate.bayes_min_chains),

@@ -1,0 +1,78 @@
+package: real_data_experiment
+description: Full local-scale GR-RHS vs RHS on TCGA-BRCA omics-by-chromosome data using optimized staged Gibbs.
+
+convergence_gate:
+  enforce_bayes_convergence: true
+  max_convergence_retries: 0
+  bayes_min_chains: 2
+  chains: 2
+  warmup: 180
+  post_warmup_draws: 220
+  adapt_delta: 0.9
+  max_treedepth: 11
+  strict_adapt_delta: 0.95
+  strict_max_treedepth: 13
+  rhat_threshold: 1.06
+  ess_threshold: 40.0
+  max_divergence_ratio: 0.02
+
+methods:
+  roster:
+    - GR_RHS_HighDim
+    - RHS_HighDim
+  grrhs_kwargs:
+    tau_target: groups
+    sampler_backend: gibbs_staged
+    use_local_scale: true
+    progress_bar: false
+    gibbs_budget_scale: 1.0
+    lambda_active_fraction: 0.28
+    lambda_active_min: 72
+    lambda_full_refresh_every: 5
+    lambda_warmup_full_refresh: false
+    lambda_random_fraction: 0.45
+    grouped_tau_refresh_repeats: 1
+    grouped_sigma_tau_block_repeats: 2
+  gigg_config:
+    allow_budget_retry: false
+    extra_retry: 0
+    no_retry: true
+
+runner:
+  output_dir: outputs/history/real_data_experiment/tcga_brca_full_omics_chromosome_highdim_grrhs_rhs_gibbs_optimized
+  seed: 20260503
+  n_jobs: 1
+  method_jobs: 1
+  build_tables: true
+  save_splits: true
+  baseline_method: RHS_HighDim
+  required_metrics_for_pairing:
+    - rmse_test
+    - mae_test
+    - lpd_test
+    - r2_test
+
+datasets:
+  - dataset_id: tcga_brca_xena_multiomics_age_omics_chromosome
+    label: TCGA-BRCA Xena Multi-Omics Age (full omics x chromosome)
+    description: Full disjoint omics-by-chromosome groups, full local lambda_j GR-RHS with optimized staged Gibbs.
+    loader:
+      path_X: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/X.npy
+      path_y: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/y.npy
+      path_feature_names: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/feature_names.txt
+      path_group_map: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/group_map.json
+      path_group_labels: data/real/tcga_brca_xena_multiomics/processed/runner_ready_age_omics_chromosome/group_labels.txt
+    task: gaussian
+    methods:
+      - GR_RHS_HighDim
+      - RHS_HighDim
+    target_label: age_at_initial_pathologic_diagnosis
+    target_transform: none
+    response_standardization: train_center
+    covariate_mode: none
+    p0_strategy: sqrt_p
+    p0_groups_strategy: sqrt_groups
+    test_fraction: 0.2
+    repeats: 1
+    shuffle: true
+    notes: Optimized full local-scale run; lambda_j uses signal-plus-random active refresh with periodic full refresh.

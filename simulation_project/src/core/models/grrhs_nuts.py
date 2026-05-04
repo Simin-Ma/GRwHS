@@ -618,6 +618,11 @@ class GRRHS_Gibbs:
     grouped_tau_refresh_repeats: int = 1
     grouped_tau_sigma_relative_update: bool = True
     grouped_sigma_tau_block_repeats: int = 0
+    lambda_active_fraction: float = 1.0
+    lambda_active_min: int = 32
+    lambda_full_refresh_every: int = 1
+    lambda_warmup_full_refresh: bool = True
+    lambda_random_fraction: float = 0.35
 
     # posterior storage (set by fit)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -930,6 +935,50 @@ class GRRHS_Gibbs:
         # half-Cauchy(1) prior on lambda_j + Jacobian
         return -0.5 * (math.log(v_j) + beta_j ** 2 / v_j) + s - math.log(max(1.0 + math.exp(2.0 * s), self.jitter))
 
+    def _select_lambda_update_indices(
+        self,
+        beta: np.ndarray,
+        *,
+        iteration: int,
+        in_warmup: bool,
+        rng: Optional[Generator] = None,
+    ) -> np.ndarray:
+        p = int(np.asarray(beta).shape[0])
+        if p <= 0:
+            return np.asarray([], dtype=int)
+        if bool(in_warmup) and bool(self.lambda_warmup_full_refresh):
+            return np.arange(p, dtype=int)
+        if p <= int(self.lambda_active_min) or int(self.lambda_full_refresh_every) <= 1:
+            return np.arange(p, dtype=int)
+        if int(iteration) % int(self.lambda_full_refresh_every) == 0:
+            return np.arange(p, dtype=int)
+        active_k = min(p, max(int(self.lambda_active_min), int(math.ceil(float(self.lambda_active_fraction) * p))))
+        if active_k >= p:
+            return np.arange(p, dtype=int)
+        abs_beta = np.abs(np.asarray(beta, dtype=float))
+        random_k = int(round(active_k * max(0.0, min(float(self.lambda_random_fraction), 0.95))))
+        random_k = min(max(random_k, 0), active_k)
+        top_k = max(active_k - random_k, 0)
+        chosen_parts: list[np.ndarray] = []
+        if top_k > 0:
+            chosen_parts.append(np.argpartition(-abs_beta, kth=top_k - 1)[:top_k])
+        already = np.concatenate(chosen_parts) if chosen_parts else np.asarray([], dtype=int)
+        if random_k > 0:
+            if already.size:
+                mask = np.ones(p, dtype=bool)
+                mask[already] = False
+                pool = np.flatnonzero(mask)
+            else:
+                pool = np.arange(p, dtype=int)
+            if pool.size <= random_k:
+                chosen_parts.append(pool)
+            else:
+                rng_use = rng if rng is not None else default_rng(int(iteration) + 7919)
+                chosen_parts.append(np.asarray(rng_use.choice(pool, size=random_k, replace=False), dtype=int))
+        if not chosen_parts:
+            return np.asarray([], dtype=int)
+        return np.asarray(np.sort(np.unique(np.concatenate(chosen_parts))), dtype=int)
+
     def _lc_logit_kappa_g(
         self,
         w: float,
@@ -1022,6 +1071,9 @@ class GRRHS_Gibbs:
                 iterator = progress(iterator, total=iters_use, desc="GR-RHS Gibbs")
             except Exception:
                 pass
+        lambda_update_total = 0
+        lambda_full_refresh_count = 0
+        lambda_active_refresh_count = 0
 
         for it in iterator:
             tau2 = tau ** 2
@@ -1064,7 +1116,18 @@ class GRRHS_Gibbs:
 
             # ---- log lambda_j | rest  (1-D slice per coefficient) ----
             if self.use_local_scale:
-                for j in range(p):
+                lambda_update_idx = self._select_lambda_update_indices(
+                    beta,
+                    iteration=it,
+                    in_warmup=bool(it < burnin_use),
+                    rng=rng,
+                )
+                lambda_update_total += int(lambda_update_idx.size)
+                if int(lambda_update_idx.size) == p:
+                    lambda_full_refresh_count += 1
+                else:
+                    lambda_active_refresh_count += 1
+                for j in lambda_update_idx:
                     def _lc_lj(s: float, _j: int = j) -> float:
                         return self._lc_log_lam_j(s, float(beta[_j]), sigma2, tau2, float(kappa_j[_j]))
                     log_lam[j] = slice_sample_1d(_lc_lj, log_lam[j], rng, width=self.slice_width_log, max_steps=self.slice_max_steps)
@@ -1140,6 +1203,9 @@ class GRRHS_Gibbs:
                 "log_lam": np.asarray(log_lam, dtype=float).copy(),
                 "logit_kappa": np.asarray(logit_kappa, dtype=float).copy(),
             },
+            "lambda_update_total": np.asarray(lambda_update_total, dtype=int),
+            "lambda_full_refresh_count": np.asarray(lambda_full_refresh_count, dtype=int),
+            "lambda_active_refresh_count": np.asarray(lambda_active_refresh_count, dtype=int),
         }
 
     # ------------------------------------------------------------------ public API
@@ -1200,6 +1266,9 @@ class GRRHS_Gibbs:
         runtime_sec = max(time.perf_counter() - start, 1e-12)
         self.chain_last_states_ = [dict(c.get("last_state", {})) for c in all_chains]
         self.chain_phase_infos_ = [dict(c.get("phase_info", {})) for c in all_chains]
+        lambda_update_total = int(np.sum([int(np.asarray(c.get("lambda_update_total", 0)).reshape(())) for c in all_chains]))
+        lambda_full_refresh_count = int(np.sum([int(np.asarray(c.get("lambda_full_refresh_count", 0)).reshape(())) for c in all_chains]))
+        lambda_active_refresh_count = int(np.sum([int(np.asarray(c.get("lambda_active_refresh_count", 0)).reshape(())) for c in all_chains]))
 
         def _stack(key: str) -> np.ndarray:
             arrs = [c[key] for c in all_chains]
@@ -1249,6 +1318,20 @@ class GRRHS_Gibbs:
             "grouped_tau_refresh_repeats": int(self.grouped_tau_refresh_repeats),
             "grouped_tau_sigma_relative_update": bool(self.grouped_tau_sigma_relative_update),
             "grouped_sigma_tau_block_repeats": int(self.grouped_sigma_tau_block_repeats),
+            "lambda_refresh": {
+                "active_fraction": float(self.lambda_active_fraction),
+                "active_min": int(self.lambda_active_min),
+                "full_refresh_every": int(self.lambda_full_refresh_every),
+                "warmup_full_refresh": bool(self.lambda_warmup_full_refresh),
+                "random_fraction": float(self.lambda_random_fraction),
+                "total_lambda_updates": int(lambda_update_total),
+                "full_refresh_count": int(lambda_full_refresh_count),
+                "active_refresh_count": int(lambda_active_refresh_count),
+                "mean_lambda_update_fraction_per_iter": float(
+                    lambda_update_total
+                    / max(int(self.num_chains) * int(max(self.iters, 1)) * max(p, 1), 1)
+                ),
+            },
         }
         if isinstance(self.chain_phase_infos_, list) and self.chain_phase_infos_:
             self.sampler_diagnostics_["chain_phase_infos"] = self.chain_phase_infos_
@@ -1956,6 +2039,9 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         adaptive_concentration_threshold_last = float("nan")
         structure_mode = "unclear"
         distributed_block_refresh_count = 0
+        lambda_update_total = 0
+        lambda_full_refresh_count = 0
+        lambda_active_refresh_count = 0
 
         max_total = int(max(
             sample_target * int(self.thin) + 1,
@@ -2017,7 +2103,18 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
             tau2 = tau ** 2
 
             if self.use_local_scale:
-                for j in range(p):
+                lambda_update_idx = self._select_lambda_update_indices(
+                    beta,
+                    iteration=total_iters - 1,
+                    in_warmup=bool((not phase_a_done) or (not phase_b_done)),
+                    rng=rng,
+                )
+                lambda_update_total += int(lambda_update_idx.size)
+                if int(lambda_update_idx.size) == p:
+                    lambda_full_refresh_count += 1
+                else:
+                    lambda_active_refresh_count += 1
+                for j in lambda_update_idx:
                     def _lc_lj(s: float, _j: int = j) -> float:
                         return self._lc_log_lam_j(s, float(beta[_j]), sigma2, tau2, float(kappa_j[_j]))
 
@@ -2310,7 +2407,13 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
                 "resume_no_burnin_used": bool(skip_adaptive),
                 "warmup_warning": str(warmup_warning_final),
                 "total_iters": int(total_iters),
+                "lambda_update_total": int(lambda_update_total),
+                "lambda_full_refresh_count": int(lambda_full_refresh_count),
+                "lambda_active_refresh_count": int(lambda_active_refresh_count),
             },
+            "lambda_update_total": np.asarray(lambda_update_total, dtype=int),
+            "lambda_full_refresh_count": np.asarray(lambda_full_refresh_count, dtype=int),
+            "lambda_active_refresh_count": np.asarray(lambda_active_refresh_count, dtype=int),
         }
 
     def fit(
@@ -2352,6 +2455,16 @@ class GRRHS_Gibbs_Staged(GRRHS_Gibbs):
         self.sampler_diagnostics_["grouped_tau_refresh_repeats"] = int(self.grouped_tau_refresh_repeats)
         self.sampler_diagnostics_["grouped_tau_sigma_relative_update"] = bool(self.grouped_tau_sigma_relative_update)
         self.sampler_diagnostics_["grouped_sigma_tau_block_repeats"] = int(self.grouped_sigma_tau_block_repeats)
+        self.sampler_diagnostics_["lambda_refresh"] = {
+            "active_fraction": float(self.lambda_active_fraction),
+            "active_min": int(self.lambda_active_min),
+            "full_refresh_every": int(self.lambda_full_refresh_every),
+            "warmup_full_refresh": bool(self.lambda_warmup_full_refresh),
+            "random_fraction": float(self.lambda_random_fraction),
+            "total_lambda_updates": int(sum(int(info.get("lambda_update_total", 0)) for info in (self.chain_phase_infos_ or []))),
+            "full_refresh_count": int(sum(int(info.get("lambda_full_refresh_count", 0)) for info in (self.chain_phase_infos_ or []))),
+            "active_refresh_count": int(sum(int(info.get("lambda_active_refresh_count", 0)) for info in (self.chain_phase_infos_ or []))),
+        }
         self.sampler_diagnostics_["concentrated_block_refresh"] = bool(self.concentrated_block_refresh)
         self.sampler_diagnostics_["concentrated_top_groups"] = int(self.concentrated_top_groups)
         self.sampler_diagnostics_["concentrated_refresh_score_delta"] = float(self.concentrated_refresh_min_score)

@@ -3,8 +3,11 @@ from __future__ import annotations
 import numpy as np
 
 from simulation_project.src.core.models.grrhs_nuts import GRRHS_Gibbs_Staged
+from simulation_project.src.experiments.runtime import _invalidate_unconverged_result
+from simulation_project.src.experiments.fitting import _fit_all_methods
 from simulation_project.src.experiments.methods.fit_gr_rhs import fit_gr_rhs
-from simulation_project.src.utils import SamplerConfig
+from simulation_project.src.utils import FitResult, SamplerConfig
+from simulation_second.src.fitting import _grrhs_defaults_for_package
 
 
 def _tiny_gaussian_problem(seed: int = 0) -> tuple[np.ndarray, np.ndarray, list[list[int]], np.ndarray]:
@@ -50,6 +53,50 @@ def test_grrhs_gibbs_staged_phase_diagnostics_present() -> None:
         assert "block_refresh_count" in info
         assert "block_refresh_steps" in info
         assert "block_refresh_group_histogram" in info
+
+
+def test_grrhs_lambda_active_refresh_uses_random_coverage() -> None:
+    model = GRRHS_Gibbs_Staged(
+        lambda_active_fraction=0.25,
+        lambda_active_min=10,
+        lambda_full_refresh_every=99,
+        lambda_warmup_full_refresh=False,
+        lambda_random_fraction=0.5,
+        progress_bar=False,
+    )
+    beta = np.linspace(100.0, 1.0, 100)
+    rng = np.random.default_rng(123)
+    idx = model._select_lambda_update_indices(beta, iteration=1, in_warmup=False, rng=rng)
+    assert idx.size == 25
+    top_deterministic = set(range(13))
+    assert top_deterministic.issubset(set(map(int, idx)))
+    assert any(int(j) >= 25 for j in idx)
+
+
+def test_unconverged_bayesian_result_retains_draws_for_evaluation() -> None:
+    beta = np.asarray([1.0, 0.0], dtype=float)
+    res = FitResult(
+        method="GR_RHS_HighDim",
+        status="ok",
+        beta_mean=beta.copy(),
+        beta_draws=beta.reshape(1, 1, 2),
+        kappa_draws=np.ones((1, 1, 1)),
+        group_scale_draws=None,
+        runtime_seconds=1.0,
+        rhat_max=1.2,
+        bulk_ess_min=5.0,
+        divergence_ratio=float("nan"),
+        converged=False,
+        tau_draws=np.ones((1, 1)),
+        diagnostics={},
+    )
+    out = _invalidate_unconverged_result(res, method="GR_RHS_HighDim", attempts=2)
+    assert out.status == "warning"
+    assert out.beta_mean is not None
+    assert out.beta_draws is not None
+    assert out.kappa_draws is not None
+    assert out.tau_draws is not None
+    assert "convergence_warning" in dict(out.diagnostics or {})
 
 
 def test_grrhs_gibbs_staged_resume_no_burnin_skips_phases() -> None:
@@ -116,6 +163,52 @@ def test_fit_gr_rhs_gaussian_defaults_to_staged_gibbs_and_tracks_resume() -> Non
     payload = diag.get("retry_resume_payload")
     assert isinstance(payload, dict)
     assert payload.get("backend") == "gibbs_staged"
+
+
+def test_fit_gr_rhs_staged_gibbs_accepts_tau_refresh_overrides() -> None:
+    X, y, groups, _beta_true = _tiny_gaussian_problem(seed=35)
+    sampler = SamplerConfig(chains=1, warmup=20, post_warmup_draws=20, ess_threshold=1.0)
+    out = fit_gr_rhs(
+        X,
+        y,
+        groups,
+        task="gaussian",
+        seed=135,
+        p0=2,
+        sampler=sampler,
+        progress_bar=False,
+        sampler_backend="gibbs_staged",
+        tau_target="groups",
+        grouped_tau_refresh_repeats=2,
+        grouped_sigma_tau_block_repeats=4,
+    )
+
+    assert out.status == "ok"
+    sampler_diag = dict((out.diagnostics or {}).get("sampler_diagnostics") or {})
+    assert int(sampler_diag.get("grouped_tau_refresh_repeats")) == 2
+    assert int(sampler_diag.get("grouped_sigma_tau_block_repeats")) == 4
+
+
+def test_fit_gr_rhs_can_return_explicit_lowdim_method_name() -> None:
+    X, y, groups, _beta_true = _tiny_gaussian_problem(seed=33)
+    sampler = SamplerConfig(chains=2, warmup=20, post_warmup_draws=20)
+    out = fit_gr_rhs(
+        X,
+        y,
+        groups,
+        task="gaussian",
+        seed=133,
+        p0=2,
+        sampler=sampler,
+        progress_bar=False,
+        sampler_backend="gibbs_staged",
+        method_name="GR_RHS_LowDim",
+    )
+    assert out.status == "ok"
+    assert out.method == "GR_RHS_LowDim"
+    diag = dict(out.diagnostics or {})
+    assert diag.get("grrhs_sampler_name") == "GR_RHS_LowDim"
+    assert diag.get("grrhs_sampler_strategy") == "low_dim"
 
 
 def test_fit_gr_rhs_gaussian_staged_gibbs_small_problem_not_clearly_worse_than_nuts() -> None:
@@ -188,6 +281,38 @@ def test_fit_gr_rhs_gaussian_collapsed_profile_backend_runs() -> None:
     assert "posterior_quality" in sampler_diag
     assert out.beta_draws is not None
     assert np.asarray(out.beta_draws).ndim == 3
+
+
+def test_grrhs_auto_alias_routes_to_highdim_backend_when_requested() -> None:
+    X, y, groups, _beta_true = _tiny_gaussian_problem(seed=34)
+    sampler = SamplerConfig(chains=1, warmup=10, post_warmup_draws=10, ess_threshold=1.0)
+    out = _fit_all_methods(
+        X,
+        y,
+        groups,
+        task="gaussian",
+        seed=134,
+        p0=2,
+        sampler=sampler,
+        methods=["GR_RHS"],
+        enforce_bayes_convergence=False,
+        rhs_sampler_strategy="high_dim",
+    )
+    res = out["GR_RHS"]
+    diag = dict(res.diagnostics or {})
+    strat = dict(diag.get("sampling_strategy") or {})
+    assert res.method == "GR_RHS"
+    assert diag.get("grrhs_sampler_name") == "GR_RHS"
+    assert diag.get("grrhs_sampler_strategy") == "high_dim"
+    assert strat.get("backend") == "collapsed_profile"
+
+
+def test_grrhs_package_defaults_distinguish_low_vs_high_dimension_suites() -> None:
+    low = _grrhs_defaults_for_package("simulation_second")
+    high = _grrhs_defaults_for_package("Simulation_highdimension")
+    assert low.get("sampler_backend") == "gibbs_staged"
+    assert high.get("sampler_backend") == "collapsed_profile"
+    assert bool(high.get("use_local_scale")) is False
 
 
 def test_fit_gr_rhs_logistic_does_not_silently_route_to_nuts() -> None:
