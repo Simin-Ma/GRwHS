@@ -414,6 +414,95 @@ def fit_result_summary_payload(
     return payload
 
 
+def _beta_convergence_artifacts(
+    beta_draws: Optional[np.ndarray],
+    beta_true: Optional[np.ndarray],
+) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    if beta_draws is None:
+        return None
+    draws_arr = np.asarray(beta_draws, dtype=float)
+    if draws_arr.ndim < 2:
+        return None
+    from simulation_project.src.core.diagnostics.convergence import effective_sample_size, split_rhat
+
+    beta_true_flat = None if beta_true is None else np.asarray(beta_true, dtype=float).reshape(-1)
+    try:
+        rhat_arr = np.asarray(split_rhat(draws_arr), dtype=float).reshape(-1)
+    except Exception:
+        width = int(draws_arr.shape[-1]) if draws_arr.ndim >= 2 else 0
+        rhat_arr = np.full(width, np.nan, dtype=float)
+    try:
+        ess_arr = np.asarray(effective_sample_size(draws_arr), dtype=float).reshape(-1)
+    except Exception:
+        width = int(draws_arr.shape[-1]) if draws_arr.ndim >= 2 else 0
+        ess_arr = np.full(width, np.nan, dtype=float)
+
+    p = int(max(rhat_arr.size, ess_arr.size, 0 if beta_true_flat is None else beta_true_flat.size))
+    if p <= 0:
+        return None
+
+    def _safe_quantile(arr: np.ndarray, q: float) -> float:
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            return float("nan")
+        return float(np.quantile(finite, q))
+
+    def _safe_reduce(arr: np.ndarray, reducer: Any) -> float:
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            return float("nan")
+        return float(reducer(finite))
+
+    detail_rows: list[dict[str, Any]] = []
+    signal_mask = np.zeros(p, dtype=bool)
+    if beta_true_flat is not None and beta_true_flat.size:
+        signal_mask[: beta_true_flat.size] = np.abs(beta_true_flat[:p]) > 1e-12
+    for idx in range(p):
+        rv = float(rhat_arr[idx]) if idx < rhat_arr.size else float("nan")
+        ev = float(ess_arr[idx]) if idx < ess_arr.size else float("nan")
+        tv = float(beta_true_flat[idx]) if beta_true_flat is not None and idx < beta_true_flat.size else float("nan")
+        detail_rows.append(
+            {
+                "coefficient_index": int(idx),
+                "rhat": None if not np.isfinite(rv) else rv,
+                "ess": None if not np.isfinite(ev) else ev,
+                "beta_true": None if not np.isfinite(tv) else tv,
+                "is_signal": bool(signal_mask[idx]),
+            }
+        )
+
+    def _partition_summary(mask: np.ndarray) -> dict[str, Any]:
+        rv = rhat_arr[mask]
+        ev = ess_arr[mask]
+        return {
+            "count": int(np.sum(mask)),
+            "rhat_max": _safe_reduce(rv, np.max),
+            "rhat_median": _safe_reduce(rv, np.median),
+            "rhat_p95": _safe_quantile(rv, 0.95),
+            "ess_min": _safe_reduce(ev, np.min),
+            "ess_median": _safe_reduce(ev, np.median),
+            "count_rhat_gt_1_01": int(np.sum(np.isfinite(rv) & (rv > 1.01))),
+            "count_rhat_gt_1_05": int(np.sum(np.isfinite(rv) & (rv > 1.05))),
+            "count_rhat_gt_1_10": int(np.sum(np.isfinite(rv) & (rv > 1.10))),
+        }
+
+    order = np.argsort(np.nan_to_num(rhat_arr, nan=-np.inf))[::-1]
+    top_rows: list[dict[str, Any]] = []
+    for idx in order[: min(20, p)]:
+        row = detail_rows[int(idx)]
+        if row["rhat"] is None:
+            continue
+        top_rows.append(dict(row))
+
+    summary = {
+        "all": _partition_summary(np.ones(p, dtype=bool)),
+        "signal": _partition_summary(signal_mask),
+        "null": _partition_summary(~signal_mask),
+        "top_rhat_parameters": top_rows,
+    }
+    return detail_rows, summary
+
+
 def save_fit_result_artifacts(
     root_dir: Path | str,
     *,
@@ -433,6 +522,8 @@ def save_fit_result_artifacts(
     draws_path = fit_dir / "posterior_draws.npz"
     beta_mean_path = fit_dir / "beta_mean.npy"
     coefficient_path = fit_dir / "coefficient_detail.csv"
+    beta_conv_detail_path = fit_dir / "convergence_beta_detail.csv"
+    beta_conv_summary_path = fit_dir / "convergence_beta_summary.json"
 
     save_json(
         fit_result_summary_payload(
@@ -487,6 +578,15 @@ def save_fit_result_artifacts(
         pd = load_pandas()
         pd.DataFrame(rows).to_csv(coefficient_path, index=False)
         written["coefficient_detail"] = str(coefficient_path)
+
+    beta_conv = _beta_convergence_artifacts(result.beta_draws, beta_true_flat)
+    if beta_conv is not None:
+        beta_conv_rows, beta_conv_summary = beta_conv
+        pd = load_pandas()
+        pd.DataFrame(beta_conv_rows).to_csv(beta_conv_detail_path, index=False)
+        save_json(json_ready(beta_conv_summary), beta_conv_summary_path)
+        written["convergence_beta_detail"] = str(beta_conv_detail_path)
+        written["convergence_beta_summary"] = str(beta_conv_summary_path)
 
     if save_dataset_bundle or dataset_arrays or dataset_metadata:
         dataset_dir = ensure_dir(root / "dataset")

@@ -24,7 +24,7 @@ def scaled_iteration_budget(
     return burnin, draws
 
 
-def fit_error_result(method: str, error: str) -> FitResult:
+def fit_error_result(method: str, error: str, *, diagnostics: dict | None = None) -> FitResult:
     return FitResult(
         method=str(method),
         status="error",
@@ -38,6 +38,6 @@ def fit_error_result(method: str, error: str) -> FitResult:
         divergence_ratio=float("nan"),
         converged=False,
         error=str(error),
-        diagnostics={},
+        diagnostics=dict(diagnostics or {}),
     )
 

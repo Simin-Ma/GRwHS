@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Sequence
+import traceback
 
 import numpy as np
 
@@ -236,6 +237,9 @@ def fit_gigg_mmle(
     mmle_step_size: float = 1.0,
     mmle_update_every: int = 1,
     mmle_window: int = 1,
+    mmle_samp_size: int = 1000,
+    mmle_tol_scale: float = 1e-4,
+    mmle_max_iters: int = 50000,
     lambda_constraint_mode: str = "none",
     q_constraint_mode: str = "hard",
     exact_highdim_fastpath: bool = False,
@@ -337,6 +341,9 @@ def fit_gigg_mmle(
                 mmle_step_size=float(mmle_step_size),
                 mmle_update_every=int(mmle_update_every),
                 mmle_window=int(mmle_window),
+                mmle_samp_size=int(mmle_samp_size),
+                mmle_tol_scale=float(mmle_tol_scale),
+                mmle_max_iters=int(mmle_max_iters),
                 lambda_constraint_mode=str(lambda_constraint_mode),
                 q_constraint_mode=str(q_constraint_mode),
                 progress_bar=bool(progress_bar),
@@ -459,6 +466,9 @@ def fit_gigg_mmle(
                 mmle_step_size=float(mmle_step_size),
                 mmle_update_every=int(mmle_update_every),
                 mmle_window=int(mmle_window),
+                mmle_samp_size=int(mmle_samp_size),
+                mmle_tol_scale=float(mmle_tol_scale),
+                mmle_max_iters=int(mmle_max_iters),
                 lambda_constraint_mode=str(lambda_constraint_mode),
                 q_constraint_mode=str(q_constraint_mode),
                 progress_bar=bool(progress_bar),
@@ -498,7 +508,15 @@ def fit_gigg_mmle(
         result.method = str(method_label)
         return result
     except Exception as exc:
-        return fit_error_result(str(method_label), f"{type(exc).__name__}: {exc}")
+        return fit_error_result(
+            str(method_label),
+            f"{type(exc).__name__}: {exc}",
+            diagnostics={
+                "exception_type": str(type(exc).__name__),
+                "traceback": traceback.format_exc(),
+                "exact_highdim_fastpath": bool(exact_highdim_fastpath),
+            },
+        )
 
 
 # GIGG Fixed
@@ -632,5 +650,13 @@ def fit_gigg_fixed(
         result.diagnostics = diag
         return result
     except Exception as exc:
-        return fit_error_result(method_label, f"{type(exc).__name__}: {exc}")
+        return fit_error_result(
+            method_label,
+            f"{type(exc).__name__}: {exc}",
+            diagnostics={
+                "exception_type": str(type(exc).__name__),
+                "traceback": traceback.format_exc(),
+                "exact_highdim_fastpath": bool(exact_highdim_fastpath),
+            },
+        )
 

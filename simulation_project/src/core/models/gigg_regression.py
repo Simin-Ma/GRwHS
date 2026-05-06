@@ -888,6 +888,14 @@ class GIGGRegression:
         try:
             if int(self.num_chains) > 1:
                 process_ok, process_reason = can_use_process_pool()
+                # High-dimensional GIGG on Windows has shown intermittent
+                # worker-level Invalid argument failures under process-based
+                # chain parallelism. Prefer the deterministic serial multichain
+                # path there so benchmark runs yield posterior draws instead of
+                # hard NaN failures.
+                if process_ok and bool(self.mmle_highdim_fastpath):
+                    process_ok = False
+                    process_reason = "disabled for highdim GIGG stability"
                 if process_ok:
                     tmpdir_obj = tempfile.TemporaryDirectory(prefix="gigg_shared_")
                     tmpdir = Path(tmpdir_obj.name)
