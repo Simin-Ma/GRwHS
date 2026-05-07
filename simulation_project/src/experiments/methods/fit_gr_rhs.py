@@ -1016,9 +1016,9 @@ def fit_gr_rhs(
                     adapt_delta_use = max(adapt_delta_use, 0.90)
                     max_treedepth_use = max(max_treedepth_use, 9)
                     if within_corr < 0.70 and 0.35 <= corr_gap < 0.50:
-                        step_size_use = 0.0315
-                        warmup_use = max(warmup_use, 205)
-                        draws_use = max(draws_use, 590)
+                        step_size_use = 0.032
+                        warmup_use = max(warmup_use, 190)
+                        draws_use = max(draws_use, 540)
                     else:
                         step_size_use = 0.03
                         warmup_use = max(warmup_use, 220)

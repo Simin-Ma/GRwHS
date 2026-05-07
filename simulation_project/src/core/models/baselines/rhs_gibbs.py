@@ -10,7 +10,11 @@ from scipy.linalg import solve_triangular
 from numpy.random import Generator, default_rng
 
 from simulation_project.src.core.inference.samplers import slice_sample_1d
-from simulation_project.src.core.inference.woodbury import beta_sample_cholesky, beta_sample_woodbury
+from simulation_project.src.core.inference.woodbury import (
+    beta_sample_block_cholesky,
+    beta_sample_cholesky,
+    beta_sample_woodbury,
+)
 
 
 _MIN_POS = 1e-10
@@ -48,6 +52,21 @@ def _standardize_design_exact(
     return X_ctr / x_scale, x_center, x_scale
 
 
+def _normalize_groups(groups: Any, p: int) -> list[np.ndarray]:
+    if groups is None:
+        return []
+    out: list[np.ndarray] = []
+    for members in groups:
+        arr = np.asarray(list(members), dtype=int).reshape(-1)
+        if arr.size == 0:
+            continue
+        arr = np.unique(arr)
+        arr = arr[(arr >= 0) & (arr < int(p))]
+        if arr.size:
+            out.append(arr)
+    return out
+
+
 def _log_half_cauchy(value: float, scale: float) -> float:
     v = float(max(value, _MIN_POS))
     s = float(max(scale, _MIN_POS))
@@ -63,6 +82,11 @@ def _ridge_init_beta(X: np.ndarray, y: np.ndarray, ridge: float = 1e-3) -> np.nd
     except Exception:
         beta = np.linalg.lstsq(lhs, rhs, rcond=None)[0]
     return np.nan_to_num(np.asarray(beta, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _ols_sigma_init(X: np.ndarray, y: np.ndarray, beta: np.ndarray) -> float:
+    resid = np.asarray(y, dtype=float).reshape(-1) - np.asarray(X, dtype=float) @ np.asarray(beta, dtype=float).reshape(-1)
+    return float(max(np.std(resid, ddof=0), 0.1))
 
 
 def _rhs_single_prior_var(
@@ -154,9 +178,17 @@ class RegularizedHorseshoeGibbs:
     lambda_active_fraction: float = 0.25
     lambda_active_min: int = 32
     lambda_full_refresh_every: int = 8
+    lambda_selection_mode: str = "magnitude"
+    lambda_random_fraction: float = 0.0
     lambda_warmup_full_refresh: bool = True
     tau_refresh_after_local: bool = True
     beta_refresh_after_hyper: bool = True
+    extra_beta_refreshes: int = 0
+    extra_lambda_sweeps: int = 0
+    init_dispersion: float = 0.0
+    group_block_refresh_every: int = 0
+    initial_chain_states: Optional[list[dict[str, Any]]] = None
+    resume_no_burnin: bool = False
 
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -174,6 +206,7 @@ class RegularizedHorseshoeGibbs:
     lambda_tilde_mean_: Optional[np.ndarray] = field(default=None, init=False)
     c_mean_: Optional[float] = field(default=None, init=False)
     sampler_diagnostics_: Dict[str, Any] = field(default_factory=dict, init=False)
+    chain_last_states_: Optional[list[dict[str, Any]]] = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.scale_intercept <= 0.0:
@@ -184,8 +217,8 @@ class RegularizedHorseshoeGibbs:
             raise ValueError("slab_scale must be positive.")
         if self.slab_df <= 0.0:
             raise ValueError("slab_df must be positive.")
-        if int(self.num_warmup) <= 0 or int(self.num_samples) <= 0:
-            raise ValueError("num_warmup and num_samples must be positive.")
+        if int(self.num_warmup) < 0 or int(self.num_samples) <= 0:
+            raise ValueError("num_warmup must be non-negative and num_samples must be positive.")
         if int(self.num_chains) <= 0:
             raise ValueError("num_chains must be positive.")
         if int(self.thinning) <= 0:
@@ -200,6 +233,18 @@ class RegularizedHorseshoeGibbs:
             raise ValueError("lambda_active_min must be positive.")
         if int(self.lambda_full_refresh_every) <= 0:
             raise ValueError("lambda_full_refresh_every must be positive.")
+        if str(self.lambda_selection_mode).strip().lower() not in {"magnitude", "cyclic"}:
+            raise ValueError("lambda_selection_mode must be one of {'magnitude', 'cyclic'}.")
+        if not 0.0 <= float(self.lambda_random_fraction) < 1.0:
+            raise ValueError("lambda_random_fraction must lie in [0, 1).")
+        if float(self.init_dispersion) < 0.0:
+            raise ValueError("init_dispersion must be non-negative.")
+        if int(self.group_block_refresh_every) < 0:
+            raise ValueError("group_block_refresh_every must be non-negative.")
+        if int(self.extra_beta_refreshes) < 0:
+            raise ValueError("extra_beta_refreshes must be non-negative.")
+        if int(self.extra_lambda_sweeps) < 0:
+            raise ValueError("extra_lambda_sweeps must be non-negative.")
 
     def _prior_var(
         self,
@@ -235,7 +280,15 @@ class RegularizedHorseshoeGibbs:
             return beta_sample_woodbury(X, y, sigma2, prior_var, rng, jitter=float(self.jitter))
         return beta_sample_cholesky(XtX, Xty, sigma2, prior_var, rng, jitter=float(self.jitter))
 
-    def _select_lambda_update_indices(self, beta: np.ndarray, *, iteration: int, in_warmup: bool) -> np.ndarray:
+    def _select_lambda_update_indices(
+        self,
+        beta: np.ndarray,
+        *,
+        iteration: int,
+        in_warmup: bool,
+        chain_permutation: np.ndarray | None = None,
+        rng: Generator | None = None,
+    ) -> np.ndarray:
         p = int(beta.shape[0])
         if bool(in_warmup) and bool(self.lambda_warmup_full_refresh):
             return np.arange(p, dtype=int)
@@ -246,29 +299,102 @@ class RegularizedHorseshoeGibbs:
         active_k = min(p, max(int(self.lambda_active_min), int(math.ceil(float(self.lambda_active_fraction) * p))))
         if active_k >= p:
             return np.arange(p, dtype=int)
+        if str(self.lambda_selection_mode).strip().lower() == "cyclic":
+            order = (
+                np.arange(p, dtype=int)
+                if chain_permutation is None or int(np.asarray(chain_permutation).size) != p
+                else np.asarray(chain_permutation, dtype=int)
+            )
+            cycle_len = max(1, int(math.ceil(p / max(active_k, 1))))
+            cycle_pos = int(iteration) % cycle_len
+            start = int(cycle_pos * active_k)
+            stop = min(start + active_k, p)
+            chosen = order[start:stop]
+            if int(chosen.size) < active_k:
+                chosen = np.concatenate([chosen, order[: active_k - int(chosen.size)]])
+            return np.asarray(np.sort(chosen), dtype=int)
         abs_beta = np.abs(np.asarray(beta, dtype=float))
-        order = np.argpartition(-abs_beta, kth=active_k - 1)[:active_k]
-        return np.asarray(np.sort(order), dtype=int)
+        random_k = int(round(active_k * max(0.0, min(float(self.lambda_random_fraction), 0.95))))
+        random_k = min(max(random_k, 0), active_k)
+        top_k = max(active_k - random_k, 0)
+        chosen_parts: list[np.ndarray] = []
+        if top_k > 0:
+            chosen_parts.append(np.argpartition(-abs_beta, kth=top_k - 1)[:top_k])
+        already = np.concatenate(chosen_parts) if chosen_parts else np.asarray([], dtype=int)
+        if random_k > 0:
+            if already.size:
+                mask = np.ones(p, dtype=bool)
+                mask[already] = False
+                pool = np.flatnonzero(mask)
+            else:
+                pool = np.arange(p, dtype=int)
+            if pool.size <= random_k:
+                chosen_parts.append(pool)
+            else:
+                rng_use = rng if rng is not None else default_rng(int(iteration) + 7919)
+                chosen_parts.append(np.asarray(rng_use.choice(pool, size=random_k, replace=False), dtype=int))
+        if not chosen_parts:
+            return np.asarray([], dtype=int)
+        return np.asarray(np.sort(np.unique(np.concatenate(chosen_parts))), dtype=int)
 
-    def _sample_single_chain(self, X: np.ndarray, y: np.ndarray, *, seed: int) -> Dict[str, np.ndarray]:
+    def _sample_single_chain(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        seed: int,
+        groups: Any = None,
+        initial_state: dict[str, Any] | None = None,
+        num_warmup: int | None = None,
+        num_samples: int | None = None,
+    ) -> Dict[str, np.ndarray]:
         rng = default_rng(int(seed))
         X_std, x_center, x_scale = _standardize_design_exact(X, center=bool(self.fit_intercept))
         y_arr = np.asarray(y, dtype=float).reshape(-1)
         y_mean = float(y_arr.mean()) if bool(self.fit_intercept) else 0.0
         y_ctr = y_arr - y_mean
         n, p = X_std.shape
+        group_blocks = _normalize_groups(groups, p)
 
         XtX = X_std.T @ X_std
         Xty = X_std.T @ y_ctr
-        beta = _ridge_init_beta(X_std, y_ctr)
-        resid = y_ctr - X_std @ beta
-        sigma = float(max(np.std(resid, ddof=0), 0.1))
+        beta_ridge = _ridge_init_beta(X_std, y_ctr)
+        sigma_base = _ols_sigma_init(X_std, y_ctr, beta_ridge)
+        beta = np.asarray(beta_ridge, dtype=float).copy()
+        sigma = float(sigma_base)
         tau_raw = float(max(self.scale_global, 1e-4))
         lam = np.ones(p, dtype=float)
         caux = 1.0
+        if isinstance(initial_state, dict):
+            beta = np.asarray(initial_state.get("beta", beta), dtype=float).reshape(-1)
+            if beta.size != p:
+                beta = np.asarray(beta_ridge, dtype=float).copy()
+            sigma = float(initial_state.get("sigma", sigma))
+            tau_raw = float(initial_state.get("tau_raw", tau_raw))
+            lam = np.asarray(initial_state.get("lam", lam), dtype=float).reshape(-1)
+            if lam.size != p:
+                lam = np.ones(p, dtype=float)
+            caux = float(initial_state.get("caux", caux))
+            sigma = float(max(sigma, 0.05))
+            tau_raw = float(max(tau_raw, 1e-5))
+            lam = np.maximum(lam, 1e-6)
+            caux = float(max(caux, 1e-6))
+        elif float(self.init_dispersion) > 0.0:
+            scale = float(self.init_dispersion)
+            beta = beta + rng.normal(scale=scale * max(float(np.std(beta_ridge, ddof=0)), 0.05), size=p)
+            sigma = float(max(sigma_base * math.exp(rng.normal(scale=0.15 * scale)), 0.05))
+            tau_raw = float(max(tau_raw * math.exp(rng.normal(scale=0.35 * scale)), 1e-5))
+            lam = np.exp(rng.normal(loc=0.0, scale=0.30 * scale, size=p))
+            caux = float(max(math.exp(rng.normal(loc=0.0, scale=0.20 * scale)), 1e-4))
+        resid = y_ctr - X_std @ beta
+        lambda_order = np.arange(p, dtype=int)
+        if str(self.lambda_selection_mode).strip().lower() == "cyclic":
+            lambda_order = rng.permutation(p).astype(int, copy=False)
 
-        total_iters = int(self.num_warmup + self.num_samples)
-        kept = max(0, (int(self.num_samples) + int(self.thinning) - 1) // int(self.thinning))
+        warmup_use = int(self.num_warmup if num_warmup is None else num_warmup)
+        samples_use = int(self.num_samples if num_samples is None else num_samples)
+        total_iters = int(warmup_use + samples_use)
+        kept = max(0, (int(samples_use) + int(self.thinning) - 1) // int(self.thinning))
         beta_draws = np.zeros((kept, p), dtype=float)
         intercept_draws = np.zeros(kept, dtype=float)
         sigma_draws = np.zeros(kept, dtype=float)
@@ -367,7 +493,9 @@ class RegularizedHorseshoeGibbs:
             lambda_update_idx = self._select_lambda_update_indices(
                 beta,
                 iteration=it,
-                in_warmup=bool(it < int(self.num_warmup)),
+                in_warmup=bool(it < int(warmup_use)),
+                chain_permutation=lambda_order,
+                rng=rng,
             )
             lambda_update_total += int(lambda_update_idx.size)
             if int(lambda_update_idx.size) == p:
@@ -375,32 +503,34 @@ class RegularizedHorseshoeGibbs:
             else:
                 lambda_active_refresh_count += 1
 
-            for j in lambda_update_idx:
-                beta_j = float(beta[j])
+            lambda_sweeps = 1 + int(self.extra_lambda_sweeps)
+            for _lambda_sweep in range(lambda_sweeps):
+                for j in lambda_update_idx:
+                    beta_j = float(beta[j])
 
-                def _logpost_log_lambda(value: float, beta_j_use: float = beta_j) -> float:
-                    lam_use = math.exp(float(value))
-                    v_j = _rhs_single_prior_var(
-                        sigma2=sigma2,
-                        tau2=tau2,
-                        lam2=lam_use ** 2,
-                        c2=c2,
-                        jitter=float(self.jitter),
-                    )
-                    lp = -0.5 * math.log(v_j) - 0.5 * (beta_j_use ** 2) / v_j
-                    lp += _log_half_cauchy(lam_use, 1.0)
-                    lp += float(value)
-                    return float(lp)
+                    def _logpost_log_lambda(value: float, beta_j_use: float = beta_j) -> float:
+                        lam_use = math.exp(float(value))
+                        v_j = _rhs_single_prior_var(
+                            sigma2=sigma2,
+                            tau2=tau2,
+                            lam2=lam_use ** 2,
+                            c2=c2,
+                            jitter=float(self.jitter),
+                        )
+                        lp = -0.5 * math.log(v_j) - 0.5 * (beta_j_use ** 2) / v_j
+                        lp += _log_half_cauchy(lam_use, 1.0)
+                        lp += float(value)
+                        return float(lp)
 
-                lam[j] = math.exp(
-                    slice_sample_1d(
-                        _logpost_log_lambda,
-                        math.log(max(float(lam[j]), _MIN_POS)),
-                        rng,
-                        width=float(self.slice_width_log_lambda),
-                        max_steps=int(self.slice_max_steps),
+                    lam[j] = math.exp(
+                        slice_sample_1d(
+                            _logpost_log_lambda,
+                            math.log(max(float(lam[j]), _MIN_POS)),
+                            rng,
+                            width=float(self.slice_width_log_lambda),
+                            max_steps=int(self.slice_max_steps),
+                        )
                     )
-                )
 
             def _logpost_log_caux(value: float) -> float:
                 caux_use = math.exp(float(value))
@@ -474,8 +604,38 @@ class RegularizedHorseshoeGibbs:
                     prior_var=prior_var,
                     rng=rng,
                 )
+                for _extra_beta in range(int(self.extra_beta_refreshes)):
+                    beta = self._sample_beta(
+                        X=X_std,
+                        y=y_ctr,
+                        XtX=XtX,
+                        Xty=Xty,
+                        sigma=sigma,
+                        prior_var=prior_var,
+                        rng=rng,
+                    )
 
-            if it >= int(self.num_warmup) and ((it - int(self.num_warmup)) % int(self.thinning) == 0):
+            if int(self.group_block_refresh_every) > 0 and group_blocks and (int(it) % int(self.group_block_refresh_every) == 0):
+                prior_var, _, _ = self._prior_var(sigma=sigma, tau_raw=tau_raw, lam=lam, caux=caux)
+                sigma2_block = max(float(sigma) ** 2, self.jitter)
+                fitted = X_std @ beta
+                for block in group_blocks:
+                    if int(block.size) <= 1:
+                        continue
+                    beta_block_old = beta[block].copy()
+                    resid_without = y_ctr - fitted + (X_std[:, block] @ beta_block_old)
+                    beta_block_new = beta_sample_block_cholesky(
+                        X_std[:, block],
+                        resid_without,
+                        sigma2_block,
+                        np.asarray(prior_var[block], dtype=float),
+                        rng,
+                        jitter=float(self.jitter),
+                    )
+                    beta[block] = np.asarray(beta_block_new, dtype=float)
+                    fitted = resid_without - (X_std[:, block] @ beta[block])
+
+            if it >= int(warmup_use) and ((it - int(warmup_use)) % int(self.thinning) == 0):
                 prior_var, lambda_tilde, c2 = self._prior_var(
                     sigma=sigma,
                     tau_raw=tau_raw,
@@ -506,10 +666,16 @@ class RegularizedHorseshoeGibbs:
             "lambda_active_refresh_count": np.asarray(lambda_active_refresh_count, dtype=int),
             "total_iters": np.asarray(total_iters, dtype=int),
             "p": np.asarray(p, dtype=int),
+            "last_state": {
+                "beta": np.asarray(beta, dtype=float).copy(),
+                "sigma": float(sigma),
+                "tau_raw": float(tau_raw),
+                "lam": np.asarray(lam, dtype=float).copy(),
+                "caux": float(caux),
+            },
         }
 
     def fit(self, X: np.ndarray, y: np.ndarray, *, groups: Any = None) -> "RegularizedHorseshoeGibbs":
-        del groups
         X_arr = np.asarray(X, dtype=float)
         y_arr = np.asarray(y, dtype=float).reshape(-1)
         if X_arr.ndim != 2:
@@ -517,12 +683,31 @@ class RegularizedHorseshoeGibbs:
         if y_arr.shape[0] != X_arr.shape[0]:
             raise ValueError("X and y must have compatible first dimensions.")
 
+        initial_states: list[dict[str, Any] | None] = [None] * int(self.num_chains)
+        if isinstance(self.initial_chain_states, list) and self.initial_chain_states:
+            for ci in range(min(len(self.initial_chain_states), int(self.num_chains))):
+                st = self.initial_chain_states[ci]
+                if isinstance(st, dict):
+                    initial_states[ci] = st
+        warmup_use = int(self.num_warmup)
+        if bool(self.resume_no_burnin) and any(s is not None for s in initial_states):
+            warmup_use = 0
+
         start = time.perf_counter()
         chain_results = [
-            self._sample_single_chain(X_arr, y_arr, seed=(0 if self.seed is None else int(self.seed)) + chain_idx)
+            self._sample_single_chain(
+                X_arr,
+                y_arr,
+                seed=(0 if self.seed is None else int(self.seed)) + chain_idx,
+                groups=groups,
+                initial_state=initial_states[chain_idx],
+                num_warmup=warmup_use,
+                num_samples=int(self.num_samples),
+            )
             for chain_idx in range(int(self.num_chains))
         ]
         runtime_sec = max(time.perf_counter() - start, 1e-12)
+        self.chain_last_states_ = [dict(item.get("last_state", {})) for item in chain_results]
 
         if int(self.num_chains) == 1:
             lead = chain_results[0]
@@ -587,13 +772,19 @@ class RegularizedHorseshoeGibbs:
                 "slab_prior": "inv_gamma_on_caux",
                 "beta_refresh": "woodbury_if_n_lt_p_else_cholesky",
                 "lambda_update": "active_subset_plus_periodic_full_slice",
+                "lambda_selection_mode": str(self.lambda_selection_mode),
+                "lambda_random_fraction": float(self.lambda_random_fraction),
                 "tau_refresh_after_local": bool(self.tau_refresh_after_local),
                 "beta_refresh_after_hyper": bool(self.beta_refresh_after_hyper),
+                "extra_beta_refreshes": int(self.extra_beta_refreshes),
+                "extra_lambda_sweeps": int(self.extra_lambda_sweeps),
+                "init_dispersion": float(self.init_dispersion),
             },
             "lambda_refresh": {
                 "active_fraction": float(self.lambda_active_fraction),
                 "active_min": int(self.lambda_active_min),
                 "full_refresh_every": int(self.lambda_full_refresh_every),
+                "random_fraction": float(self.lambda_random_fraction),
                 "warmup_full_refresh": bool(self.lambda_warmup_full_refresh),
                 "total_lambda_updates": int(lambda_update_total),
                 "full_refresh_count": int(lambda_full_refresh_count),

@@ -498,6 +498,7 @@ def _exp3_worker(
         method_jobs = int(task.get("method_jobs", 1))
         enforce_conv = bool(task["enforce_bayes_convergence"])
         max_retries = int(task["max_convergence_retries"])
+        rhs_kwargs = dict(task.get("rhs_kwargs", {}))
         grrhs_kwargs = dict(task["grrhs_kwargs"])
         log_path = str(task.get("log_path", "")).strip() or None
     else:
@@ -506,14 +507,17 @@ def _exp3_worker(
             boundary_xi_ratio = float(_BOUNDARY_XI_RATIO)
             n_train = 100
             method_jobs = 1
+            rhs_kwargs = {}
             log_path = None
         elif len(task) == 20:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_test, sampler, methods, gigg_config, bayes_min_chains, enforce_conv, max_retries, grrhs_kwargs = task
             n_train = 100
             method_jobs = 1
+            rhs_kwargs = {}
             log_path = None
         else:
             sid, signal, group_cfg, setting_block, env_id, design_type, rho_within, rho_between, target_snr, boundary_xi_ratio, r, seed_base, n_train, n_test, sampler, methods, gigg_config, bayes_min_chains, method_jobs, enforce_conv, max_retries, grrhs_kwargs = task
+            rhs_kwargs = {}
             log_path = None
         methods = [str(m) for m in methods]
         gigg_mode = "paper_ref"
@@ -605,6 +609,7 @@ def _exp3_worker(
         p0_groups=p0_signal_groups,
         sampler=sampler, methods=methods, gigg_config=gigg_config,
         bayes_min_chains=int(bayes_min_chains) if bayes_min_chains is not None else None,
+        rhs_kwargs=rhs_kwargs or {},
         grrhs_kwargs=grrhs_kwargs or {},
         enforce_bayes_convergence=bool(enforce_conv),
         max_convergence_retries=int(max_retries),
@@ -934,6 +939,7 @@ def run_exp3_linear_benchmark(
                 "method_jobs": int(method_jobs),
                 "enforce_bayes_convergence": bool(enforce_bayes_convergence),
                 "max_convergence_retries": int(retry_limit),
+                "rhs_kwargs": {},
                 "grrhs_kwargs": dict(grrhs_kw),
                 "log_path": log_path,
             }

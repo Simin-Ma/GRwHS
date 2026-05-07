@@ -31,6 +31,7 @@ def _fit_all_methods(
     p0: int,
     p0_groups: int | None = None,
     sampler: SamplerConfig,
+    rhs_kwargs: dict[str, Any] | None = None,
     grrhs_kwargs: dict[str, Any] | None = None,
     methods: Sequence[str] | None = None,
     gigg_config: dict[str, Any] | None = None,
@@ -41,6 +42,7 @@ def _fit_all_methods(
     rhs_sampler_strategy: str = "auto",
 ) -> dict[str, FitResult]:
     n = X.shape[0]
+    rhs_kwargs = rhs_kwargs or {}
     grrhs_kwargs = grrhs_kwargs or {}
     tau_target_use = str(grrhs_kwargs.get("tau_target", "coefficients")).strip().lower()
     grrhs_p0 = int(p0)
@@ -103,6 +105,7 @@ def _fit_all_methods(
             n=int(n),
             sampler=sampler_try,
             rhs_sampler_strategy=str(rhs_sampler_strategy),
+            rhs_kwargs={**dict(rhs_kwargs)},
             grrhs_kwargs={**dict(grrhs_kwargs), "retry_attempt": int(attempt)},
             gigg_mmle_kwargs=gigg_mmle_try,
             gigg_fixed_kwargs=gigg_fixed_try,

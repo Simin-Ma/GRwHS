@@ -24,6 +24,14 @@ method_config:
     allow_budget_retry: true
     extra_retry: 0
     no_retry: true
+    exact_highdim_fastpath: true
+    highdim_continuation_rounds: 230
+    highdim_continuation_warmup: 2
+    highdim_continuation_draws: 4
+    highdim_stage_a_burnin: 8
+    highdim_stage_a_draws: 8
+    highdim_stage_a_reference_mmle: true
+    highdim_select_best_round: true
 
 convergence_gate:
   enforce_bayes_convergence: true

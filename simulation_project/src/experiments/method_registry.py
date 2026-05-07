@@ -20,6 +20,7 @@ class MethodContext:
     n: int
     sampler: SamplerConfig
     rhs_sampler_strategy: str
+    rhs_kwargs: dict
     grrhs_kwargs: dict
     gigg_mmle_kwargs: dict
     gigg_fixed_kwargs: dict
@@ -49,6 +50,29 @@ class MethodRegistry:
         return sorted(self._runners.keys())
 
 
+def _mean_within_abs_corr(X: np.ndarray, groups: list[list[int]]) -> float:
+    X_arr = np.asarray(X, dtype=float)
+    vals: list[float] = []
+    for members in groups:
+        idx = np.asarray(list(members), dtype=int).reshape(-1)
+        if idx.size <= 1:
+            continue
+        block = X_arr[:, idx]
+        corr = np.corrcoef(block, rowvar=False)
+        corr = np.asarray(corr, dtype=float)
+        if corr.ndim != 2 or corr.shape[0] != corr.shape[1]:
+            continue
+        mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
+        if not np.any(mask):
+            continue
+        vals.extend(np.abs(corr[mask]).reshape(-1).tolist())
+    if not vals:
+        return float("nan")
+    arr = np.asarray(vals, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    return float(np.mean(arr)) if arr.size else float("nan")
+
+
 def build_default_method_registry() -> MethodRegistry:
     from .methods.fit_classical import fit_lasso_cv, fit_ols
     from .methods.fit_gigg import fit_gigg_fixed, fit_gigg_mmle
@@ -58,6 +82,12 @@ def build_default_method_registry() -> MethodRegistry:
     from .methods.fit_rhs import fit_rhs
 
     reg = MethodRegistry()
+
+    def _clean_gigg_kwargs(raw: dict) -> dict:
+        kwargs = dict(raw)
+        for key in ("allow_budget_retry", "extra_retry", "retry_cap"):
+            kwargs.pop(key, None)
+        return kwargs
 
     def _fit_rhs_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
         return fit_rhs(
@@ -71,7 +101,56 @@ def build_default_method_registry() -> MethodRegistry:
             method_name=str(method_name),
         )
 
+    def _rhs_highdim_exact_sampler(c: MethodContext) -> SamplerConfig:
+        within_corr = _mean_within_abs_corr(np.asarray(c.X, dtype=float), c.groups)
+        if np.isfinite(within_corr) and within_corr >= 0.75:
+            warmup = max(int(c.sampler.warmup), 1200)
+            draws = max(int(c.sampler.post_warmup_draws), 2000)
+        else:
+            warmup = max(int(c.sampler.warmup), 1000)
+            draws = max(int(c.sampler.post_warmup_draws), 1500)
+        return SamplerConfig(
+            chains=max(4, int(c.sampler.chains)),
+            warmup=int(warmup),
+            post_warmup_draws=int(draws),
+            adapt_delta=max(0.99, float(c.sampler.adapt_delta)),
+            max_treedepth=max(14, int(c.sampler.max_treedepth)),
+            strict_adapt_delta=max(0.995, float(c.sampler.strict_adapt_delta)),
+            strict_max_treedepth=max(15, int(c.sampler.strict_max_treedepth)),
+            max_divergence_ratio=min(0.01, float(c.sampler.max_divergence_ratio)),
+            rhat_threshold=float(c.sampler.rhat_threshold),
+            ess_threshold=float(c.sampler.ess_threshold),
+        )
+
     def _fit_rhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
+        sampler_use = _rhs_highdim_exact_sampler(c)
+        res = fit_rhs(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.p0,
+            sampler=sampler_use,
+            method_name=str(method_name),
+            progress_bar=False,
+        )
+        diag = dict(res.diagnostics or {})
+        diag["rhs_highdim_route"] = "stan_exact"
+        diag["rhs_highdim_sampler_budget"] = {
+            "chains": int(sampler_use.chains),
+            "warmup": int(sampler_use.warmup),
+            "post_warmup_draws": int(sampler_use.post_warmup_draws),
+            "adapt_delta": float(sampler_use.adapt_delta),
+            "max_treedepth": int(sampler_use.max_treedepth),
+            "strict_adapt_delta": float(sampler_use.strict_adapt_delta),
+            "strict_max_treedepth": int(sampler_use.strict_max_treedepth),
+        }
+        res.diagnostics = diag
+        return res
+
+    def _fit_rhs_highdim_gibbs(c: MethodContext, *, method_name: str) -> FitResult:
+        kwargs = dict(c.rhs_kwargs)
         return fit_rhs_gibbs(
             c.X,
             c.y,
@@ -81,6 +160,7 @@ def build_default_method_registry() -> MethodRegistry:
             p0=c.p0,
             sampler=c.sampler,
             method_name=str(method_name),
+            **kwargs,
         )
 
     def _grrhs_kwargs_for_strategy(c: MethodContext, *, high_dim: bool) -> dict:
@@ -127,7 +207,7 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _fit_gigg_mmle_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
-        kwargs = dict(c.gigg_mmle_kwargs)
+        kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
         kwargs["exact_highdim_fastpath"] = False
         return fit_gigg_mmle(
             c.X,
@@ -142,7 +222,7 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _fit_gigg_mmle_highdim(c: MethodContext, *, method_name: str) -> FitResult:
-        kwargs = dict(c.gigg_mmle_kwargs)
+        kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
         kwargs["exact_highdim_fastpath"] = True
         return fit_gigg_mmle(
             c.X,
@@ -190,7 +270,7 @@ def build_default_method_registry() -> MethodRegistry:
     )
     reg.register(
         "RHS_Gibbs",
-        lambda c: _fit_rhs_highdim(c, method_name="RHS_Gibbs"),
+        lambda c: _fit_rhs_highdim_gibbs(c, method_name="RHS_Gibbs"),
     )
     reg.register(
         "GIGG_MMLE",

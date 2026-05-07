@@ -40,6 +40,7 @@ def force_until_converged_gate(gate: ConvergenceGateSpec) -> ConvergenceGateSpec
 @dataclass(frozen=True)
 class MethodRuntimeConfig:
     roster: tuple[str, ...] = DEFAULT_METHOD_ROSTER
+    rhs_kwargs: dict[str, Any] = field(default_factory=dict)
     grrhs_kwargs: dict[str, Any] = field(
         default_factory=lambda: {
             "tau_target": "groups",
@@ -57,6 +58,7 @@ class MethodRuntimeConfig:
     def to_dict(self) -> dict[str, Any]:
         return {
             "roster": list(self.roster),
+            "rhs_kwargs": dict(self.rhs_kwargs),
             "grrhs_kwargs": dict(self.grrhs_kwargs),
             "gigg_config": dict(self.gigg_config),
         }
@@ -216,6 +218,7 @@ def benchmark_config_from_payload(payload: Mapping[str, Any]) -> BenchmarkConfig
     gate_payload = payload.get("convergence_gate", {})
     methods_cfg = MethodRuntimeConfig(
         roster=default_methods,
+        rhs_kwargs=dict(methods_payload.get("rhs_kwargs", {})),
         grrhs_kwargs=dict(methods_payload.get("grrhs_kwargs", {"tau_target": "groups", "progress_bar": False})),
         gigg_config=dict(methods_payload.get("gigg_config", {"allow_budget_retry": True, "extra_retry": 0, "no_retry": True})),
     )

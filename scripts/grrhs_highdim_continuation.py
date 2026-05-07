@@ -34,8 +34,17 @@ def main() -> int:
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=4)
     parser.add_argument("--draws", type=int, default=4)
+    parser.add_argument("--target-rhat", type=float, default=float("nan"))
+    parser.add_argument("--min-rounds", type=int, default=1)
     parser.add_argument("--seed", type=int, default=20260428)
     parser.add_argument("--outdir", default="tmp/grrhs_highdim_continuation")
+    parser.add_argument("--adapt-delta", type=float, default=0.9)
+    parser.add_argument("--max-treedepth", type=int, default=8)
+    parser.add_argument("--strict-adapt-delta", type=float, default=0.95)
+    parser.add_argument("--strict-max-treedepth", type=int, default=10)
+    parser.add_argument("--use-local-scale", action="store_true")
+    parser.add_argument("--collapsed-dense-mass", action="store_true")
+    parser.add_argument("--collapsed-kappa-reparam", default="prior_logit_affine")
     args = parser.parse_args()
 
     cfg = load_benchmark_config(args.config)
@@ -53,6 +62,8 @@ def main() -> int:
     payloads: list[dict[str, Any] | None] = [None] * int(args.chains)
     chain_beta_rounds: list[list[np.ndarray]] = [[] for _ in range(int(args.chains))]
     history: list[dict[str, Any]] = []
+    best_round_idx = -1
+    best_rhat = float("inf")
 
     total_start = time.perf_counter()
     for round_idx in range(1, int(args.rounds) + 1):
@@ -62,10 +73,10 @@ def main() -> int:
                 chains=1,
                 warmup=int(args.warmup),
                 post_warmup_draws=int(args.draws),
-                adapt_delta=0.9,
-                max_treedepth=8,
-                strict_adapt_delta=0.95,
-                strict_max_treedepth=10,
+                adapt_delta=float(args.adapt_delta),
+                max_treedepth=int(args.max_treedepth),
+                strict_adapt_delta=float(args.strict_adapt_delta),
+                strict_max_treedepth=int(args.strict_max_treedepth),
                 max_divergence_ratio=0.05,
                 rhat_threshold=1.01,
                 ess_threshold=20.0,
@@ -84,7 +95,9 @@ def main() -> int:
                 method_name=f"GR_RHS_chain{chain_idx+1}",
                 tau_target="groups",
                 sampler_backend="collapsed_profile",
-                use_local_scale=False,
+                use_local_scale=bool(args.use_local_scale),
+                collapsed_dense_mass=True if bool(args.collapsed_dense_mass) else None,
+                collapsed_kappa_reparameterization=str(args.collapsed_kappa_reparam),
                 progress_bar=False,
             )
             wall = time.perf_counter() - t0
@@ -117,15 +130,28 @@ def main() -> int:
             beta_diag = dict(conv.get("beta", {}))
             round_rec["merged_beta_diag"] = beta_diag
             round_rec["merged_shape"] = [int(x) for x in beta_chains.shape]
+            rhat_now = float(beta_diag.get("rhat_max", float("inf")))
+            if np.isfinite(rhat_now) and rhat_now < best_rhat:
+                best_rhat = rhat_now
+                best_round_idx = len(history)
         history.append(round_rec)
         _json_dump({"history": history}, outdir / "continuation_history.json")
+        if (
+            np.isfinite(float(args.target_rhat))
+            and round_idx >= int(args.min_rounds)
+            and "merged_beta_diag" in round_rec
+            and np.isfinite(float(round_rec["merged_beta_diag"].get("rhat_max", float("inf"))))
+            and float(round_rec["merged_beta_diag"].get("rhat_max", float("inf"))) <= float(args.target_rhat)
+        ):
+            break
 
     good = [idx for idx, chunks in enumerate(chain_beta_rounds) if chunks]
     if len(good) < 2:
         print(json.dumps({"error": "Need at least two successful chains to summarize convergence."}, indent=2))
         return 1
 
-    aligned = [np.concatenate(chain_beta_rounds[idx], axis=0) for idx in good]
+    rounds_keep = len(history) if best_round_idx < 0 else int(best_round_idx + 1)
+    aligned = [np.concatenate(chain_beta_rounds[idx][:rounds_keep], axis=0) for idx in good]
     min_draws = min(arr.shape[0] for arr in aligned)
     aligned = [arr[:min_draws] for arr in aligned]
     beta_chains = np.stack(aligned, axis=0)
@@ -152,7 +178,19 @@ def main() -> int:
                 "rounds": int(args.rounds),
                 "warmup_per_round": int(args.warmup),
                 "draws_per_round": int(args.draws),
+                "target_rhat": None if not np.isfinite(float(args.target_rhat)) else float(args.target_rhat),
+                "min_rounds": int(args.min_rounds),
                 "setting_id": str(args.setting_id),
+                "adapt_delta": float(args.adapt_delta),
+                "max_treedepth": int(args.max_treedepth),
+                "strict_adapt_delta": float(args.strict_adapt_delta),
+                "strict_max_treedepth": int(args.strict_max_treedepth),
+                "use_local_scale": bool(args.use_local_scale),
+                "collapsed_dense_mass": bool(args.collapsed_dense_mass),
+                "collapsed_kappa_reparam": str(args.collapsed_kappa_reparam),
+                "best_round": int(best_round_idx + 1) if best_round_idx >= 0 else None,
+                "final_round_executed": int(len(history)),
+                "rounds_used_for_final_artifact": int(rounds_keep),
             },
         },
     )
