@@ -104,11 +104,11 @@ def build_default_method_registry() -> MethodRegistry:
     def _rhs_highdim_exact_sampler(c: MethodContext) -> SamplerConfig:
         within_corr = _mean_within_abs_corr(np.asarray(c.X, dtype=float), c.groups)
         if np.isfinite(within_corr) and within_corr >= 0.75:
-            warmup = max(int(c.sampler.warmup), 1200)
-            draws = max(int(c.sampler.post_warmup_draws), 2000)
+            warmup = max(int(c.sampler.warmup), 1250)
+            draws = max(int(c.sampler.post_warmup_draws), 2750)
         else:
             warmup = max(int(c.sampler.warmup), 1000)
-            draws = max(int(c.sampler.post_warmup_draws), 1500)
+            draws = max(int(c.sampler.post_warmup_draws), 2000)
         return SamplerConfig(
             chains=max(4, int(c.sampler.chains)),
             warmup=int(warmup),
@@ -121,6 +121,18 @@ def build_default_method_registry() -> MethodRegistry:
             rhat_threshold=float(c.sampler.rhat_threshold),
             ess_threshold=float(c.sampler.ess_threshold),
         )
+
+    def _gigg_highdim_exact_kwargs(c: MethodContext) -> dict:
+        kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
+        within_corr = _mean_within_abs_corr(np.asarray(c.X, dtype=float), c.groups)
+        kwargs["exact_highdim_fastpath"] = True
+        if np.isfinite(within_corr) and within_corr >= 0.75:
+            kwargs["highdim_continuation_rounds"] = max(int(kwargs.get("highdim_continuation_rounds", 0)), 280)
+            kwargs["highdim_continuation_warmup"] = max(int(kwargs.get("highdim_continuation_warmup", 0) or 0), 2)
+            kwargs["highdim_continuation_draws"] = max(int(kwargs.get("highdim_continuation_draws", 0) or 0), 5)
+            kwargs["highdim_stage_a_burnin"] = max(int(kwargs.get("highdim_stage_a_burnin", 0) or 0), 8)
+            kwargs["highdim_stage_a_draws"] = max(int(kwargs.get("highdim_stage_a_draws", 0) or 0), 8)
+        return kwargs
 
     def _fit_rhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         sampler_use = _rhs_highdim_exact_sampler(c)
@@ -222,8 +234,7 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _fit_gigg_mmle_highdim(c: MethodContext, *, method_name: str) -> FitResult:
-        kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
-        kwargs["exact_highdim_fastpath"] = True
+        kwargs = _gigg_highdim_exact_kwargs(c)
         return fit_gigg_mmle(
             c.X,
             c.y,
