@@ -17,7 +17,7 @@ def _evaluate_row(
     y_test: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Compute MSE, CI coverage, and (optionally) held-out log predictive density."""
-    from .analysis.metrics import ci_length_and_coverage, compute_test_lpd, compute_test_lpd_ppd, mse_null_signal_overall
+    from .analysis.metrics import ci_length_and_coverage_sampled, compute_test_lpd, compute_test_lpd_ppd, mse_null_signal_overall
 
     nan = float("nan")
     if result.beta_mean is None:
@@ -32,7 +32,7 @@ def _evaluate_row(
             "lpd_test_plugin": nan,
         }
     m = mse_null_signal_overall(result.beta_mean, beta0)
-    ci_len, cov = ci_length_and_coverage(beta0, result.beta_draws)
+    ci_len, cov = ci_length_and_coverage_sampled(beta0, result.beta_draws)
     lpd_plugin = nan
     lpd_ppd = nan
     if X_train is not None and y_train is not None and X_test is not None and y_test is not None:

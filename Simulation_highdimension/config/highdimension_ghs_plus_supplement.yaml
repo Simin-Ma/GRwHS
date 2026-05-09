@@ -1,18 +1,12 @@
 package: Simulation_highdimension
-description: High-dimensional p>n benchmark suite for GR-RHS.
+description: High-dimensional GHS_plus supplement benchmark for GR-RHS study.
 
 methods:
-  - GR_RHS
-  - RHS
-  - GIGG_MMLE
-  - LASSO_CV
+  - GHS_plus
 
 method_config:
   roster:
-    - GR_RHS
-    - RHS
-    - GIGG_MMLE
-    - LASSO_CV
+    - GHS_plus
   grrhs_kwargs:
     tau_target: groups
     sampler_backend: collapsed_profile
@@ -52,10 +46,10 @@ runner:
   seed: 20260428
   n_jobs: 1
   method_jobs: 1
-  output_dir: outputs/history/Simulation_highdimension/benchmark_main
+  output_dir: outputs/history/Simulation_highdimension/benchmark_ghs_plus_supplement
   save_datasets: true
   build_tables: true
-  baseline_method: RHS
+  baseline_method: GHS_plus
   required_metrics_for_pairing:
     - mse_null
     - mse_signal
@@ -102,14 +96,6 @@ tables:
       - coverage_95
       - runtime_mean
       - n_converged
-  highdim_paired_deltas:
-    rows:
-      - common-converged paired setting x method
-    columns:
-      - delta_vs_rhs
-      - paired_n
-      - mse_overall
-      - mse_signal
 
 optional_stress_lines: []
 
@@ -131,7 +117,7 @@ settings:
     role: neutral high-dimensional anchor
     notes: High-dimensional analogue of the classical low-dimensional reference family.
     suite: highdim
-    methods: [GR_RHS, RHS, GIGG_MMLE, LASSO_CV]
+    methods: [GHS_plus]
   - setting_id: hd_setting_2_single_mode
     label: "HD Setting 2: Single-Mode Heterogeneous High-Dimensional"
     family: single_mode_heterogeneous
@@ -149,7 +135,7 @@ settings:
     role: high-dimensional transition setting
     notes: Tests whether shared heterogeneous active-group structure remains useful when p exceeds n.
     suite: highdim
-    methods: [GR_RHS, RHS, GIGG_MMLE, LASSO_CV]
+    methods: [GHS_plus]
   - setting_id: hd_setting_3_multimode_showcase
     label: "HD Setting 3: Multimode Heterogeneous High-Dimensional Showcase"
     family: multimode_heterogeneous
@@ -167,4 +153,4 @@ settings:
     role: main high-dimensional showcase
     notes: High-dimensional analogue of the multimode heterogeneous GR-RHS showcase family.
     suite: highdim
-    methods: [GR_RHS, RHS, GIGG_MMLE, LASSO_CV]
+    methods: [GHS_plus]

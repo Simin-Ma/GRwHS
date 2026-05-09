@@ -6,6 +6,7 @@ import math
 import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -180,6 +181,7 @@ class GroupedHorseshoePlus:
     num_chains: int = 1
     jitter: float = 1e-8
     progress_bar: bool = True
+    use_process_pool: bool = True
 
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -395,6 +397,9 @@ class GroupedHorseshoePlus:
 
         start = time.perf_counter()
         process_ok, _ = can_use_process_pool()
+        process_ok = bool(process_ok and self.use_process_pool and int(self.num_chains) > 1)
+        used_process_pool = False
+        process_pool_fallback_reason = ""
         try:
             if int(self.num_chains) <= 1:
                 chain_results = [
@@ -402,38 +407,48 @@ class GroupedHorseshoePlus:
                     for chain_idx in range(int(self.num_chains))
                 ]
             elif process_ok:
-                tmpdir_obj = tempfile.TemporaryDirectory(prefix="ghsplus_shared_")
-                tmpdir = Path(tmpdir_obj.name)
-                x_path = tmpdir / "X.npy"
-                y_path = tmpdir / "y.npy"
-                np.save(x_path, np.asarray(X_arr, dtype=float), allow_pickle=False)
-                np.save(y_path, np.asarray(y_arr, dtype=float), allow_pickle=False)
-                payloads = [
-                    {
-                        "fit_intercept": bool(self.fit_intercept),
-                        "tau0": float(self.tau0),
-                        "group_scale_prior": float(self.group_scale_prior),
-                        "local_scale_prior": float(self.local_scale_prior),
-                        "iters": int(self.iters),
-                        "burnin": int(self.burnin),
-                        "thin": int(self.thin),
-                        "seed": int(self.seed) + chain_idx,
-                        "jitter": float(self.jitter),
-                        "progress_bar": False,
-                        "X_file": str(x_path),
-                        "y_file": str(y_path),
-                        "X": None,
-                        "y": None,
-                        "groups": groups_use,
-                    }
-                    for chain_idx in range(int(self.num_chains))
-                ]
-                with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
-                    fut_map = {executor.submit(_fit_grouped_hsplus_chain_task, payloads[i]): i for i in range(len(payloads))}
-                    chain_results = [None] * len(payloads)
-                    for fut in as_completed(fut_map):
-                        chain_results[fut_map[fut]] = fut.result()
+                try:
+                    tmpdir_obj = tempfile.TemporaryDirectory(prefix="ghsplus_shared_")
+                    tmpdir = Path(tmpdir_obj.name)
+                    x_path = tmpdir / "X.npy"
+                    y_path = tmpdir / "y.npy"
+                    np.save(x_path, np.asarray(X_arr, dtype=float), allow_pickle=False)
+                    np.save(y_path, np.asarray(y_arr, dtype=float), allow_pickle=False)
+                    payloads = [
+                        {
+                            "fit_intercept": bool(self.fit_intercept),
+                            "tau0": float(self.tau0),
+                            "group_scale_prior": float(self.group_scale_prior),
+                            "local_scale_prior": float(self.local_scale_prior),
+                            "iters": int(self.iters),
+                            "burnin": int(self.burnin),
+                            "thin": int(self.thin),
+                            "seed": int(self.seed) + chain_idx,
+                            "jitter": float(self.jitter),
+                            "progress_bar": False,
+                            "X_file": str(x_path),
+                            "y_file": str(y_path),
+                            "X": None,
+                            "y": None,
+                            "groups": groups_use,
+                        }
+                        for chain_idx in range(int(self.num_chains))
+                    ]
+                    with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
+                        fut_map = {executor.submit(_fit_grouped_hsplus_chain_task, payloads[i]): i for i in range(len(payloads))}
+                        chain_results = [None] * len(payloads)
+                        for fut in as_completed(fut_map):
+                            chain_results[fut_map[fut]] = fut.result()
+                    used_process_pool = True
+                except (BrokenProcessPool, OSError, MemoryError) as exc:
+                    process_pool_fallback_reason = f"{type(exc).__name__}: {exc}"
+                    chain_results = [
+                        self._sample_single_chain(X_arr, y_arr, groups=groups_use, seed=int(self.seed) + chain_idx)
+                        for chain_idx in range(int(self.num_chains))
+                    ]
             else:
+                if int(self.num_chains) > 1 and bool(self.use_process_pool) and not process_ok:
+                    process_pool_fallback_reason = "process_pool_disabled_or_unavailable"
                 chain_results = [
                     self._sample_single_chain(X_arr, y_arr, groups=groups_use, seed=int(self.seed) + chain_idx)
                     for chain_idx in range(int(self.num_chains))
@@ -491,6 +506,8 @@ class GroupedHorseshoePlus:
             "runtime_sec": float(runtime_sec),
             "num_chains": int(self.num_chains),
             "kept_draws_per_chain": int(kept),
+            "used_process_pool": bool(used_process_pool),
+            "process_pool_fallback_reason": str(process_pool_fallback_reason),
             "model": "HBGHS (Xu et al. 2016)",
             "standardization": {
                 "x_center": bool(self.fit_intercept),

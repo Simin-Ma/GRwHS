@@ -49,6 +49,7 @@ def fit_ghs_plus(
     group_scale_prior: float = 1.0,
     local_scale_prior: float = 1.0,
     progress_bar: bool = True,
+    use_process_pool: bool = True,
 ) -> FitResult:
     """Fit Xu et al. (2016) HBGHS using the paper-style Gaussian Gibbs setup.
 
@@ -84,6 +85,7 @@ def fit_ghs_plus(
             seed=int(seed),
             num_chains=int(sampler.chains),
             progress_bar=bool(progress_bar),
+            use_process_pool=bool(use_process_pool),
         )
         model, runtime = timed_call(model.fit, X, y, groups=as_int_groups(groups))
         beta_draws = getattr(model, "coef_samples_", None)

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 import numpy as np
-from sklearn.metrics import roc_auc_score
 
 from ...utils import flatten_draws, posterior_ci95
 
@@ -22,9 +21,26 @@ def mse_null_signal_overall(beta_hat: np.ndarray, beta_true: np.ndarray) -> dict
 
 
 def ci_length_and_coverage(beta_true: np.ndarray, beta_draws: Optional[np.ndarray]) -> tuple[float, float]:
-    ci = posterior_ci95(beta_draws)
-    if ci is None:
+    return ci_length_and_coverage_sampled(beta_true, beta_draws)
+
+
+def ci_length_and_coverage_sampled(
+    beta_true: np.ndarray,
+    beta_draws: Optional[np.ndarray],
+    *,
+    max_draws: int = 400,
+) -> tuple[float, float]:
+    if beta_draws is None:
         return float("nan"), float("nan")
+    draws = np.asarray(beta_draws, dtype=float)
+    if draws.ndim < 2:
+        return float("nan"), float("nan")
+    if draws.ndim > 2:
+        draws = draws.reshape(-1, draws.shape[-1])
+    if draws.shape[0] > int(max_draws):
+        idx = np.linspace(0, draws.shape[0] - 1, int(max_draws)).round().astype(int)
+        draws = draws[idx]
+    ci = np.quantile(draws, [0.025, 0.975], axis=0)
     low = np.asarray(ci[0], dtype=float)
     high = np.asarray(ci[1], dtype=float)
     width = float(np.mean(high - low))
@@ -50,6 +66,8 @@ def group_l2_error(beta_hat: np.ndarray, beta_true: np.ndarray, groups: Sequence
 
 
 def group_auroc(scores: np.ndarray, labels: np.ndarray) -> float:
+    from sklearn.metrics import roc_auc_score
+
     s = np.asarray(scores, dtype=float).reshape(-1)
     y = np.asarray(labels, dtype=int).reshape(-1)
     finite = np.isfinite(s) & np.isfinite(y)

@@ -273,6 +273,7 @@ def build_default_method_registry() -> MethodRegistry:
             p0=c.p0,
             sampler=c.sampler,
             progress_bar=False,
+            use_process_pool=True,
         )
 
     def _fit_ghs_plus_highdim(c: MethodContext, *, method_name: str) -> FitResult:
@@ -285,7 +286,11 @@ def build_default_method_registry() -> MethodRegistry:
             seed=c.seed,
             p0=c.p0,
             sampler=sampler_use,
+            iter_mult=1,
+            iter_floor=400,
+            iter_cap=400,
             progress_bar=False,
+            use_process_pool=False,
         )
         diag = dict(res.diagnostics or {})
         diag["ghs_highdim_route"] = "gibbs_light_exact"
@@ -293,6 +298,9 @@ def build_default_method_registry() -> MethodRegistry:
             "chains": int(sampler_use.chains),
             "warmup": int(sampler_use.warmup),
             "post_warmup_draws": int(sampler_use.post_warmup_draws),
+            "iter_mult": 1,
+            "iter_floor": 400,
+            "iter_cap": 400,
             "adapt_delta": float(sampler_use.adapt_delta),
             "max_treedepth": int(sampler_use.max_treedepth),
             "strict_adapt_delta": float(sampler_use.strict_adapt_delta),
