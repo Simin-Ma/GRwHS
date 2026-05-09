@@ -221,6 +221,7 @@ def build_default_method_registry() -> MethodRegistry:
     def _fit_gigg_mmle_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
         kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
         kwargs["exact_highdim_fastpath"] = False
+        kwargs.setdefault("progress_bar", False)
         return fit_gigg_mmle(
             c.X,
             c.y,
@@ -235,6 +236,7 @@ def build_default_method_registry() -> MethodRegistry:
 
     def _fit_gigg_mmle_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         kwargs = _gigg_highdim_exact_kwargs(c)
+        kwargs.setdefault("progress_bar", False)
         return fit_gigg_mmle(
             c.X,
             c.y,
@@ -357,6 +359,7 @@ def build_default_method_registry() -> MethodRegistry:
             seed=c.seed,
             p0=c.p0,
             sampler=c.sampler,
+            progress_bar=False,
         ),
     )
     reg.register("OLS", lambda c: fit_ols(c.X, c.y, task=c.task, seed=c.seed))

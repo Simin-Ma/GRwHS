@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import math
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -10,6 +11,7 @@ from numpy.random import Generator, default_rng
 from scipy.linalg import cho_factor, cho_solve, solve_triangular
 
 from simulation_project.src.core.inference.woodbury import beta_sample_woodbury
+from simulation_project.src.core.utils.parallel_runtime import can_use_process_pool
 
 
 _MIN_POS = 1e-10
@@ -106,6 +108,28 @@ def _sample_beta_conditional(
     z = rng.standard_normal(precision.shape[0])
     noise = solve_triangular(chol[0], z, lower=bool(chol[1]), check_finite=False)
     return np.asarray(mean + math.sqrt(max(float(sigma2), jitter)) * noise, dtype=float)
+
+
+def _fit_grouped_hsplus_chain_task(payload: Dict[str, Any]) -> Dict[str, np.ndarray]:
+    model = GroupedHorseshoePlus(
+        fit_intercept=bool(payload["fit_intercept"]),
+        tau0=float(payload["tau0"]),
+        group_scale_prior=float(payload["group_scale_prior"]),
+        local_scale_prior=float(payload["local_scale_prior"]),
+        iters=int(payload["iters"]),
+        burnin=int(payload["burnin"]),
+        thin=int(payload["thin"]),
+        seed=int(payload["seed"]),
+        num_chains=1,
+        jitter=float(payload["jitter"]),
+        progress_bar=bool(payload.get("progress_bar", False)),
+    )
+    return model._sample_single_chain(
+        np.asarray(payload["X"], dtype=float),
+        np.asarray(payload["y"], dtype=float),
+        groups=payload["groups"],
+        seed=int(payload["seed"]),
+    )
 
 
 @dataclass
@@ -351,10 +375,41 @@ class GroupedHorseshoePlus:
         groups_use = [[j] for j in range(X_arr.shape[1])] if groups is None else [list(map(int, g)) for g in groups]
 
         start = time.perf_counter()
-        chain_results = [
-            self._sample_single_chain(X_arr, y_arr, groups=groups_use, seed=int(self.seed) + chain_idx)
+        payloads = [
+            {
+                "fit_intercept": bool(self.fit_intercept),
+                "tau0": float(self.tau0),
+                "group_scale_prior": float(self.group_scale_prior),
+                "local_scale_prior": float(self.local_scale_prior),
+                "iters": int(self.iters),
+                "burnin": int(self.burnin),
+                "thin": int(self.thin),
+                "seed": int(self.seed) + chain_idx,
+                "jitter": float(self.jitter),
+                "progress_bar": False,
+                "X": np.asarray(X_arr, dtype=float),
+                "y": np.asarray(y_arr, dtype=float),
+                "groups": groups_use,
+            }
             for chain_idx in range(int(self.num_chains))
         ]
+        process_ok, _ = can_use_process_pool()
+        if int(self.num_chains) <= 1:
+            chain_results = [
+                self._sample_single_chain(X_arr, y_arr, groups=groups_use, seed=int(self.seed) + chain_idx)
+                for chain_idx in range(int(self.num_chains))
+            ]
+        elif process_ok:
+            with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
+                fut_map = {executor.submit(_fit_grouped_hsplus_chain_task, payloads[i]): i for i in range(len(payloads))}
+                chain_results = [None] * len(payloads)
+                for fut in as_completed(fut_map):
+                    chain_results[fut_map[fut]] = fut.result()
+        else:
+            chain_results = [
+                self._sample_single_chain(X_arr, y_arr, groups=groups_use, seed=int(self.seed) + chain_idx)
+                for chain_idx in range(int(self.num_chains))
+            ]
         runtime_sec = max(time.perf_counter() - start, 1e-12)
 
         if int(self.num_chains) == 1:
