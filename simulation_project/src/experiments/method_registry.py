@@ -134,6 +134,20 @@ def build_default_method_registry() -> MethodRegistry:
             kwargs["highdim_stage_a_draws"] = max(int(kwargs.get("highdim_stage_a_draws", 0) or 0), 8)
         return kwargs
 
+    def _ghs_highdim_light_sampler(c: MethodContext) -> SamplerConfig:
+        return SamplerConfig(
+            chains=max(4, int(c.sampler.chains)),
+            warmup=max(500, int(c.sampler.warmup)),
+            post_warmup_draws=max(500, int(c.sampler.post_warmup_draws)),
+            adapt_delta=max(0.95, float(c.sampler.adapt_delta)),
+            max_treedepth=max(12, int(c.sampler.max_treedepth)),
+            strict_adapt_delta=max(0.99, float(c.sampler.strict_adapt_delta)),
+            strict_max_treedepth=max(14, int(c.sampler.strict_max_treedepth)),
+            max_divergence_ratio=min(0.01, float(c.sampler.max_divergence_ratio)),
+            rhat_threshold=float(c.sampler.rhat_threshold),
+            ess_threshold=max(400.0, float(c.sampler.ess_threshold)),
+        )
+
     def _fit_rhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         sampler_use = _rhs_highdim_exact_sampler(c)
         res = fit_rhs(
@@ -249,6 +263,45 @@ def build_default_method_registry() -> MethodRegistry:
             **kwargs,
         )
 
+    def _fit_ghs_plus_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
+        return fit_ghs_plus(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.p0,
+            sampler=c.sampler,
+            progress_bar=False,
+        )
+
+    def _fit_ghs_plus_highdim(c: MethodContext, *, method_name: str) -> FitResult:
+        sampler_use = _ghs_highdim_light_sampler(c)
+        res = fit_ghs_plus(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.p0,
+            sampler=sampler_use,
+            progress_bar=False,
+        )
+        diag = dict(res.diagnostics or {})
+        diag["ghs_highdim_route"] = "gibbs_light_exact"
+        diag["ghs_highdim_sampler_budget"] = {
+            "chains": int(sampler_use.chains),
+            "warmup": int(sampler_use.warmup),
+            "post_warmup_draws": int(sampler_use.post_warmup_draws),
+            "adapt_delta": float(sampler_use.adapt_delta),
+            "max_treedepth": int(sampler_use.max_treedepth),
+            "strict_adapt_delta": float(sampler_use.strict_adapt_delta),
+            "strict_max_treedepth": int(sampler_use.strict_max_treedepth),
+            "ess_threshold": float(sampler_use.ess_threshold),
+        }
+        res.diagnostics = diag
+        return res
+
     reg.register(
         "GR_RHS",
         lambda c: (
@@ -351,15 +404,10 @@ def build_default_method_registry() -> MethodRegistry:
     )
     reg.register(
         "GHS_plus",
-        lambda c: fit_ghs_plus(
-            c.X,
-            c.y,
-            c.groups,
-            task=c.task,
-            seed=c.seed,
-            p0=c.p0,
-            sampler=c.sampler,
-            progress_bar=False,
+        lambda c: (
+            _fit_ghs_plus_highdim(c, method_name="GHS_plus")
+            if str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
+            else _fit_ghs_plus_lowdim(c, method_name="GHS_plus")
         ),
     )
     reg.register("OLS", lambda c: fit_ols(c.X, c.y, task=c.task, seed=c.seed))

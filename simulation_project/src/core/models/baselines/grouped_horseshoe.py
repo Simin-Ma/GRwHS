@@ -1,9 +1,12 @@
 ﻿from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 import math
+import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -13,8 +16,19 @@ from scipy.linalg import cho_factor, cho_solve, solve_triangular
 from simulation_project.src.core.inference.woodbury import beta_sample_woodbury
 from simulation_project.src.core.utils.parallel_runtime import can_use_process_pool
 
+try:
+    from threadpoolctl import threadpool_limits
+except Exception:  # pragma: no cover
+    threadpool_limits = None
+
 
 _MIN_POS = 1e-10
+
+
+def _blas_single_thread_context():
+    if threadpool_limits is None:
+        return nullcontext()
+    return threadpool_limits(limits=1, user_api="blas")
 
 
 def _sample_invgamma(alpha: float, beta: float, rng: Generator) -> float:
@@ -111,6 +125,14 @@ def _sample_beta_conditional(
 
 
 def _fit_grouped_hsplus_chain_task(payload: Dict[str, Any]) -> Dict[str, np.ndarray]:
+    if payload.get("X_file"):
+        X = np.load(str(payload["X_file"]), allow_pickle=False)
+    else:
+        X = np.asarray(payload["X"], dtype=float)
+    if payload.get("y_file"):
+        y = np.load(str(payload["y_file"]), allow_pickle=False)
+    else:
+        y = np.asarray(payload["y"], dtype=float)
     model = GroupedHorseshoePlus(
         fit_intercept=bool(payload["fit_intercept"]),
         tau0=float(payload["tau0"]),
@@ -125,8 +147,8 @@ def _fit_grouped_hsplus_chain_task(payload: Dict[str, Any]) -> Dict[str, np.ndar
         progress_bar=bool(payload.get("progress_bar", False)),
     )
     return model._sample_single_chain(
-        np.asarray(payload["X"], dtype=float),
-        np.asarray(payload["y"], dtype=float),
+        np.asarray(X, dtype=float),
+        np.asarray(y, dtype=float),
         groups=payload["groups"],
         seed=int(payload["seed"]),
     )
@@ -230,134 +252,130 @@ class GroupedHorseshoePlus:
         groups: Sequence[Sequence[int]],
         seed: int,
     ) -> Dict[str, np.ndarray]:
-        rng = default_rng(int(seed))
-        X_std, y_ctr, x_mean, x_scale, y_mean = self._prepare_data(X, y, fit_intercept=bool(self.fit_intercept))
-        n, p = X_std.shape
-        groups_norm = _normalize_groups(groups, p)
-        G = len(groups_norm)
-        group_id = np.empty(p, dtype=int)
-        group_sizes = np.zeros(G, dtype=int)
-        for gid, members in enumerate(groups_norm):
-            idx = np.asarray(members, dtype=int)
-            group_id[idx] = gid
-            group_sizes[gid] = int(idx.size)
+        with _blas_single_thread_context():
+            rng = default_rng(int(seed))
+            X_std, y_ctr, x_mean, x_scale, y_mean = self._prepare_data(X, y, fit_intercept=bool(self.fit_intercept))
+            n, p = X_std.shape
+            groups_norm = _normalize_groups(groups, p)
+            G = len(groups_norm)
+            group_id = np.empty(p, dtype=int)
+            group_sizes = np.zeros(G, dtype=int)
+            for gid, members in enumerate(groups_norm):
+                idx = np.asarray(members, dtype=int)
+                group_id[idx] = gid
+                group_sizes[gid] = int(idx.size)
 
-        XtX = X_std.T @ X_std
-        Xty = X_std.T @ y_ctr
+            XtX = X_std.T @ X_std
+            Xty = X_std.T @ y_ctr
 
-        try:
-            beta = np.linalg.solve(XtX + 1e-3 * np.eye(p), Xty)
-        except np.linalg.LinAlgError:
-            beta = np.zeros(p, dtype=float)
-        sigma2 = max(float(np.var(y_ctr - X_std @ beta)), float(self.jitter))
-        tau2 = max(float(self.tau0) ** 2, float(self.jitter))
-        tau_aux = 1.0
-        group_lambda2 = np.ones(G, dtype=float)
-        group_aux = np.ones(G, dtype=float)
-        local_delta2 = np.ones(p, dtype=float)
-        local_aux = np.ones(p, dtype=float)
+            try:
+                beta = np.linalg.solve(XtX + 1e-3 * np.eye(p), Xty)
+            except np.linalg.LinAlgError:
+                beta = np.zeros(p, dtype=float)
+            sigma2 = max(float(np.var(y_ctr - X_std @ beta)), float(self.jitter))
+            tau2 = max(float(self.tau0) ** 2, float(self.jitter))
+            tau_aux = 1.0
+            group_lambda2 = np.ones(G, dtype=float)
+            group_aux = np.ones(G, dtype=float)
+            local_delta2 = np.ones(p, dtype=float)
+            local_aux = np.ones(p, dtype=float)
 
-        kept = max(0, (int(self.iters) - int(self.burnin) + int(self.thin) - 1) // int(self.thin))
-        beta_draws = np.zeros((kept, p), dtype=float)
-        intercept_draws = np.zeros(kept, dtype=float)
-        sigma2_draws = np.zeros(kept, dtype=float)
-        tau_draws = np.zeros(kept, dtype=float)
-        group_draws = np.zeros((kept, G), dtype=float)
-        local_draws = np.ones((kept, p), dtype=float)
+            kept = max(0, (int(self.iters) - int(self.burnin) + int(self.thin) - 1) // int(self.thin))
+            beta_draws = np.zeros((kept, p), dtype=float)
+            intercept_draws = np.zeros(kept, dtype=float)
+            sigma2_draws = np.zeros(kept, dtype=float)
+            tau_draws = np.zeros(kept, dtype=float)
+            group_draws = np.zeros((kept, G), dtype=float)
+            local_draws = np.ones((kept, p), dtype=float)
 
-        keep_i = 0
-        iterator = range(int(self.iters))
-        if bool(self.progress_bar):
-            from simulation_project.src.core.utils.logging_utils import progress
-            iterator = progress(iterator, total=int(self.iters), desc="Grouped HS+ Gibbs")
+            keep_i = 0
+            iterator = range(int(self.iters))
+            if bool(self.progress_bar):
+                from simulation_project.src.core.utils.logging_utils import progress
+                iterator = progress(iterator, total=int(self.iters), desc="Grouped HS+ Gibbs")
 
-        for it in iterator:
-            # beta | sigma^2, tau^2, lambda_g, delta_j
-            prior_var = tau2 * group_lambda2[group_id] * local_delta2
-            beta = _sample_beta_conditional(
-                X=X_std,
-                y=y_ctr,
-                XtX=XtX,
-                Xty=Xty,
-                sigma2=sigma2,
-                prior_var=prior_var,
-                jitter=float(self.jitter),
-                rng=rng,
-            )
+            for it in iterator:
+                prior_var = tau2 * group_lambda2[group_id] * local_delta2
+                beta = _sample_beta_conditional(
+                    X=X_std,
+                    y=y_ctr,
+                    XtX=XtX,
+                    Xty=Xty,
+                    sigma2=sigma2,
+                    prior_var=prior_var,
+                    jitter=float(self.jitter),
+                    rng=rng,
+                )
 
-            # sigma^2 | beta, tau^2, lambda_g, delta_j
-            resid = y_ctr - X_std @ beta
-            prior_quad = float(np.sum((beta * beta) / np.maximum(prior_var, self.jitter)))
-            n_eff = max(n - int(bool(self.fit_intercept)), 1)
-            sigma2 = _sample_invgamma(
-                alpha=0.5 * (n_eff + p),
-                beta=0.5 * max(float(resid @ resid) + prior_quad, self.jitter),
-                rng=rng,
-            )
+                resid = y_ctr - X_std @ beta
+                prior_quad = float(np.sum((beta * beta) / np.maximum(prior_var, self.jitter)))
+                n_eff = max(n - int(bool(self.fit_intercept)), 1)
+                sigma2 = _sample_invgamma(
+                    alpha=0.5 * (n_eff + p),
+                    beta=0.5 * max(float(resid @ resid) + prior_quad, self.jitter),
+                    rng=rng,
+                )
 
-            # tau^2 | beta, sigma^2, lambda_g, delta_j  [global shrinkage]
-            tau_rate = 0.5 * float(np.sum((beta * beta) / np.maximum(group_lambda2[group_id] * local_delta2, self.jitter))) / max(sigma2, self.jitter)
-            tau2 = _sample_invgamma(alpha=0.5 * (p + 1), beta=max(tau_rate + (1.0 / max(tau_aux, self.jitter)), self.jitter), rng=rng)
-            tau_aux = _sample_invgamma(alpha=1.0, beta=(1.0 / tau2) + (1.0 / (float(self.tau0) ** 2)), rng=rng)
+                tau_rate = 0.5 * float(np.sum((beta * beta) / np.maximum(group_lambda2[group_id] * local_delta2, self.jitter))) / max(sigma2, self.jitter)
+                tau2 = _sample_invgamma(alpha=0.5 * (p + 1), beta=max(tau_rate + (1.0 / max(tau_aux, self.jitter)), self.jitter), rng=rng)
+                tau_aux = _sample_invgamma(alpha=1.0, beta=(1.0 / tau2) + (1.0 / (float(self.tau0) ** 2)), rng=rng)
 
-            # lambda_g^2 | beta, sigma^2, tau^2, delta_j  [group shrinkage, vectorized]
-            weighted_b2 = beta ** 2 / np.maximum(local_delta2, self.jitter)
-            group_beta_sq = np.bincount(group_id, weights=weighted_b2, minlength=G)
-            rates_g = (0.5 * group_beta_sq / max(sigma2 * tau2, self.jitter)
-                       + 1.0 / np.maximum(group_aux, self.jitter))
-            alphas_g = 0.5 * (group_sizes + 1)
-            group_lambda2 = 1.0 / rng.gamma(
-                shape=np.maximum(alphas_g, self.jitter),
-                scale=1.0 / np.maximum(rates_g, self.jitter),
-            )
-            group_aux = 1.0 / rng.gamma(
-                shape=np.ones(G),
-                scale=1.0 / np.maximum(
-                    1.0 / np.maximum(group_lambda2, self.jitter)
-                    + 1.0 / float(self.group_scale_prior) ** 2,
-                    self.jitter,
-                ),
-            )
+                weighted_b2 = beta ** 2 / np.maximum(local_delta2, self.jitter)
+                group_beta_sq = np.bincount(group_id, weights=weighted_b2, minlength=G)
+                rates_g = (0.5 * group_beta_sq / max(sigma2 * tau2, self.jitter)
+                           + 1.0 / np.maximum(group_aux, self.jitter))
+                alphas_g = 0.5 * (group_sizes + 1)
+                group_lambda2 = 1.0 / rng.gamma(
+                    shape=np.maximum(alphas_g, self.jitter),
+                    scale=1.0 / np.maximum(rates_g, self.jitter),
+                )
+                group_aux = 1.0 / rng.gamma(
+                    shape=np.ones(G),
+                    scale=1.0 / np.maximum(
+                        1.0 / np.maximum(group_lambda2, self.jitter)
+                        + 1.0 / float(self.group_scale_prior) ** 2,
+                        self.jitter,
+                    ),
+                )
 
-            # delta_j^2 | beta, sigma^2, tau^2, lambda_g  [within-group, vectorized]
-            group_scales_j = group_lambda2[group_id]
-            rates_j = (0.5 * beta ** 2 / np.maximum(sigma2 * tau2 * group_scales_j, self.jitter)
-                       + 1.0 / np.maximum(local_aux, self.jitter))
-            local_delta2 = 1.0 / rng.gamma(
-                shape=np.ones(p),
-                scale=1.0 / np.maximum(rates_j, self.jitter),
-            )
-            local_aux = 1.0 / rng.gamma(
-                shape=np.ones(p),
-                scale=1.0 / np.maximum(
-                    1.0 / np.maximum(local_delta2, self.jitter)
-                    + 1.0 / float(self.local_scale_prior) ** 2,
-                    self.jitter,
-                ),
-            )
+                group_scales_j = group_lambda2[group_id]
+                rates_j = (0.5 * beta ** 2 / np.maximum(sigma2 * tau2 * group_scales_j, self.jitter)
+                           + 1.0 / np.maximum(local_aux, self.jitter))
+                local_delta2 = 1.0 / rng.gamma(
+                    shape=np.ones(p),
+                    scale=1.0 / np.maximum(rates_j, self.jitter),
+                )
+                local_aux = 1.0 / rng.gamma(
+                    shape=np.ones(p),
+                    scale=1.0 / np.maximum(
+                        1.0 / np.maximum(local_delta2, self.jitter)
+                        + 1.0 / float(self.local_scale_prior) ** 2,
+                        self.jitter,
+                    ),
+                )
 
-            if it >= int(self.burnin) and ((it - int(self.burnin)) % int(self.thin) == 0):
-                beta_orig = beta / x_scale
-                intercept = float(y_mean - np.dot(x_mean, beta_orig)) if bool(self.fit_intercept) else 0.0
-                beta_draws[keep_i] = beta_orig
-                intercept_draws[keep_i] = intercept
-                sigma2_draws[keep_i] = sigma2
-                tau_draws[keep_i] = math.sqrt(max(tau2, self.jitter))
-                group_draws[keep_i] = np.sqrt(np.maximum(group_lambda2, self.jitter))
-                local_draws[keep_i] = np.sqrt(np.maximum(local_delta2, self.jitter))
-                keep_i += 1
+                if it >= int(self.burnin) and ((it - int(self.burnin)) % int(self.thin) == 0):
+                    beta_orig = beta / x_scale
+                    intercept = float(y_mean - np.dot(x_mean, beta_orig)) if bool(self.fit_intercept) else 0.0
+                    beta_draws[keep_i] = beta_orig
+                    intercept_draws[keep_i] = intercept
+                    sigma2_draws[keep_i] = sigma2
+                    tau_draws[keep_i] = math.sqrt(max(tau2, self.jitter))
+                    group_draws[keep_i] = np.sqrt(np.maximum(group_lambda2, self.jitter))
+                    local_draws[keep_i] = np.sqrt(np.maximum(local_delta2, self.jitter))
+                    keep_i += 1
 
-        return {
-            "coef_samples": beta_draws,
-            "intercept_samples": intercept_draws,
-            "sigma2_samples": sigma2_draws,
-            "tau_samples": tau_draws,
-            "group_lambda_samples": group_draws,
-            "local_scale_samples": local_draws,
-            "groups": [list(g) for g in groups_norm],
-            "group_id": group_id,
-            "group_sizes": group_sizes,
-        }
+            return {
+                "coef_samples": beta_draws,
+                "intercept_samples": intercept_draws,
+                "sigma2_samples": sigma2_draws,
+                "tau_samples": tau_draws,
+                "group_lambda_samples": group_draws,
+                "local_scale_samples": local_draws,
+                "groups": [list(g) for g in groups_norm],
+                "group_id": group_id,
+                "group_sizes": group_sizes,
+            }
 
     def fit(
         self,
@@ -366,6 +384,7 @@ class GroupedHorseshoePlus:
         *,
         groups: Optional[Sequence[Sequence[int]]] = None,
     ) -> "GroupedHorseshoePlus":
+        tmpdir_obj: tempfile.TemporaryDirectory[str] | None = None
         X_arr = np.asarray(X, dtype=float)
         y_arr = np.asarray(y, dtype=float).reshape(-1)
         if X_arr.ndim != 2:
@@ -375,42 +394,54 @@ class GroupedHorseshoePlus:
         groups_use = [[j] for j in range(X_arr.shape[1])] if groups is None else [list(map(int, g)) for g in groups]
 
         start = time.perf_counter()
-        payloads = [
-            {
-                "fit_intercept": bool(self.fit_intercept),
-                "tau0": float(self.tau0),
-                "group_scale_prior": float(self.group_scale_prior),
-                "local_scale_prior": float(self.local_scale_prior),
-                "iters": int(self.iters),
-                "burnin": int(self.burnin),
-                "thin": int(self.thin),
-                "seed": int(self.seed) + chain_idx,
-                "jitter": float(self.jitter),
-                "progress_bar": False,
-                "X": np.asarray(X_arr, dtype=float),
-                "y": np.asarray(y_arr, dtype=float),
-                "groups": groups_use,
-            }
-            for chain_idx in range(int(self.num_chains))
-        ]
         process_ok, _ = can_use_process_pool()
-        if int(self.num_chains) <= 1:
-            chain_results = [
-                self._sample_single_chain(X_arr, y_arr, groups=groups_use, seed=int(self.seed) + chain_idx)
-                for chain_idx in range(int(self.num_chains))
-            ]
-        elif process_ok:
-            with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
-                fut_map = {executor.submit(_fit_grouped_hsplus_chain_task, payloads[i]): i for i in range(len(payloads))}
-                chain_results = [None] * len(payloads)
-                for fut in as_completed(fut_map):
-                    chain_results[fut_map[fut]] = fut.result()
-        else:
-            chain_results = [
-                self._sample_single_chain(X_arr, y_arr, groups=groups_use, seed=int(self.seed) + chain_idx)
-                for chain_idx in range(int(self.num_chains))
-            ]
-        runtime_sec = max(time.perf_counter() - start, 1e-12)
+        try:
+            if int(self.num_chains) <= 1:
+                chain_results = [
+                    self._sample_single_chain(X_arr, y_arr, groups=groups_use, seed=int(self.seed) + chain_idx)
+                    for chain_idx in range(int(self.num_chains))
+                ]
+            elif process_ok:
+                tmpdir_obj = tempfile.TemporaryDirectory(prefix="ghsplus_shared_")
+                tmpdir = Path(tmpdir_obj.name)
+                x_path = tmpdir / "X.npy"
+                y_path = tmpdir / "y.npy"
+                np.save(x_path, np.asarray(X_arr, dtype=float), allow_pickle=False)
+                np.save(y_path, np.asarray(y_arr, dtype=float), allow_pickle=False)
+                payloads = [
+                    {
+                        "fit_intercept": bool(self.fit_intercept),
+                        "tau0": float(self.tau0),
+                        "group_scale_prior": float(self.group_scale_prior),
+                        "local_scale_prior": float(self.local_scale_prior),
+                        "iters": int(self.iters),
+                        "burnin": int(self.burnin),
+                        "thin": int(self.thin),
+                        "seed": int(self.seed) + chain_idx,
+                        "jitter": float(self.jitter),
+                        "progress_bar": False,
+                        "X_file": str(x_path),
+                        "y_file": str(y_path),
+                        "X": None,
+                        "y": None,
+                        "groups": groups_use,
+                    }
+                    for chain_idx in range(int(self.num_chains))
+                ]
+                with ProcessPoolExecutor(max_workers=int(self.num_chains)) as executor:
+                    fut_map = {executor.submit(_fit_grouped_hsplus_chain_task, payloads[i]): i for i in range(len(payloads))}
+                    chain_results = [None] * len(payloads)
+                    for fut in as_completed(fut_map):
+                        chain_results[fut_map[fut]] = fut.result()
+            else:
+                chain_results = [
+                    self._sample_single_chain(X_arr, y_arr, groups=groups_use, seed=int(self.seed) + chain_idx)
+                    for chain_idx in range(int(self.num_chains))
+                ]
+            runtime_sec = max(time.perf_counter() - start, 1e-12)
+        finally:
+            if tmpdir_obj is not None:
+                tmpdir_obj.cleanup()
 
         if int(self.num_chains) == 1:
             lead = chain_results[0]

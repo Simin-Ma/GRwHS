@@ -30,6 +30,29 @@ def _json_scalar(value):
     return val
 
 
+def _json_clean(value):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return {str(k): _json_clean(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_clean(v) for v in value]
+    if hasattr(value, "item"):
+        try:
+            return _json_clean(value.item())
+        except Exception:
+            pass
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (int, str, bool)):
+        return value
+    try:
+        val = float(value)
+    except Exception:
+        return str(value)
+    return val if math.isfinite(val) else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run one high-dimensional setting x method benchmark case.")
     parser.add_argument("--config", default="Simulation_highdimension/config/highdimension.yaml")
@@ -109,7 +132,9 @@ def main() -> int:
         "mse_null": _json_scalar(metrics.get("mse_null")),
         "coverage_95": _json_scalar(metrics.get("coverage_95")),
         "lpd_test": _json_scalar(metrics.get("lpd_test")),
-        "attempts_used": int((result.diagnostics or {}).get("attempts_used", 1)),
+        "attempts_used": int((((result.diagnostics or {}).get("convergence_retry", {}) or {}).get("attempts_used", 1))),
+        "error": str(getattr(result, "error", "") or ""),
+        "diagnostics": _json_clean(result.diagnostics),
     }
 
     outdir = ROOT / str(args.outdir)
