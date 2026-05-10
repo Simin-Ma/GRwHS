@@ -53,23 +53,22 @@ def _json_clean(value):
     return val if math.isfinite(val) else None
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Run one high-dimensional setting x method benchmark case.")
-    parser.add_argument("--config", default="Simulation_highdimension/config/highdimension.yaml")
-    parser.add_argument("--setting-id", required=True)
-    parser.add_argument("--method", required=True)
-    parser.add_argument("--replicate", type=int, default=1)
-    parser.add_argument("--outdir", default="tmp/highdim_single_case_runs")
-    args = parser.parse_args()
-
+def run_case(
+    *,
+    config: str,
+    setting_id: str,
+    method: str,
+    replicate: int = 1,
+    outdir: str = "tmp/highdim_single_case_runs",
+) -> dict[str, object]:
     total_t0 = time.perf_counter()
 
-    cfg = load_benchmark_config(args.config)
-    setting = cfg.setting_map()[str(args.setting_id)]
+    cfg = load_benchmark_config(config)
+    setting = cfg.setting_map()[str(setting_id)]
     dataset_t0 = time.perf_counter()
     ds = generate_grouped_dataset(
         setting,
-        replicate_id=int(args.replicate),
+        replicate_id=int(replicate),
         master_seed=int(cfg.runner.seed),
         family_specs=cfg.families,
     )
@@ -101,14 +100,14 @@ def main() -> int:
         sampler=sampler,
         rhs_kwargs=dict(cfg.methods.rhs_kwargs),
         grrhs_kwargs=dict(cfg.methods.grrhs_kwargs),
-        methods=[str(args.method)],
+        methods=[str(method)],
         gigg_config=dict(cfg.methods.gigg_config),
         bayes_min_chains=int(cfg.convergence_gate.bayes_min_chains),
         enforce_bayes_convergence=bool(cfg.convergence_gate.enforce_bayes_convergence),
         max_convergence_retries=int(cfg.convergence_gate.max_convergence_retries),
         method_jobs=1,
         rhs_sampler_strategy="high_dim",
-    )[str(args.method)]
+    )[str(method)]
     fit_call_seconds = time.perf_counter() - fit_t0
 
     eval_t0 = time.perf_counter()
@@ -124,9 +123,9 @@ def main() -> int:
 
     payload_t0 = time.perf_counter()
     payload = {
-        "replicate": int(args.replicate),
-        "setting_id": str(args.setting_id),
-        "method": str(args.method),
+        "replicate": int(replicate),
+        "setting_id": str(setting_id),
+        "method": str(method),
         "wall_seconds": float(time.perf_counter() - total_t0),
         "runtime_seconds": _json_scalar(result.runtime_seconds),
         "status": str(result.status),
@@ -151,10 +150,10 @@ def main() -> int:
     }
     payload_build_seconds = time.perf_counter() - payload_t0
 
-    outdir = ROOT / str(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    stem = f"{args.setting_id}__{args.method}__r{int(args.replicate)}"
-    out_path = outdir / f"{stem}.json"
+    outdir_path = ROOT / str(outdir)
+    outdir_path.mkdir(parents=True, exist_ok=True)
+    stem = f"{setting_id}__{method}__r{int(replicate)}"
+    out_path = outdir_path / f"{stem}.json"
     write_t0 = time.perf_counter()
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     write_seconds = time.perf_counter() - write_t0
@@ -164,7 +163,26 @@ def main() -> int:
     payload["timing_breakdown"]["write_seconds"] = float(write_seconds)
     payload["timing_breakdown"]["total_seconds"] = float(total_seconds)
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(json.dumps({"out_path": str(out_path), **payload}, indent=2, ensure_ascii=False))
+    return {"out_path": str(out_path), **payload}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run one high-dimensional setting x method benchmark case.")
+    parser.add_argument("--config", default="Simulation_highdimension/config/highdimension.yaml")
+    parser.add_argument("--setting-id", required=True)
+    parser.add_argument("--method", required=True)
+    parser.add_argument("--replicate", type=int, default=1)
+    parser.add_argument("--outdir", default="tmp/highdim_single_case_runs")
+    args = parser.parse_args()
+
+    payload = run_case(
+        config=str(args.config),
+        setting_id=str(args.setting_id),
+        method=str(args.method),
+        replicate=int(args.replicate),
+        outdir=str(args.outdir),
+    )
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 
 

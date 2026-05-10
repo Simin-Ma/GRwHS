@@ -74,13 +74,6 @@ def _mean_within_abs_corr(X: np.ndarray, groups: list[list[int]]) -> float:
 
 
 def build_default_method_registry() -> MethodRegistry:
-    from .methods.fit_classical import fit_lasso_cv, fit_ols
-    from .methods.fit_gigg import fit_gigg_fixed, fit_gigg_mmle
-    from .methods.fit_ghs_plus import fit_ghs_plus
-    from .methods.fit_gr_rhs import fit_gr_rhs
-    from .methods.fit_rhs_gibbs import fit_rhs_gibbs
-    from .methods.fit_rhs import fit_rhs
-
     reg = MethodRegistry()
 
     def _clean_gigg_kwargs(raw: dict) -> dict:
@@ -90,6 +83,8 @@ def build_default_method_registry() -> MethodRegistry:
         return kwargs
 
     def _fit_rhs_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_rhs import fit_rhs
+
         return fit_rhs(
             c.X,
             c.y,
@@ -176,6 +171,8 @@ def build_default_method_registry() -> MethodRegistry:
         return res
 
     def _fit_rhs_highdim_gibbs(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_rhs_gibbs import fit_rhs_gibbs
+
         kwargs = dict(c.rhs_kwargs)
         return fit_rhs_gibbs(
             c.X,
@@ -207,6 +204,8 @@ def build_default_method_registry() -> MethodRegistry:
         return {**defaults, **base}
 
     def _fit_grrhs_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_gr_rhs import fit_gr_rhs
+
         return fit_gr_rhs(
             c.X,
             c.y,
@@ -220,6 +219,8 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _fit_grrhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_gr_rhs import fit_gr_rhs
+
         return fit_gr_rhs(
             c.X,
             c.y,
@@ -233,6 +234,8 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _fit_gigg_mmle_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_gigg import fit_gigg_mmle
+
         kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
         kwargs["exact_highdim_fastpath"] = False
         kwargs.setdefault("progress_bar", False)
@@ -249,6 +252,8 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _fit_gigg_mmle_highdim(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_gigg import fit_gigg_mmle
+
         kwargs = _gigg_highdim_exact_kwargs(c)
         kwargs.setdefault("progress_bar", False)
         return fit_gigg_mmle(
@@ -264,6 +269,8 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _fit_ghs_plus_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_ghs_plus import fit_ghs_plus
+
         return fit_ghs_plus(
             c.X,
             c.y,
@@ -277,6 +284,8 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _fit_ghs_plus_highdim(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_ghs_plus import fit_ghs_plus
+
         sampler_use = _ghs_highdim_light_sampler(c)
         res = fit_ghs_plus(
             c.X,
@@ -364,7 +373,7 @@ def build_default_method_registry() -> MethodRegistry:
     )
     reg.register(
         "GIGG_b_small",
-        lambda c: fit_gigg_fixed(
+        lambda c: __import__("simulation_project.src.experiments.methods.fit_gigg", fromlist=["fit_gigg_fixed"]).fit_gigg_fixed(
             c.X,
             c.y,
             c.groups,
@@ -380,7 +389,7 @@ def build_default_method_registry() -> MethodRegistry:
     )
     reg.register(
         "GIGG_GHS",
-        lambda c: fit_gigg_fixed(
+        lambda c: __import__("simulation_project.src.experiments.methods.fit_gigg", fromlist=["fit_gigg_fixed"]).fit_gigg_fixed(
             c.X,
             c.y,
             c.groups,
@@ -396,7 +405,7 @@ def build_default_method_registry() -> MethodRegistry:
     )
     reg.register(
         "GIGG_b_large",
-        lambda c: fit_gigg_fixed(
+        lambda c: __import__("simulation_project.src.experiments.methods.fit_gigg", fromlist=["fit_gigg_fixed"]).fit_gigg_fixed(
             c.X,
             c.y,
             c.groups,
@@ -418,8 +427,20 @@ def build_default_method_registry() -> MethodRegistry:
             else _fit_ghs_plus_lowdim(c, method_name="GHS_plus")
         ),
     )
-    reg.register("OLS", lambda c: fit_ols(c.X, c.y, task=c.task, seed=c.seed))
-    reg.register("LASSO_CV", lambda c: fit_lasso_cv(c.X, c.y, task=c.task, seed=c.seed))
+    reg.register(
+        "OLS",
+        lambda c: __import__(
+            "simulation_project.src.experiments.methods.fit_classical",
+            fromlist=["fit_ols"],
+        ).fit_ols(c.X, c.y, task=c.task, seed=c.seed),
+    )
+    reg.register(
+        "LASSO_CV",
+        lambda c: __import__(
+            "simulation_project.src.experiments.methods.fit_classical",
+            fromlist=["fit_lasso_cv"],
+        ).fit_lasso_cv(c.X, c.y, task=c.task, seed=c.seed),
+    )
     return reg
 
 

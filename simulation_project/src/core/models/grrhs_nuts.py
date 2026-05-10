@@ -5,16 +5,12 @@ import math
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import jax
 import jax.numpy as jnp
 from jax import random
 from jax.nn import sigmoid
 import numpy as np
 from numpy.random import Generator, default_rng
-import numpyro
-import numpyro.distributions as dist
-from numpyro.diagnostics import summary as diagnostics_summary
-from numpyro.infer import MCMC, NUTS
-from scipy.special import betaln
 
 from simulation_project.src.core.inference.samplers import slice_sample_1d
 from simulation_project.src.core.inference.woodbury import (
@@ -24,6 +20,21 @@ from simulation_project.src.core.inference.woodbury import (
 )
 
 _EPS = 1e-12
+
+
+def _betaln(alpha: float, beta: float) -> float:
+    a = float(alpha)
+    b = float(beta)
+    return float(math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b))
+
+
+def _load_numpyro_runtime():
+    import numpyro
+    import numpyro.distributions as dist
+    from numpyro.diagnostics import summary as diagnostics_summary
+    from numpyro.infer import MCMC, NUTS
+
+    return numpyro, dist, diagnostics_summary, MCMC, NUTS
 
 
 def _split_groups(p: int, groups: List[List[int]]) -> Tuple[np.ndarray, np.ndarray]:
@@ -228,7 +239,7 @@ class GRRHS_NUTS:
         return (
             (alpha - 1.0) * jnp.log(x)
             + (beta - 1.0) * jnp.log1p(-x)
-            - float(betaln(alpha, beta))
+            - float(_betaln(alpha, beta))
             + jnp.log(x)
             + jnp.log1p(-x)
         )
@@ -241,6 +252,7 @@ class GRRHS_NUTS:
         group_sizes: jnp.ndarray,
         tau0_eff: float,
     ) -> None:
+        numpyro, dist, _, _, _ = _load_numpyro_runtime()
         n, p = X.shape
         G = int(group_sizes.shape[0])
 
@@ -346,13 +358,14 @@ class GRRHS_NUTS:
             num_chains=int(self.num_chains),
         )
         init_strategy = (
-            numpyro.infer.init_to_median(num_samples=15)
+            _load_numpyro_runtime()[0].infer.init_to_median(num_samples=15)
             if _should_use_median_init(
                 use_init_to_median=bool(self.use_init_to_median),
                 init_params=init_params_use,
             )
-            else numpyro.infer.init_to_uniform()
+            else _load_numpyro_runtime()[0].infer.init_to_uniform()
         )
+        _, _, _, MCMC, NUTS = _load_numpyro_runtime()
         kernel = NUTS(
             self._model,
             target_accept_prob=float(self.target_accept_prob),
@@ -386,8 +399,8 @@ class GRRHS_NUTS:
             extra_fields=("diverging", "energy", "num_steps"),
             **run_kwargs,
         )
+        samples = jax.block_until_ready(mcmc.get_samples(group_by_chain=True))
         runtime_sec = max(time.perf_counter() - start, 1e-12)
-        samples = mcmc.get_samples(group_by_chain=True)
         latent_keys = ["sigma", "tau", "beta_raw"]
         if bool(self.use_local_scale):
             latent_keys.append("lambda")
@@ -439,6 +452,7 @@ class GRRHS_NUTS:
         self.intercept_ = 0.0
 
     def _extract_diagnostics(self, mcmc: MCMC, *, runtime_sec: float) -> Dict[str, Any]:
+        _, _, diagnostics_summary, _, _ = _load_numpyro_runtime()
         out: Dict[str, Any] = {"backend": "numpyro_nuts", "runtime_sec": float(runtime_sec)}
         try:
             extra = mcmc.get_extra_fields(group_by_chain=True)
@@ -2596,6 +2610,7 @@ class GRRHS_CollapsedNUTS:
         group_XXT: Optional[jnp.ndarray],  # (G, n, n) precomputed M_g for profile mode
     ):
         """Return a NumPyro model function parameterised by this instance."""
+        numpyro, dist, _, _, _ = _load_numpyro_runtime()
         s0 = float(self.s0)
         alpha_kappa = float(self.alpha_kappa)
         beta_kappa = float(self.beta_kappa)
@@ -2774,13 +2789,14 @@ class GRRHS_CollapsedNUTS:
             num_chains=int(self.num_chains),
         )
         init_strategy = (
-            numpyro.infer.init_to_median(num_samples=15)
+            _load_numpyro_runtime()[0].infer.init_to_median(num_samples=15)
             if _should_use_median_init(
                 use_init_to_median=bool(self.use_init_to_median),
                 init_params=init_params_use,
             )
-            else numpyro.infer.init_to_uniform()
+            else _load_numpyro_runtime()[0].infer.init_to_uniform()
         )
+        _, _, _, MCMC, NUTS = _load_numpyro_runtime()
         kernel = NUTS(
             model_fn,
             step_size=1.0 if self.step_size is None else float(max(self.step_size, 1e-6)),
@@ -2817,9 +2833,8 @@ class GRRHS_CollapsedNUTS:
             extra_fields=("diverging", "energy", "num_steps"),
             **run_kwargs,
         )
+        samples = jax.block_until_ready(mcmc.get_samples(group_by_chain=True))
         runtime_nuts = time.perf_counter() - start
-
-        samples = mcmc.get_samples(group_by_chain=True)
         tau_reparam = str(self.tau_parameterization).strip().lower()
         latent_keys = ["sigma", "tau_raw" if tau_reparam == "sigma_scaled" else "tau"]
         lambda_reparam = str(self.lambda_parameterization).strip().lower()
@@ -2967,6 +2982,7 @@ class GRRHS_CollapsedNUTS:
         beta_sampler: str,
         tau0_effective: float,
     ) -> Dict[str, Any]:
+        _, _, diagnostics_summary, _, _ = _load_numpyro_runtime()
         out: Dict[str, Any] = {
             "backend": "simcore_collapsed_nuts",
             "runtime_sec": float(runtime_sec),

@@ -6,10 +6,25 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.core.models.grrhs_nuts import GRRHS_CollapsedNUTS, GRRHS_Gibbs_Staged, GRRHS_NUTS
-
 from .helpers import as_int_groups, fit_error_result
 from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
+
+
+def _load_grrhs_classes():
+    from simulation_project.src.core.models.grrhs_nuts import (
+        GRRHS_CollapsedNUTS,
+        GRRHS_Gibbs_Staged,
+        GRRHS_NUTS,
+    )
+
+    return GRRHS_CollapsedNUTS, GRRHS_Gibbs_Staged, GRRHS_NUTS
+
+
+def _calibrate_tau0(*, p0: float, D: int, n: int, sigma_ref: float) -> float:
+    p0_use = max(float(p0), 1.0)
+    D_use = max(int(D), 1)
+    denom = max(float(D_use) - p0_use, 1.0)
+    return float((p0_use / denom) * float(max(sigma_ref, 1e-12)) / math.sqrt(max(int(n), 1)))
 
 
 def _clone_numeric_dict(obj: dict[str, Any] | None) -> dict[str, np.ndarray] | None:
@@ -296,7 +311,7 @@ def _ridge_init_params(
         sigma_guess = float(max(sigma_reference, 1.0))
 
     target_dim = p if str(tau_target).strip().lower() == "coefficients" else max(G, 1)
-    tau0_eff = GRRHS_NUTS.calibrate_tau0(
+    tau0_eff = _calibrate_tau0(
         p0=max(float(p0), 1.0),
         D=max(int(target_dim), 1),
         n=max(int(X_arr.shape[0]), 1),
@@ -365,7 +380,7 @@ def _collapsed_profile_ridge_init_params(
         sigma_guess = float(max(sigma_reference, 1.0))
 
     target_dim = p if str(tau_target).strip().lower() == "coefficients" else max(G, 1)
-    tau0_eff = GRRHS_NUTS.calibrate_tau0(
+    tau0_eff = _calibrate_tau0(
         p0=max(float(p0), 1.0),
         D=max(int(target_dim), 1),
         n=max(int(X_arr.shape[0]), 1),
@@ -499,7 +514,8 @@ def _build_nuts(
     progress_bar: bool,
     init_params: dict[str, np.ndarray] | None = None,
     resume_no_warmup: bool = False,
-    ) -> GRRHS_NUTS:
+    ) -> Any:
+    _, _, GRRHS_NUTS = _load_grrhs_classes()
     likelihood = "logistic" if str(task).lower() == "logistic" else "gaussian"
     return GRRHS_NUTS(
         alpha_kappa=float(alpha_kappa),
@@ -552,7 +568,8 @@ def _build_gibbs_staged(
     lambda_random_fraction: float | None = None,
     grouped_tau_refresh_repeats: int | None = None,
     grouped_sigma_tau_block_repeats: int | None = None,
-) -> GRRHS_Gibbs_Staged:
+) -> Any:
+    _, GRRHS_Gibbs_Staged, _ = _load_grrhs_classes()
     warmup = max(40, int(sampler.warmup))
     draws = max(20, int(sampler.post_warmup_draws))
     budget_scale_use = 1.0 if budget_scale is None else float(max(0.05, min(float(budget_scale), 4.0)))
@@ -740,8 +757,9 @@ def _build_collapsed_profile(
     step_size: float | None = None,
     find_heuristic_step_size: bool = False,
     dense_mass: bool = False,
-) -> GRRHS_CollapsedNUTS:
+) -> Any:
     """Build GR-RHS-CaP: collapsed-and-profile GR-RHS for high-dimensional Gaussian runs."""
+    GRRHS_CollapsedNUTS, _, _ = _load_grrhs_classes()
     return GRRHS_CollapsedNUTS(
         alpha_kappa=float(alpha_kappa),
         beta_kappa=float(beta_kappa),
