@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import Any, Sequence
 
 import numpy as np
@@ -823,6 +824,7 @@ def fit_gr_rhs(
     )
 
     try:
+        total_fit_t0 = time.perf_counter()
         pseudo_sigma = 1.0
         if str(task).lower() == "logistic":
             pseudo_sigma = logistic_pseudo_sigma(y)
@@ -1098,19 +1100,23 @@ def fit_gr_rhs(
                 int(sampler.max_treedepth),
                 resume_payload=retry_resume_payload,
             )
-        model, runtime = timed_call(model.fit, X, y, groups=groups_use)
+        model, runtime_fit_only = timed_call(model.fit, X, y, groups=groups_use)
+        postprocess_t0 = time.perf_counter()
         resume_payload_out = _extract_retry_resume_payload(model=model)
         beta_draws = getattr(model, "coef_samples_", None)
         beta_mean = getattr(model, "coef_mean_", None)
         tau_draws = getattr(model, "tau_samples_", None)
         kappa_draws = getattr(model, "kappa_samples_", None)
 
+        diagnostics_t0 = time.perf_counter()
         rhat_max, ess_min, div_ratio, converged, details = diagnostics_summary_for_method(
             model=model,
             tracked_params=tracked,
             beta_draws=beta_draws,
             config=sampler,
         )
+        diagnostics_seconds = time.perf_counter() - diagnostics_t0
+        postprocess_seconds = time.perf_counter() - postprocess_t0
 
         # Retry HMC/NUTS designs with stricter adaptation when divergences are high.
         if backend_name in {"nuts", "collapsed_profile"}:
@@ -1129,19 +1135,23 @@ def fit_gr_rhs(
                         int(sampler.strict_max_treedepth),
                         resume_payload=resume_payload_out,
                     )
-                strict, runtime2 = timed_call(strict.fit, X, y, groups=groups_use)
+                strict, runtime2_fit_only = timed_call(strict.fit, X, y, groups=groups_use)
+                postprocess_t0 = time.perf_counter()
                 resume_payload_out = _extract_retry_resume_payload(model=strict)
                 beta_draws = getattr(strict, "coef_samples_", None)
                 beta_mean = getattr(strict, "coef_mean_", None)
                 tau_draws = getattr(strict, "tau_samples_", None)
                 kappa_draws = getattr(strict, "kappa_samples_", None)
+                diagnostics_t0 = time.perf_counter()
                 rhat_max, ess_min, div_ratio, converged, details = diagnostics_summary_for_method(
                     model=strict,
                     tracked_params=tracked,
                     beta_draws=beta_draws,
                     config=sampler,
                 )
-                runtime += runtime2
+                diagnostics_seconds += time.perf_counter() - diagnostics_t0
+                postprocess_seconds += time.perf_counter() - postprocess_t0
+                runtime_fit_only += runtime2_fit_only
 
         diagnostics = dict(details or {})
         if resume_payload_out is not None:
@@ -1170,6 +1180,13 @@ def fit_gr_rhs(
                 "geometry_tol": sampler_diag.get("geometry_tol"),
                 "transition_tol": sampler_diag.get("transition_tol"),
             }
+        total_fit_seconds = time.perf_counter() - total_fit_t0
+        diagnostics["fit_timing_breakdown"] = {
+            "fit_runtime_seconds_model_only": float(runtime_fit_only),
+            "postprocess_seconds_after_fit": float(postprocess_seconds),
+            "diagnostics_seconds": float(diagnostics_seconds),
+            "fit_runtime_seconds_total": float(total_fit_seconds),
+        }
 
         return FitResult(
             method=str(method_name),
@@ -1179,7 +1196,7 @@ def fit_gr_rhs(
             kappa_draws=None if kappa_draws is None else np.asarray(kappa_draws, dtype=float),
             group_scale_draws=None,
             tau_draws=None if tau_draws is None else np.asarray(tau_draws, dtype=float),
-            runtime_seconds=float(runtime),
+            runtime_seconds=float(total_fit_seconds),
             rhat_max=float(rhat_max),
             bulk_ess_min=float(ess_min),
             divergence_ratio=float(div_ratio),

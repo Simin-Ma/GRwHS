@@ -62,14 +62,18 @@ def main() -> int:
     parser.add_argument("--outdir", default="tmp/highdim_single_case_runs")
     args = parser.parse_args()
 
+    total_t0 = time.perf_counter()
+
     cfg = load_benchmark_config(args.config)
     setting = cfg.setting_map()[str(args.setting_id)]
+    dataset_t0 = time.perf_counter()
     ds = generate_grouped_dataset(
         setting,
         replicate_id=int(args.replicate),
         master_seed=int(cfg.runner.seed),
         family_specs=cfg.families,
     )
+    dataset_seconds = time.perf_counter() - dataset_t0
     p0 = int((abs(ds.beta) > 1e-12).sum())
     p0_groups = int(sum(any(abs(ds.beta[idx]) > 1e-12 for idx in g) for g in ds.groups))
     sampler = SamplerConfig(
@@ -85,7 +89,7 @@ def main() -> int:
         max_divergence_ratio=float(cfg.convergence_gate.max_divergence_ratio),
     )
 
-    t0 = time.perf_counter()
+    fit_t0 = time.perf_counter()
     result = _fit_all_methods(
         ds.X_train,
         ds.y_train,
@@ -105,8 +109,9 @@ def main() -> int:
         method_jobs=1,
         rhs_sampler_strategy="high_dim",
     )[str(args.method)]
-    wall_seconds = time.perf_counter() - t0
+    fit_call_seconds = time.perf_counter() - fit_t0
 
+    eval_t0 = time.perf_counter()
     metrics = _evaluate_row(
         result,
         ds.beta,
@@ -115,12 +120,14 @@ def main() -> int:
         X_test=ds.X_test,
         y_test=ds.y_test,
     )
+    evaluation_seconds = time.perf_counter() - eval_t0
 
+    payload_t0 = time.perf_counter()
     payload = {
         "replicate": int(args.replicate),
         "setting_id": str(args.setting_id),
         "method": str(args.method),
-        "wall_seconds": float(wall_seconds),
+        "wall_seconds": float(time.perf_counter() - total_t0),
         "runtime_seconds": _json_scalar(result.runtime_seconds),
         "status": str(result.status),
         "converged": bool(result.converged),
@@ -135,12 +142,27 @@ def main() -> int:
         "attempts_used": int((((result.diagnostics or {}).get("convergence_retry", {}) or {}).get("attempts_used", 1))),
         "error": str(getattr(result, "error", "") or ""),
         "diagnostics": _json_clean(result.diagnostics),
+        "timing_breakdown": {
+            "dataset_seconds": float(dataset_seconds),
+            "fit_wrapper_seconds": float(fit_call_seconds),
+            "fit_runtime_seconds": _json_scalar(result.runtime_seconds),
+            "evaluation_seconds": float(evaluation_seconds),
+        },
     }
+    payload_build_seconds = time.perf_counter() - payload_t0
 
     outdir = ROOT / str(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     stem = f"{args.setting_id}__{args.method}__r{int(args.replicate)}"
     out_path = outdir / f"{stem}.json"
+    write_t0 = time.perf_counter()
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_seconds = time.perf_counter() - write_t0
+    total_seconds = time.perf_counter() - total_t0
+    payload["wall_seconds"] = float(total_seconds)
+    payload["timing_breakdown"]["payload_build_seconds"] = float(payload_build_seconds)
+    payload["timing_breakdown"]["write_seconds"] = float(write_seconds)
+    payload["timing_breakdown"]["total_seconds"] = float(total_seconds)
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps({"out_path": str(out_path), **payload}, indent=2, ensure_ascii=False))
     return 0
