@@ -125,6 +125,100 @@ def run_case(
                 enforce_bayes_convergence=bool(cfg.convergence_gate.enforce_bayes_convergence),
                 continue_on_retry=True,
             )
+        if method_name == "GIGG_MMLE":
+            from simulation_project.src.experiments.methods.fit_gigg import fit_gigg_mmle
+            from simulation_project.src.experiments.method_registry import _mean_within_abs_corr
+
+            gigg_kwargs_raw = dict(cfg.methods.gigg_config)
+            for key in ("allow_budget_retry", "extra_retry", "retry_cap"):
+                gigg_kwargs_raw.pop(key, None)
+            gigg_kwargs = dict(gigg_kwargs_raw)
+            within_corr = _mean_within_abs_corr(ds.X_train, ds.groups)
+            gigg_kwargs["exact_highdim_fastpath"] = True
+            if math.isfinite(within_corr) and within_corr >= 0.75:
+                gigg_kwargs["highdim_continuation_rounds"] = max(int(gigg_kwargs.get("highdim_continuation_rounds", 0)), 280)
+                gigg_kwargs["highdim_continuation_warmup"] = max(int(gigg_kwargs.get("highdim_continuation_warmup", 0) or 0), 2)
+                gigg_kwargs["highdim_continuation_draws"] = max(int(gigg_kwargs.get("highdim_continuation_draws", 0) or 0), 5)
+                gigg_kwargs["highdim_stage_a_burnin"] = max(int(gigg_kwargs.get("highdim_stage_a_burnin", 0) or 0), 8)
+                gigg_kwargs["highdim_stage_a_draws"] = max(int(gigg_kwargs.get("highdim_stage_a_draws", 0) or 0), 8)
+            gigg_kwargs["progress_bar"] = False
+            sampler_base = _sampler_for_bayesian_default(
+                sampler,
+                min_chains=int(cfg.convergence_gate.bayes_min_chains),
+            )
+
+            def _runner(sampler_try, attempt, resume_payload=None):
+                _ = resume_payload
+                return fit_gigg_mmle(
+                    ds.X_train,
+                    ds.y_train,
+                    ds.groups,
+                    task=str(cfg.runner.task),
+                    seed=int(cfg.runner.seed) + 1,
+                    sampler=sampler_try,
+                    p0=int(p0),
+                    method_label="GIGG_MMLE",
+                    **gigg_kwargs,
+                )
+
+            return _fit_with_convergence_retry(
+                _runner,
+                method="GIGG_MMLE",
+                sampler=sampler_base,
+                bayes_min_chains=int(cfg.convergence_gate.bayes_min_chains),
+                max_convergence_retries=int(cfg.convergence_gate.max_convergence_retries),
+                enforce_bayes_convergence=bool(cfg.convergence_gate.enforce_bayes_convergence),
+                continue_on_retry=False,
+            )
+        if method_name == "RHS":
+            from simulation_project.src.experiments.methods.fit_rhs import fit_rhs
+            from simulation_project.src.experiments.method_registry import _mean_within_abs_corr
+
+            within_corr = _mean_within_abs_corr(ds.X_train, ds.groups)
+            if math.isfinite(within_corr) and within_corr >= 0.75:
+                warmup = max(int(sampler.warmup), 1100)
+                draws = max(int(sampler.post_warmup_draws), 2400)
+                adapt_delta = max(0.99, float(sampler.adapt_delta))
+            else:
+                warmup = max(int(sampler.warmup), 1000)
+                draws = max(int(sampler.post_warmup_draws), 2000)
+                adapt_delta = max(0.985, float(sampler.adapt_delta))
+            sampler_base = SamplerConfig(
+                chains=max(4, int(sampler.chains)),
+                warmup=int(warmup),
+                post_warmup_draws=int(draws),
+                adapt_delta=float(adapt_delta),
+                max_treedepth=max(14, int(sampler.max_treedepth)),
+                strict_adapt_delta=max(0.995, float(sampler.strict_adapt_delta)),
+                strict_max_treedepth=max(15, int(sampler.strict_max_treedepth)),
+                max_divergence_ratio=min(0.01, float(sampler.max_divergence_ratio)),
+                rhat_threshold=float(sampler.rhat_threshold),
+                ess_threshold=float(sampler.ess_threshold),
+            )
+
+            def _runner(sampler_try, attempt, resume_payload=None):
+                _ = resume_payload
+                return fit_rhs(
+                    ds.X_train,
+                    ds.y_train,
+                    ds.groups,
+                    task=str(cfg.runner.task),
+                    seed=int(cfg.runner.seed) + 1 + 100 * int(attempt),
+                    p0=int(p0),
+                    sampler=sampler_try,
+                    method_name="RHS",
+                    progress_bar=False,
+                )
+
+            return _fit_with_convergence_retry(
+                _runner,
+                method="RHS",
+                sampler=sampler_base,
+                bayes_min_chains=int(cfg.convergence_gate.bayes_min_chains),
+                max_convergence_retries=int(cfg.convergence_gate.max_convergence_retries),
+                enforce_bayes_convergence=bool(cfg.convergence_gate.enforce_bayes_convergence),
+                continue_on_retry=False,
+            )
         return None
 
     fit_t0 = time.perf_counter()

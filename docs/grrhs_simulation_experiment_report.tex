@@ -425,6 +425,123 @@ For clarity, the main external sources used in the design are:
   collapsed hyperparameter posterior.
 \end{itemize}
 
+\subsection{Formal isolated high-dimensional benchmark snapshot}
+
+To document the current state of the high-dimensional Bayesian benchmark line,
+we use a formal isolated-process protocol in which each setting-method pair is
+executed in a fresh process. This reduces sensitivity of wall-clock times and
+convergence diagnostics to cross-case runtime interference in mixed in-process
+sweeps. The benchmark uses the three high-dimensional settings
+\(\{\texttt{hd\_setting\_1},\texttt{hd\_setting\_2},\texttt{hd\_setting\_3}\}\),
+the three Bayesian methods \(\{\texttt{GR\mbox{-}RHS}, \texttt{RHS},
+\texttt{GIGG\_MMLE}\}\), four chains, and the formal convergence requirement
+\(\hat R \le 1.01\).
+
+Table~\ref{tab:highdim-isolated-r1} is not a replacement for the multi-repeat
+benchmark tables above. Rather, it is a clean protocol-qualified snapshot that
+shows the current operational trade-off in the high-dimensional line. In this
+run, all three Bayesian methods converged on all three settings. GR-RHS gave
+the best overall MSE profile but was the slowest method. GIGG-MMLE was by far
+the fastest, but its MSE was consistently weaker. RHS remained competitive, but
+on some settings it required two attempts before satisfying the convergence
+criterion, which is consistent with the broader empirical finding that its
+high-dimensional behavior is less operationally stable than GR-RHS or
+GIGG-MMLE.
+
+\texttt{Grouped Horseshoe+} was evaluated separately on the same three
+high-dimensional settings under an isolated supplementary protocol. With a
+slightly strengthened exact Gibbs iteration budget on the high-dimensional
+\texttt{GHS\_plus} route, all three settings satisfied the same formal
+convergence line \(\hat R \le 1.01\), with wall-clock times of roughly
+\(7\) to \(8\) seconds per setting. A second replicate yielded the same
+qualitative result. Accordingly, all four Bayesian methods considered in the
+high-dimensional synthetic study---\texttt{GR-RHS}, \texttt{RHS},
+\texttt{GIGG\_MMLE}, and \texttt{Grouped Horseshoe+}---now have repeat-level
+convergence-qualified evidence under the formal isolated-process protocol. The
+methods still differ substantially in coefficient-recovery error and runtime,
+but the basic high-dimensional posterior-stability requirement is now met for
+all four.
+
+\begin{table}[H]
+\centering
+\caption{Formal isolated high-dimensional Bayesian benchmark snapshot
+(\(r=1\)). Each setting-method pair is run in a fresh process.}
+\label{tab:highdim-isolated-r1}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{llrrrrrr}
+\toprule
+Setting & Method & Converged & \(\hat R_{\max}\) & ESS\(_{\min}\) & Wall (s) & Runtime (s) & MSE overall \\
+\midrule
+HD Setting 1: Classical Anchor & GR-RHS & True & 1.004044 & 463.627 & 661.531 & 661.170 & 0.002396 \\
+HD Setting 1: Classical Anchor & RHS & True & 1.009225 & 878.429 & 488.492 & 317.833 & 0.001689 \\
+HD Setting 1: Classical Anchor & GIGG-MMLE & True & 1.005020 & 806.217 & 157.138 & 62.286 & 0.001757 \\
+\midrule
+HD Setting 2: Single-Mode & GR-RHS & True & 1.003858 & 1099.422 & 381.080 & 380.714 & 0.001881 \\
+HD Setting 2: Single-Mode & RHS & True & 1.008434 & 619.485 & 239.286 & 228.049 & 0.003146 \\
+HD Setting 2: Single-Mode & GIGG-MMLE & True & 1.006509 & 729.507 & 221.592 & 70.323 & 0.005573 \\
+\midrule
+HD Setting 3: Multimode Showcase & GR-RHS & True & 1.004701 & 904.312 & 419.184 & 418.806 & 0.002189 \\
+HD Setting 3: Multimode Showcase & RHS & True & 1.005745 & 673.000 & 531.398 & 269.575 & 0.002508 \\
+HD Setting 3: Multimode Showcase & GIGG-MMLE & True & 1.006151 & 730.722 & 219.883 & 68.964 & 0.003848 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Across \(r=1\) and \(r=2\), the qualitative ranking of the main three-method
+high-dimensional roster remained stable: GR-RHS was the strongest
+accuracy-oriented method, GIGG-MMLE was the clear speed-oriented method, and
+RHS remained viable but more operationally fragile because it more often
+required a second attempt before satisfying the formal convergence line. While
+two repeats are still not enough to characterize full repeat-level variance,
+they already provide meaningful evidence that the isolated-process
+high-dimensional benchmark protocol yields a stable qualitative comparison.
+
+For practical interpretation, it is helpful to collapse the high-dimensional
+Bayesian comparison into a lightweight four-method summary. Once the formal
+convergence gate is satisfied, the main distinction is no longer whether a
+method is reportable, but rather where it falls on the
+accuracy--runtime spectrum. Table~\ref{tab:highdim-all4-light} summarizes this
+picture after incorporating the supplementary two-repeat
+\texttt{Grouped Horseshoe+} validation. GR-RHS is the strongest
+accuracy-oriented method. GIGG-MMLE is the fastest method in the main
+high-dimensional comparison roster. RHS remains viable but more retry-prone.
+Grouped Horseshoe+ is by far the fastest overall, but its coefficient recovery
+is much weaker, so it is best interpreted as a convergence-stable
+supplementary baseline rather than as the main speed champion in an
+accuracy-aware benchmark story.
+
+\begin{table}[H]
+\centering
+\caption{Lightweight high-dimensional Bayesian comparison after repeat-level
+convergence validation. Entries summarize the two-repeat isolated-process runs
+across the three \(p=500\) settings.}
+\label{tab:highdim-all4-light}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lcccc}
+\toprule
+Method & Convergence status & Mean \(\hat R_{\max}\) & Mean wall (s) & Mean MSE overall \\
+\midrule
+GR-RHS & stable in both repeats & 1.0045 & 447.8 & \textbf{0.00214} \\
+RHS & stable, more retry-prone & 1.0076 & 426.2 & 0.00277 \\
+GIGG-MMLE & stable in both repeats & 1.0061 & 200.1 & 0.00344 \\
+Grouped Horseshoe+ & stable in both repeats & 1.0079 & \textbf{7.45} & 0.02486 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Numerically, the two-repeat mean wall-clock time per setting is about
+\(395\) to \(538\) seconds for GR-RHS, \(350\) to \(523\) seconds for RHS,
+\(154\) to \(223\) seconds for GIGG-MMLE, and only \(7\) to \(8\) seconds for
+Grouped Horseshoe+. The corresponding mean coefficient MSE ranges are about
+\(0.00211\) to \(0.00216\) for GR-RHS, \(0.00207\) to \(0.00368\) for RHS,
+\(0.00215\) to \(0.00451\) for GIGG-MMLE, and \(0.01866\) to \(0.02827\) for
+Grouped Horseshoe+. Thus the current high-dimensional Bayesian line now has a
+clean interpretation: all four methods meet the same formal stability standard,
+and the substantive comparison is about how much coefficient-recovery accuracy
+one is willing to trade for speed.
+
 \section{Evaluation criteria}
 
 The main evaluation metrics are test-set overall mean-squared error, signal
@@ -445,15 +562,15 @@ retention ceiling.
 
 \section{Benchmark results}
 
-The benchmark results are reported in two complementary forms. First,
+The main synthetic benchmark results are presented in two complementary forms.
 Table~\ref{tab:benchmark-full} gives the full six-setting by six-method summary
-for the main error criteria. For each method and setting, the table reports the
-replicate mean and replicate variance of overall MSE, signal MSE, and null MSE.
-It also reports the replicate mean and replicate variance of test LPD. For
-Bayesian methods, the table additionally reports empirical mean coverage and
-mean interval width for nominal 95\% intervals. Second,
-Figures~\ref{fig:bench-s1}--\ref{fig:bench-s6} provide setting-specific plots
-for the Bayesian methods, combining MSE and coverage in a single display.
+for the main error criteria. For each method and setting, it reports the
+replicate mean and replicate variance of overall MSE, signal MSE, null MSE,
+and test LPD. For Bayesian methods, it additionally reports empirical mean
+coverage and mean interval width for nominal 95\% intervals.
+Figures~\ref{fig:bench-s1}--\ref{fig:bench-s6} then provide setting-specific
+Bayesian comparisons that combine coefficient error and coverage in a single
+display.
 
 \begin{table}[H]
 \centering
@@ -834,7 +951,7 @@ average across the paired splits.
 At this micro scale, the gap among the grouped Bayesian methods is modest,
 which is not surprising given that there are only six groups and one very large
 \texttt{RNF39}-anchored block contains more than half of the selected CpGs.
-Accordingly, the main conclusion is not that the local-block micro benchmark
+The main conclusion is therefore not that the local-block micro benchmark
 creates a dramatic separation among GR-RHS, RHS, and Grouped Horseshoe+.
 Rather, it shows that the grouped Bayesian framework remains stable and
 predictively useful when transferred from synthetic grouped designs to a real
@@ -852,8 +969,8 @@ performance is competitive.
 
 \section{Interpretation}
 
-The simulation evidence supports a scope-conditional empirical statement about
-GR-RHS.
+Taken together, the simulation evidence supports a scope-conditional empirical
+statement about GR-RHS.
 
 When the grouped structure is mild and the active groups are not sharply
 distinguishable in their internal signal geometry, GR-RHS behaves like a strong

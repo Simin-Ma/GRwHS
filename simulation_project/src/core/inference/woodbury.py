@@ -39,16 +39,19 @@ def beta_sample_woodbury(
       w = M^{-1}(y - X u - delta)
       beta = u + D X^T w
     """
+    from scipy.linalg import cho_factor, cho_solve
+
     n, p = X.shape
     D = np.maximum(prior_var, jitter)
 
     XD = X * D                                          # n x p (broadcast D by row)
     M = XD @ X.T                                        # n x n
     np.fill_diagonal(M, M.diagonal() + sigma2)          # M += sigma2 * I
+    chol, lower = cho_factor(M, lower=True, check_finite=False)
 
     u = rng.standard_normal(p) * np.sqrt(D)             # u ~ N(0, D)
     delta = rng.standard_normal(n) * math.sqrt(max(sigma2, jitter))  # delta ~ N(0, sigma2 * I)
-    w = np.linalg.solve(M, y - X @ u - delta)           # n
+    w = cho_solve((chol, lower), y - X @ u - delta, check_finite=False)  # n
     return u + D * (X.T @ w)                            # p
 
 

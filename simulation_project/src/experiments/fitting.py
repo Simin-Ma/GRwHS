@@ -117,6 +117,7 @@ def _fit_all_methods(
     gigg_extra_retry = int(gigg_extra_retry_cfg)
     def _run_single_method(method: str) -> tuple[str, FitResult]:
         res: FitResult | None = None
+        best_ok_res: FitResult | None = None
         attempts = 1
         if method in gigg_methods:
             # Default keeps paper-aligned single-shot GIGG behavior. For
@@ -132,8 +133,12 @@ def _fit_all_methods(
                 attempts = attempt + 1
                 res = _fit_once(method, attempt)
                 if bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
+                    best_ok_res = res
+                if bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
                     break
             assert res is not None
+            if best_ok_res is not None:
+                res = best_ok_res
             if not bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
                 res = _invalidate_unconverged_result(res, method=method, attempts=attempts)
         else:
@@ -181,6 +186,7 @@ def _fit_with_convergence_retry(
     if _is_bayesian_method(method):
         sampler_base = _sampler_for_bayesian_default(sampler_base, min_chains=bayes_min_chains)
     res: FitResult | None = None
+    best_ok_res: FitResult | None = None
     attempts = 1
     resume_payload: dict[str, Any] | None = None
     for attempt in range(retry_max + 1):
@@ -201,8 +207,12 @@ def _fit_with_convergence_retry(
         if not bool(enforce_bayes_convergence):
             break
         if bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
+            best_ok_res = res
+        if bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
             break
     assert res is not None
+    if best_ok_res is not None:
+        res = best_ok_res
     if bool(enforce_bayes_convergence) and _is_bayesian_method(method):
         if not bool(res.status == "ok" and res.converged and (res.beta_mean is not None)):
             res = _invalidate_unconverged_result(res, method=method, attempts=attempts)

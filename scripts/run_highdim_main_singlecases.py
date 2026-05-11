@@ -169,6 +169,7 @@ def main() -> int:
         "replicate": int(args.replicate),
         "timeout_seconds": int(args.timeout_seconds),
         "method_first": bool(args.method_first),
+        "isolated": bool(args.isolated),
         "methods_filter": sorted(requested_methods),
         "settings_filter": sorted(requested_settings),
         "prewarm_methods": list(prewarm_methods),
@@ -243,6 +244,7 @@ def main() -> int:
                 "method": str(job["method"]),
                 "exit_code": int(completed.returncode),
                 "result_path": str(result_path),
+                "isolated_run": True,
             }
             if result_path.exists():
                 try:
@@ -267,6 +269,7 @@ def main() -> int:
                     "exit_code": 0,
                     "result_path": str(result_path),
                     "result": result,
+                    "isolated_run": False,
                 }
             except Exception as exc:
                 payload = {
@@ -275,6 +278,7 @@ def main() -> int:
                     "exit_code": 1,
                     "result_path": str(result_path),
                     "error": f"{type(exc).__name__}: {exc}",
+                    "isolated_run": False,
                 }
         results.append(payload)
         (outdir / "run_progress.json").write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -283,8 +287,14 @@ def main() -> int:
         "config": str(args.config),
         "replicate": int(args.replicate),
         "n_jobs": int(len(jobs)),
+        "isolated": bool(args.isolated),
+        "timeout_seconds": int(args.timeout_seconds),
+        "method_first": bool(args.method_first),
         "prewarm": prewarm_records,
         "prewarm_recommended": bool(args.method_first and requested_methods == {"GR_RHS"} and not prewarm_methods),
+        "protocol_note": (
+            "For formal high-dimensional Bayesian benchmarks, prefer --isolated so each case runs in a fresh process."
+        ),
         "results": results,
     }
     (outdir / "run_summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")

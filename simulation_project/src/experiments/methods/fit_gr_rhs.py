@@ -1041,8 +1041,8 @@ def fit_gr_rhs(
                         draws_use = max(draws_use, 540)
                     else:
                         step_size_use = 0.03
-                        warmup_use = max(warmup_use, 220)
-                        draws_use = max(draws_use, 620)
+                        warmup_use = max(warmup_use, 200)
+                        draws_use = max(draws_use, 560)
                 else:
                     if within_corr >= 0.7 or corr_gap >= 0.5:
                         step_size_use = 0.025

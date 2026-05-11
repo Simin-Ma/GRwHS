@@ -99,16 +99,18 @@ def build_default_method_registry() -> MethodRegistry:
     def _rhs_highdim_exact_sampler(c: MethodContext) -> SamplerConfig:
         within_corr = _mean_within_abs_corr(np.asarray(c.X, dtype=float), c.groups)
         if np.isfinite(within_corr) and within_corr >= 0.75:
-            warmup = max(int(c.sampler.warmup), 1250)
-            draws = max(int(c.sampler.post_warmup_draws), 2750)
+            warmup = max(int(c.sampler.warmup), 1100)
+            draws = max(int(c.sampler.post_warmup_draws), 2400)
+            adapt_delta = max(0.99, float(c.sampler.adapt_delta))
         else:
             warmup = max(int(c.sampler.warmup), 1000)
             draws = max(int(c.sampler.post_warmup_draws), 2000)
+            adapt_delta = max(0.985, float(c.sampler.adapt_delta))
         return SamplerConfig(
             chains=max(4, int(c.sampler.chains)),
             warmup=int(warmup),
             post_warmup_draws=int(draws),
-            adapt_delta=max(0.99, float(c.sampler.adapt_delta)),
+            adapt_delta=float(adapt_delta),
             max_treedepth=max(14, int(c.sampler.max_treedepth)),
             strict_adapt_delta=max(0.995, float(c.sampler.strict_adapt_delta)),
             strict_max_treedepth=max(15, int(c.sampler.strict_max_treedepth)),
@@ -142,6 +144,12 @@ def build_default_method_registry() -> MethodRegistry:
             rhat_threshold=float(c.sampler.rhat_threshold),
             ess_threshold=max(400.0, float(c.sampler.ess_threshold)),
         )
+
+    def _ghs_highdim_iter_budget(c: MethodContext) -> tuple[int, int, int]:
+        within_corr = _mean_within_abs_corr(np.asarray(c.X, dtype=float), c.groups)
+        if np.isfinite(within_corr) and within_corr >= 0.75:
+            return 1, 500, 800
+        return 1, 450, 700
 
     def _fit_rhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         sampler_use = _rhs_highdim_exact_sampler(c)
@@ -287,6 +295,7 @@ def build_default_method_registry() -> MethodRegistry:
         from .methods.fit_ghs_plus import fit_ghs_plus
 
         sampler_use = _ghs_highdim_light_sampler(c)
+        iter_mult, iter_floor, iter_cap = _ghs_highdim_iter_budget(c)
         res = fit_ghs_plus(
             c.X,
             c.y,
@@ -295,9 +304,9 @@ def build_default_method_registry() -> MethodRegistry:
             seed=c.seed,
             p0=c.p0,
             sampler=sampler_use,
-            iter_mult=1,
-            iter_floor=400,
-            iter_cap=400,
+            iter_mult=iter_mult,
+            iter_floor=iter_floor,
+            iter_cap=iter_cap,
             progress_bar=False,
             use_process_pool=False,
         )
@@ -307,9 +316,9 @@ def build_default_method_registry() -> MethodRegistry:
             "chains": int(sampler_use.chains),
             "warmup": int(sampler_use.warmup),
             "post_warmup_draws": int(sampler_use.post_warmup_draws),
-            "iter_mult": 1,
-            "iter_floor": 400,
-            "iter_cap": 400,
+            "iter_mult": int(iter_mult),
+            "iter_floor": int(iter_floor),
+            "iter_cap": int(iter_cap),
             "adapt_delta": float(sampler_use.adapt_delta),
             "max_treedepth": int(sampler_use.max_treedepth),
             "strict_adapt_delta": float(sampler_use.strict_adapt_delta),
