@@ -69,6 +69,7 @@ def _fit_fair_ghs_plus(
     seed: int,
     sampler: SamplerConfig,
     tau0: float,
+    sample_global_scale: bool,
     group_scale_prior: float,
     local_scale_prior: float,
     use_process_pool: bool,
@@ -78,6 +79,7 @@ def _fit_fair_ghs_plus(
         tau0=float(tau0),
         group_scale_prior=float(group_scale_prior),
         local_scale_prior=float(local_scale_prior),
+        sample_global_scale=bool(sample_global_scale),
         iters=int(sampler.warmup + sampler.post_warmup_draws),
         burnin=int(sampler.warmup),
         thin=1,
@@ -92,7 +94,9 @@ def _fit_fair_ghs_plus(
     group_draws = getattr(model, "group_lambda_samples_", None)
     tau_draws = getattr(model, "tau_samples_", None)
 
-    tracked = ["beta", "tau", "group_scale", "lambda", "sigma"]
+    tracked = ["beta", "group_scale", "lambda", "sigma"]
+    if bool(sample_global_scale):
+        tracked.insert(1, "tau")
     rhat_max, ess_min, div_ratio, converged, details = diagnostics_summary_for_method(
         model=model,
         tracked_params=tracked,
@@ -102,8 +106,9 @@ def _fit_fair_ghs_plus(
     diagnostics = dict(details or {})
     diagnostics["fair_ghs_plus_protocol"] = {
         "tracked_params": tracked,
-        "route": "full_gibbs_formal",
+        "route": "full_gibbs_formal" if bool(sample_global_scale) else "fixed_tau_gibbs_formal",
         "tau0": float(tau0),
+        "sample_global_scale": bool(sample_global_scale),
         "group_scale_prior": float(group_scale_prior),
         "local_scale_prior": float(local_scale_prior),
         "iters": int(sampler.warmup + sampler.post_warmup_draws),
@@ -140,6 +145,8 @@ def run_case(
     warmup: int,
     draws: int,
     tau0: float,
+    tau0_auto: bool,
+    sample_global_scale: bool,
     group_scale_prior: float,
     local_scale_prior: float,
     use_process_pool: bool,
@@ -155,6 +162,12 @@ def run_case(
         family_specs=cfg.families,
     )
     dataset_seconds = time.perf_counter() - dataset_t0
+    p0 = int((np.abs(ds.beta) > 1e-12).sum())
+    p = int(np.asarray(ds.beta).reshape(-1).size)
+    n = int(ds.X_train.shape[0])
+    tau0_use = float(tau0)
+    if bool(tau0_auto):
+        tau0_use = float((max(p0, 1) / max(p - max(p0, 1), 1)) / math.sqrt(max(n, 1)))
 
     sampler = SamplerConfig(
         chains=max(4, int(cfg.convergence_gate.chains)),
@@ -176,7 +189,8 @@ def run_case(
         ds.groups,
         seed=int(cfg.runner.seed) + 5,
         sampler=sampler,
-        tau0=float(tau0),
+        tau0=float(tau0_use),
+        sample_global_scale=bool(sample_global_scale),
         group_scale_prior=float(group_scale_prior),
         local_scale_prior=float(local_scale_prior),
         use_process_pool=bool(use_process_pool),
@@ -197,7 +211,7 @@ def run_case(
     payload = {
         "replicate": int(replicate),
         "setting_id": str(setting_id),
-        "method": "GHS_plus_fair",
+        "method": "GHS_plus_fair" if bool(sample_global_scale) else "GHS_plus_fixed_tau",
         "wall_seconds": float(time.perf_counter() - total_t0),
         "runtime_seconds": _json_scalar(result.runtime_seconds),
         "status": str(result.status),
@@ -212,6 +226,9 @@ def run_case(
         "lpd_test": _json_scalar(metrics.get("lpd_test")),
         "attempts_used": 1,
         "error": str(getattr(result, "error", "") or ""),
+        "p0": int(p0),
+        "tau0_used": float(tau0_use),
+        "sample_global_scale": bool(sample_global_scale),
         "diagnostics": _json_clean(result.diagnostics),
         "timing_breakdown": {
             "dataset_seconds": float(dataset_seconds),
@@ -223,7 +240,8 @@ def run_case(
     }
     outdir_path = ROOT / str(outdir)
     outdir_path.mkdir(parents=True, exist_ok=True)
-    out_path = outdir_path / f"{setting_id}__GHS_plus_fair__r{int(replicate)}.json"
+    method_stem = "GHS_plus_fair" if bool(sample_global_scale) else "GHS_plus_fixed_tau"
+    out_path = outdir_path / f"{setting_id}__{method_stem}__r{int(replicate)}.json"
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"out_path": str(out_path), **payload}
 
@@ -237,6 +255,8 @@ def main() -> int:
     parser.add_argument("--warmup", type=int, default=2500)
     parser.add_argument("--draws", type=int, default=2500)
     parser.add_argument("--tau0", type=float, default=1.0)
+    parser.add_argument("--tau0-auto", action="store_true", help="Use simulation p0 to set RHS-style global scale.")
+    parser.add_argument("--fixed-tau", action="store_true", help="Treat tau0 as a fixed global-scale hyperparameter.")
     parser.add_argument("--group-scale-prior", type=float, default=1.0)
     parser.add_argument("--local-scale-prior", type=float, default=1.0)
     parser.add_argument("--use-process-pool", action="store_true")
@@ -249,6 +269,8 @@ def main() -> int:
         warmup=int(args.warmup),
         draws=int(args.draws),
         tau0=float(args.tau0),
+        tau0_auto=bool(args.tau0_auto),
+        sample_global_scale=not bool(args.fixed_tau),
         group_scale_prior=float(args.group_scale_prior),
         local_scale_prior=float(args.local_scale_prior),
         use_process_pool=bool(args.use_process_pool),

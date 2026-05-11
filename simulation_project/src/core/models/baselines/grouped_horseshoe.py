@@ -174,6 +174,7 @@ class GroupedHorseshoePlus:
     tau0: float = 1.0
     group_scale_prior: float = 1.0
     local_scale_prior: float = 1.0
+    sample_global_scale: bool = True
     iters: int = 3000
     burnin: int = 1500
     thin: int = 1
@@ -318,9 +319,10 @@ class GroupedHorseshoePlus:
                     rng=rng,
                 )
 
-                tau_rate = 0.5 * float(np.sum((beta * beta) / np.maximum(group_lambda2[group_id] * local_delta2, self.jitter))) / max(sigma2, self.jitter)
-                tau2 = _sample_invgamma(alpha=0.5 * (p + 1), beta=max(tau_rate + (1.0 / max(tau_aux, self.jitter)), self.jitter), rng=rng)
-                tau_aux = _sample_invgamma(alpha=1.0, beta=(1.0 / tau2) + (1.0 / (float(self.tau0) ** 2)), rng=rng)
+                if bool(self.sample_global_scale):
+                    tau_rate = 0.5 * float(np.sum((beta * beta) / np.maximum(group_lambda2[group_id] * local_delta2, self.jitter))) / max(sigma2, self.jitter)
+                    tau2 = _sample_invgamma(alpha=0.5 * (p + 1), beta=max(tau_rate + (1.0 / max(tau_aux, self.jitter)), self.jitter), rng=rng)
+                    tau_aux = _sample_invgamma(alpha=1.0, beta=(1.0 / tau2) + (1.0 / (float(self.tau0) ** 2)), rng=rng)
 
                 weighted_b2 = beta ** 2 / np.maximum(local_delta2, self.jitter)
                 group_beta_sq = np.bincount(group_id, weights=weighted_b2, minlength=G)
