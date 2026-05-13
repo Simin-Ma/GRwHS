@@ -17,6 +17,14 @@ DEFAULT_ABLATION_VARIANTS: Tuple[str, ...] = (
     "GR_RHS_no_kappa",
 )
 
+DEFAULT_PRIOR_SENSITIVITY_VARIANTS: Tuple[str, ...] = (
+    "GR_RHS_prior_default",
+    "GR_RHS_prior_uniform",
+    "GR_RHS_prior_u_shape",
+    "GR_RHS_prior_moderate_null",
+    "GR_RHS_prior_aggressive_null",
+)
+
 
 @dataclass(frozen=True)
 class ConvergenceGateSpec:

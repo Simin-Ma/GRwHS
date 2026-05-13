@@ -125,6 +125,30 @@ def _aggregate_metrics(valid, *, group_cols: Sequence[str], count_name: str):
     return valid.groupby(list(group_cols) + ["method"], as_index=False).agg(**present)
 
 
+def _method_metadata(raw, *, group_cols: Sequence[str]):
+    pd = load_pandas()
+    cols = [col for col in ["alpha_kappa", "beta_kappa", "kappa_prior_label", "method_spec_family"] if col in raw.columns]
+    if raw.empty or not cols:
+        return pd.DataFrame(columns=list(group_cols) + ["method"] + cols)
+
+    def _first_nonempty(series):
+        for value in series:
+            if pd.notna(value) and str(value) != "":
+                return value
+        return series.iloc[0] if len(series) else np.nan
+
+    return raw.groupby(list(group_cols) + ["method"], as_index=False).agg(
+        **{col: (col, _first_nonempty) for col in cols}
+    )
+
+
+def _attach_method_metadata(summary, raw, *, group_cols: Sequence[str]):
+    meta = _method_metadata(raw, group_cols=group_cols)
+    if meta.empty:
+        return summary
+    return summary.merge(meta, on=list(group_cols) + ["method"], how="left")
+
+
 def _add_metric_ranks(summary, *, group_cols: Sequence[str], method_order: Sequence[str]) -> Any:
     pd = load_pandas()
     if summary.empty:
@@ -172,6 +196,7 @@ def build_summary(
     valid = _filter_valid_rows(raw, required_metric_cols=required_metric_cols)
     metrics = _aggregate_metrics(valid, group_cols=group_cols, count_name="n_summary_reps")
     summary = counts.merge(metrics, on=list(group_cols) + ["method"], how="left")
+    summary = _attach_method_metadata(summary, raw, group_cols=group_cols)
     summary["method_label"] = summary["method"].map(mechanism_method_label)
     summary["summary_scope"] = "marginal_valid"
     return _add_metric_ranks(summary, group_cols=group_cols, method_order=method_order)
@@ -201,6 +226,7 @@ def build_paired_summary(
     summary = counts.merge(metrics, on=list(group_cols) + ["method"], how="left")
     if group_cols:
         summary = summary.merge(paired_stats, on=list(group_cols), how="left")
+    summary = _attach_method_metadata(summary, raw, group_cols=group_cols)
     summary["method_label"] = summary["method"].map(mechanism_method_label)
     summary["summary_scope"] = "common_converged_paired"
     summary = _add_metric_ranks(summary, group_cols=group_cols, method_order=method_order)
@@ -255,6 +281,7 @@ def build_paired_summary_by_setting(
     if group_cols and not paired_stats.empty:
         paired_stats = paired_stats.drop_duplicates(subset=list(group_cols), keep="first")
         summary = summary.merge(paired_stats, on=list(group_cols), how="left")
+    summary = _attach_method_metadata(summary, raw, group_cols=group_cols)
     summary["method_label"] = summary["method"].map(mechanism_method_label)
     summary["summary_scope"] = "common_converged_paired"
     summary = _add_metric_ranks(summary, group_cols=group_cols, method_order=method_order)

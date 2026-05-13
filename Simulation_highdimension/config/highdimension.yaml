@@ -17,6 +17,8 @@ method_config:
     tau_target: groups
     sampler_backend: collapsed_profile
     use_local_scale: false
+    alpha_kappa: 0.5
+    beta_kappa: 8.0
     progress_bar: false
   gigg_config:
     allow_budget_retry: true

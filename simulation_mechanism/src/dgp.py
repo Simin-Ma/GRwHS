@@ -404,7 +404,7 @@ def generate_mechanism_dataset(
 ) -> MechanismDataset:
     seed = setting_replicate_seed(setting.setting_id, replicate_id, master_seed=master_seed)
     kind = str(setting.experiment_kind).strip().lower()
-    if kind == "group_separation":
+    if kind in {"group_separation", "prior_sensitivity"}:
         return _generate_group_separation_dataset(setting, seed=seed, replicate_id=replicate_id)
     if kind == "correlation_stress":
         return _generate_correlation_stress_dataset(setting, seed=seed, replicate_id=replicate_id)

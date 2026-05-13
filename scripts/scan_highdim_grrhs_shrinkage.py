@@ -49,6 +49,12 @@ DEFAULT_CANDIDATES = [
         "beta_kappa": 6.0,
     },
     {
+        "label": "kappa_b8",
+        "description": "boundary test for very strong null shrinkage: kappa~Beta(0.5,8.0)",
+        "alpha_kappa": 0.5,
+        "beta_kappa": 8.0,
+    },
+    {
         "label": "kappa_a025_b2",
         "description": "more spike near zero: kappa~Beta(0.25,2.0)",
         "alpha_kappa": 0.25,

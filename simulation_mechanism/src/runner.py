@@ -57,6 +57,20 @@ def _error_fit_result(method: str, message: str) -> FitResult:
     )
 
 
+def _method_prior_fields(method: str, specs: Mapping[str, Mapping[str, Any]] | None) -> dict[str, Any]:
+    spec = dict((specs or {}).get(str(method), {}))
+    alpha = spec.get("alpha_kappa")
+    beta = spec.get("beta_kappa")
+    prior_label = str(spec.get("prior_label", ""))
+    family = str(spec.get("method", method))
+    return {
+        "alpha_kappa": float(alpha) if alpha is not None else float("nan"),
+        "beta_kappa": float(beta) if beta is not None else float("nan"),
+        "kappa_prior_label": prior_label,
+        "method_spec_family": family,
+    }
+
+
 def _gate_from_payload(payload: Mapping[str, Any]):
     from .schemas import ConvergenceGateSpec
 
@@ -107,6 +121,10 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
         dataset_artifacts = save_mechanism_dataset(dataset, Path(str(task["dataset_dir"])) / setting.setting_id)
 
     methods = [str(method) for method in setting.methods]
+    variant_specs = {
+        str(name): dict(spec)
+        for name, spec in dict(task.get("ablation_variant_specs", {})).items()
+    }
     try:
         results = fit_setting_methods(
             dataset,
@@ -166,6 +184,7 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
                 "tau0_oracle": _json_safe_float(tau0_oracle),
                 "tau_post_mean": _json_safe_float(tau_post_mean),
                 "tau_ratio_to_oracle": _json_safe_float(tau_ratio_to_oracle),
+                **_method_prior_fields(method, variant_specs),
             },
             coefficient_truth=dataset.beta,
             extra_json={
@@ -219,6 +238,7 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
             "p0_groups_true": int(dataset.metadata["p0_groups_true"]),
             "decoy_group": int(dataset.metadata.get("decoy_group", -1)),
             "method": str(method),
+            **_method_prior_fields(method, variant_specs),
             "fit_artifact_dir": str(fit_artifacts.get("fit_dir", "")),
             "dataset_arrays_path": str(dataset_artifacts.get("arrays", "")),
             "dataset_metadata_path": str(dataset_artifacts.get("metadata", "")),
@@ -251,6 +271,7 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
                     "complexity_pattern": str(setting.complexity_pattern),
                     "total_active_coeff": int(setting.total_active_coeff),
                     "decoy_group": int(dataset.metadata.get("decoy_group", -1)),
+                    **_method_prior_fields(method, variant_specs),
                 },
             )
         )
@@ -354,7 +375,10 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
         paired_raw,
         group_cols=group_cols,
         baseline_method=config.runner.baseline_method,
-        baseline_by_experiment_kind={"ablation": config.runner.ablation_baseline_method},
+        baseline_by_experiment_kind={
+            "ablation": config.runner.ablation_baseline_method,
+            "prior_sensitivity": "GR_RHS_prior_default",
+        },
     )
 
     if not per_group.empty:

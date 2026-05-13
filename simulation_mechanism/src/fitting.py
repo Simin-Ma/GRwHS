@@ -78,8 +78,10 @@ def fit_setting_methods(
     p0_true = int(np.count_nonzero(np.asarray(dataset.beta, dtype=float)))
     p0_groups = int(_active_group_count(dataset.beta, dataset.groups))
     sampler = sampler_config_from_gate(gate)
+    specs = {str(name): dict(spec) for name, spec in (ablation_variant_specs or {}).items()}
 
-    if str(setting.experiment_kind).strip().lower() != "ablation":
+    variant_kinds = {"ablation", "prior_sensitivity"}
+    if str(setting.experiment_kind).strip().lower() not in variant_kinds:
         return legacy_fit_all_methods(
             dataset.X_train,
             dataset.y_train,
@@ -98,7 +100,6 @@ def fit_setting_methods(
             method_jobs=int(method_jobs),
         )
 
-    specs = {str(name): dict(spec) for name, spec in (ablation_variant_specs or {}).items()}
     tau_target = str((grrhs_kwargs or {}).get("tau_target", "groups")).strip().lower()
     grrhs_p0 = p0_groups if tau_target == "groups" else p0_true
 

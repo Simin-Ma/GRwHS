@@ -703,6 +703,71 @@ def build_figure6_delta_data(paired_deltas):
     ].copy()
 
 
+def build_figure7_prior_sensitivity_data(summary_paired, paired_deltas):
+    if summary_paired.empty:
+        return summary_paired
+    summary_cols = [
+        col
+        for col in [
+            "experiment_id",
+            "setting_id",
+            "method",
+            "method_label",
+            "alpha_kappa",
+            "beta_kappa",
+            "kappa_prior_label",
+            "kappa_gap",
+            "kappa_signal_mean",
+            "kappa_null_mean",
+            "group_auroc",
+            "mse_null",
+            "mse_signal",
+            "mse_overall",
+            "n_paired",
+            "n_runs",
+            "n_converged",
+        ]
+        if col in summary_paired.columns
+    ]
+    summary = summary_paired.loc[summary_paired["experiment_id"] == "M5", summary_cols].copy()
+    if paired_deltas.empty:
+        return summary
+    keep_metrics = {"kappa_gap", "mse_null", "mse_signal", "mse_overall", "group_auroc"}
+    delta_cols = [
+        col
+        for col in [
+            "experiment_id",
+            "setting_id",
+            "method",
+            "metric",
+            "baseline_method",
+            "mean_diff",
+            "se_diff",
+            "ci95_lo",
+            "ci95_hi",
+            "wins_vs_baseline",
+            "losses_vs_baseline",
+            "ties_vs_baseline",
+        ]
+        if col in paired_deltas.columns
+    ]
+    deltas = paired_deltas.loc[
+        (paired_deltas["experiment_id"] == "M5")
+        & paired_deltas["metric"].astype(str).isin(keep_metrics),
+        delta_cols,
+    ].copy()
+    if deltas.empty:
+        return summary
+    wide = deltas.pivot_table(
+        index=["experiment_id", "setting_id", "method"],
+        columns="metric",
+        values="mean_diff",
+        aggfunc="mean",
+    ).reset_index()
+    wide.columns = [f"delta_vs_default_{col}" if col not in {"experiment_id", "setting_id", "method"} else col for col in wide.columns]
+    return summary.merge(wide, on=["experiment_id", "setting_id", "method"], how="left")
+
+
 def build_paper_tables(
     *,
     summary_paired,
@@ -735,6 +800,7 @@ def build_paper_tables(
     fig5 = build_figure5_data(summary_paired, paired_deltas)
     fig6 = build_figure6_data(summary_paired)
     fig6_delta = build_figure6_delta_data(paired_deltas)
+    fig7 = build_figure7_prior_sensitivity_data(summary_paired, paired_deltas)
 
     fig2_path = figure_dir / "figure2_group_separation.csv"
     fig3_path = figure_dir / "figure3_correlation_ambiguity.csv"
@@ -742,12 +808,14 @@ def build_paper_tables(
     fig5_path = figure_dir / "figure5_complexity_unit.csv"
     fig6_path = figure_dir / "figure6_ablation.csv"
     fig6_delta_path = figure_dir / "figure6_ablation_deltas.csv"
+    fig7_path = figure_dir / "figure7_prior_sensitivity.csv"
     fig2.to_csv(fig2_path, index=False, float_format=CSV_FLOAT_FORMAT)
     fig3.to_csv(fig3_path, index=False, float_format=CSV_FLOAT_FORMAT)
     fig4.to_csv(fig4_path, index=False, float_format=CSV_FLOAT_FORMAT)
     fig5.to_csv(fig5_path, index=False, float_format=CSV_FLOAT_FORMAT)
     fig6.to_csv(fig6_path, index=False, float_format=CSV_FLOAT_FORMAT)
     fig6_delta.to_csv(fig6_delta_path, index=False, float_format=CSV_FLOAT_FORMAT)
+    fig7.to_csv(fig7_path, index=False, float_format=CSV_FLOAT_FORMAT)
 
     return {
         "paper_table_mechanism_csv": str(full_csv),
@@ -761,6 +829,7 @@ def build_paper_tables(
         "figure5_complexity_unit": str(fig5_path),
         "figure6_ablation": str(fig6_path),
         "figure6_ablation_deltas": str(fig6_delta_path),
+        "figure7_prior_sensitivity": str(fig7_path),
     }
 
 

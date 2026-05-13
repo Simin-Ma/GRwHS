@@ -15,6 +15,11 @@ MASTER_SEED = 20260425
 _METHOD_LABEL_OVERRIDES = {
     "GR_RHS_fixed_10x": "GR-RHS (fixed 10x tau0)",
     "GR_RHS_oracle": "GR-RHS (oracle tau0)",
+    "GR_RHS_prior_default": "GR-RHS Beta(0.5,1)",
+    "GR_RHS_prior_uniform": "GR-RHS Beta(1,1)",
+    "GR_RHS_prior_u_shape": "GR-RHS Beta(0.5,0.5)",
+    "GR_RHS_prior_moderate_null": "GR-RHS Beta(1,3)",
+    "GR_RHS_prior_aggressive_null": "GR-RHS Beta(2,5)",
 }
 
 

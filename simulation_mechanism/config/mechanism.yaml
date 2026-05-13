@@ -19,3 +19,9 @@ methods:
     - GR_RHS_no_local_scales
     - GR_RHS_shared_kappa
     - GR_RHS_no_kappa
+  prior_sensitivity_variants:
+    - GR_RHS_prior_default
+    - GR_RHS_prior_uniform
+    - GR_RHS_prior_u_shape
+    - GR_RHS_prior_moderate_null
+    - GR_RHS_prior_aggressive_null

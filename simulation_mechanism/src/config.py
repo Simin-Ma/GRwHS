@@ -8,6 +8,7 @@ import yaml
 
 from .schemas import (
     DEFAULT_ABLATION_VARIANTS,
+    DEFAULT_PRIOR_SENSITIVITY_VARIANTS,
     DEFAULT_STANDARD_METHODS,
     ConvergenceGateSpec,
     MechanismSettingSpec,
@@ -43,6 +44,7 @@ def force_until_converged_gate(gate: ConvergenceGateSpec) -> ConvergenceGateSpec
 class MethodRuntimeConfig:
     standard_methods: tuple[str, ...] = DEFAULT_STANDARD_METHODS
     ablation_variants: tuple[str, ...] = DEFAULT_ABLATION_VARIANTS
+    prior_sensitivity_variants: tuple[str, ...] = DEFAULT_PRIOR_SENSITIVITY_VARIANTS
     grrhs_kwargs: dict[str, Any] = field(
         default_factory=lambda: {
             "tau_target": "groups",
@@ -100,6 +102,51 @@ class MethodRuntimeConfig:
                 "beta_kappa": 500.0,
                 "note": "approx_fixed_neutral_shared_kappa",
             },
+            "GR_RHS_prior_default": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.5,
+                "beta_kappa": 1.0,
+                "prior_label": "default",
+            },
+            "GR_RHS_prior_uniform": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 1.0,
+                "beta_kappa": 1.0,
+                "prior_label": "uniform",
+            },
+            "GR_RHS_prior_u_shape": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.5,
+                "beta_kappa": 0.5,
+                "prior_label": "u_shape",
+            },
+            "GR_RHS_prior_moderate_null": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 1.0,
+                "beta_kappa": 3.0,
+                "prior_label": "moderate_null",
+            },
+            "GR_RHS_prior_aggressive_null": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 2.0,
+                "beta_kappa": 5.0,
+                "prior_label": "aggressive_null",
+            },
         }
     )
 
@@ -107,6 +154,7 @@ class MethodRuntimeConfig:
         return {
             "standard_methods": list(self.standard_methods),
             "ablation_variants": list(self.ablation_variants),
+            "prior_sensitivity_variants": list(self.prior_sensitivity_variants),
             "grrhs_kwargs": dict(self.grrhs_kwargs),
             "gigg_config": dict(self.gigg_config),
             "ablation_variant_specs": {
@@ -179,9 +227,15 @@ def setting_spec_from_dict(
     *,
     default_methods: tuple[str, ...],
     default_ablation_variants: tuple[str, ...],
+    default_prior_sensitivity_variants: tuple[str, ...] = DEFAULT_PRIOR_SENSITIVITY_VARIANTS,
 ) -> MechanismSettingSpec:
     experiment_kind = str(payload.get("experiment_kind", "group_separation"))
-    default_method_list = default_ablation_variants if experiment_kind == "ablation" else default_methods
+    if experiment_kind == "ablation":
+        default_method_list = default_ablation_variants
+    elif experiment_kind == "prior_sensitivity":
+        default_method_list = default_prior_sensitivity_variants
+    else:
+        default_method_list = default_methods
     methods = payload.get("methods", list(default_method_list))
     sigma2_raw = payload.get("sigma2")
     return MechanismSettingSpec(
@@ -238,6 +292,7 @@ def build_default_config() -> MechanismConfig:
         settings=build_mechanism_suite(
             standard_methods=methods.standard_methods,
             ablation_variants=methods.ablation_variants,
+            prior_sensitivity_variants=methods.prior_sensitivity_variants,
             include_dense_ablation=False,
         ),
         include_dense_ablation=False,
@@ -259,6 +314,13 @@ def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig
         ),
         ablation_variants=tuple(
             str(item) for item in methods_payload.get("ablation_variants", list(DEFAULT_ABLATION_VARIANTS))
+        ),
+        prior_sensitivity_variants=tuple(
+            str(item)
+            for item in methods_payload.get(
+                "prior_sensitivity_variants",
+                list(DEFAULT_PRIOR_SENSITIVITY_VARIANTS),
+            )
         ),
         grrhs_kwargs=dict(methods_payload.get("grrhs_kwargs", {"tau_target": "groups", "progress_bar": False})),
         gigg_config=dict(
@@ -282,6 +344,7 @@ def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig
                 item,
                 default_methods=methods_cfg.standard_methods,
                 default_ablation_variants=methods_cfg.ablation_variants,
+                default_prior_sensitivity_variants=methods_cfg.prior_sensitivity_variants,
             )
             for item in settings_payload
         )
@@ -289,6 +352,7 @@ def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig
         settings = build_mechanism_suite(
             standard_methods=methods_cfg.standard_methods,
             ablation_variants=methods_cfg.ablation_variants,
+            prior_sensitivity_variants=methods_cfg.prior_sensitivity_variants,
             include_dense_ablation=include_dense_ablation,
         )
 
