@@ -20,6 +20,7 @@ from simulation_project.src.utils import (
     FitResult,
     SamplerConfig,
     diagnostics_summary_for_method,
+    save_fit_result_artifacts,
     timed_call,
 )
 from simulation_second.src.config import load_benchmark_config
@@ -150,6 +151,7 @@ def run_case(
     group_scale_prior: float,
     local_scale_prior: float,
     use_process_pool: bool,
+    save_artifacts: bool = False,
 ) -> dict[str, object]:
     total_t0 = time.perf_counter()
     cfg = load_benchmark_config(config)
@@ -241,7 +243,30 @@ def run_case(
     outdir_path = ROOT / str(outdir)
     outdir_path.mkdir(parents=True, exist_ok=True)
     method_stem = "GHS_plus_fair" if bool(sample_global_scale) else "GHS_plus_fixed_tau"
-    out_path = outdir_path / f"{setting_id}__{method_stem}__r{int(replicate)}.json"
+    stem = f"{setting_id}__{method_stem}__r{int(replicate)}"
+    out_path = outdir_path / f"{stem}.json"
+    if bool(save_artifacts):
+        artifacts = save_fit_result_artifacts(
+            outdir_path / stem,
+            result=result,
+            run_context={
+                "setting_id": str(setting_id),
+                "method": "GHS_plus_NUTS",
+                "replicate": int(replicate),
+                "source_script": "run_highdim_fair_ghs_plus_case.py",
+            },
+            coefficient_truth=ds.beta,
+            dataset_arrays={
+                "X_train": ds.X_train,
+                "y_train": ds.y_train,
+                "X_test": ds.X_test,
+                "y_test": ds.y_test,
+                "beta": ds.beta,
+            },
+            dataset_metadata={"groups": [[int(i) for i in g] for g in ds.groups]},
+            save_dataset_bundle=True,
+        )
+        payload["artifacts"] = _json_clean(artifacts)
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"out_path": str(out_path), **payload}
 
@@ -260,6 +285,7 @@ def main() -> int:
     parser.add_argument("--group-scale-prior", type=float, default=1.0)
     parser.add_argument("--local-scale-prior", type=float, default=1.0)
     parser.add_argument("--use-process-pool", action="store_true")
+    parser.add_argument("--save-artifacts", action="store_true")
     args = parser.parse_args()
     payload = run_case(
         config=str(args.config),
@@ -274,6 +300,7 @@ def main() -> int:
         group_scale_prior=float(args.group_scale_prior),
         local_scale_prior=float(args.local_scale_prior),
         use_process_pool=bool(args.use_process_pool),
+        save_artifacts=bool(args.save_artifacts),
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0

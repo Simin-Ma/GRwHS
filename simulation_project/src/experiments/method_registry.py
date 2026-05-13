@@ -127,6 +127,11 @@ def build_default_method_registry() -> MethodRegistry:
             kwargs["highdim_continuation_rounds"] = max(int(kwargs.get("highdim_continuation_rounds", 0)), 280)
             kwargs["highdim_continuation_warmup"] = max(int(kwargs.get("highdim_continuation_warmup", 0) or 0), 2)
             kwargs["highdim_continuation_draws"] = max(int(kwargs.get("highdim_continuation_draws", 0) or 0), 5)
+            kwargs["highdim_diagnostic_interval"] = max(int(kwargs.get("highdim_diagnostic_interval", 0) or 0), 10)
+            kwargs["highdim_early_stop"] = True
+            kwargs["highdim_early_stop_min_rounds"] = max(int(kwargs.get("highdim_early_stop_min_rounds", 0) or 0), 120)
+            kwargs["highdim_early_stop_patience"] = max(int(kwargs.get("highdim_early_stop_patience", 0) or 0), 2)
+            kwargs["highdim_store_history"] = False
             kwargs["highdim_stage_a_burnin"] = max(int(kwargs.get("highdim_stage_a_burnin", 0) or 0), 8)
             kwargs["highdim_stage_a_draws"] = max(int(kwargs.get("highdim_stage_a_draws", 0) or 0), 8)
         return kwargs
@@ -201,6 +206,8 @@ def build_default_method_registry() -> MethodRegistry:
                 "tau_target": "groups",
                 "sampler_backend": "collapsed_profile",
                 "use_local_scale": False,
+                "collapsed_hard_min_warmup": 150,
+                "collapsed_hard_min_draws": 320,
                 "progress_bar": False,
             }
         else:

@@ -95,6 +95,8 @@ def run_case(
             from simulation_project.src.experiments.methods.fit_gr_rhs import fit_gr_rhs
 
             grrhs_kwargs = dict(cfg.methods.grrhs_kwargs)
+            grrhs_kwargs.setdefault("collapsed_hard_min_warmup", 150)
+            grrhs_kwargs.setdefault("collapsed_hard_min_draws", 320)
             tau_target_use = str(grrhs_kwargs.get("tau_target", "coefficients")).strip().lower()
             grrhs_p0 = int(p0_groups) if tau_target_use == "groups" else int(p0)
             sampler_base = _sampler_for_bayesian_default(
@@ -141,6 +143,11 @@ def run_case(
                 gigg_kwargs["highdim_continuation_draws"] = max(int(gigg_kwargs.get("highdim_continuation_draws", 0) or 0), 5)
                 gigg_kwargs["highdim_stage_a_burnin"] = max(int(gigg_kwargs.get("highdim_stage_a_burnin", 0) or 0), 8)
                 gigg_kwargs["highdim_stage_a_draws"] = max(int(gigg_kwargs.get("highdim_stage_a_draws", 0) or 0), 8)
+                gigg_kwargs["highdim_diagnostic_interval"] = max(int(gigg_kwargs.get("highdim_diagnostic_interval", 0) or 0), 10)
+                gigg_kwargs["highdim_early_stop"] = True
+                gigg_kwargs["highdim_early_stop_min_rounds"] = max(int(gigg_kwargs.get("highdim_early_stop_min_rounds", 0) or 0), 120)
+                gigg_kwargs["highdim_early_stop_patience"] = max(int(gigg_kwargs.get("highdim_early_stop_patience", 0) or 0), 2)
+                gigg_kwargs["highdim_store_history"] = False
             gigg_kwargs["progress_bar"] = False
             sampler_base = _sampler_for_bayesian_default(
                 sampler,

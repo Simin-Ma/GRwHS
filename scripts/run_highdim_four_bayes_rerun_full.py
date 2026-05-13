@@ -22,6 +22,12 @@ SETTINGS = [
     "hd_setting_3_multimode_showcase",
 ]
 METHODS = ["GR_RHS", "RHS", "GIGG_MMLE", "GHS_plus_NUTS"]
+POSTERIOR_FAMILY = {
+    "GR_RHS": "gr_rhs_regularized_grouped_horseshoe",
+    "RHS": "regularized_horseshoe",
+    "GIGG_MMLE": "gigg_empirical_bayes_mmle",
+    "GHS_plus_NUTS": "grouped_horseshoe_plus",
+}
 
 
 def _run(cmd: list[str], *, timeout_seconds: int) -> dict[str, object]:
@@ -102,7 +108,7 @@ def _run_rhs_retry(
     timeout_seconds: int,
     force: bool,
 ) -> dict[str, object]:
-    pattern = f"{setting}__RHS__r{rep}__w4000_d8000_s*.json"
+    pattern = f"{setting}__RHS__r{rep}__w2500_d5000_s*.json"
     existing = _latest_json(ROOT / outdir, pattern)
     if existing is not None and (not force) and _is_converged(existing):
         return {"status": "skipped_existing_retry", "path": str(existing), "converged": True}
@@ -116,9 +122,9 @@ def _run_rhs_retry(
         "--outdir",
         outdir,
         "--warmup",
-        "4000",
+        "2500",
         "--draws",
-        "8000",
+        "5000",
         "--adapt-delta",
         "0.995",
         "--max-treedepth",
@@ -191,9 +197,11 @@ def _rep_from_name(path: Path) -> int:
 def _row(path: Path, *, method: str | None = None) -> dict[str, object]:
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
     budget = payload.get("retry_budget", {})
-    return {
+    method_name = str(method or payload.get("method", ""))
+    row = {
         "setting_id": str(payload.get("setting_id", "")),
-        "method": str(method or payload.get("method", "")),
+        "method": method_name,
+        "posterior_family": POSTERIOR_FAMILY.get(method_name, "unknown"),
         "replicate": int(payload.get("replicate", _rep_from_name(path))),
         "status": str(payload.get("status", "")),
         "converged": bool(payload.get("converged", False)),
@@ -211,16 +219,22 @@ def _row(path: Path, *, method: str | None = None) -> dict[str, object]:
         "draws": int(budget.get("draws", 0)) if isinstance(budget, dict) and budget.get("draws") else math.nan,
         "source_file": str(path.relative_to(ROOT)),
     }
+    row["same_posterior_comparison_group"] = row["posterior_family"]
+    return row
 
 
 def _collect_rows(outroot: Path) -> pd.DataFrame:
+    outroot = outroot.resolve()
     rows: list[dict[str, object]] = []
     standard = outroot / "standard_cases"
     rhs_retry = outroot / "rhs_retries"
+    gigg_retry = outroot / "gigg_retries"
     ghs = outroot / "ghs_plus_nuts"
     for path in standard.glob("*.json"):
         rows.append(_row(path))
     for path in rhs_retry.glob("*.json"):
+        rows.append(_row(path))
+    for path in gigg_retry.glob("*.json"):
         rows.append(_row(path))
     for path in ghs.glob("*.json"):
         rows.append(_row(path, method="GHS_plus_NUTS"))
@@ -248,6 +262,7 @@ def _summaries(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         row = {
             "setting_id": setting,
             "method": method,
+            "posterior_family": str(g["posterior_family"].iloc[0]) if "posterior_family" in g and not g.empty else POSTERIOR_FAMILY.get(str(method), "unknown"),
             "n_runs": int(g.shape[0]),
             "n_converged": int(g["converged"].sum()),
             "eligible_5of5": bool(eligible),
@@ -274,6 +289,7 @@ def _summaries(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     ranking = ranking[
         [
             "setting_id",
+            "posterior_family",
             "rank_mse_overall",
             "method",
             "mse_overall_mean",

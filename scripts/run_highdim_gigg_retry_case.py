@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from simulation_project.src.experiments.evaluation import _evaluate_row
-from simulation_project.src.experiments.methods.fit_rhs import fit_rhs
+from simulation_project.src.experiments.methods.fit_gigg import fit_gigg_mmle
 from simulation_project.src.utils import SamplerConfig, save_fit_result_artifacts
 from simulation_second.src.config import load_benchmark_config
 from simulation_second.src.dataset import generate_grouped_dataset
@@ -51,17 +51,14 @@ def _json_clean(value):
     return val if math.isfinite(val) else None
 
 
-def run_rhs_retry(
+def run_case(
     *,
     config: str,
     setting_id: str,
     replicate: int,
     outdir: str,
-    warmup: int,
-    draws: int,
-    chains: int,
-    adapt_delta: float,
-    max_treedepth: int,
+    rounds: int,
+    draws_per_round: int,
     seed_offset: int,
     save_artifacts: bool = False,
 ) -> dict[str, object]:
@@ -76,32 +73,51 @@ def run_rhs_retry(
     )
     p0 = int((abs(ds.beta) > 1e-12).sum())
     sampler = SamplerConfig(
-        chains=int(chains),
-        warmup=int(warmup),
-        post_warmup_draws=int(draws),
-        adapt_delta=float(adapt_delta),
-        max_treedepth=int(max_treedepth),
-        strict_adapt_delta=max(0.999, float(adapt_delta)),
-        strict_max_treedepth=max(int(max_treedepth), 16),
-        max_divergence_ratio=float(cfg.convergence_gate.max_divergence_ratio),
+        chains=max(4, int(cfg.convergence_gate.chains)),
+        warmup=int(cfg.convergence_gate.warmup),
+        post_warmup_draws=int(cfg.convergence_gate.post_warmup_draws),
+        adapt_delta=float(cfg.convergence_gate.adapt_delta),
+        max_treedepth=int(cfg.convergence_gate.max_treedepth),
+        strict_adapt_delta=float(cfg.convergence_gate.strict_adapt_delta),
+        strict_max_treedepth=int(cfg.convergence_gate.strict_max_treedepth),
         rhat_threshold=float(cfg.convergence_gate.rhat_threshold),
         ess_threshold=float(cfg.convergence_gate.ess_threshold),
+        max_divergence_ratio=float(cfg.convergence_gate.max_divergence_ratio),
     )
-
+    gigg_kwargs = dict(cfg.methods.gigg_config)
+    for key in ("allow_budget_retry", "extra_retry", "retry_cap"):
+        gigg_kwargs.pop(key, None)
+    gigg_kwargs.update(
+        {
+            "exact_highdim_fastpath": True,
+            "highdim_continuation_rounds": int(rounds),
+            "highdim_continuation_warmup": 2,
+            "highdim_continuation_draws": int(draws_per_round),
+            "highdim_stage_a_burnin": max(8, int(gigg_kwargs.get("highdim_stage_a_burnin", 8) or 8)),
+            "highdim_stage_a_draws": max(8, int(gigg_kwargs.get("highdim_stage_a_draws", 8) or 8)),
+            "highdim_stage_a_reference_mmle": True,
+            "highdim_select_best_round": True,
+            "highdim_diagnostic_interval": 10,
+            "highdim_early_stop": True,
+            "highdim_early_stop_min_rounds": 120,
+            "highdim_early_stop_patience": 2,
+            "highdim_store_history": False,
+            "progress_bar": False,
+        }
+    )
     fit_t0 = time.perf_counter()
-    result = fit_rhs(
+    result = fit_gigg_mmle(
         ds.X_train,
         ds.y_train,
         ds.groups,
         task=str(cfg.runner.task),
-        seed=int(cfg.runner.seed) + 2 + 10000 * int(seed_offset),
-        p0=int(p0),
+        seed=int(cfg.runner.seed) + 4 + 10000 * int(seed_offset),
         sampler=sampler,
-        method_name="RHS",
-        progress_bar=False,
+        p0=int(p0),
+        method_label="GIGG_MMLE",
+        **gigg_kwargs,
     )
     fit_seconds = time.perf_counter() - fit_t0
-
     metrics = _evaluate_row(
         result,
         ds.beta,
@@ -113,7 +129,7 @@ def run_rhs_retry(
     payload = {
         "replicate": int(replicate),
         "setting_id": str(setting_id),
-        "method": "RHS",
+        "method": "GIGG_MMLE",
         "wall_seconds": float(time.perf_counter() - total_t0),
         "runtime_seconds": _json_scalar(result.runtime_seconds),
         "status": str(result.status),
@@ -130,11 +146,8 @@ def run_rhs_retry(
         "error": str(getattr(result, "error", "") or ""),
         "diagnostics": _json_clean(result.diagnostics),
         "retry_budget": {
-            "warmup": int(warmup),
-            "draws": int(draws),
-            "chains": int(chains),
-            "adapt_delta": float(adapt_delta),
-            "max_treedepth": int(max_treedepth),
+            "rounds": int(rounds),
+            "draws_per_round": int(draws_per_round),
             "seed_offset": int(seed_offset),
         },
         "timing_breakdown": {
@@ -143,10 +156,9 @@ def run_rhs_retry(
             "total_seconds": float(time.perf_counter() - total_t0),
         },
     }
-
     outdir_path = ROOT / str(outdir)
     outdir_path.mkdir(parents=True, exist_ok=True)
-    stem = f"{setting_id}__RHS__r{int(replicate)}__w{int(warmup)}_d{int(draws)}_s{int(seed_offset)}"
+    stem = f"{setting_id}__GIGG_MMLE__r{int(replicate)}__rounds{int(rounds)}_dpr{int(draws_per_round)}_s{int(seed_offset)}"
     out_path = outdir_path / f"{stem}.json"
     if bool(save_artifacts):
         artifacts = save_fit_result_artifacts(
@@ -154,9 +166,9 @@ def run_rhs_retry(
             result=result,
             run_context={
                 "setting_id": str(setting_id),
-                "method": "RHS",
+                "method": "GIGG_MMLE",
                 "replicate": int(replicate),
-                "source_script": "run_highdim_rhs_setting2_retry.py",
+                "source_script": "run_highdim_gigg_retry_case.py",
             },
             coefficient_truth=ds.beta,
             dataset_arrays={
@@ -175,30 +187,23 @@ def run_rhs_retry(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Targeted strict RHS retry for high-dimensional setting 2.")
+    parser = argparse.ArgumentParser(description="Targeted high-dimensional GIGG retry case.")
     parser.add_argument("--config", default="Simulation_highdimension/config/highdimension.yaml")
-    parser.add_argument("--setting-id", default="hd_setting_2_single_mode")
+    parser.add_argument("--setting-id", required=True)
     parser.add_argument("--replicate", type=int, required=True)
-    parser.add_argument("--outdir", default="tmp/highdim_rhs_setting2_retry_full")
-    parser.add_argument("--warmup", type=int, default=2500)
-    parser.add_argument("--draws", type=int, default=5000)
-    parser.add_argument("--chains", type=int, default=4)
-    parser.add_argument("--adapt-delta", type=float, default=0.995)
-    parser.add_argument("--max-treedepth", type=int, default=15)
-    parser.add_argument("--seed-offset", type=int, default=0)
+    parser.add_argument("--outdir", default="tmp/highdim_bayes_rerun_20260512_full/gigg_retries")
+    parser.add_argument("--rounds", type=int, default=420)
+    parser.add_argument("--draws-per-round", type=int, default=5)
+    parser.add_argument("--seed-offset", type=int, default=21)
     parser.add_argument("--save-artifacts", action="store_true")
     args = parser.parse_args()
-
-    payload = run_rhs_retry(
+    payload = run_case(
         config=str(args.config),
         setting_id=str(args.setting_id),
         replicate=int(args.replicate),
         outdir=str(args.outdir),
-        warmup=int(args.warmup),
-        draws=int(args.draws),
-        chains=int(args.chains),
-        adapt_delta=float(args.adapt_delta),
-        max_treedepth=int(args.max_treedepth),
+        rounds=int(args.rounds),
+        draws_per_round=int(args.draws_per_round),
         seed_offset=int(args.seed_offset),
         save_artifacts=bool(args.save_artifacts),
     )

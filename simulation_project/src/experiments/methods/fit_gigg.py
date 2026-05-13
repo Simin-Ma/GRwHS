@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Sequence
 import traceback
 
@@ -213,12 +214,38 @@ def _extract_and_diagnose(
     )
 
 
-def _extract_draw_diag(beta_chains: np.ndarray) -> tuple[float, float, dict[str, Any]]:
-    conv = summarize_convergence({"beta": np.asarray(beta_chains, dtype=float)})
+def _extract_draw_diag(
+    beta_chains: np.ndarray,
+    *,
+    gamma2_chains: np.ndarray | None = None,
+    lambda_chains: np.ndarray | None = None,
+    tau_chains: np.ndarray | None = None,
+    sigma_chains: np.ndarray | None = None,
+) -> tuple[float, float, dict[str, Any]]:
+    draws: dict[str, np.ndarray] = {"beta": np.asarray(beta_chains, dtype=float)}
+    if gamma2_chains is not None:
+        draws["gamma2"] = np.asarray(gamma2_chains, dtype=float)
+    if lambda_chains is not None:
+        draws["lambda"] = np.asarray(lambda_chains, dtype=float)
+    if tau_chains is not None:
+        draws["tau"] = np.asarray(tau_chains, dtype=float)
+    if sigma_chains is not None:
+        draws["sigma"] = np.asarray(sigma_chains, dtype=float)
+    conv = summarize_convergence(draws)
     beta_diag = dict(conv.get("beta", {}))
+    rvals: list[float] = []
+    evals: list[float] = []
+    for item in conv.values():
+        if isinstance(item, dict):
+            rv = item.get("rhat_max", float("nan"))
+            ev = item.get("ess_min", float("nan"))
+            if np.isfinite(rv):
+                rvals.append(float(rv))
+            if np.isfinite(ev):
+                evals.append(float(ev))
     return (
-        float(beta_diag.get("rhat_max", float("nan"))),
-        float(beta_diag.get("ess_min", float("nan"))),
+        float(max(rvals)) if rvals else float(beta_diag.get("rhat_max", float("nan"))),
+        float(min(evals)) if evals else float(beta_diag.get("ess_min", float("nan"))),
         {"convergence_detail": conv},
     )
 
@@ -251,6 +278,14 @@ def _run_highdim_stage_b_continuation(
     tau_sq_seed: float,
     sigma_sq_seed: float,
     select_best_round: bool,
+    diagnostic_interval: int = 1,
+    early_stop: bool = False,
+    early_stop_min_rounds: int = 80,
+    early_stop_patience: int = 2,
+    rhat_threshold: float = 1.01,
+    ess_threshold: float = 400.0,
+    store_history: bool = True,
+    chain_workers: int = 1,
 ) -> tuple[np.ndarray, float, dict[str, Any]]:
     chains = int(max(1, num_chains))
     rounds_use = int(max(1, rounds))
@@ -290,15 +325,38 @@ def _run_highdim_stage_b_continuation(
         )
 
     chain_beta_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
+    chain_gamma2_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
+    chain_lambda_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
+    chain_tau_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
+    chain_sigma_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
     history: list[dict[str, Any]] = []
     total_runtime = 0.0
     best_round = 1
     best_rhat = float("inf")
+    best_ess = float("nan")
+    diag_interval = int(max(1, diagnostic_interval))
+    workers = int(max(1, min(chains, chain_workers)))
+    stable_ok_checks = 0
+    last_diag_round = 0
 
-    for round_idx in range(1, rounds_use + 1):
-        round_rec: dict[str, Any] = {"round": int(round_idx), "chains": []}
-        for chain_idx in range(chains):
-            payload = payloads[chain_idx]
+    def _merge_beta_chains(rounds_keep: int) -> np.ndarray:
+        aligned_use = [
+            np.concatenate(chain_beta_rounds[idx][:rounds_keep], axis=0)
+            for idx in range(chains)
+        ]
+        min_draws_use = min(arr.shape[0] for arr in aligned_use)
+        return np.stack([arr[:min_draws_use] for arr in aligned_use], axis=0)
+
+    def _merge_optional_chains(store: list[list[np.ndarray]], rounds_keep: int) -> np.ndarray | None:
+        if any(len(store[idx]) < rounds_keep for idx in range(chains)):
+            return None
+        aligned_use = [np.concatenate(store[idx][:rounds_keep], axis=0) for idx in range(chains)]
+        if any(arr.size == 0 for arr in aligned_use):
+            return None
+        min_draws_use = min(arr.shape[0] for arr in aligned_use)
+        return np.stack([arr[:min_draws_use] for arr in aligned_use], axis=0)
+
+    def _run_one_chain(round_idx: int, chain_idx: int, payload: dict[str, np.ndarray] | None):
             model = GIGGRegression(
                 method="fixed",
                 n_burn_in=warmup_use,
@@ -338,39 +396,128 @@ def _run_highdim_stage_b_continuation(
                 lambda_sq_inits=None if payload is None else payload.get("lambda_sq_inits"),
                 gamma_sq_inits=None if payload is None else payload.get("gamma_sq_inits"),
             )
-            total_runtime += float(wall)
             draws_arr = np.asarray(fit.coef_samples_, dtype=float)
-            chain_beta_rounds[chain_idx].append(draws_arr)
-            payloads[chain_idx] = {
+            gamma2_arr = None if fit.gamma2_samples_ is None else np.asarray(fit.gamma2_samples_, dtype=float)
+            lambda_arr = None if fit.lambda_samples_ is None else np.asarray(fit.lambda_samples_, dtype=float)
+            tau_arr = None if fit.tau_samples_ is None else np.asarray(fit.tau_samples_, dtype=float)
+            sigma_arr = None if fit.sigma_samples_ is None else np.asarray(fit.sigma_samples_, dtype=float)
+            next_payload = {
                 "beta_inits": np.asarray(fit.coef_samples_[-1], dtype=float).reshape(-1),
                 "lambda_sq_inits": np.asarray(fit.lambda_samples_[-1], dtype=float).reshape(-1),
                 "gamma_sq_inits": np.asarray(fit.gamma2_samples_[-1], dtype=float).reshape(-1),
             }
+            return int(chain_idx), draws_arr, gamma2_arr, lambda_arr, tau_arr, sigma_arr, next_payload, float(wall)
+
+    for round_idx in range(1, rounds_use + 1):
+        round_rec: dict[str, Any] = {"round": int(round_idx), "chains": []}
+        if workers <= 1:
+            chain_results = [
+                _run_one_chain(int(round_idx), int(chain_idx), payloads[chain_idx])
+                for chain_idx in range(chains)
+            ]
+        else:
+            chain_results = []
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                futs = [
+                    ex.submit(_run_one_chain, int(round_idx), int(chain_idx), payloads[chain_idx])
+                    for chain_idx in range(chains)
+                ]
+                for fut in as_completed(futs):
+                    chain_results.append(fut.result())
+            chain_results.sort(key=lambda item: int(item[0]))
+
+        for chain_idx, draws_arr, gamma2_arr, lambda_arr, tau_arr, sigma_arr, next_payload, wall in chain_results:
+            total_runtime += float(wall)
+            chain_beta_rounds[int(chain_idx)].append(np.asarray(draws_arr, dtype=float))
+            if gamma2_arr is not None:
+                chain_gamma2_rounds[int(chain_idx)].append(np.asarray(gamma2_arr, dtype=float))
+            if lambda_arr is not None:
+                chain_lambda_rounds[int(chain_idx)].append(np.asarray(lambda_arr, dtype=float))
+            if tau_arr is not None:
+                chain_tau_rounds[int(chain_idx)].append(np.asarray(tau_arr, dtype=float))
+            if sigma_arr is not None:
+                chain_sigma_rounds[int(chain_idx)].append(np.asarray(sigma_arr, dtype=float))
+            payloads[int(chain_idx)] = next_payload
             round_rec["chains"].append({"chain": int(chain_idx + 1), "wall_seconds": float(wall)})
 
-        aligned = [np.concatenate(chain_beta_rounds[idx], axis=0) for idx in range(chains)]
-        min_draws = min(arr.shape[0] for arr in aligned)
-        beta_chains = np.stack([arr[:min_draws] for arr in aligned], axis=0)
-        rhat_now, ess_now, detail_now = _extract_draw_diag(beta_chains)
-        round_rec["merged_beta_diag"] = dict(detail_now.get("convergence_detail", {}).get("beta", {}))
-        round_rec["merged_shape"] = [int(x) for x in beta_chains.shape]
-        history.append(round_rec)
-        if np.isfinite(rhat_now) and rhat_now < best_rhat:
-            best_rhat = float(rhat_now)
-            best_round = int(round_idx)
+        should_diagnose = (
+            round_idx == 1
+            or round_idx == rounds_use
+            or (round_idx % diag_interval == 0)
+        )
+        if should_diagnose:
+            beta_chains = _merge_beta_chains(int(round_idx))
+            rhat_now, ess_now, detail_now = _extract_draw_diag(
+                beta_chains,
+                gamma2_chains=_merge_optional_chains(chain_gamma2_rounds, int(round_idx)),
+                lambda_chains=_merge_optional_chains(chain_lambda_rounds, int(round_idx)),
+                tau_chains=_merge_optional_chains(chain_tau_rounds, int(round_idx)),
+                sigma_chains=_merge_optional_chains(chain_sigma_rounds, int(round_idx)),
+            )
+            last_diag_round = int(round_idx)
+            round_rec["merged_beta_diag"] = dict(detail_now.get("convergence_detail", {}).get("beta", {}))
+            round_rec["merged_shape"] = [int(x) for x in beta_chains.shape]
+            if np.isfinite(rhat_now) and rhat_now < best_rhat:
+                best_rhat = float(rhat_now)
+                best_ess = float(ess_now)
+                best_round = int(round_idx)
+            if (
+                bool(early_stop)
+                and round_idx >= int(max(1, early_stop_min_rounds))
+                and np.isfinite(rhat_now)
+                and np.isfinite(ess_now)
+                and rhat_now <= float(rhat_threshold)
+                and ess_now >= float(ess_threshold)
+            ):
+                stable_ok_checks += 1
+            else:
+                stable_ok_checks = 0
+        else:
+            round_rec["diagnostic_skipped"] = True
+
+        if bool(store_history) or should_diagnose:
+            history.append(round_rec)
+
+        if bool(early_stop) and stable_ok_checks >= int(max(1, early_stop_patience)):
+            break
 
     rounds_keep = int(best_round if bool(select_best_round) else rounds_use)
-    aligned = [np.concatenate(chain_beta_rounds[idx][:rounds_keep], axis=0) for idx in range(chains)]
-    min_draws = min(arr.shape[0] for arr in aligned)
-    beta_chains = np.stack([arr[:min_draws] for arr in aligned], axis=0)
-    _, _, detail = _extract_draw_diag(beta_chains)
+    rounds_executed = int(round_idx)
+    if not bool(select_best_round):
+        rounds_keep = int(rounds_executed)
+    beta_chains = _merge_beta_chains(rounds_keep)
+    gamma2_chains = _merge_optional_chains(chain_gamma2_rounds, rounds_keep)
+    lambda_chains = _merge_optional_chains(chain_lambda_rounds, rounds_keep)
+    tau_chains = _merge_optional_chains(chain_tau_rounds, rounds_keep)
+    sigma_chains = _merge_optional_chains(chain_sigma_rounds, rounds_keep)
+    _, _, detail = _extract_draw_diag(
+        beta_chains,
+        gamma2_chains=gamma2_chains,
+        lambda_chains=lambda_chains,
+        tau_chains=tau_chains,
+        sigma_chains=sigma_chains,
+    )
     return beta_chains, float(total_runtime), {
+        "final_gamma2_chains": gamma2_chains,
+        "final_lambda_chains": lambda_chains,
+        "final_tau_chains": tau_chains,
+        "final_sigma_chains": sigma_chains,
         "continuation_history": history,
         "best_round": int(best_round),
-        "rounds_executed": int(rounds_use),
+        "best_rhat": float(best_rhat),
+        "best_ess": float(best_ess),
+        "rounds_requested": int(rounds_use),
+        "rounds_executed": int(rounds_executed),
         "rounds_used_for_final_artifact": int(rounds_keep),
         "continuation_warmup": int(warmup_use),
         "continuation_draws": int(draws_use),
+        "diagnostic_interval": int(diag_interval),
+        "chain_workers": int(workers),
+        "last_diagnostic_round": int(last_diag_round),
+        "early_stop": bool(early_stop),
+        "early_stop_min_rounds": int(max(1, early_stop_min_rounds)),
+        "early_stop_patience": int(max(1, early_stop_patience)),
+        "history_stored": bool(store_history),
         **detail,
     }
 
@@ -413,6 +560,12 @@ def fit_gigg_mmle(
     highdim_stage_a_draws: int | None = None,
     highdim_select_best_round: bool = True,
     highdim_stage_a_reference_mmle: bool = False,
+    highdim_diagnostic_interval: int = 1,
+    highdim_early_stop: bool = False,
+    highdim_early_stop_min_rounds: int = 80,
+    highdim_early_stop_patience: int = 2,
+    highdim_store_history: bool = True,
+    highdim_chain_workers: int = 1,
     method_label: str = "GIGG_MMLE",
     no_retry: bool = False,
     progress_bar: bool = True,
@@ -571,17 +724,31 @@ def fit_gigg_mmle(
                     tau_sq_seed=float(tau_sq_seed),
                     sigma_sq_seed=float(sigma_sq_seed),
                     select_best_round=bool(highdim_select_best_round),
+                    diagnostic_interval=int(highdim_diagnostic_interval),
+                    early_stop=bool(highdim_early_stop),
+                    early_stop_min_rounds=int(highdim_early_stop_min_rounds),
+                    early_stop_patience=int(highdim_early_stop_patience),
+                    rhat_threshold=float(sampler.rhat_threshold),
+                    ess_threshold=float(sampler.ess_threshold),
+                    store_history=bool(highdim_store_history),
+                    chain_workers=int(highdim_chain_workers),
                 )
                 total_runtime += float(stage_b_runtime)
-                rhat_max, ess_min, detail = _extract_draw_diag(beta_chains)
+                rhat_max, ess_min, detail = _extract_draw_diag(
+                    beta_chains,
+                    gamma2_chains=None if cont_info.get("final_gamma2_chains") is None else np.asarray(cont_info["final_gamma2_chains"], dtype=float),
+                    lambda_chains=None if cont_info.get("final_lambda_chains") is None else np.asarray(cont_info["final_lambda_chains"], dtype=float),
+                    tau_chains=None if cont_info.get("final_tau_chains") is None else np.asarray(cont_info["final_tau_chains"], dtype=float),
+                    sigma_chains=None if cont_info.get("final_sigma_chains") is None else np.asarray(cont_info["final_sigma_chains"], dtype=float),
+                )
                 result = FitResult(
                     method=str(method_label),
                     status="ok",
                     beta_mean=np.asarray(beta_chains, dtype=float).reshape(-1, beta_chains.shape[-1]).mean(axis=0),
                     beta_draws=np.asarray(beta_chains, dtype=float),
                     kappa_draws=None,
-                    group_scale_draws=None,
-                    tau_draws=None,
+                    group_scale_draws=None if cont_info.get("final_gamma2_chains") is None else np.asarray(cont_info["final_gamma2_chains"], dtype=float),
+                    tau_draws=None if cont_info.get("final_tau_chains") is None else np.asarray(cont_info["final_tau_chains"], dtype=float),
                     runtime_seconds=float(total_runtime),
                     rhat_max=float(rhat_max),
                     bulk_ess_min=float(ess_min),
@@ -612,7 +779,7 @@ def fit_gigg_mmle(
                         "locals_first_beta_update": False,
                         "extra_local_scale_sweeps": 0,
                         "extra_beta_refresh_prob": float(extra_beta_refresh_prob),
-                        **cont_info,
+                        **{k: v for k, v in cont_info.items() if not str(k).startswith("final_")},
                     },
                 }
                 diag = dict(result.diagnostics or {})

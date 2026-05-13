@@ -163,6 +163,8 @@ def collect_model_draws(model: Any) -> Dict[str, Optional[np.ndarray]]:
         "tau": "tau_samples_",
         "sigma": "sigma_samples_",
         "lambda": "lambda_samples_",
+        "lambda_tilde": "lambda_tilde_samples_",
+        "c": "c_samples_",
         "kappa": "kappa_samples_",
         "group_scale": "group_lambda_samples_",
         "gamma2": "gamma2_samples_",

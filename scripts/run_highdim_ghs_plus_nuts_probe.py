@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from simulation_project.src.experiments.evaluation import _evaluate_row
-from simulation_project.src.utils import FitResult
+from simulation_project.src.utils import FitResult, save_fit_result_artifacts
 from simulation_second.src.config import load_benchmark_config
 from simulation_second.src.dataset import generate_grouped_dataset
 
@@ -59,6 +59,7 @@ def run_case(
     max_tree_depth: int,
     target_accept: float,
     dense_mass: bool,
+    save_artifacts: bool = False,
 ) -> dict[str, object]:
     import jax
     import jax.numpy as jnp
@@ -200,7 +201,30 @@ def run_case(
     }
     outdir_path = ROOT / str(outdir)
     outdir_path.mkdir(parents=True, exist_ok=True)
-    out_path = outdir_path / f"{setting_id}__GHS_plus_NUTS__r{int(replicate)}_w{int(warmup)}_d{int(draws)}.json"
+    stem = f"{setting_id}__GHS_plus_NUTS__r{int(replicate)}_w{int(warmup)}_d{int(draws)}"
+    out_path = outdir_path / f"{stem}.json"
+    if bool(save_artifacts):
+        artifacts = save_fit_result_artifacts(
+            outdir_path / stem,
+            result=result,
+            run_context={
+                "setting_id": str(setting_id),
+                "method": "GHS_plus_NUTS",
+                "replicate": int(replicate),
+                "source_script": "run_highdim_ghs_plus_nuts_probe.py",
+            },
+            coefficient_truth=ds.beta,
+            dataset_arrays={
+                "X_train": ds.X_train,
+                "y_train": ds.y_train,
+                "X_test": ds.X_test,
+                "y_test": ds.y_test,
+                "beta": ds.beta,
+            },
+            dataset_metadata={"groups": [[int(i) for i in g] for g in ds.groups]},
+            save_dataset_bundle=True,
+        )
+        payload["artifacts"] = artifacts
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"out_path": str(out_path), **payload}
 
@@ -217,6 +241,7 @@ def main() -> int:
     parser.add_argument("--max-tree-depth", type=int, default=10)
     parser.add_argument("--target-accept", type=float, default=0.9)
     parser.add_argument("--dense-mass", action="store_true")
+    parser.add_argument("--save-artifacts", action="store_true")
     args = parser.parse_args()
     payload = run_case(
         config=str(args.config),
@@ -229,6 +254,7 @@ def main() -> int:
         max_tree_depth=int(args.max_tree_depth),
         target_accept=float(args.target_accept),
         dense_mass=bool(args.dense_mass),
+        save_artifacts=bool(args.save_artifacts),
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0

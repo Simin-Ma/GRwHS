@@ -821,6 +821,8 @@ def fit_gr_rhs(
     grouped_sigma_tau_block_repeats: int | None = None,
     collapsed_kappa_reparameterization: str = "prior_logit_affine",
     collapsed_dense_mass: bool | None = None,
+    collapsed_hard_min_warmup: int | None = None,
+    collapsed_hard_min_draws: int | None = None,
     method_name: str = "GR_RHS",
 ) -> FitResult:
     tracked = ["beta", "tau", "kappa"]
@@ -1032,17 +1034,21 @@ def fit_gr_rhs(
             ):
                 heuristic_step_size = True
                 dense_mass_use = bool(collapsed_dense_mass) if collapsed_dense_mass is not None else False
+                hard_min_warmup = 200 if collapsed_hard_min_warmup is None else int(collapsed_hard_min_warmup)
+                hard_min_draws = 560 if collapsed_hard_min_draws is None else int(collapsed_hard_min_draws)
+                hard_mid_min_warmup = 190 if collapsed_hard_min_warmup is None else int(collapsed_hard_min_warmup)
+                hard_mid_min_draws = 540 if collapsed_hard_min_draws is None else int(collapsed_hard_min_draws)
                 if int(sampler.chains) > 1:
                     adapt_delta_use = max(adapt_delta_use, 0.90)
                     max_treedepth_use = max(max_treedepth_use, 9)
                     if within_corr < 0.70 and 0.35 <= corr_gap < 0.50:
                         step_size_use = 0.032
-                        warmup_use = max(warmup_use, 190)
-                        draws_use = max(draws_use, 540)
+                        warmup_use = max(warmup_use, int(max(1, hard_mid_min_warmup)))
+                        draws_use = max(draws_use, int(max(1, hard_mid_min_draws)))
                     else:
                         step_size_use = 0.03
-                        warmup_use = max(warmup_use, 200)
-                        draws_use = max(draws_use, 560)
+                        warmup_use = max(warmup_use, int(max(1, hard_min_warmup)))
+                        draws_use = max(draws_use, int(max(1, hard_min_draws)))
                 else:
                     if within_corr >= 0.7 or corr_gap >= 0.5:
                         step_size_use = 0.025
@@ -1185,6 +1191,8 @@ def fit_gr_rhs(
             "gibbs_budget_scale": None if gibbs_budget_scale is None else float(gibbs_budget_scale),
             "collapsed_kappa_reparameterization": str(collapsed_kappa_reparameterization),
             "collapsed_dense_mass": None if collapsed_dense_mass is None else bool(collapsed_dense_mass),
+            "collapsed_hard_min_warmup": None if collapsed_hard_min_warmup is None else int(collapsed_hard_min_warmup),
+            "collapsed_hard_min_draws": None if collapsed_hard_min_draws is None else int(collapsed_hard_min_draws),
         }
         sampler_diag = diagnostics.get("sampler_diagnostics")
         if backend_name == "gibbs_staged" and isinstance(sampler_diag, dict):
