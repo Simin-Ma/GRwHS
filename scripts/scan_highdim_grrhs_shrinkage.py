@@ -55,6 +55,32 @@ DEFAULT_CANDIDATES = [
         "beta_kappa": 8.0,
     },
     {
+        "label": "kappa_b10",
+        "description": "stronger boundary test: kappa~Beta(0.5,10.0)",
+        "alpha_kappa": 0.5,
+        "beta_kappa": 10.0,
+    },
+    {
+        "label": "kappa_b12",
+        "description": "stronger boundary test: kappa~Beta(0.5,12.0)",
+        "alpha_kappa": 0.5,
+        "beta_kappa": 12.0,
+    },
+    {
+        "label": "kappa_b8_tau05",
+        "description": "kappa~Beta(0.5,8.0) with tau0 halved from the high-dimensional calibrated value",
+        "alpha_kappa": 0.5,
+        "beta_kappa": 8.0,
+        "tau0": 0.00392837100659193,
+    },
+    {
+        "label": "kappa_b10_tau05",
+        "description": "kappa~Beta(0.5,10.0) with tau0 halved from the high-dimensional calibrated value",
+        "alpha_kappa": 0.5,
+        "beta_kappa": 10.0,
+        "tau0": 0.00392837100659193,
+    },
+    {
         "label": "kappa_a025_b2",
         "description": "more spike near zero: kappa~Beta(0.25,2.0)",
         "alpha_kappa": 0.25,
