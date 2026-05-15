@@ -32,6 +32,9 @@ class Scenario:
     family: str
     description: str
     decoy_pairs: tuple[tuple[int, int], ...] = ()
+    active_groups: tuple[int, ...] = ()
+    support_fraction: float | None = None
+    signal_scale: float = 0.35
 
 
 SCENARIOS: tuple[Scenario, ...] = (
@@ -54,6 +57,42 @@ SCENARIOS: tuple[Scenario, ...] = (
         family="unequal-group-size",
         description="Small strong groups compete against larger mostly-null groups.",
     ),
+    Scenario(
+        name="hd_dense_balanced_p200",
+        group_sizes=tuple([10] * 20),
+        family="highdim-dense-active-groups",
+        description="p=200, many dense active groups; overall MSE should reflect signal recovery more than null screening.",
+        active_groups=tuple(range(12)),
+        support_fraction=1.0,
+        signal_scale=0.30,
+    ),
+    Scenario(
+        name="hd_dense_p240",
+        group_sizes=tuple([10] * 24),
+        family="highdim-dense-active-groups",
+        description="p=240, half the groups active and nearly all coefficients active inside active groups.",
+        active_groups=tuple(range(12)),
+        support_fraction=0.9,
+        signal_scale=0.32,
+    ),
+    Scenario(
+        name="hd_group_sparse_p300",
+        group_sizes=tuple([10] * 30),
+        family="highdim-group-structured-sparse-null",
+        description="p=300, strong group sparsity with dense within-active-group support.",
+        active_groups=tuple(range(10)),
+        support_fraction=0.85,
+        signal_scale=0.36,
+    ),
+    Scenario(
+        name="hd_ultradense_p60",
+        group_sizes=tuple([10] * 6),
+        family="highdim-ultradense",
+        description="p=60, only slightly above n in the temporary probe; almost all coefficients in active groups are signal.",
+        active_groups=tuple(range(5)),
+        support_fraction=1.0,
+        signal_scale=0.42,
+    ),
 )
 
 
@@ -63,7 +102,18 @@ def _build_beta(scenario: Scenario) -> tuple[np.ndarray, np.ndarray]:
     beta = np.zeros(p, dtype=float)
     active_group = np.zeros(len(groups), dtype=int)
 
-    if scenario.name == "hetero_mixed":
+    if scenario.support_fraction is not None and scenario.active_groups:
+        frac = min(1.0, max(0.0, float(scenario.support_fraction)))
+        for ag_pos, gid in enumerate(scenario.active_groups):
+            group = np.asarray(groups[int(gid)], dtype=int)
+            width = int(group.size)
+            k = max(1, min(width, int(round(frac * width))))
+            idx = group[:k]
+            signs = np.where((np.arange(k) + ag_pos) % 2 == 0, 1.0, -1.0)
+            taper = np.linspace(1.15, 0.75, k)
+            beta[idx] = float(scenario.signal_scale) * signs * taper
+            active_group[int(gid)] = 1
+    elif scenario.name == "hetero_mixed":
         beta[np.asarray(groups[0], dtype=int)[0]] = 1.45
         beta[np.asarray(groups[1], dtype=int)[:3]] = np.asarray([0.82, -0.74, 0.58], dtype=float)
         beta[np.asarray(groups[2], dtype=int)] = np.asarray([0.34, -0.31, 0.28, -0.25, 0.22, -0.19], dtype=float)
@@ -234,6 +284,7 @@ def _run_one_setting(
         enforce_bayes_convergence=bool(enforce_bayes_convergence),
         max_convergence_retries=int(max_convergence_retries),
         method_jobs=1,
+        rhs_sampler_strategy="high_dim",
     )
 
     X_test, _ = _sample_custom_design(
@@ -270,6 +321,11 @@ def _run_one_setting(
                 "sigma2": float(sigma2),
                 "test_signal_norm": float(test_signal_norm),
                 "group_sizes_json": json.dumps(list(scenario.group_sizes)),
+                "p": int(beta_true.size),
+                "n_over_p": float(n) / float(beta_true.size),
+                "active_coefficients": int(np.sum(np.abs(beta_true) > 1e-12)),
+                "active_fraction": float(np.mean(np.abs(beta_true) > 1e-12)),
+                "active_groups": int(np.sum(active_group)),
             }
         )
         rows.append(row)
@@ -334,24 +390,74 @@ def _compare_gr_vs_gigg(summary: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("advantage_score", ascending=False)
 
 
+def _compare_gr_vs_all(summary: pd.DataFrame, *, methods: list[str]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    keys = ["scenario", "rho_within", "target_snr"]
+    methods_use = [str(m) for m in methods]
+    for key_vals, chunk in summary.groupby(keys, as_index=False):
+        key_tuple = key_vals if isinstance(key_vals, tuple) else (key_vals,)
+        by_method = {str(row["method"]): row for _, row in chunk.iterrows()}
+        if "GR_RHS" not in by_method:
+            continue
+        if not all(m in by_method for m in methods_use):
+            continue
+        gr = by_method["GR_RHS"]
+        all_converged = all(int(by_method[m]["n_converged"]) == int(by_method[m]["n_runs"]) for m in methods_use)
+        mse_by_method = {m: float(by_method[m]["mse_overall_mean"]) for m in methods_use}
+        if not all(np.isfinite(v) for v in mse_by_method.values()):
+            continue
+        best_method = min(mse_by_method, key=mse_by_method.get)
+        competitors = [m for m in methods_use if m != "GR_RHS"]
+        best_competitor = min(competitors, key=lambda m: mse_by_method[m])
+        gr_mse = float(mse_by_method["GR_RHS"])
+        best_comp_mse = float(mse_by_method[best_competitor])
+        rows.append(
+            {
+                "scenario": str(key_tuple[0]),
+                "rho_within": float(key_tuple[1]),
+                "target_snr": float(key_tuple[2]),
+                "all_methods_converged": bool(all_converged),
+                "best_method": str(best_method),
+                "gr_is_best_overall": bool(best_method == "GR_RHS"),
+                "gr_mse_overall": gr_mse,
+                "best_competitor": str(best_competitor),
+                "best_competitor_mse_overall": best_comp_mse,
+                "best_competitor_over_gr_ratio": float(best_comp_mse / gr_mse) if gr_mse > 0 else float("nan"),
+                "gr_mse_signal": float(gr["mse_signal_mean"]),
+                "gr_mse_null": float(gr["mse_null_mean"]),
+                "gr_n_converged": int(gr["n_converged"]),
+                "gr_n_runs": int(gr["n_runs"]),
+                **{f"{m}_mse_overall": float(mse_by_method[m]) for m in methods_use},
+                **{f"{m}_n_converged": int(by_method[m]["n_converged"]) for m in methods_use},
+            }
+        )
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    return out.sort_values(
+        ["all_methods_converged", "gr_is_best_overall", "best_competitor_over_gr_ratio"],
+        ascending=[False, False, False],
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Search new synthetic regions where GR-RHS has structural advantages.")
     parser.add_argument("--save-dir", type=str, default="outputs/grrhs_advantage_region_search")
-    parser.add_argument("--scenarios", type=str, default="hetero_mixed,paired_decoy,size_imbalance")
-    parser.add_argument("--methods", type=str, default="GR_RHS,GIGG_MMLE,RHS,LASSO_CV")
+    parser.add_argument("--scenarios", type=str, default="hd_dense_balanced_p200,hd_dense_p240,hd_group_sparse_p300")
+    parser.add_argument("--methods", type=str, default="GR_RHS,RHS,GIGG_MMLE,GHS_plus")
     parser.add_argument("--scan-repeats", type=int, default=1)
     parser.add_argument("--confirm-repeats", type=int, default=2)
     parser.add_argument("--top-k", type=int, default=3)
-    parser.add_argument("--n-train", type=int, default=180)
+    parser.add_argument("--n-train", type=int, default=120)
     parser.add_argument("--n-test", type=int, default=500)
-    parser.add_argument("--rho-between", type=float, default=0.15)
-    parser.add_argument("--rho-list", type=str, default="0.75,0.90")
-    parser.add_argument("--snr-list", type=str, default="0.35,1.0")
+    parser.add_argument("--rho-between", type=float, default=0.05)
+    parser.add_argument("--rho-list", type=str, default="0.85,0.92")
+    parser.add_argument("--snr-list", type=str, default="2.0,4.0")
     parser.add_argument("--seed", type=int, default=MASTER_SEED + 32000)
     parser.add_argument("--chains", type=int, default=2)
-    parser.add_argument("--warmup", type=int, default=180)
-    parser.add_argument("--draws", type=int, default=180)
-    parser.add_argument("--ess-threshold", type=float, default=60.0)
+    parser.add_argument("--warmup", type=int, default=240)
+    parser.add_argument("--draws", type=int, default=720)
+    parser.add_argument("--ess-threshold", type=float, default=200.0)
     parser.add_argument("--max-convergence-retries", type=int, default=1)
     parser.add_argument("--gigg-iter-floor", type=int, default=400)
     parser.add_argument("--gigg-iter-cap", type=int, default=400)
@@ -372,7 +478,10 @@ def main() -> None:
     )
     grrhs_kwargs = {
         "tau_target": "groups",
-        "sampler_backend": "gibbs_staged",
+        "sampler_backend": "collapsed_profile",
+        "use_local_scale": False,
+        "alpha_kappa": 0.5,
+        "beta_kappa": 12.0,
         "progress_bar": False,
     }
     gigg_config = {
@@ -417,15 +526,20 @@ def main() -> None:
     raw_scan = pd.DataFrame(scan_rows)
     scan_summary = _aggregate(raw_scan)
     top_regions = _compare_gr_vs_gigg(scan_summary)
+    top_all = _compare_gr_vs_all(scan_summary, methods=methods)
 
     raw_scan.to_csv(out_dir / "scan_raw.csv", index=False)
     scan_summary.to_csv(out_dir / "scan_summary.csv", index=False)
     top_regions.to_csv(out_dir / "top_regions_scan.csv", index=False)
+    top_all.to_csv(out_dir / "top_regions_all_methods_scan.csv", index=False)
 
     confirm_rows: list[dict[str, Any]] = []
-    if not top_regions.empty and int(args.confirm_repeats) > 0:
-        top_take = min(int(args.top_k), int(top_regions.shape[0]))
-        top_candidates = top_regions.head(top_take).to_dict(orient="records")
+    if not top_all.empty and int(args.confirm_repeats) > 0:
+        candidate_table = top_all.loc[top_all["all_methods_converged"].astype(bool)]
+        if candidate_table.empty:
+            candidate_table = top_all
+        top_take = min(int(args.top_k), int(candidate_table.shape[0]))
+        top_candidates = candidate_table.head(top_take).to_dict(orient="records")
         for idx, rec in enumerate(top_candidates):
             scenario = scenario_map[str(rec["scenario"])]
             for rep in range(int(args.confirm_repeats)):
@@ -453,12 +567,15 @@ def main() -> None:
     if not raw_confirm.empty:
         confirm_summary = _aggregate(raw_confirm)
         confirm_regions = _compare_gr_vs_gigg(confirm_summary)
+        confirm_all = _compare_gr_vs_all(confirm_summary, methods=methods)
         raw_confirm.to_csv(out_dir / "confirm_raw.csv", index=False)
         confirm_summary.to_csv(out_dir / "confirm_summary.csv", index=False)
         confirm_regions.to_csv(out_dir / "top_regions_confirm.csv", index=False)
+        confirm_all.to_csv(out_dir / "top_regions_all_methods_confirm.csv", index=False)
     else:
         confirm_summary = pd.DataFrame()
         confirm_regions = pd.DataFrame()
+        confirm_all = pd.DataFrame()
 
     meta = {
         "seed": int(args.seed),
@@ -501,6 +618,14 @@ def main() -> None:
     if not confirm_regions.empty:
         print("\nConfirmed regions:")
         print(confirm_regions.head(int(args.top_k)).to_string(index=False))
+    print("\nTop scan regions (GR-RHS vs all Bayesian methods):")
+    if top_all.empty:
+        print("  none")
+    else:
+        print(top_all.head(int(args.top_k)).to_string(index=False))
+    if not confirm_all.empty:
+        print("\nConfirmed regions (GR-RHS vs all Bayesian methods):")
+        print(confirm_all.head(int(args.top_k)).to_string(index=False))
     print(f"\nArtifacts saved in: {out_dir}")
 
 

@@ -157,6 +157,8 @@ def build_default_method_registry() -> MethodRegistry:
         return 1, 450, 700
 
     def _fit_rhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_rhs import fit_rhs
+
         sampler_use = _rhs_highdim_exact_sampler(c)
         res = fit_rhs(
             c.X,
