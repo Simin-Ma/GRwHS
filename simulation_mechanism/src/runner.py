@@ -371,15 +371,26 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
         required_metric_cols=config.runner.required_metrics_for_pairing,
         method_order=method_order,
     )
-    paired_deltas = build_paired_deltas(
-        paired_raw,
-        group_cols=group_cols,
-        baseline_method=config.runner.baseline_method,
-        baseline_by_experiment_kind={
-            "ablation": config.runner.ablation_baseline_method,
-            "prior_sensitivity": "GR_RHS_prior_default",
-        },
-    )
+    paired_deltas_parts = []
+    for experiment_id, sub in paired_raw.groupby("experiment_id", dropna=False, sort=False):
+        exp_id = str(experiment_id)
+        baseline = config.runner.baseline_method
+        baseline_by_kind = {"ablation": config.runner.ablation_baseline_method}
+        if exp_id == "M5":
+            baseline = "GR_RHS_prior_default"
+        elif exp_id == "M5A":
+            baseline = "GR_RHS_beta_sweep_b1"
+        elif exp_id == "M5B":
+            baseline = "GR_RHS_alpha_sweep_a0_5"
+        paired_deltas_parts.append(
+            build_paired_deltas(
+                sub,
+                group_cols=group_cols,
+                baseline_method=baseline,
+                baseline_by_experiment_kind=baseline_by_kind,
+            )
+        )
+    paired_deltas = pd.concat(paired_deltas_parts, ignore_index=True) if paired_deltas_parts else pd.DataFrame()
 
     if not per_group.empty:
         pair_keys = paired_raw.loc[:, [col for col in ["setting_id", "replicate_id", "method"] if col in paired_raw.columns]].drop_duplicates()

@@ -20,6 +20,16 @@ _METHOD_LABEL_OVERRIDES = {
     "GR_RHS_prior_u_shape": "GR-RHS Beta(0.5,0.5)",
     "GR_RHS_prior_moderate_null": "GR-RHS Beta(1,3)",
     "GR_RHS_prior_aggressive_null": "GR-RHS Beta(2,5)",
+    "GR_RHS_beta_sweep_b0_5": "GR-RHS Beta(0.5,0.5)",
+    "GR_RHS_beta_sweep_b1": "GR-RHS Beta(0.5,1)",
+    "GR_RHS_beta_sweep_b2": "GR-RHS Beta(0.5,2)",
+    "GR_RHS_beta_sweep_b3": "GR-RHS Beta(0.5,3)",
+    "GR_RHS_beta_sweep_b5": "GR-RHS Beta(0.5,5)",
+    "GR_RHS_beta_sweep_b8": "GR-RHS Beta(0.5,8)",
+    "GR_RHS_alpha_sweep_a0_25": "GR-RHS Beta(0.25,1)",
+    "GR_RHS_alpha_sweep_a0_5": "GR-RHS Beta(0.5,1)",
+    "GR_RHS_alpha_sweep_a1": "GR-RHS Beta(1,1)",
+    "GR_RHS_alpha_sweep_a2": "GR-RHS Beta(2,1)",
 }
 
 

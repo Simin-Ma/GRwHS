@@ -729,7 +729,8 @@ def build_figure7_prior_sensitivity_data(summary_paired, paired_deltas):
         ]
         if col in summary_paired.columns
     ]
-    summary = summary_paired.loc[summary_paired["experiment_id"] == "M5", summary_cols].copy()
+    prior_experiments = {"M5", "M5A", "M5B"}
+    summary = summary_paired.loc[summary_paired["experiment_id"].astype(str).isin(prior_experiments), summary_cols].copy()
     if paired_deltas.empty:
         return summary
     keep_metrics = {"kappa_gap", "mse_null", "mse_signal", "mse_overall", "group_auroc"}
@@ -752,7 +753,7 @@ def build_figure7_prior_sensitivity_data(summary_paired, paired_deltas):
         if col in paired_deltas.columns
     ]
     deltas = paired_deltas.loc[
-        (paired_deltas["experiment_id"] == "M5")
+        paired_deltas["experiment_id"].astype(str).isin(prior_experiments)
         & paired_deltas["metric"].astype(str).isin(keep_metrics),
         delta_cols,
     ].copy()

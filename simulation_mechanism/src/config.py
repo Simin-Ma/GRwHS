@@ -8,6 +8,8 @@ import yaml
 
 from .schemas import (
     DEFAULT_ABLATION_VARIANTS,
+    DEFAULT_PRIOR_ALPHA_SWEEP_VARIANTS,
+    DEFAULT_PRIOR_BETA_SWEEP_VARIANTS,
     DEFAULT_PRIOR_SENSITIVITY_VARIANTS,
     DEFAULT_STANDARD_METHODS,
     ConvergenceGateSpec,
@@ -45,6 +47,8 @@ class MethodRuntimeConfig:
     standard_methods: tuple[str, ...] = DEFAULT_STANDARD_METHODS
     ablation_variants: tuple[str, ...] = DEFAULT_ABLATION_VARIANTS
     prior_sensitivity_variants: tuple[str, ...] = DEFAULT_PRIOR_SENSITIVITY_VARIANTS
+    prior_beta_sweep_variants: tuple[str, ...] = DEFAULT_PRIOR_BETA_SWEEP_VARIANTS
+    prior_alpha_sweep_variants: tuple[str, ...] = DEFAULT_PRIOR_ALPHA_SWEEP_VARIANTS
     grrhs_kwargs: dict[str, Any] = field(
         default_factory=lambda: {
             "tau_target": "groups",
@@ -147,6 +151,96 @@ class MethodRuntimeConfig:
                 "beta_kappa": 5.0,
                 "prior_label": "aggressive_null",
             },
+            "GR_RHS_beta_sweep_b0_5": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.5,
+                "beta_kappa": 0.5,
+                "prior_label": "alpha0.5_beta0.5",
+            },
+            "GR_RHS_beta_sweep_b1": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.5,
+                "beta_kappa": 1.0,
+                "prior_label": "alpha0.5_beta1",
+            },
+            "GR_RHS_beta_sweep_b2": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.5,
+                "beta_kappa": 2.0,
+                "prior_label": "alpha0.5_beta2",
+            },
+            "GR_RHS_beta_sweep_b3": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.5,
+                "beta_kappa": 3.0,
+                "prior_label": "alpha0.5_beta3",
+            },
+            "GR_RHS_beta_sweep_b5": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.5,
+                "beta_kappa": 5.0,
+                "prior_label": "alpha0.5_beta5",
+            },
+            "GR_RHS_beta_sweep_b8": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.5,
+                "beta_kappa": 8.0,
+                "prior_label": "alpha0.5_beta8",
+            },
+            "GR_RHS_alpha_sweep_a0_25": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.25,
+                "beta_kappa": 1.0,
+                "prior_label": "alpha0.25_beta1",
+            },
+            "GR_RHS_alpha_sweep_a0_5": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 0.5,
+                "beta_kappa": 1.0,
+                "prior_label": "alpha0.5_beta1",
+            },
+            "GR_RHS_alpha_sweep_a1": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 1.0,
+                "beta_kappa": 1.0,
+                "prior_label": "alpha1_beta1",
+            },
+            "GR_RHS_alpha_sweep_a2": {
+                "method": "GR_RHS",
+                "tau_mode": "auto",
+                "use_local_scale": True,
+                "shared_kappa": False,
+                "alpha_kappa": 2.0,
+                "beta_kappa": 1.0,
+                "prior_label": "alpha2_beta1",
+            },
         }
     )
 
@@ -155,6 +249,8 @@ class MethodRuntimeConfig:
             "standard_methods": list(self.standard_methods),
             "ablation_variants": list(self.ablation_variants),
             "prior_sensitivity_variants": list(self.prior_sensitivity_variants),
+            "prior_beta_sweep_variants": list(self.prior_beta_sweep_variants),
+            "prior_alpha_sweep_variants": list(self.prior_alpha_sweep_variants),
             "grrhs_kwargs": dict(self.grrhs_kwargs),
             "gigg_config": dict(self.gigg_config),
             "ablation_variant_specs": {
@@ -322,6 +418,20 @@ def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig
                 list(DEFAULT_PRIOR_SENSITIVITY_VARIANTS),
             )
         ),
+        prior_beta_sweep_variants=tuple(
+            str(item)
+            for item in methods_payload.get(
+                "prior_beta_sweep_variants",
+                list(DEFAULT_PRIOR_BETA_SWEEP_VARIANTS),
+            )
+        ),
+        prior_alpha_sweep_variants=tuple(
+            str(item)
+            for item in methods_payload.get(
+                "prior_alpha_sweep_variants",
+                list(DEFAULT_PRIOR_ALPHA_SWEEP_VARIANTS),
+            )
+        ),
         grrhs_kwargs=dict(methods_payload.get("grrhs_kwargs", {"tau_target": "groups", "progress_bar": False})),
         gigg_config=dict(
             methods_payload.get(
@@ -353,6 +463,8 @@ def mechanism_config_from_payload(payload: Mapping[str, Any]) -> MechanismConfig
             standard_methods=methods_cfg.standard_methods,
             ablation_variants=methods_cfg.ablation_variants,
             prior_sensitivity_variants=methods_cfg.prior_sensitivity_variants,
+            prior_beta_sweep_variants=methods_cfg.prior_beta_sweep_variants,
+            prior_alpha_sweep_variants=methods_cfg.prior_alpha_sweep_variants,
             include_dense_ablation=include_dense_ablation,
         )
 

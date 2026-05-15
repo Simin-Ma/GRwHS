@@ -4,6 +4,8 @@ from typing import Sequence
 
 from .schemas import (
     DEFAULT_ABLATION_VARIANTS,
+    DEFAULT_PRIOR_ALPHA_SWEEP_VARIANTS,
+    DEFAULT_PRIOR_BETA_SWEEP_VARIANTS,
     DEFAULT_PRIOR_SENSITIVITY_VARIANTS,
     DEFAULT_STANDARD_METHODS,
     MechanismSettingSpec,
@@ -69,11 +71,15 @@ def build_mechanism_suite(
     standard_methods: Sequence[str] = DEFAULT_STANDARD_METHODS,
     ablation_variants: Sequence[str] = DEFAULT_ABLATION_VARIANTS,
     prior_sensitivity_variants: Sequence[str] = DEFAULT_PRIOR_SENSITIVITY_VARIANTS,
+    prior_beta_sweep_variants: Sequence[str] = DEFAULT_PRIOR_BETA_SWEEP_VARIANTS,
+    prior_alpha_sweep_variants: Sequence[str] = DEFAULT_PRIOR_ALPHA_SWEEP_VARIANTS,
     include_dense_ablation: bool = False,
 ) -> tuple[MechanismSettingSpec, ...]:
     standard = tuple(str(item) for item in standard_methods)
     ablation = tuple(str(item) for item in ablation_variants)
     prior_sensitivity = tuple(str(item) for item in prior_sensitivity_variants)
+    prior_beta_sweep = tuple(str(item) for item in prior_beta_sweep_variants)
+    prior_alpha_sweep = tuple(str(item) for item in prior_alpha_sweep_variants)
     out: list[MechanismSettingSpec] = []
 
     out.append(
@@ -189,6 +195,54 @@ def build_mechanism_suite(
         )
     )
 
+    out.append(
+        MechanismSettingSpec(
+            setting_id="m5a_kappa_beta_sweep_alpha_fixed",
+            setting_label="M5A Kappa Beta Sweep",
+            experiment_id="M5A",
+            experiment_label="Kappa Beta Sweep at Fixed Alpha",
+            experiment_kind="prior_sensitivity",
+            line_id="exp5a",
+            line_label="Exp5A",
+            scientific_question="How does beta_kappa affect GR-RHS when alpha_kappa is fixed at 0.5?",
+            primary_metric="kappa_gap",
+            group_sizes=(10, 10, 10, 10, 10),
+            n_train=100,
+            n_test=30,
+            rho_within=0.8,
+            rho_between=0.2,
+            sigma2=1.0,
+            mu=(0.0, 0.0, 1.5, 4.0, 10.0),
+            role="controlled beta_kappa sensitivity with alpha_kappa fixed",
+            notes="Controls alpha_kappa=0.5 and scans beta_kappa to isolate stronger/weaker null preference.",
+            methods=prior_beta_sweep,
+        )
+    )
+
+    out.append(
+        MechanismSettingSpec(
+            setting_id="m5b_kappa_alpha_sweep_beta_fixed",
+            setting_label="M5B Kappa Alpha Sweep",
+            experiment_id="M5B",
+            experiment_label="Kappa Alpha Sweep at Fixed Beta",
+            experiment_kind="prior_sensitivity",
+            line_id="exp5b",
+            line_label="Exp5B",
+            scientific_question="How does alpha_kappa affect GR-RHS when beta_kappa is fixed at 1.0?",
+            primary_metric="kappa_gap",
+            group_sizes=(10, 10, 10, 10, 10),
+            n_train=100,
+            n_test=30,
+            rho_within=0.8,
+            rho_between=0.2,
+            sigma2=1.0,
+            mu=(0.0, 0.0, 1.5, 4.0, 10.0),
+            role="controlled alpha_kappa sensitivity with beta_kappa fixed",
+            notes="Controls beta_kappa=1.0 and scans alpha_kappa to isolate the prior push away from the zero gate.",
+            methods=prior_alpha_sweep,
+        )
+    )
+
     return tuple(out)
 
 
@@ -204,6 +258,8 @@ def get_setting_by_id(
         standard_methods=standard_methods,
         ablation_variants=ablation_variants,
         prior_sensitivity_variants=DEFAULT_PRIOR_SENSITIVITY_VARIANTS,
+        prior_beta_sweep_variants=DEFAULT_PRIOR_BETA_SWEEP_VARIANTS,
+        prior_alpha_sweep_variants=DEFAULT_PRIOR_ALPHA_SWEEP_VARIANTS,
         include_dense_ablation=include_dense_ablation,
     ):
         if setting.setting_id == target:

@@ -25,6 +25,22 @@ DEFAULT_PRIOR_SENSITIVITY_VARIANTS: Tuple[str, ...] = (
     "GR_RHS_prior_aggressive_null",
 )
 
+DEFAULT_PRIOR_BETA_SWEEP_VARIANTS: Tuple[str, ...] = (
+    "GR_RHS_beta_sweep_b0_5",
+    "GR_RHS_beta_sweep_b1",
+    "GR_RHS_beta_sweep_b2",
+    "GR_RHS_beta_sweep_b3",
+    "GR_RHS_beta_sweep_b5",
+    "GR_RHS_beta_sweep_b8",
+)
+
+DEFAULT_PRIOR_ALPHA_SWEEP_VARIANTS: Tuple[str, ...] = (
+    "GR_RHS_alpha_sweep_a0_25",
+    "GR_RHS_alpha_sweep_a0_5",
+    "GR_RHS_alpha_sweep_a1",
+    "GR_RHS_alpha_sweep_a2",
+)
+
 
 @dataclass(frozen=True)
 class ConvergenceGateSpec:

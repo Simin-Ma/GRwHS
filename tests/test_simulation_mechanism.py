@@ -22,8 +22,8 @@ from simulation_mechanism.src.cli import run_mechanism_cli
 
 def test_mechanism_suite_defaults_to_eleven_primary_settings() -> None:
     settings = build_mechanism_suite()
-    assert len(settings) == 11
-    assert {setting.experiment_id for setting in settings} == {"M1", "M2", "M3", "M4", "M5"}
+    assert len(settings) == 13
+    assert {setting.experiment_id for setting in settings} == {"M1", "M2", "M3", "M4", "M5", "M5A", "M5B"}
     assert "m4_ablation_p0_15" not in {setting.setting_id for setting in settings}
     prior = {setting.setting_id: setting for setting in settings}["m5_kappa_prior_sensitivity"]
     assert prior.experiment_kind == "prior_sensitivity"
@@ -34,11 +34,27 @@ def test_mechanism_suite_defaults_to_eleven_primary_settings() -> None:
         "GR_RHS_prior_moderate_null",
         "GR_RHS_prior_aggressive_null",
     )
+    beta_sweep = {setting.setting_id: setting for setting in settings}["m5a_kappa_beta_sweep_alpha_fixed"]
+    alpha_sweep = {setting.setting_id: setting for setting in settings}["m5b_kappa_alpha_sweep_beta_fixed"]
+    assert beta_sweep.methods == (
+        "GR_RHS_beta_sweep_b0_5",
+        "GR_RHS_beta_sweep_b1",
+        "GR_RHS_beta_sweep_b2",
+        "GR_RHS_beta_sweep_b3",
+        "GR_RHS_beta_sweep_b5",
+        "GR_RHS_beta_sweep_b8",
+    )
+    assert alpha_sweep.methods == (
+        "GR_RHS_alpha_sweep_a0_25",
+        "GR_RHS_alpha_sweep_a0_5",
+        "GR_RHS_alpha_sweep_a1",
+        "GR_RHS_alpha_sweep_a2",
+    )
     dense = build_dense_ablation_settings()
     assert len(dense) == 2
     assert {setting.setting_id for setting in dense} == {"m4_ablation_p0_15", "m4_ablation_p0_30"}
     assert all(setting.suite == "dense_ablation" for setting in dense)
-    assert len(build_mechanism_suite(include_dense_ablation=True)) == 13
+    assert len(build_mechanism_suite(include_dense_ablation=True)) == 15
 
 
 def test_mixed_decoy_dataset_marks_decoy_group() -> None:
@@ -68,12 +84,14 @@ def test_dense_ablation_settings_are_diagnostic_only() -> None:
 def test_default_mechanism_yaml_loads() -> None:
     config = load_mechanism_config()
     assert config.package == "simulation_mechanism"
-    assert len(config.settings) == 11
+    assert len(config.settings) == 13
     assert config.include_dense_ablation is False
     assert config.methods.standard_methods == ("GR_RHS", "RHS")
     assert config.methods.grrhs_kwargs["tau_target"] == "groups"
     assert config.methods.ablation_variant_specs["GR_RHS_prior_default"]["alpha_kappa"] == 0.5
     assert config.methods.ablation_variant_specs["GR_RHS_prior_aggressive_null"]["beta_kappa"] == 5.0
+    assert config.methods.ablation_variant_specs["GR_RHS_beta_sweep_b8"]["beta_kappa"] == 8.0
+    assert config.methods.ablation_variant_specs["GR_RHS_alpha_sweep_a0_25"]["alpha_kappa"] == 0.25
     assert config.convergence_gate.enforce_bayes_convergence is True
     assert config.convergence_gate.max_convergence_retries == -1
 
@@ -83,7 +101,7 @@ def test_config_can_include_dense_ablation_group() -> None:
     assert config.include_dense_ablation is True
     assert "m4_ablation_p0_15" in config.setting_map()
     assert "m4_ablation_p0_30" in config.setting_map()
-    assert len(config.settings) == 13
+    assert len(config.settings) == 15
 
 
 def test_mechanism_config_forces_until_convergence_even_if_payload_disables_it() -> None:
@@ -111,6 +129,8 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
             config.setting_map()["m4_ablation_p0_05"],
             config.setting_map()["m4_ablation_p0_15"],
             config.setting_map()["m5_kappa_prior_sensitivity"],
+            config.setting_map()["m5a_kappa_beta_sweep_alpha_fixed"],
+            config.setting_map()["m5b_kappa_alpha_sweep_beta_fixed"],
         ),
         runner=replace(
             config.runner,
@@ -136,6 +156,16 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
         "GR_RHS_prior_u_shape": 0.97,
         "GR_RHS_prior_moderate_null": 0.96,
         "GR_RHS_prior_aggressive_null": 0.95,
+        "GR_RHS_beta_sweep_b0_5": 0.97,
+        "GR_RHS_beta_sweep_b1": 0.98,
+        "GR_RHS_beta_sweep_b2": 0.97,
+        "GR_RHS_beta_sweep_b3": 0.96,
+        "GR_RHS_beta_sweep_b5": 0.95,
+        "GR_RHS_beta_sweep_b8": 0.94,
+        "GR_RHS_alpha_sweep_a0_25": 0.96,
+        "GR_RHS_alpha_sweep_a0_5": 0.98,
+        "GR_RHS_alpha_sweep_a1": 0.97,
+        "GR_RHS_alpha_sweep_a2": 0.95,
     }
     kappa_profiles = {
         "GR_RHS": (0.82, 0.18),
@@ -149,6 +179,16 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
         "GR_RHS_prior_u_shape": (0.84, 0.20),
         "GR_RHS_prior_moderate_null": (0.76, 0.14),
         "GR_RHS_prior_aggressive_null": (0.70, 0.10),
+        "GR_RHS_beta_sweep_b0_5": (0.84, 0.20),
+        "GR_RHS_beta_sweep_b1": (0.82, 0.18),
+        "GR_RHS_beta_sweep_b2": (0.78, 0.14),
+        "GR_RHS_beta_sweep_b3": (0.75, 0.12),
+        "GR_RHS_beta_sweep_b5": (0.70, 0.10),
+        "GR_RHS_beta_sweep_b8": (0.64, 0.08),
+        "GR_RHS_alpha_sweep_a0_25": (0.72, 0.08),
+        "GR_RHS_alpha_sweep_a0_5": (0.82, 0.18),
+        "GR_RHS_alpha_sweep_a1": (0.78, 0.24),
+        "GR_RHS_alpha_sweep_a2": (0.76, 0.32),
     }
 
     def fake_fit_setting_methods(
@@ -217,23 +257,33 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     mechanism_table = pd.read_csv(run_dir / "paper_tables" / "paper_table_mechanism.csv")
     mechanism_md = (run_dir / "paper_tables" / "paper_table_mechanism.md").read_text(encoding="utf-8")
 
-    assert set(raw["experiment_id"]) == {"M2", "M3", "M4", "M5"}
+    assert set(raw["experiment_id"]) == {"M2", "M3", "M4", "M5", "M5A", "M5B"}
     assert {"alpha_kappa", "beta_kappa", "kappa_prior_label"}.issubset(set(raw.columns))
     assert "paired_common_converged" in per_group.columns
     assert not fig4.empty
     fig5 = pd.read_csv(run_dir / "paper_tables" / "figure_data" / "figure5_complexity_unit.csv")
     m4_deltas = paired_deltas.loc[paired_deltas["experiment_id"] == "M4"]
-    m5_deltas = paired_deltas.loc[paired_deltas["experiment_id"] == "M5"]
+    m5_deltas = paired_deltas.loc[paired_deltas["experiment_id"].isin(["M5", "M5A", "M5B"])]
     assert not m4_deltas.empty
     assert not m5_deltas.empty
     assert set(m4_deltas["baseline_method"]) == {"GR_RHS"}
-    assert set(m5_deltas["baseline_method"]) == {"GR_RHS_prior_default"}
+    assert set(m5_deltas["baseline_method"]) == {
+        "GR_RHS_prior_default",
+        "GR_RHS_beta_sweep_b1",
+        "GR_RHS_alpha_sweep_a0_5",
+    }
     assert "group_auroc" in mechanism_table.columns
     assert "m4_ablation_p0_15" not in set(mechanism_table["setting_id"].astype(str))
     assert "m3_few_groups_concentrated" in set(fig5["setting_id"].astype(str))
     assert "m4_ablation_p0_15" in set(fig6["setting_id"].astype(str))
     fig7 = pd.read_csv(run_dir / "paper_tables" / "figure_data" / "figure7_prior_sensitivity.csv")
-    assert set(fig7["method"].astype(str)) >= {"GR_RHS_prior_default", "GR_RHS_prior_aggressive_null"}
+    assert set(fig7["experiment_id"].astype(str)) >= {"M5", "M5A", "M5B"}
+    assert set(fig7["method"].astype(str)) >= {
+        "GR_RHS_prior_default",
+        "GR_RHS_prior_aggressive_null",
+        "GR_RHS_beta_sweep_b8",
+        "GR_RHS_alpha_sweep_a0_25",
+    }
     assert "delta_vs_default_kappa_gap" in fig7.columns
     assert "**" in mechanism_md
 
