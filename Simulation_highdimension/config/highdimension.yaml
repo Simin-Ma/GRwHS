@@ -73,25 +73,34 @@ signal_families:
     log_uniform_concentration: false
     acceptance_alpha_ratio_min:
     acceptance_support_gap_min:
-    description: Shared mild within-group blueprint used as a neutral high-dimensional anchor.
+    description: Classical high-dimensional grouped-signal anchor with shared mild support and concentration.
   single_mode_heterogeneous:
     name: single_mode_heterogeneous
-    support_fraction_range: [0.4, 0.8]
-    concentration_range: [0.8, 2.0]
+    support_fraction_range: [0.85, 1.0]
+    concentration_range: [4.0, 8.0]
     share_hyperparameters: true
     log_uniform_concentration: false
     acceptance_alpha_ratio_min:
     acceptance_support_gap_min:
-    description: Shared heterogeneous active-group blueprint for the high-dimensional transition setting.
+    description: Shared dense active-group blueprint for high-dimensional single-mode group-signal settings.
   multimode_heterogeneous:
     name: multimode_heterogeneous
-    support_fraction_range: [0.2, 0.8]
-    concentration_range: [0.2, 6.0]
+    support_fraction_range: [0.75, 1.0]
+    concentration_range: [1.0, 10.0]
     share_hyperparameters: false
     log_uniform_concentration: true
-    acceptance_alpha_ratio_min: 3.0
-    acceptance_support_gap_min: 0.25
-    description: Active groups draw distinct within-group blueprint parameters for the high-dimensional showcase.
+    acceptance_alpha_ratio_min: 1.5
+    acceptance_support_gap_min: 0.05
+    description: Active groups draw distinct within-group density and concentration parameters for the heterogeneous grouped-signal showcase.
+  sparse_boundary:
+    name: sparse_boundary
+    support_fraction_range: [0.45, 0.75]
+    concentration_range: [0.8, 4.0]
+    share_hyperparameters: false
+    log_uniform_concentration: true
+    acceptance_alpha_ratio_min: 1.5
+    acceptance_support_gap_min: 0.1
+    description: Boundary high-dimensional setting with fewer active groups and less dense within-group support.
 
 tables:
   highdim_leaderboard:
@@ -117,56 +126,111 @@ optional_stress_lines: []
 
 settings:
   - setting_id: hd_setting_1_classical_anchor
-    label: "HD Setting 1: Classical High-Dimensional Anchor"
+    label: "HD Setting 1: Classical Reference, Medium Correlation"
     family: classical_reference
     group_sizes: [10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
-    active_groups: [0, 1, 2, 3, 4]
+    active_groups: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     n_train: 200
     n_test: 200
     rho_within: 0.6
     rho_between: 0.2
     target_r2: 0.7
-    role: neutral high-dimensional anchor
-    notes: High-dimensional analogue of the classical low-dimensional reference family.
+    role: credibility anchor
+    notes: "Original-scale p=500 analogue of the classical reference: moderate within-group correlation and moderate within-active-group support."
     suite: highdim
     methods: [GR_RHS, RHS, GIGG_MMLE, LASSO_CV]
-  - setting_id: hd_setting_2_single_mode
-    label: "HD Setting 2: Single-Mode Heterogeneous High-Dimensional"
+  - setting_id: hd_setting_2_classical_high
+    label: "HD Setting 2: Classical Reference, High Correlation"
+    family: classical_reference
+    group_sizes: [10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    n_train: 200
+    n_test: 200
+    rho_within: 0.8
+    rho_between: 0.2
+    target_r2: 0.7
+    role: classical paper-style correlation stress point
+    notes: Same classical grouped-signal blueprint as HD1, but under higher within-group correlation.
+    suite: highdim
+    methods: [GR_RHS, RHS, GIGG_MMLE, LASSO_CV]
+  - setting_id: hd_setting_3_dense_single_mode
+    label: "HD Setting 3: Dense Single-Mode Group Signal"
     family: single_mode_heterogeneous
     group_sizes: [10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
-    active_groups: [0, 1, 2, 3, 4]
+    active_groups: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+                    10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     n_train: 200
     n_test: 200
     rho_within: 0.8
     rho_between: 0.2
     target_r2: 0.7
-    role: high-dimensional transition setting
-    notes: Tests whether shared heterogeneous active-group structure remains useful when p exceeds n.
+    role: transition from neutral to mechanism-sensitive benchmark
+    notes: Dense active-group support with a shared single-mode blueprint; this is the main p=500 regime expected to favor group-aware recovery.
     suite: highdim
     methods: [GR_RHS, RHS, GIGG_MMLE, LASSO_CV]
-  - setting_id: hd_setting_3_multimode_showcase
-    label: "HD Setting 3: Multimode Heterogeneous High-Dimensional Showcase"
+  - setting_id: hd_setting_4_single_mode_unequal
+    label: "HD Setting 4: Dense Single-Mode, Unequal Group Sizes"
+    family: single_mode_heterogeneous
+    group_sizes: [30, 30, 30, 30, 30,
+                  20, 20, 20, 20, 20, 20, 20, 20, 20, 20,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2, 5, 6, 7, 10, 11, 15, 16, 20, 21]
+    n_train: 200
+    n_test: 200
+    rho_within: 0.8
+    rho_between: 0.2
+    target_r2: 0.7
+    role: group-size heterogeneity benchmark
+    notes: Original-scale p=500 setting with unequal group sizes and dense single-mode signal spread across large, medium, and small active groups.
+    suite: highdim
+    methods: [GR_RHS, RHS, GIGG_MMLE, LASSO_CV]
+  - setting_id: hd_setting_5_multimode_showcase
+    label: "HD Setting 5: Multimode Heterogeneous Group Signal"
     family: multimode_heterogeneous
     group_sizes: [10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
                   10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
-    active_groups: [0, 1, 2, 3, 4]
+    active_groups: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+                    10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     n_train: 200
     n_test: 200
     rho_within: 0.8
     rho_between: 0.2
     target_r2: 0.7
-    role: main high-dimensional showcase
-    notes: High-dimensional analogue of the multimode heterogeneous GR-RHS showcase family.
+    role: main showcase setting
+    notes: Same original-scale p=500 and high within-group correlation, but active groups have distinct support and concentration profiles.
+    suite: highdim
+    methods: [GR_RHS, RHS, GIGG_MMLE, LASSO_CV]
+  - setting_id: hd_setting_6_sparse_boundary
+    label: "HD Setting 6: Sparse Group-Signal Boundary"
+    family: sparse_boundary
+    group_sizes: [10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                  10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+    active_groups: [0, 1, 2, 3, 4, 5, 6, 7]
+    n_train: 200
+    n_test: 200
+    rho_within: 0.8
+    rho_between: 0.2
+    target_r2: 0.7
+    role: boundary and robustness benchmark
+    notes: Less dense and more null-heavy p=500 setting included to show the boundary of the GR-RHS grouped-signal advantage.
     suite: highdim
     methods: [GR_RHS, RHS, GIGG_MMLE, LASSO_CV]
