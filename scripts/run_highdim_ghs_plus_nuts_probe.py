@@ -59,6 +59,7 @@ def run_case(
     max_tree_depth: int,
     target_accept: float,
     dense_mass: bool,
+    seed_offset: int = 0,
     save_artifacts: bool = False,
 ) -> dict[str, object]:
     import jax
@@ -121,7 +122,8 @@ def run_case(
         progress_bar=False,
     )
     fit_t0 = time.perf_counter()
-    mcmc.run(jax.random.PRNGKey(int(cfg.runner.seed) + int(replicate)), X_j, y_j, gid_j)
+    run_seed = int(cfg.runner.seed) + int(replicate) + 10000 * int(seed_offset)
+    mcmc.run(jax.random.PRNGKey(run_seed), X_j, y_j, gid_j)
     runtime_seconds = time.perf_counter() - fit_t0
     samples = mcmc.get_samples(group_by_chain=True)
     diag = numpyro_summary(samples, prob=0.9, group_by_chain=True)
@@ -198,10 +200,20 @@ def run_case(
         "coverage_95": _json_scalar(metrics.get("coverage_95")),
         "lpd_test": _json_scalar(metrics.get("lpd_test")),
         "diagnostics": result.diagnostics,
+        "probe_budget": {
+            "warmup": int(warmup),
+            "draws": int(draws),
+            "chains": int(chains),
+            "max_tree_depth": int(max_tree_depth),
+            "target_accept": float(target_accept),
+            "dense_mass": bool(dense_mass),
+            "seed_offset": int(seed_offset),
+        },
     }
     outdir_path = ROOT / str(outdir)
     outdir_path.mkdir(parents=True, exist_ok=True)
-    stem = f"{setting_id}__GHS_plus_NUTS__r{int(replicate)}_w{int(warmup)}_d{int(draws)}"
+    seed_part = "" if int(seed_offset) == 0 else f"_s{int(seed_offset)}"
+    stem = f"{setting_id}__GHS_plus_NUTS__r{int(replicate)}_w{int(warmup)}_d{int(draws)}{seed_part}"
     out_path = outdir_path / f"{stem}.json"
     if bool(save_artifacts):
         artifacts = save_fit_result_artifacts(
@@ -241,6 +253,7 @@ def main() -> int:
     parser.add_argument("--max-tree-depth", type=int, default=10)
     parser.add_argument("--target-accept", type=float, default=0.9)
     parser.add_argument("--dense-mass", action="store_true")
+    parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--save-artifacts", action="store_true")
     args = parser.parse_args()
     payload = run_case(
@@ -254,6 +267,7 @@ def main() -> int:
         max_tree_depth=int(args.max_tree_depth),
         target_accept=float(args.target_accept),
         dense_mass=bool(args.dense_mass),
+        seed_offset=int(args.seed_offset),
         save_artifacts=bool(args.save_artifacts),
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))

@@ -212,7 +212,7 @@ def _row(path: Path, *, method_override: str | None = None) -> dict[str, object]
 
 def _collect(outroot: Path, settings: list[str], rep: int) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
-    for sub in ["standard", "gigg", "ghs_plus_nuts"]:
+    for sub in ["standard", "grrhs_retries", "rhs_retries", "gigg", "ghs_plus_nuts"]:
         folder = outroot / sub
         if not folder.exists():
             continue
@@ -292,7 +292,8 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg = load_benchmark_config(args.config)
-    settings = [s.setting_id for s in cfg.settings]
+    all_settings = [s.setting_id for s in cfg.settings]
+    settings = list(all_settings)
     if args.settings:
         wanted = set(str(x) for x in args.settings)
         settings = [s for s in settings if s in wanted]
@@ -340,12 +341,12 @@ def main() -> int:
             log.append(rec)
             (outroot / "run_log.json").parent.mkdir(parents=True, exist_ok=True)
             (outroot / "run_log.json").write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding="utf-8")
-            df = _collect(outroot, settings, int(args.replicate))
-            _write_report(df, outroot, settings)
+            df = _collect(outroot, all_settings, int(args.replicate))
+            _write_report(df, outroot, all_settings)
             print(f"[done] converged={rec.get('converged')} path={rec.get('path', '')}", flush=True)
 
-    df = _collect(outroot, settings, int(args.replicate))
-    _write_report(df, outroot, settings)
+    df = _collect(outroot, all_settings, int(args.replicate))
+    _write_report(df, outroot, all_settings)
     print(f"Artifacts saved in: {outroot}")
     return 0
 
