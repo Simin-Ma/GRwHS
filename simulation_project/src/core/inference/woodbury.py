@@ -22,6 +22,7 @@ def beta_sample_woodbury(
     rng: Generator,
     *,
     jitter: float = 1e-10,
+    X_t: np.ndarray | None = None,
 ) -> np.ndarray:
     """Sample beta from its Gaussian posterior using the Woodbury sampler.
 
@@ -44,15 +45,17 @@ def beta_sample_woodbury(
     n, p = X.shape
     D = np.maximum(prior_var, jitter)
 
-    XD = X * D                                          # n x p (broadcast D by row)
-    M = XD @ X.T                                        # n x n
+    Xt = np.ascontiguousarray(X.T) if X_t is None else X_t
+    # Scaling X.T avoids materializing an n-by-p temporary that is slow for
+    # row-major high-dimensional designs on common BLAS builds.
+    M = X @ (Xt * D[:, None])                           # n x n
     np.fill_diagonal(M, M.diagonal() + sigma2)          # M += sigma2 * I
     chol, lower = cho_factor(M, lower=True, check_finite=False)
 
     u = rng.standard_normal(p) * np.sqrt(D)             # u ~ N(0, D)
     delta = rng.standard_normal(n) * math.sqrt(max(sigma2, jitter))  # delta ~ N(0, sigma2 * I)
     w = cho_solve((chol, lower), y - X @ u - delta, check_finite=False)  # n
-    return u + D * (X.T @ w)                            # p
+    return u + D * (Xt @ w)                             # p
 
 
 def beta_sample_cholesky(

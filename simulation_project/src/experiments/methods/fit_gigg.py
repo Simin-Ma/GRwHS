@@ -11,14 +11,13 @@ from .helpers import as_int_groups, fit_error_result, scaled_iteration_budget
 from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, timed_call
 
 # Iteration counts
-# Boss et al. (2024) use 10 000 burn-in + 10 000 draws in all simulations
-# (Section 5.2). Defaults here match that budget exactly so direct calls to
-# fit_gigg_mmle / fit_gigg_fixed reproduce the paper's computational setting.
-# floor=cap=10000 means the sampler always runs exactly 10k+10k regardless
-# of the HMC warmup/draw budget passed via SamplerConfig.
+# Default now follows the unified SamplerConfig budget rather than pinning
+# GIGG to a separate 10k+10k protocol. This keeps the formal experimental
+# budget aligned across Bayesian methods while still allowing explicit
+# paper-reproduction overrides via iter_floor / iter_cap when needed.
 _DEFAULT_GIGG_ITER_MULT = 4
-_DEFAULT_GIGG_ITER_FLOOR = 10000
-_DEFAULT_GIGG_ITER_CAP = 10000
+_DEFAULT_GIGG_ITER_FLOOR = 10
+_DEFAULT_GIGG_ITER_CAP = 10**9
 
 
 def _validate_gigg_master_alignment(

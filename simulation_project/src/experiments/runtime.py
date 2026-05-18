@@ -157,11 +157,12 @@ def _sampler_for_exp4(base: SamplerConfig) -> SamplerConfig:
 
 
 def _gigg_config_default() -> dict[str, Any]:
-    # Single default follows the published GIGG budget.
+    # Single default follows the unified sampler budget; exact paper-scale
+    # 10k+10k runs should be requested explicitly via iter overrides.
     return {
         "iter_mult": 4,
-        "iter_floor": 10000,
-        "iter_cap": 10000,
+        "iter_floor": 10,
+        "iter_cap": 10**9,
         "btrick": False,
         "mmle_burnin_only": False,
         "mmle_step_size": 1.0,

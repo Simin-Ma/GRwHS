@@ -4,6 +4,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 import math
 from pathlib import Path
 import tempfile
+import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
 
@@ -641,6 +642,7 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         lambda_cap=float(payload.get("lambda_cap", _POS_CAP)),
         lambda_soft_cap=float(payload.get("lambda_soft_cap", payload.get("lambda_cap", _POS_CAP))),
         progress_bar=bool(payload.get("progress_bar", False)),
+        enable_profiling=bool(payload.get("enable_profiling", False)),
     )
     fitted = model.fit(
         X_arr,
@@ -670,6 +672,7 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         "alpha_mean": None if fitted.alpha_mean_ is None else np.asarray(fitted.alpha_mean_),
         "b_mean": None if fitted.b_mean_ is None else np.asarray(fitted.b_mean_),
         "intercept": float(fitted.intercept_),
+        "runtime_profile": None if fitted.runtime_profile_ is None else dict(fitted.runtime_profile_),
     }
 
 
@@ -722,6 +725,7 @@ class GIGGRegression:
     lambda_cap: float = _POS_CAP
     lambda_soft_cap: float = _POS_CAP
     progress_bar: bool = True
+    enable_profiling: bool = False
 
     rng_: Generator = field(init=False, repr=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -739,6 +743,7 @@ class GIGGRegression:
     b_mean_: Optional[np.ndarray] = field(default=None, init=False)
     intercept_: float = field(default=0.0, init=False)
     auto_intercept_: bool = field(default=False, init=False)
+    runtime_profile_: Optional[dict] = field(default=None, init=False)
 
     # Backward-compatible aliases used elsewhere in the project.
     iters: Optional[int] = None
@@ -985,6 +990,7 @@ class GIGGRegression:
                         "lambda_cap": self.lambda_cap,
                         "lambda_soft_cap": self.lambda_soft_cap,
                         "progress_bar": bool(self.progress_bar),
+                        "enable_profiling": bool(self.enable_profiling),
                         "X": None if data_paths else np.asarray(X, dtype=float),
                         "y": None if data_paths else np.asarray(y, dtype=float),
                         "C": None if data_paths else (None if C is None else np.asarray(C, dtype=float)),
@@ -1075,6 +1081,8 @@ class GIGGRegression:
             self.alpha_mean_ = None if alpha_draws is None else alpha_draws.mean(axis=0)
             self.b_mean_ = None if b_draws is None else b_draws.mean(axis=0)
             self.intercept_ = float(lead["intercept"])
+            lead_profile = lead.get("runtime_profile")
+            self.runtime_profile_ = None if lead_profile is None else dict(lead_profile)
             return self
         finally:
             if tmpdir_obj is not None:
@@ -1084,6 +1092,7 @@ class GIGGRegression:
         self,
         *,
         X: np.ndarray,
+        X_t: Optional[np.ndarray],
         y_tilde: np.ndarray,
         sigma_sq: float,
         local_scale: np.ndarray,
@@ -1103,6 +1112,7 @@ class GIGGRegression:
         self,
         *,
         X: np.ndarray,
+        X_t: Optional[np.ndarray] = None,
         y_tilde: np.ndarray,
         sigma_sq: float,
         local_scale: np.ndarray,
@@ -1125,6 +1135,7 @@ class GIGGRegression:
             prior_var=d,
             rng=rng,
             jitter=self.jitter,
+            X_t=X_t,
         )
         beta = sigma * theta
         return np.clip(np.nan_to_num(beta, nan=0.0, posinf=_BETA_CAP, neginf=-_BETA_CAP), -_BETA_CAP, _BETA_CAP)
@@ -1268,6 +1279,7 @@ class GIGGRegression:
         self.rng_ = default_rng(self.seed)
         rng = self.rng_
         group_arrays = [np.asarray(idxs, dtype=int) for idxs in normalised_groups]
+        X_t = np.ascontiguousarray(X.T) if self.btrick else None
         group_order = np.arange(G, dtype=int)
         lambda_sq = np.maximum(np.asarray(lambda_sq_seed, dtype=float).reshape(-1), self.jitter)
         gamma_sq = np.maximum(np.asarray(gamma_sq_seed, dtype=float).reshape(-1), self.jitter)
@@ -1294,6 +1306,16 @@ class GIGGRegression:
         keep_idx = 0
         xb = X @ beta
         ca = C_arr @ alpha if k > 0 else None
+        runtime_profile = {
+            "alpha_seconds": 0.0,
+            "beta_seconds": 0.0,
+            "scale_seconds": 0.0,
+            "sigma_tau_seconds": 0.0,
+            "mmle_seconds": 0.0,
+            "burnin_seconds": 0.0,
+            "sample_seconds": 0.0,
+            "gibbs_steps": 0,
+        }
 
         def _gibbs_step() -> None:
             nonlocal alpha, beta, lambda_sq, gamma_sq, tau_sq, sigma_sq, nu, xb, ca
@@ -1346,6 +1368,7 @@ class GIGGRegression:
                                 draw = lambda_sq[j]
                             lambda_sq[j] = max(float(draw), self.jitter)
 
+            t_alpha = time.perf_counter() if self.enable_profiling else 0.0
             if k > 0:
                 resid_alpha = y_arr - xb
                 if self.stable_solve:
@@ -1357,14 +1380,21 @@ class GIGGRegression:
                     mean_alpha = cov_alpha @ (C_arr.T @ resid_alpha)
                     alpha = mean_alpha + math.sqrt(sigma_sq) * (np.linalg.cholesky(cov_alpha) @ rng.normal(size=k))
                 ca = C_arr @ alpha
+            if self.enable_profiling:
+                runtime_profile["alpha_seconds"] += time.perf_counter() - t_alpha
 
             y_tilde = y_arr - ca if k > 0 else y_arr
+            t_scale = time.perf_counter() if self.enable_profiling else 0.0
             if self.locals_first_beta_update:
                 _update_group_scales()
+            if self.enable_profiling and self.locals_first_beta_update:
+                runtime_profile["scale_seconds"] += time.perf_counter() - t_scale
             local_scale = np.maximum(tau_sq * gamma_sq[group_id] * lambda_sq, self.jitter)
+            t_beta = time.perf_counter() if self.enable_profiling else 0.0
             if self.btrick:
                 beta = self._draw_beta_btrick(
                     X=X,
+                    X_t=X_t,
                     y_tilde=y_tilde,
                     sigma_sq=sigma_sq,
                     local_scale=local_scale,
@@ -1380,6 +1410,9 @@ class GIGGRegression:
                 )
 
             xb = X @ beta
+            if self.enable_profiling:
+                runtime_profile["beta_seconds"] += time.perf_counter() - t_beta
+            t_sigma_tau = time.perf_counter() if self.enable_profiling else 0.0
             gl_param_expand_diag_inv = np.maximum(1.0 / np.maximum(local_scale, self.jitter), self.jitter)
             tau_rate = _clip_positive_scalar(
                 0.5 * tau_sq * float(np.sum((beta**2) * gl_param_expand_diag_inv))
@@ -1392,7 +1425,7 @@ class GIGGRegression:
                 tau_sq = tau_rate / max(tau_shape + 1.0, 1.0)
             tau_sq = _clip_positive_scalar(tau_sq, floor=self.jitter)
 
-            resid = y_arr - X @ beta - (C_arr @ alpha if k > 0 else 0.0)
+            resid = y_arr - xb - ca if k > 0 else y_arr - xb
             rss = float(resid @ resid)
             scale_sigma = _clip_positive_scalar(0.5 * rss + 1.0 / _clip_positive_scalar(nu, floor=self.jitter))
             try:
@@ -1400,11 +1433,16 @@ class GIGGRegression:
             except Exception:
                 sigma_sq = scale_sigma / max(sigma_shape + 1.0, 1.0)
             sigma_sq = _clip_positive_scalar(sigma_sq, floor=self.jitter)
+            if self.enable_profiling:
+                runtime_profile["sigma_tau_seconds"] += time.perf_counter() - t_sigma_tau
 
+            t_scale = time.perf_counter() if self.enable_profiling else 0.0
             if not self.locals_first_beta_update:
                 _update_group_scales()
             for _ in range(int(self.extra_local_scale_sweeps)):
                 _update_group_scales()
+            if self.enable_profiling:
+                runtime_profile["scale_seconds"] += time.perf_counter() - t_scale
             eta.fill(1.0)
             nu_scale = _clip_positive_scalar(1.0 / _clip_positive_scalar(tau_sq, floor=self.jitter) + 1.0 / _clip_positive_scalar(sigma_sq, floor=self.jitter), floor=self.jitter)
             try:
@@ -1418,6 +1456,7 @@ class GIGGRegression:
                 if self.btrick:
                     beta = self._draw_beta_btrick(
                         X=X,
+                        X_t=X_t,
                         y_tilde=y_tilde,
                         sigma_sq=sigma_sq,
                         local_scale=refresh_local_scale,
@@ -1437,12 +1476,17 @@ class GIGGRegression:
             gamma_sq = np.maximum(gamma_sq, self.jitter)
             p_vec[:] = _clip_positive_array(p_vec, floor=self.jitter, cap=_POS_CAP)
             q_vec[:] = self._stabilize_q_array(q_vec)
+            if self.enable_profiling:
+                runtime_profile["gibbs_steps"] += 1
 
         burnin_iter = range(self.n_burn_in)
         if _progress is not None:
             burnin_iter = _progress(burnin_iter, total=int(self.n_burn_in), desc="GIGG burn-in")
+        burnin_wall_start = time.perf_counter() if self.enable_profiling else 0.0
         for burnin_idx in burnin_iter:
             _gibbs_step()
+        if self.enable_profiling:
+            runtime_profile["burnin_seconds"] = time.perf_counter() - burnin_wall_start
 
         if method_eff == "mmle":
             highdim_fast = bool(self.mmle_highdim_fastpath and p > n and p >= 150)
@@ -1456,6 +1500,7 @@ class GIGGRegression:
             mmle_iter = range(max_mmle_iters)
             if _progress is not None:
                 mmle_iter = _progress(mmle_iter, total=int(max_mmle_iters), desc="GIGG MMLE")
+            mmle_wall_start = time.perf_counter() if self.enable_profiling else 0.0
             for _ in mmle_iter:
                 _gibbs_step()
                 eta_log_sum += np.log(np.maximum(eta, self.jitter))
@@ -1486,11 +1531,14 @@ class GIGGRegression:
                         break
                     if highdim_fast and mmle_cnt >= 2 * mmle_samp_size:
                         break
+            if self.enable_profiling:
+                runtime_profile["mmle_seconds"] = time.perf_counter() - mmle_wall_start
 
         sample_iters = kept * self.n_thin
         sample_iter = range(sample_iters)
         if _progress is not None:
             sample_iter = _progress(sample_iter, total=int(sample_iters), desc="GIGG sample")
+        sample_wall_start = time.perf_counter() if self.enable_profiling else 0.0
         for it in sample_iter:
             _gibbs_step()
             if it % self.n_thin == 0:
@@ -1504,6 +1552,8 @@ class GIGGRegression:
                     lambda_draws[keep_idx] = lambda_sq
                 b_draws[keep_idx] = q_vec
                 keep_idx += 1
+        if self.enable_profiling:
+            runtime_profile["sample_seconds"] = time.perf_counter() - sample_wall_start
 
         self.coef_samples_ = coef_draws if kept else None
         self.alpha_samples_ = alpha_draws
@@ -1522,6 +1572,7 @@ class GIGGRegression:
             self.intercept_ = float(self.alpha_mean_[0])
         else:
             self.intercept_ = 0.0
+        self.runtime_profile_ = runtime_profile if self.enable_profiling else None
         return self
 
     def predict(self, X: np.ndarray, C: Optional[np.ndarray] = None) -> np.ndarray:
