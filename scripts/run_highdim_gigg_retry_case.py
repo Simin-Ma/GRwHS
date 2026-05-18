@@ -59,6 +59,7 @@ def run_case(
     outdir: str,
     rounds: int,
     draws_per_round: int,
+    chain_workers: int,
     seed_offset: int,
     save_artifacts: bool = False,
 ) -> dict[str, object]:
@@ -102,6 +103,7 @@ def run_case(
             "highdim_early_stop_min_rounds": 120,
             "highdim_early_stop_patience": 2,
             "highdim_store_history": False,
+            "highdim_chain_workers": int(max(1, chain_workers)),
             "progress_bar": False,
         }
     )
@@ -148,6 +150,7 @@ def run_case(
         "retry_budget": {
             "rounds": int(rounds),
             "draws_per_round": int(draws_per_round),
+            "chain_workers": int(max(1, chain_workers)),
             "seed_offset": int(seed_offset),
         },
         "timing_breakdown": {
@@ -194,6 +197,7 @@ def main() -> int:
     parser.add_argument("--outdir", default="tmp/highdim_bayes_rerun_20260512_full/gigg_retries")
     parser.add_argument("--rounds", type=int, default=420)
     parser.add_argument("--draws-per-round", type=int, default=5)
+    parser.add_argument("--chain-workers", type=int, default=1)
     parser.add_argument("--seed-offset", type=int, default=21)
     parser.add_argument("--save-artifacts", action="store_true")
     args = parser.parse_args()
@@ -204,6 +208,7 @@ def main() -> int:
         outdir=str(args.outdir),
         rounds=int(args.rounds),
         draws_per_round=int(args.draws_per_round),
+        chain_workers=int(args.chain_workers),
         seed_offset=int(args.seed_offset),
         save_artifacts=bool(args.save_artifacts),
     )

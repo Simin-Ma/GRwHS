@@ -1,6 +1,6 @@
 ﻿GR_RHS:
   alpha_kappa: 0.5
-  beta_kappa: 1.0
+  beta_kappa: 4.0
   s_a: 1.0
   tau_calibration: rhs_style
 RHS:

@@ -235,6 +235,24 @@ def build_default_method_registry() -> MethodRegistry:
             **_grrhs_kwargs_for_strategy(c, high_dim=False),
         )
 
+    def _fit_grrhs_lowdim_with_beta(c: MethodContext, *, method_name: str, beta_kappa: float) -> FitResult:
+        from .methods.fit_gr_rhs import fit_gr_rhs
+
+        kwargs = _grrhs_kwargs_for_strategy(c, high_dim=False)
+        kwargs["alpha_kappa"] = 0.5
+        kwargs["beta_kappa"] = float(beta_kappa)
+        return fit_gr_rhs(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.grrhs_p0,
+            sampler=c.sampler,
+            method_name=str(method_name),
+            **kwargs,
+        )
+
     def _fit_grrhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_gr_rhs import fit_gr_rhs
 
@@ -250,6 +268,24 @@ def build_default_method_registry() -> MethodRegistry:
             **_grrhs_kwargs_for_strategy(c, high_dim=True),
         )
 
+    def _fit_grrhs_highdim_with_beta(c: MethodContext, *, method_name: str, beta_kappa: float) -> FitResult:
+        from .methods.fit_gr_rhs import fit_gr_rhs
+
+        kwargs = _grrhs_kwargs_for_strategy(c, high_dim=True)
+        kwargs["alpha_kappa"] = 0.5
+        kwargs["beta_kappa"] = float(beta_kappa)
+        return fit_gr_rhs(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.grrhs_p0,
+            sampler=c.sampler,
+            method_name=str(method_name),
+            **kwargs,
+        )
+
     def _fit_grrhs_eb_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_gr_rhs_adaptive import fit_gr_rhs_adaptive_beta
 
@@ -263,6 +299,30 @@ def build_default_method_registry() -> MethodRegistry:
             sampler=c.sampler,
             method_name=str(method_name),
             **_grrhs_kwargs_for_strategy(c, high_dim=True),
+        )
+
+    def _fit_grrhs_adaptive(c: MethodContext, *, method_name: str) -> FitResult:
+        from .methods.fit_gr_rhs_adaptive import fit_gr_rhs_adaptive_beta
+
+        kwargs = _grrhs_kwargs_for_strategy(
+            c,
+            high_dim=(str(c.rhs_sampler_strategy).strip().lower() == "high_dim"),
+        )
+        kwargs["alpha_kappa"] = 0.5
+        kwargs["adaptive_strategy"] = "group_specific_multiplicity"
+        kwargs["multiplicity_correction"] = "fwer"
+        kwargs["multiplicity_level"] = 0.05
+        kwargs["screening_permutations"] = 120 if str(c.rhs_sampler_strategy).strip().lower() == "high_dim" else 200
+        return fit_gr_rhs_adaptive_beta(
+            c.X,
+            c.y,
+            c.groups,
+            task=c.task,
+            seed=c.seed,
+            p0=c.grrhs_p0,
+            sampler=c.sampler,
+            method_name=str(method_name),
+            **kwargs,
         )
 
     def _fit_gigg_mmle_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
@@ -371,6 +431,34 @@ def build_default_method_registry() -> MethodRegistry:
     reg.register(
         "GR_RHS_EB",
         lambda c: _fit_grrhs_eb_highdim(c, method_name="GR_RHS_EB"),
+    )
+    reg.register(
+        "GR_RHS_B01",
+        lambda c: (
+            _fit_grrhs_highdim_with_beta(c, method_name="GR_RHS_B01", beta_kappa=1.0)
+            if str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
+            else _fit_grrhs_lowdim_with_beta(c, method_name="GR_RHS_B01", beta_kappa=1.0)
+        ),
+    )
+    reg.register(
+        "GR_RHS_B04",
+        lambda c: (
+            _fit_grrhs_highdim_with_beta(c, method_name="GR_RHS_B04", beta_kappa=4.0)
+            if str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
+            else _fit_grrhs_lowdim_with_beta(c, method_name="GR_RHS_B04", beta_kappa=4.0)
+        ),
+    )
+    reg.register(
+        "GR_RHS_B08",
+        lambda c: (
+            _fit_grrhs_highdim_with_beta(c, method_name="GR_RHS_B08", beta_kappa=8.0)
+            if str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
+            else _fit_grrhs_lowdim_with_beta(c, method_name="GR_RHS_B08", beta_kappa=8.0)
+        ),
+    )
+    reg.register(
+        "GR_RHS_Adaptive",
+        lambda c: _fit_grrhs_adaptive(c, method_name="GR_RHS_Adaptive"),
     )
     reg.register(
         "RHS",
