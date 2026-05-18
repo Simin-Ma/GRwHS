@@ -221,6 +221,112 @@ def calibrate_grrhs_beta_ridge_screening_moment(
     )
 
 
+def _bh_fdr_mask(p_values: np.ndarray, *, alpha: float) -> np.ndarray:
+    p = np.asarray(p_values, dtype=float).reshape(-1)
+    m = int(p.size)
+    if m == 0:
+        return np.asarray([], dtype=bool)
+    order = np.argsort(p)
+    ranked = p[order]
+    cut = float("nan")
+    for rank, val in enumerate(ranked, start=1):
+        if float(val) <= float(alpha) * float(rank) / float(m):
+            cut = float(val)
+    if not np.isfinite(cut):
+        return np.zeros(m, dtype=bool)
+    return np.asarray(p <= cut, dtype=bool)
+
+
+def calibrate_grrhs_beta_ridge_screening_multiplicity(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    *,
+    alpha_kappa: float = 0.5,
+    null_level: float = 0.10,
+    n_permutations: int = 500,
+    ridge_scale: str = "sqrt_np",
+    correction: str = "fwer",
+    min_active_groups: float = 1.0,
+    min_beta_kappa: float | None = 1.0,
+    max_beta_kappa: float | None = 16.0,
+    seed: int = 1,
+) -> AdaptiveBetaCalibration:
+    group_list = [list(map(int, g)) for g in groups]
+    X_arr = np.asarray(X, dtype=float)
+    y_arr = np.asarray(y, dtype=float).reshape(-1)
+    n, p = int(X_arr.shape[0]), int(X_arr.shape[1])
+    mode = str(ridge_scale).strip().lower()
+    if mode == "sqrt_np":
+        ridge = float(math.sqrt(max(n * p, 1)))
+    elif mode == "n":
+        ridge = float(max(n, 1))
+    elif mode == "p":
+        ridge = float(max(p, 1))
+    else:
+        ridge = float(max(float(ridge_scale), 1e-8))
+    G = max(len(group_list), 1)
+    observed = _ridge_group_scores(X_arr, y_arr, group_list, ridge=ridge)
+    perms = int(max(1, n_permutations))
+    perm_scores = np.zeros((perms, G), dtype=float)
+    rng = np.random.default_rng(int(seed))
+    for b in range(perms):
+        perm_scores[b, :] = _ridge_group_scores(X_arr, rng.permutation(y_arr), group_list, ridge=ridge)
+
+    corr = str(correction).strip().lower()
+    level = float(min(max(null_level, 1e-6), 0.5))
+    if corr in {"fwer", "max", "maxT".lower()}:
+        max_null = np.nanmax(perm_scores, axis=1)
+        threshold = float(np.nanquantile(max_null, 1.0 - level))
+        active_mask = np.asarray(observed > threshold, dtype=bool)
+        p_values = np.asarray([(1.0 + np.sum(max_null >= obs)) / (perms + 1.0) for obs in observed], dtype=float)
+        threshold_detail: Any = threshold
+    elif corr in {"fdr", "bh", "benjamini-hochberg"}:
+        p_values = np.asarray([(1.0 + np.sum(perm_scores[:, g] >= observed[g])) / (perms + 1.0) for g in range(G)], dtype=float)
+        active_mask = _bh_fdr_mask(p_values, alpha=level)
+        threshold_detail = None
+    elif corr in {"pointwise", "per_group", "raw"}:
+        thresholds = np.nanquantile(perm_scores, 1.0 - level, axis=0)
+        active_mask = np.asarray(observed > thresholds, dtype=bool)
+        p_values = np.asarray([(1.0 + np.sum(perm_scores[:, g] >= observed[g])) / (perms + 1.0) for g in range(G)], dtype=float)
+        threshold_detail = thresholds.tolist()
+    else:
+        raise ValueError(f"Unknown multiplicity correction: {correction}")
+
+    active_count = float(np.sum(active_mask))
+    s_eff = float(min(max(active_count, float(min_active_groups)), float(G) * 0.5))
+    pi_eff = float(s_eff / float(G))
+    beta_raw = float(float(alpha_kappa) * (1.0 - pi_eff) / max(pi_eff, 1e-12))
+    beta_hat = float(beta_raw)
+    if min_beta_kappa is not None:
+        beta_hat = float(max(beta_hat, float(min_beta_kappa)))
+    if max_beta_kappa is not None:
+        beta_hat = float(min(beta_hat, float(max_beta_kappa)))
+    return AdaptiveBetaCalibration(
+        strategy="ridge_screening_multiplicity",
+        alpha_kappa=float(alpha_kappa),
+        beta_kappa=float(beta_hat),
+        details={
+            "correction": corr,
+            "null_level": float(level),
+            "n_permutations": int(perms),
+            "ridge_scale": str(ridge_scale),
+            "ridge": float(ridge),
+            "n_groups": int(G),
+            "n_active_groups": int(active_count),
+            "min_active_groups": float(min_active_groups),
+            "s_eff": float(s_eff),
+            "pi_eff": float(pi_eff),
+            "beta_kappa_raw": float(beta_raw),
+            "min_beta_kappa": None if min_beta_kappa is None else float(min_beta_kappa),
+            "max_beta_kappa": None if max_beta_kappa is None else float(max_beta_kappa),
+            "threshold": threshold_detail,
+            "p_values": p_values.tolist(),
+            "active_mask": active_mask.astype(bool).tolist(),
+        },
+    )
+
+
 def calibrate_grrhs_beta_validation_opt(
     X: np.ndarray,
     y: np.ndarray,
@@ -570,6 +676,9 @@ def fit_gr_rhs_adaptive_beta(
     screening_null_quantile: float = 0.90,
     screening_permutations: int = 500,
     ridge_screening_scale: str = "sqrt_np",
+    multiplicity_correction: str = "fwer",
+    multiplicity_level: float = 0.10,
+    multiplicity_min_active_groups: float = 1.0,
     mcem_rounds: int = 1,
     mcem_step_size: float = 1.0,
     mcem_init_strategy: str = "ridge_screening_moment",
@@ -593,6 +702,9 @@ def fit_gr_rhs_adaptive_beta(
     kwargs.pop("screening_null_quantile", None)
     kwargs.pop("screening_permutations", None)
     kwargs.pop("ridge_screening_scale", None)
+    kwargs.pop("multiplicity_correction", None)
+    kwargs.pop("multiplicity_level", None)
+    kwargs.pop("multiplicity_min_active_groups", None)
     kwargs.pop("mcem_rounds", None)
     kwargs.pop("mcem_step_size", None)
     kwargs.pop("mcem_init_strategy", None)
@@ -625,6 +737,24 @@ def fit_gr_rhs_adaptive_beta(
             null_quantile=float(screening_null_quantile),
             n_permutations=int(screening_permutations),
             ridge_scale=str(ridge_screening_scale),
+            min_beta_kappa=min_beta_kappa,
+            max_beta_kappa=max_beta_kappa,
+            seed=int(seed) + 809,
+        )
+    elif strategy in {"ridge_screening_multiplicity", "multiplicity", "group_multiplicity", "fwer", "fdr"}:
+        correction = str(multiplicity_correction)
+        if strategy in {"fwer", "fdr"}:
+            correction = str(strategy)
+        calib = calibrate_grrhs_beta_ridge_screening_multiplicity(
+            X,
+            y,
+            groups,
+            alpha_kappa=float(alpha_kappa),
+            null_level=float(multiplicity_level),
+            n_permutations=int(screening_permutations),
+            ridge_scale=str(ridge_screening_scale),
+            correction=correction,
+            min_active_groups=float(multiplicity_min_active_groups),
             min_beta_kappa=min_beta_kappa,
             max_beta_kappa=max_beta_kappa,
             seed=int(seed) + 809,

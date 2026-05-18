@@ -71,6 +71,9 @@ def run_case(
     log_beta_max: float,
     min_beta_kappa: float | None,
     adaptive_strategy: str,
+    multiplicity_correction: str,
+    multiplicity_level: float,
+    multiplicity_min_active_groups: float,
     mcem_rounds: int,
     mcem_step_size: float,
     mcem_init_strategy: str,
@@ -115,6 +118,9 @@ def run_case(
             "screening_null_quantile": float(validation_fraction),
             "screening_permutations": int(calibration_draws),
             "ridge_screening_scale": "sqrt_np",
+            "multiplicity_correction": str(multiplicity_correction),
+            "multiplicity_level": float(multiplicity_level),
+            "multiplicity_min_active_groups": float(multiplicity_min_active_groups),
             "calibration_warmup": int(calibration_warmup),
             "calibration_draws": int(calibration_draws),
             "mcem_rounds": int(mcem_rounds),
@@ -216,6 +222,9 @@ def main() -> int:
     parser.add_argument("--log-beta-max", type=float, default=math.log(16.0))
     parser.add_argument("--min-beta-kappa", type=float, default=1.0)
     parser.add_argument("--adaptive-strategy", default="ridge_screening_moment")
+    parser.add_argument("--multiplicity-correction", default="fwer")
+    parser.add_argument("--multiplicity-level", type=float, default=0.10)
+    parser.add_argument("--multiplicity-min-active-groups", type=float, default=1.0)
     parser.add_argument("--mcem-rounds", type=int, default=1)
     parser.add_argument("--mcem-step-size", type=float, default=1.0)
     parser.add_argument("--mcem-init-strategy", default="ridge_screening_moment")
@@ -243,6 +252,9 @@ def main() -> int:
         log_beta_max=float(args.log_beta_max),
         min_beta_kappa=args.min_beta_kappa,
         adaptive_strategy=str(args.adaptive_strategy),
+        multiplicity_correction=str(args.multiplicity_correction),
+        multiplicity_level=float(args.multiplicity_level),
+        multiplicity_min_active_groups=float(args.multiplicity_min_active_groups),
         mcem_rounds=int(args.mcem_rounds),
         mcem_step_size=float(args.mcem_step_size),
         mcem_init_strategy=str(args.mcem_init_strategy),
