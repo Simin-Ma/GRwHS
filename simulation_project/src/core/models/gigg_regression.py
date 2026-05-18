@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import math
 from pathlib import Path
 import tempfile
@@ -8,8 +8,10 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
 
 import numpy as np
+from scipy.linalg import cho_factor, cho_solve
 from numpy.random import Generator, default_rng
 
+from ..inference.woodbury import beta_sample_woodbury
 from ..utils.parallel_runtime import can_use_process_pool
 
 try:
@@ -70,9 +72,8 @@ def _trigamma_approx(x: float) -> float:
 
 def _chol_solve(mat: np.ndarray, vec: np.ndarray) -> np.ndarray:
     """Solve mat * x = vec for SPD mat via Cholesky."""
-    chol = np.linalg.cholesky(mat)
-    y = np.linalg.solve(chol, vec)
-    return np.linalg.solve(chol.T, y)
+    chol = cho_factor(mat, lower=True, check_finite=False)
+    return cho_solve(chol, vec, check_finite=False)
 
 
 def _digamma_inv(y: float, tol: float = 1e-8, max_iter: int = 50) -> float:
@@ -888,14 +889,10 @@ class GIGGRegression:
         try:
             if int(self.num_chains) > 1:
                 process_ok, process_reason = can_use_process_pool()
-                # High-dimensional GIGG on Windows has shown intermittent
-                # worker-level Invalid argument failures under process-based
-                # chain parallelism. Prefer the deterministic serial multichain
-                # path there so benchmark runs yield posterior draws instead of
-                # hard NaN failures.
-                if process_ok and bool(self.mmle_highdim_fastpath):
-                    process_ok = False
-                    process_reason = "disabled for highdim GIGG stability"
+                # High-dimensional GIGG is expensive, but the chain block is
+                # independent. Prefer process workers when safe, otherwise use
+                # threads so we still keep the formal multichain budget.
+                use_thread_pool = bool(self.mmle_highdim_fastpath and not process_ok)
                 if process_ok:
                     tmpdir_obj = tempfile.TemporaryDirectory(prefix="gigg_shared_")
                     tmpdir = Path(tmpdir_obj.name)
@@ -1025,6 +1022,19 @@ class GIGGRegression:
                                 fut_iter = _progress(fut_iter, total=len(payloads), desc="GIGG chains")
                             for fut in fut_iter:
                                 chain_results[fut_map[fut]] = fut.result()
+                    elif use_thread_pool:
+                        if bool(self.progress_bar):
+                            print("[WARN] GIGG process pool unavailable. Running highdim chains in a thread pool.")
+                        with ThreadPoolExecutor(max_workers=int(self.num_chains)) as executor:
+                            fut_map = {executor.submit(_fit_gigg_chain_task, payloads[i]): i for i in range(len(payloads))}
+                            chain_results = [None] * len(payloads)
+                            fut_iter = as_completed(fut_map)
+                            if bool(self.progress_bar):
+                                from simulation_project.src.core.utils.logging_utils import progress as _progress
+
+                                fut_iter = _progress(fut_iter, total=len(payloads), desc="GIGG chains [threads]")
+                            for fut in fut_iter:
+                                chain_results[fut_map[fut]] = fut.result()
                     else:
                         if bool(self.progress_bar):
                             print(f"[WARN] GIGG process pool disabled ({process_reason}). Running chains sequentially.")
@@ -1105,24 +1115,17 @@ class GIGGRegression:
           y/sigma = X theta + eps, eps~N(0, I)
         draw theta from posterior using n x n solve, then beta = sigma * theta.
         """
-        n = int(X.shape[0])
         sigma = math.sqrt(_clip_positive_scalar(sigma_sq, floor=self.jitter))
         y_star = y_tilde / sigma
         d = _clip_positive_array(local_scale, floor=self.jitter)
-
-        u = rng.normal(size=d.shape[0]) * np.sqrt(d)
-        delta = rng.normal(size=n)
-        v = X @ u + delta
-        x_d = X * d[np.newaxis, :]
-        mat = x_d @ X.T + np.eye(n, dtype=float)
-        rhs = y_star - v
-        if self.jitter > 0.0:
-            mat = mat + np.eye(n, dtype=float) * self.jitter
-        if self.stable_solve:
-            w = _chol_solve(mat, rhs)
-        else:
-            w = np.linalg.solve(mat, rhs)
-        theta = u + d * (X.T @ w)
+        theta = beta_sample_woodbury(
+            X=X,
+            y=y_star,
+            sigma2=1.0,
+            prior_var=d,
+            rng=rng,
+            jitter=self.jitter,
+        )
         beta = sigma * theta
         return np.clip(np.nan_to_num(beta, nan=0.0, posinf=_BETA_CAP, neginf=-_BETA_CAP), -_BETA_CAP, _BETA_CAP)
 
@@ -1143,7 +1146,7 @@ class GIGGRegression:
         b: Optional[Sequence[float]] = None,
         method: Optional[str] = None,
     ) -> "GIGGRegression":
-        X = np.asarray(X, dtype=float)
+        X = np.ascontiguousarray(np.asarray(X, dtype=float))
         yy = y if y is not None else Y
         if yy is None:
             raise ValueError("Response y (or Y) is required.")
@@ -1159,7 +1162,7 @@ class GIGGRegression:
         group_sizes = np.array([len(g) for g in normalised_groups], dtype=int)
         G = group_sizes.size
 
-        C_arr = np.zeros((n, 0), dtype=float) if C is None else np.asarray(C, dtype=float)
+        C_arr = np.zeros((n, 0), dtype=float) if C is None else np.ascontiguousarray(np.asarray(C, dtype=float))
         self.auto_intercept_ = False
         if C is None and bool(self.fit_intercept):
             C_arr = np.ones((n, 1), dtype=float)
@@ -1276,6 +1279,7 @@ class GIGGRegression:
         nu = 1.0
 
         CtC = C_arr.T @ C_arr if k > 0 else None
+        CtC_chol = cho_factor(CtC, lower=True, check_finite=False) if k > 0 and self.stable_solve else None
         tau_shape = 0.5 * (p + 1.0)
         sigma_shape = 0.5 * (n + 1.0)
 
@@ -1288,9 +1292,11 @@ class GIGGRegression:
         lambda_draws = np.zeros((kept, p), dtype=float) if self.store_lambda else None
         b_draws = np.zeros((kept, G), dtype=float)
         keep_idx = 0
+        xb = X @ beta
+        ca = C_arr @ alpha if k > 0 else None
 
         def _gibbs_step() -> None:
-            nonlocal alpha, beta, lambda_sq, gamma_sq, tau_sq, sigma_sq, nu
+            nonlocal alpha, beta, lambda_sq, gamma_sq, tau_sq, sigma_sq, nu, xb, ca
             def _update_group_scales() -> None:
                 nonlocal lambda_sq, gamma_sq
                 gid_iter = rng.permutation(group_order) if self.randomize_group_order and G > 1 else group_order
@@ -1341,17 +1347,18 @@ class GIGGRegression:
                             lambda_sq[j] = max(float(draw), self.jitter)
 
             if k > 0:
-                resid_alpha = y_arr - X @ beta
+                resid_alpha = y_arr - xb
                 if self.stable_solve:
-                    mean_alpha = _chol_solve(CtC, C_arr.T @ resid_alpha)
-                    noise_alpha = _chol_solve(CtC, rng.normal(size=k))
+                    mean_alpha = cho_solve(CtC_chol, C_arr.T @ resid_alpha, check_finite=False)
+                    noise_alpha = cho_solve(CtC_chol, rng.normal(size=k), check_finite=False)
                     alpha = mean_alpha + math.sqrt(sigma_sq) * noise_alpha
                 else:
                     cov_alpha = np.linalg.inv(CtC)
                     mean_alpha = cov_alpha @ (C_arr.T @ resid_alpha)
                     alpha = mean_alpha + math.sqrt(sigma_sq) * (np.linalg.cholesky(cov_alpha) @ rng.normal(size=k))
+                ca = C_arr @ alpha
 
-            y_tilde = y_arr - (C_arr @ alpha if k > 0 else 0.0)
+            y_tilde = y_arr - ca if k > 0 else y_arr
             if self.locals_first_beta_update:
                 _update_group_scales()
             local_scale = np.maximum(tau_sq * gamma_sq[group_id] * lambda_sq, self.jitter)
@@ -1372,6 +1379,7 @@ class GIGGRegression:
                     rng=rng,
                 )
 
+            xb = X @ beta
             gl_param_expand_diag_inv = np.maximum(1.0 / np.maximum(local_scale, self.jitter), self.jitter)
             tau_rate = _clip_positive_scalar(
                 0.5 * tau_sq * float(np.sum((beta**2) * gl_param_expand_diag_inv))
@@ -1423,6 +1431,7 @@ class GIGGRegression:
                         local_scale=refresh_local_scale,
                         rng=rng,
                     )
+                xb = X @ beta
 
             lambda_sq = np.maximum(lambda_sq, self.jitter)
             gamma_sq = np.maximum(gamma_sq, self.jitter)
@@ -1437,38 +1446,45 @@ class GIGGRegression:
 
         if method_eff == "mmle":
             highdim_fast = bool(self.mmle_highdim_fastpath and p > n and p >= 150)
-            mmle_samp_size = int(max(1, min(self.mmle_samp_size, 150 if highdim_fast else self.mmle_samp_size)))
+            mmle_samp_size = int(max(1, min(self.mmle_samp_size, 80 if highdim_fast else self.mmle_samp_size)))
             terminate_mmle = float((5.0 if highdim_fast else 1.0) * self.mmle_tol_scale) * float(G)
             delta_mmle = float("inf")
             mmle_cnt = 0
-            lambda_mmle_store = np.zeros((mmle_samp_size, p), dtype=float)
-            eta_mmle_store = np.ones((mmle_samp_size, G), dtype=float)
-            max_mmle_iters = max(1, int(min(self.mmle_max_iters, 1200 if highdim_fast else self.mmle_max_iters)))
+            eta_log_sum = np.zeros(G, dtype=float)
+            lambda_log_sum = np.zeros(G, dtype=float)
+            max_mmle_iters = max(1, int(min(self.mmle_max_iters, 600 if highdim_fast else self.mmle_max_iters)))
             mmle_iter = range(max_mmle_iters)
             if _progress is not None:
                 mmle_iter = _progress(mmle_iter, total=int(max_mmle_iters), desc="GIGG MMLE")
             for _ in mmle_iter:
                 _gibbs_step()
-                lambda_mmle_store[mmle_cnt % mmle_samp_size] = lambda_sq
-                eta_mmle_store[mmle_cnt % mmle_samp_size] = eta
+                eta_log_sum += np.log(np.maximum(eta, self.jitter))
+                lambda_log_sum += np.bincount(
+                    group_id,
+                    weights=np.log(np.maximum(lambda_sq, self.jitter)),
+                    minlength=G,
+                )
                 mmle_cnt += 1
                 if mmle_cnt % mmle_samp_size == 0:
                     q_new = q_vec.copy()
                     p_new = np.full(G, 1.0 / max(float(n), 1.0), dtype=float)
                     for gid, idxs in enumerate(group_arrays):
-                        overflow_check = float(np.mean(np.log(np.maximum(eta_mmle_store[:, gid], self.jitter))))
-                        overflow_check -= float(np.mean(np.log(np.maximum(lambda_mmle_store[:, idxs], self.jitter))))
+                        eta_mean_log = float(eta_log_sum[gid]) / float(mmle_samp_size)
+                        lambda_mean_log = float(lambda_log_sum[gid]) / float(mmle_samp_size * max(int(group_sizes[gid]), 1))
+                        overflow_check = eta_mean_log - lambda_mean_log
                         try:
                             est = _digamma_inv(overflow_check)
                         except Exception:
                             est = float(q_vec[gid])
                         q_new[gid] = min(max(float(est), self.b_floor), self.b_max)
+                    eta_log_sum.fill(0.0)
+                    lambda_log_sum.fill(0.0)
                     delta_mmle = float(np.sum((q_new - q_vec) ** 2 + (p_new - p_vec) ** 2))
                     q_vec[:] = self._stabilize_q_array(q_new)
                     p_vec[:] = p_new
                     if delta_mmle < terminate_mmle:
                         break
-                    if highdim_fast and mmle_cnt >= 3 * mmle_samp_size:
+                    if highdim_fast and mmle_cnt >= 2 * mmle_samp_size:
                         break
 
         sample_iters = kept * self.n_thin

@@ -257,7 +257,7 @@ def highdim_sampler_budget(
     high_corr = bool(np.isfinite(within_corr) and within_corr >= 0.75)
 
     if role_key in {"rhs_exact", "gigg_mmle"}:
-        chains_floor = 4 if role_key == "rhs_exact" else 2
+        chains_floor = 4
         warmup_floor = 1100 if high_corr else 1000
         draws_floor = 2400 if high_corr else 2000
         adapt_delta_floor = 0.99 if high_corr else 0.985
