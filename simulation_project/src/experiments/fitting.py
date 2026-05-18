@@ -78,6 +78,7 @@ def _fit_all_methods(
         gigg_fixed_try = {k: v for k, v in gigg_try.items() if k not in {"mmle_burnin_only", "mmle_step_size"}}
         offset_map = {
             "GR_RHS": 1,
+            "GR_RHS_EB": 15,
             "GR_RHS_LowDim": 13,
             "GR_RHS_HighDim": 14,
             "RHS": 2,

@@ -1,0 +1,23 @@
+package: Simulation_highdimension
+description: High-dimensional GR-RHS empirical-Bayes route. Inherits the HD1-HD6 design from highdimension.yaml when used as a reference template.
+
+# This file documents the recommended formal GR-RHS-EB settings. The method is
+# registered as GR_RHS_EB in simulation_project.src.experiments.method_registry.
+# The recommended route uses a ridge-partial group score with a permutation
+# empirical null to estimate the group activity fraction, maps that estimate to
+# beta_kappa by moment matching E[kappa]=alpha/(alpha+beta), then fits the final
+# posterior. The test set is not used for hyperparameter selection.
+
+method_config:
+  grrhs_kwargs:
+    tau_target: groups
+    sampler_backend: collapsed_profile
+    use_local_scale: false
+    progress_bar: false
+    adaptive_strategy: ridge_screening_moment
+    alpha_kappa: 0.5
+    screening_null_quantile: 0.95
+    screening_permutations: 300
+    ridge_screening_scale: sqrt_np
+    min_beta_kappa: 1.0
+    max_beta_kappa: 16.0

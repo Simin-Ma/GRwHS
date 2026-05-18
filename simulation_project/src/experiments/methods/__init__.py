@@ -15,6 +15,7 @@ __all__ = [
     "fit_gigg_mmle",
     "fit_gigg_fixed",
     "fit_gr_rhs",
+    "fit_gr_rhs_adaptive_beta",
     "fit_rhs_gibbs",
     "fit_rhs",
 ]
@@ -26,6 +27,7 @@ _LAZY_EXPORTS = {
     "fit_gigg_mmle": ("simulation_project.src.experiments.methods.fit_gigg", "fit_gigg_mmle"),
     "fit_gigg_fixed": ("simulation_project.src.experiments.methods.fit_gigg", "fit_gigg_fixed"),
     "fit_gr_rhs": ("simulation_project.src.experiments.methods.fit_gr_rhs", "fit_gr_rhs"),
+    "fit_gr_rhs_adaptive_beta": ("simulation_project.src.experiments.methods.fit_gr_rhs_adaptive", "fit_gr_rhs_adaptive_beta"),
     "fit_rhs_gibbs": ("simulation_project.src.experiments.methods.fit_rhs_gibbs", "fit_rhs_gibbs"),
     "fit_rhs": ("simulation_project.src.experiments.methods.fit_rhs", "fit_rhs"),
 }
@@ -40,4 +42,3 @@ def __getattr__(name: str) -> Any:
     value = getattr(module, attr_name)
     globals()[name] = value
     return value
-

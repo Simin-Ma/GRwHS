@@ -80,6 +80,8 @@ def estimate_adaptive_beta_kappa(
     null_quantile: float,
     n_permutations: int,
     seed: int,
+    min_beta_kappa: float | None = None,
+    max_beta_kappa: float | None = None,
 ) -> dict[str, object]:
     groups_use = [[int(i) for i in g] for g in groups]
     G = max(len(groups_use), 1)
@@ -96,7 +98,12 @@ def estimate_adaptive_beta_kappa(
     pi_raw = float(n_active / float(G))
     pi_min = float(1.0 / float(G))
     pi_hat = float(min(max(pi_raw, pi_min), 0.5))
-    beta_hat = float(float(alpha_kappa) * (1.0 - pi_hat) / max(pi_hat, 1e-12))
+    beta_raw = float(float(alpha_kappa) * (1.0 - pi_hat) / max(pi_hat, 1e-12))
+    beta_hat = float(beta_raw)
+    if min_beta_kappa is not None:
+        beta_hat = float(max(beta_hat, float(min_beta_kappa)))
+    if max_beta_kappa is not None:
+        beta_hat = float(min(beta_hat, float(max_beta_kappa)))
     return {
         "alpha_kappa": float(alpha_kappa),
         "null_quantile": float(null_quantile),
@@ -106,7 +113,10 @@ def estimate_adaptive_beta_kappa(
         "pi_raw": float(pi_raw),
         "pi_min": float(pi_min),
         "pi_hat": float(pi_hat),
+        "beta_kappa_raw": float(beta_raw),
         "beta_kappa_hat": float(beta_hat),
+        "min_beta_kappa": None if min_beta_kappa is None else float(min_beta_kappa),
+        "max_beta_kappa": None if max_beta_kappa is None else float(max_beta_kappa),
         "observed_group_scores": observed.tolist(),
         "empirical_null_thresholds": thresholds.tolist(),
         "active_group_screen_mask": active_mask.tolist(),
@@ -143,6 +153,8 @@ def run_adaptive_case(
     max_treedepth: int,
     seed_offset: int,
     p0_mode: str,
+    min_beta_kappa: float | None = None,
+    max_beta_kappa: float | None = None,
     label: str | None = None,
     calibrate_only: bool = False,
 ) -> dict[str, object]:
@@ -164,6 +176,8 @@ def run_adaptive_case(
         null_quantile=float(null_quantile),
         n_permutations=int(n_permutations),
         seed=int(calib_seed),
+        min_beta_kappa=min_beta_kappa,
+        max_beta_kappa=max_beta_kappa,
     )
     beta_hat = float(calibration["beta_kappa_hat"])
     p0_mode_use = str(p0_mode).strip().lower()
@@ -292,6 +306,8 @@ def main() -> int:
     parser.add_argument("--max-treedepth", type=int, default=14)
     parser.add_argument("--seed-offset", type=int, default=9701)
     parser.add_argument("--p0-mode", choices=["screen_active", "sqrt_groups", "truth"], default="screen_active")
+    parser.add_argument("--min-beta-kappa", type=float, default=None)
+    parser.add_argument("--max-beta-kappa", type=float, default=None)
     parser.add_argument("--label", default=None)
     parser.add_argument("--calibrate-only", action="store_true")
     args = parser.parse_args()
@@ -309,6 +325,8 @@ def main() -> int:
         max_treedepth=int(args.max_treedepth),
         seed_offset=int(args.seed_offset),
         p0_mode=str(args.p0_mode),
+        min_beta_kappa=args.min_beta_kappa,
+        max_beta_kappa=args.max_beta_kappa,
         label=args.label,
         calibrate_only=bool(args.calibrate_only),
     )
