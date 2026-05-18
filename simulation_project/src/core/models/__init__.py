@@ -4,13 +4,11 @@ from importlib import import_module
 from typing import Any
 
 __all__ = [
-    "GRRHS_NUTS",
     "GRRHS_Gibbs_Staged",
     "GIGGRegression",
 ]
 
 _LAZY_EXPORTS = {
-    "GRRHS_NUTS": ("simulation_project.src.core.models.grrhs_nuts", "GRRHS_NUTS"),
     "GRRHS_Gibbs_Staged": ("simulation_project.src.core.models.grrhs_nuts", "GRRHS_Gibbs_Staged"),
     "GIGGRegression": ("simulation_project.src.core.models.gigg_regression", "GIGGRegression"),
 }

@@ -137,441 +137,23 @@ def _safe_nanmin(values: Sequence[float]) -> float:
     return float(np.min(finite))
 
 
-@dataclass
-class GRRHS_NUTS:
-    """
-    GR-RHS reference implementation:
-    primitive hierarchy with transformed/non-centered NUTS.
-    """
-
-    tau0: Optional[float] = None
-    eta: float = 0.5
-    s0: float = 1.0
-    alpha_kappa: float = 2.0
-    beta_kappa: Any = 8.0
-    likelihood: str = "gaussian"
-    use_local_scale: bool = True
-    shared_kappa: bool = False
-    auto_calibrate_tau: bool = True
-    tau_target: str = "coefficients"  # coefficients | groups
-    p0: Optional[float] = None
-    sigma_reference: float = 1.0
-    num_warmup: int = 1000
-    num_samples: int = 1000
-    num_chains: int = 4
-    thinning: int = 1
-    target_accept_prob: float = 0.95
-    max_tree_depth: int = 12
-    dense_mass: bool = False
-    use_init_to_median: bool = True
-    chain_method: str = "sequential"
-    progress_bar: bool = True
-    seed: int = 42
-    step_size: Optional[float] = None
-    find_heuristic_step_size: bool = False
-    init_params: Optional[Dict[str, Any]] = None
-    resume_no_warmup: bool = False
-
-    coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    sigma_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    tau_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    lambda_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    kappa_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    c2_samples_: Optional[np.ndarray] = field(default=None, init=False)
-    coef_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    sigma_mean_: Optional[float] = field(default=None, init=False)
-    tau_mean_: Optional[float] = field(default=None, init=False)
-    lambda_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    kappa_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    c2_mean_: Optional[np.ndarray] = field(default=None, init=False)
-    intercept_: float = field(default=0.0, init=False)
-    groups_: Optional[List[List[int]]] = field(default=None, init=False)
-    group_id_: Optional[np.ndarray] = field(default=None, init=False)
-    group_sizes_: Optional[np.ndarray] = field(default=None, init=False)
-    sampler_diagnostics_: Dict[str, Any] = field(default_factory=dict, init=False)
-    last_init_params_: Optional[Dict[str, np.ndarray]] = field(default=None, init=False)
-
-    def __post_init__(self) -> None:
-        if self.eta <= 0.0:
-            raise ValueError("eta must be positive.")
-        if self.s0 <= 0.0:
-            raise ValueError("s0 must be positive.")
-        lik = str(self.likelihood).strip().lower()
-        if lik in {"gaussian", "regression"}:
-            self.likelihood = "gaussian"
-        elif lik in {"logistic", "classification"}:
-            self.likelihood = "logistic"
-        else:
-            raise ValueError("likelihood must be 'gaussian' or 'logistic'.")
-        if self.tau0 is not None and float(self.tau0) <= 0.0:
-            raise ValueError("tau0 must be positive when provided.")
-        if np.any(np.asarray(self.alpha_kappa, dtype=float) <= 0.0) or np.any(np.asarray(self.beta_kappa, dtype=float) <= 0.0):
-            raise ValueError("alpha_kappa and beta_kappa must be positive.")
-        if self.num_warmup < 0 or self.num_samples <= 0:
-            raise ValueError("num_warmup must be >=0 and num_samples must be >0.")
-        if self.num_chains <= 0:
-            raise ValueError("num_chains must be positive.")
-        if self.thinning <= 0:
-            raise ValueError("thinning must be positive.")
-        if not (0.5 <= float(self.target_accept_prob) < 1.0):
-            raise ValueError("target_accept_prob must be in [0.5, 1.0).")
-        if int(self.max_tree_depth) <= 0:
-            raise ValueError("max_tree_depth must be positive.")
-
-    @staticmethod
-    def calibrate_tau0(*, p0: float, D: int, n: int, sigma_ref: float = 1.0) -> float:
-        p0_use = max(float(p0), 1.0)
-        denom = max(float(D) - p0_use, 1e-8)
-        return float(max((p0_use / denom) * (float(sigma_ref) / math.sqrt(max(int(n), 1))), 1e-8))
-
-    @staticmethod
-    def _log_half_cauchy_on_log(log_x: jnp.ndarray, scale: float) -> jnp.ndarray:
-        x = jnp.exp(log_x)
-        return jnp.log(2.0 / jnp.pi) - jnp.log(scale) - jnp.log1p((x / scale) ** 2) + log_x
-
-    @staticmethod
-    def _log_half_normal_on_log(log_x: jnp.ndarray, scale: jnp.ndarray) -> jnp.ndarray:
-        x = jnp.exp(log_x)
-        return 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(scale) - 0.5 * (x / scale) ** 2 + log_x
-
-    @staticmethod
-    def _log_beta_on_logit(logit_x: jnp.ndarray, alpha: Any, beta: Any) -> jnp.ndarray:
-        x = jnp.clip(jnp.asarray(sigmoid(logit_x)), _EPS, 1.0 - _EPS)
-        alpha_arr = jnp.asarray(alpha, dtype=x.dtype)
-        beta_arr = jnp.asarray(beta, dtype=x.dtype)
-        return (
-            (alpha_arr - 1.0) * jnp.log(x)
-            + (beta_arr - 1.0) * jnp.log1p(-x)
-            - _betaln(alpha_arr, beta_arr)
-            + jnp.log(x)
-            + jnp.log1p(-x)
-        )
-
-    def _model(
-        self,
-        X: jnp.ndarray,
-        y: jnp.ndarray,
-        group_id: jnp.ndarray,
-        group_sizes: jnp.ndarray,
-        tau0_eff: float,
-    ) -> None:
-        numpyro, dist, _, _, _ = _load_numpyro_runtime()
-        n, p = X.shape
-        G = int(group_sizes.shape[0])
-
-        if self.likelihood == "gaussian":
-            sigma = numpyro.sample("sigma", dist.HalfCauchy(jnp.asarray(self.s0, dtype=X.dtype)))
-        else:
-            sigma = numpyro.deterministic("sigma", jnp.asarray(1.0, dtype=X.dtype))
-
-        tau_scale = jnp.maximum(jnp.asarray(tau0_eff, dtype=X.dtype) * sigma, _EPS)
-        tau = numpyro.sample("tau", dist.HalfCauchy(tau_scale))
-
-        if self.use_local_scale:
-            lam = numpyro.sample("lambda", dist.HalfCauchy(jnp.ones((p,), dtype=X.dtype)).to_event(1))
-        else:
-            lam = numpyro.deterministic("lambda", jnp.ones((p,), dtype=X.dtype))
-
-        beta_kappa_arr = jnp.asarray(self.beta_kappa, dtype=X.dtype)
-        if self.shared_kappa:
-            logit_kappa_raw = numpyro.sample("logit_kappa_shared_raw", dist.Normal(0.0, 1.0))
-            kappa_shared = sigmoid(logit_kappa_raw)
-            kappa = numpyro.deterministic("kappa", jnp.full((G,), kappa_shared, dtype=X.dtype))
-            numpyro.factor(
-                "prior_logit_kappa",
-                self._log_beta_on_logit(logit_kappa_raw, self.alpha_kappa, beta_kappa_arr)
-                - dist.Normal(0.0, 1.0).log_prob(logit_kappa_raw),
-            )
-        else:
-            logit_kappa = numpyro.sample(
-                "logit_kappa_raw",
-                dist.Normal(jnp.zeros((G,)), jnp.ones((G,))).to_event(1),
-            )
-            kappa = numpyro.deterministic("kappa", sigmoid(logit_kappa))
-            numpyro.factor(
-                "prior_logit_kappa",
-                jnp.sum(
-                    self._log_beta_on_logit(logit_kappa, self.alpha_kappa, beta_kappa_arr)
-                    - dist.Normal(0.0, 1.0).log_prob(logit_kappa)
-                ),
-            )
-
-        sigma2 = sigma * sigma
-        numpyro.deterministic("c2", sigma2 * kappa / (1.0 - kappa + _EPS))
-
-        kappa_j = kappa[group_id]
-        tau2 = tau * tau
-        lam2 = lam * lam
-        # Dimensionless ratio r_j = tau^2 * lambda_j^2 / sigma^2
-        # keeps each factor O(1) and avoids overflow in products of scales.
-        # v_j = sigma^2 * kappa_g(j) * r_j / (kappa_g(j) + (1-kappa_g(j)) * r_j)
-        r = tau2 * lam2 / (sigma2 + _EPS)
-        beta_var = sigma2 * kappa_j * r / (kappa_j + (1.0 - kappa_j) * r + _EPS)
-        beta_scale = jnp.sqrt(jnp.maximum(beta_var, _EPS))
-
-        beta_raw = numpyro.sample("beta_raw", dist.Normal(jnp.zeros((p,)), jnp.ones((p,))).to_event(1))
-        beta = numpyro.deterministic("beta", beta_raw * beta_scale)
-
-        mean = X @ beta
-        with numpyro.plate("data", n):
-            if self.likelihood == "gaussian":
-                numpyro.sample("y", dist.Normal(mean, sigma), obs=y)
-            else:
-                numpyro.sample("y", dist.Bernoulli(logits=mean), obs=y)
-
-    def fit(
-        self,
-        X: np.ndarray,
-        y: np.ndarray,
-        groups: Optional[List[List[int]]] = None,
-    ) -> "GRRHS_NUTS":
-        X_arr = np.asarray(X, dtype=np.float32)
-        y_arr = np.asarray(y, dtype=np.float32).reshape(-1)
-        if X_arr.ndim != 2:
-            raise ValueError("X must be 2D.")
-        if y_arr.ndim != 1 or y_arr.shape[0] != X_arr.shape[0]:
-            raise ValueError("y must be a 1D vector aligned with X.")
-
-        n, p = X_arr.shape
-        if groups is None:
-            groups = [[j] for j in range(p)]
-        self.groups_ = [list(map(int, g)) for g in groups]
-        gid, gsz = _split_groups(p, self.groups_)
-        self.group_id_ = gid
-        self.group_sizes_ = gsz
-
-        if self.tau0 is not None:
-            tau0_eff = float(self.tau0)
-        elif self.auto_calibrate_tau:
-            target_dim = p if str(self.tau_target).strip().lower() == "coefficients" else len(self.groups_)
-            p0_use = float(self.p0) if self.p0 is not None else float(max(1, min(20, target_dim // 4)))
-            sigma_ref = float(self.sigma_reference)
-            if self.likelihood == "logistic" and sigma_ref <= 0.0:
-                sigma_ref = 2.0
-            tau0_eff = self.calibrate_tau0(
-                p0=p0_use,
-                D=target_dim,
-                n=n,
-                sigma_ref=sigma_ref,
-            )
-        else:
-            tau0_eff = 0.1
-
-        init_params_use = _normalize_init_params(
-            self.init_params,
-            num_chains=int(self.num_chains),
-        )
-        init_strategy = (
-            _load_numpyro_runtime()[0].infer.init_to_median(num_samples=15)
-            if _should_use_median_init(
-                use_init_to_median=bool(self.use_init_to_median),
-                init_params=init_params_use,
-            )
-            else _load_numpyro_runtime()[0].infer.init_to_uniform()
-        )
-        _, _, _, MCMC, NUTS = _load_numpyro_runtime()
-        kernel = NUTS(
-            self._model,
-            target_accept_prob=float(self.target_accept_prob),
-            dense_mass=bool(self.dense_mass),
-            max_tree_depth=int(self.max_tree_depth),
-            init_strategy=init_strategy,
-        )
-        warmup_use = int(self.num_warmup)
-        if bool(self.resume_no_warmup) and init_params_use is not None:
-            warmup_use = 0
-        mcmc = MCMC(
-            kernel,
-            num_warmup=int(warmup_use),
-            num_samples=int(self.num_samples),
-            num_chains=int(self.num_chains),
-            chain_method=str(self.chain_method),
-            progress_bar=bool(self.progress_bar),
-        )
-
-        start = time.perf_counter()
-        run_kwargs: Dict[str, Any] = {}
-        if init_params_use is not None:
-            run_kwargs["init_params"] = init_params_use
-        mcmc.run(
-            random.PRNGKey(int(self.seed)),
-            jnp.asarray(X_arr),
-            jnp.asarray(y_arr),
-            jnp.asarray(gid),
-            jnp.asarray(gsz),
-            float(tau0_eff),
-            extra_fields=("diverging", "energy", "num_steps"),
-            **run_kwargs,
-        )
-        samples = jax.block_until_ready(mcmc.get_samples(group_by_chain=True))
-        runtime_sec = max(time.perf_counter() - start, 1e-12)
-        latent_keys = ["sigma", "tau", "beta_raw"]
-        if bool(self.use_local_scale):
-            latent_keys.append("lambda")
-        if bool(self.shared_kappa):
-            latent_keys.append("logit_kappa_shared_raw")
-        else:
-            latent_keys.append("logit_kappa_raw")
-        self.last_init_params_ = _extract_last_init_params(samples, latent_keys=latent_keys)
-        self._store_samples(samples)
-        self.sampler_diagnostics_ = self._extract_diagnostics(mcmc, runtime_sec=runtime_sec)
-        transformed = ["logit_kappa"]
-        self.sampler_diagnostics_["parameterization"] = {
-            "primitive_hierarchy": True,
-            "transformed_variables": transformed,
-            "non_centered_beta": True,
-            "likelihood": str(self.likelihood),
-            "use_local_scale": bool(self.use_local_scale),
-            "shared_kappa": bool(self.shared_kappa),
-            "tau0_effective": float(tau0_eff),
-            "init_to_median": bool(self.use_init_to_median),
-        }
-        return self
-
-    def _store_samples(self, samples: Dict[str, jnp.ndarray]) -> None:
-        def get(name: str) -> Optional[np.ndarray]:
-            if name not in samples:
-                return None
-            return _thin(np.asarray(samples[name], dtype=np.float64), int(self.thinning))
-
-        self.coef_samples_ = get("beta")
-        self.sigma_samples_ = get("sigma")
-        self.tau_samples_ = get("tau")
-        self.lambda_samples_ = get("lambda")
-        self.kappa_samples_ = get("kappa")
-        self.c2_samples_ = get("c2")
-
-        coef_draws = _flatten_param(self.coef_samples_)
-        self.coef_mean_ = None if coef_draws is None else coef_draws.mean(axis=0)
-        sigma_draws = _flatten_scalar(self.sigma_samples_)
-        tau_draws = _flatten_scalar(self.tau_samples_)
-        lam_draws = _flatten_param(self.lambda_samples_)
-        kappa_draws = _flatten_param(self.kappa_samples_)
-        c2_draws = _flatten_param(self.c2_samples_)
-        self.sigma_mean_ = None if sigma_draws is None else float(sigma_draws.mean())
-        self.tau_mean_ = None if tau_draws is None else float(tau_draws.mean())
-        self.lambda_mean_ = None if lam_draws is None else lam_draws.mean(axis=0)
-        self.kappa_mean_ = None if kappa_draws is None else kappa_draws.mean(axis=0)
-        self.c2_mean_ = None if c2_draws is None else c2_draws.mean(axis=0)
-        self.intercept_ = 0.0
-
-    def _extract_diagnostics(self, mcmc: MCMC, *, runtime_sec: float) -> Dict[str, Any]:
-        _, _, diagnostics_summary, _, _ = _load_numpyro_runtime()
-        out: Dict[str, Any] = {"backend": "numpyro_nuts", "runtime_sec": float(runtime_sec)}
-        try:
-            extra = mcmc.get_extra_fields(group_by_chain=True)
-        except Exception:
-            extra = {}
-
-        diverging_raw = np.asarray(extra.get("diverging", []), dtype=float)
-        num_steps_raw = np.asarray(extra.get("num_steps", []), dtype=float)
-        energy_raw = np.asarray(extra.get("energy", []), dtype=float)
-        if diverging_raw.ndim == 1 and diverging_raw.size:
-            diverging_raw = diverging_raw.reshape(1, -1)
-        if num_steps_raw.ndim == 1 and num_steps_raw.size:
-            num_steps_raw = num_steps_raw.reshape(1, -1)
-        if energy_raw.ndim == 1 and energy_raw.size:
-            energy_raw = energy_raw.reshape(1, -1)
-
-        divergences = int(np.sum(diverging_raw > 0.5)) if diverging_raw.size else -1
-        if num_steps_raw.size:
-            treedepth_limit = float(2 ** int(self.max_tree_depth))
-            treedepth_hits = int(np.sum(num_steps_raw >= treedepth_limit))
-            max_num_steps = int(np.max(num_steps_raw))
-        else:
-            treedepth_hits = -1
-            max_num_steps = -1
-
-        ebfmi_vals: list[float] = []
-        if energy_raw.size:
-            for chain_energy in energy_raw:
-                if chain_energy.size < 3:
-                    ebfmi_vals.append(float("nan"))
-                    continue
-                num = float(np.mean(np.diff(chain_energy) ** 2))
-                den = float(np.var(chain_energy))
-                ebfmi_vals.append(float("nan") if den <= 0.0 or not np.isfinite(den) else num / den)
-        ebfmi_min = _safe_nanmin(ebfmi_vals)
-        out["hmc"] = {
-            "divergences": int(divergences),
-            "treedepth_hits": int(treedepth_hits),
-            "max_num_steps": int(max_num_steps),
-            "ebfmi_per_chain": ebfmi_vals,
-            "ebfmi_min": ebfmi_min,
-        }
-
-        try:
-            samples = mcmc.get_samples(group_by_chain=True)
-            diag = diagnostics_summary(samples, group_by_chain=True)
-            blocks = ["beta", "tau", "a", "kappa", "lambda"]
-            rhat_vals: list[float] = []
-            ess_vals: list[float] = []
-            for b in blocks:
-                if b not in diag:
-                    continue
-                entry = diag[b]
-                if isinstance(entry, dict):
-                    if "r_hat" in entry:
-                        rhat_vals.extend(np.asarray(entry["r_hat"], dtype=float).reshape(-1).tolist())
-                    if "n_eff" in entry:
-                        ess_vals.extend(np.asarray(entry["n_eff"], dtype=float).reshape(-1).tolist())
-            rhat_vals = [float(v) for v in rhat_vals if np.isfinite(v)]
-            ess_vals = [float(v) for v in ess_vals if np.isfinite(v)]
-            min_ess = float(min(ess_vals)) if ess_vals else float("nan")
-            out["posterior_quality"] = {
-                "max_rhat": float(max(rhat_vals)) if rhat_vals else float("nan"),
-                "min_ess": min_ess,
-                "ess_per_sec": float(min_ess / runtime_sec) if np.isfinite(min_ess) else float("nan"),
-            }
-        except Exception:
-            out["posterior_quality"] = {}
-        return out
-
-    def predict(self, X: np.ndarray, use_posterior_mean: bool = True) -> np.ndarray:
-        if self.coef_mean_ is None:
-            raise RuntimeError("Model not fitted.")
-        X_arr = np.asarray(X, dtype=np.float32)
-        if use_posterior_mean:
-            linear = X_arr @ np.asarray(self.coef_mean_, dtype=float) + float(self.intercept_)
-            if self.likelihood == "logistic":
-                linear = np.clip(linear, -60.0, 60.0)
-                return 1.0 / (1.0 + np.exp(-linear))
-            return linear
-        if self.coef_samples_ is None:
-            raise RuntimeError("No posterior samples available.")
-        last = np.asarray(self.coef_samples_)[-1]
-        linear = X_arr @ np.asarray(last, dtype=float) + float(self.intercept_)
-        if self.likelihood == "logistic":
-            linear = np.clip(linear, -60.0, 60.0)
-            return 1.0 / (1.0 + np.exp(-linear))
-        return linear
-
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        if self.likelihood != "logistic":
-            raise RuntimeError("predict_proba is only available for logistic likelihood.")
-        prob = np.asarray(self.predict(X, use_posterior_mean=True), dtype=float).reshape(-1)
-        return np.column_stack([1.0 - prob, prob])
-
-    def get_posterior_summaries(self) -> Dict[str, Any]:
-        if self.coef_samples_ is None:
-            raise RuntimeError("Model not fitted.")
-        coef = _flatten_param(self.coef_samples_)
-        if coef is None:
-            raise RuntimeError("Coefficient draws are unavailable.")
-        out: Dict[str, Any] = {
-            "beta_mean": coef.mean(axis=0),
-            "beta_median": np.median(coef, axis=0),
-            "beta_ci95": np.quantile(coef, [0.025, 0.975], axis=0),
-            "sigma_mean": self.sigma_mean_,
-            "tau_mean": self.tau_mean_,
-            "kappa_mean": self.kappa_mean_,
-            "c2_mean": self.c2_mean_,
-            "lambda_mean": self.lambda_mean_,
-        }
-        return out
+def calibrate_tau0(*, p0: float, D: int, n: int, sigma_ref: float = 1.0) -> float:
+    p0_use = max(float(p0), 1.0)
+    denom = max(float(D) - p0_use, 1e-8)
+    return float(max((p0_use / denom) * (float(sigma_ref) / math.sqrt(max(int(n), 1))), 1e-8))
 
 
-GRRHS_HMC = GRRHS_NUTS
+def _log_beta_on_logit(logit_x: jnp.ndarray, alpha: Any, beta: Any) -> jnp.ndarray:
+    x = jnp.clip(jnp.asarray(sigmoid(logit_x)), _EPS, 1.0 - _EPS)
+    alpha_arr = jnp.asarray(alpha, dtype=x.dtype)
+    beta_arr = jnp.asarray(beta, dtype=x.dtype)
+    return (
+        (alpha_arr - 1.0) * jnp.log(x)
+        + (beta_arr - 1.0) * jnp.log1p(-x)
+        - _betaln(alpha_arr, beta_arr)
+        + jnp.log(x)
+        + jnp.log1p(-x)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1251,7 +833,7 @@ class GRRHS_Gibbs:
         elif self.auto_calibrate_tau:
             target_dim = p if str(self.tau_target).strip().lower() == "coefficients" else len(groups_use)
             p0_use = float(self.p0) if self.p0 is not None else float(max(1, min(20, target_dim // 4)))
-            tau0_eff = GRRHS_NUTS.calibrate_tau0(p0=p0_use, D=target_dim, n=n, sigma_ref=float(self.sigma_reference))
+            tau0_eff = calibrate_tau0(p0=p0_use, D=target_dim, n=n, sigma_ref=float(self.sigma_reference))
         else:
             tau0_eff = 0.1
 
@@ -2518,9 +2100,9 @@ class GRRHS_CollapsedNUTS:
         p(theta | y)  proportional to  N(y; 0, X V(theta) X^T + sigma^2 I_n)
     then draws beta ~ p(beta | theta, y) via Woodbury Gibbs.
 
-    Dimension reduction vs GRRHS_NUTS
+    Dimension reduction vs primitive reference
     ----------------------------------
-    Mode                   GRRHS_NUTS    Collapsed
+    Mode                   Primitive     Collapsed
     Full (lambda active)    2p+G+2       p+G+2
     Profile (lam=1)         p+G+2        G+2       <- orders-of-magnitude smaller
 
@@ -2630,7 +2212,7 @@ class GRRHS_CollapsedNUTS:
         if lambda_reparam not in {"standard", "prior_log_affine"}:
             lambda_reparam = "prior_log_affine"
         # capture static helper as local reference (avoids self-capture inside JAX trace)
-        _lbeta = GRRHS_NUTS._log_beta_on_logit
+        _lbeta = _log_beta_on_logit
         _log_half_cauchy_on_log = GRRHS_CollapsedNUTS._half_cauchy_log_density_on_log
         logit_loc, logit_scale = self._beta_logit_moments(alpha_kappa, beta_kappa)
         logit_loc_jnp = jnp.asarray(logit_loc)
@@ -2771,7 +2353,7 @@ class GRRHS_CollapsedNUTS:
         elif self.auto_calibrate_tau:
             target_dim = p if str(self.tau_target).strip().lower() == "coefficients" else G
             p0_use = float(self.p0) if self.p0 is not None else float(max(1, min(20, target_dim // 4)))
-            tau0_eff = GRRHS_NUTS.calibrate_tau0(p0=p0_use, D=target_dim, n=n, sigma_ref=float(self.sigma_reference))
+            tau0_eff = calibrate_tau0(p0=p0_use, D=target_dim, n=n, sigma_ref=float(self.sigma_reference))
         else:
             tau0_eff = 0.1
 

@@ -14,10 +14,9 @@ def _load_grrhs_classes():
     from simulation_project.src.core.models.grrhs_nuts import (
         GRRHS_CollapsedNUTS,
         GRRHS_Gibbs_Staged,
-        GRRHS_NUTS,
     )
 
-    return GRRHS_CollapsedNUTS, GRRHS_Gibbs_Staged, GRRHS_NUTS
+    return GRRHS_CollapsedNUTS, GRRHS_Gibbs_Staged
 
 
 def _calibrate_tau0(*, p0: float, D: int, n: int, sigma_ref: float) -> float:
@@ -71,8 +70,10 @@ def _extract_retry_resume_payload(*, model: Any) -> dict[str, Any] | None:
     init_params = _clone_numeric_dict(getattr(model, "last_init_params_", None))
     if init_params:
         diag = getattr(model, "sampler_diagnostics_", {})
-        backend = "nuts"
-        if isinstance(diag, dict) and str(diag.get("backend", "")).strip() == "simcore_collapsed_nuts":
+        backend = "collapsed_profile"
+        if isinstance(diag, dict) and str(diag.get("backend", "")).strip() == "simcore_gibbs_staged":
+            backend = "gibbs_staged"
+        elif isinstance(diag, dict) and str(diag.get("backend", "")).strip() == "simcore_collapsed_nuts":
             backend = "collapsed_profile"
         return {"backend": backend, "init_params": init_params}
     chain_last_states = getattr(model, "chain_last_states_", None)
@@ -87,7 +88,7 @@ def _extract_retry_resume_payload(*, model: Any) -> dict[str, Any] | None:
     return None
 
 
-def _filter_nuts_init_params(
+def _filter_init_params(
     init_params: dict[str, np.ndarray] | None,
     *,
     task: str,
@@ -99,101 +100,11 @@ def _filter_nuts_init_params(
     gaussian = str(task).strip().lower() != "logistic"
     allowed = {"tau", "tau_raw"}
     if gaussian:
-        allowed.add("sigma")
-    if gaussian:
-        allowed.add("beta_raw")
+        allowed.update({"sigma", "beta_raw"})
     if bool(use_local_scale):
-        allowed.add("lambda")
-        allowed.add("log_lambda_raw")
-    if bool(shared_kappa):
-        allowed.add("logit_kappa_shared_raw")
-    else:
-        allowed.add("logit_kappa_raw")
+        allowed.update({"lambda", "log_lambda_raw"})
+    allowed.add("logit_kappa_shared_raw" if bool(shared_kappa) else "logit_kappa_raw")
     out = {str(k): np.asarray(v, dtype=float).copy() for k, v in init_params.items() if str(k) in allowed}
-    return out or None
-
-
-def _expand_manual_init_params_for_chains(
-    init_params: dict[str, np.ndarray] | None,
-    *,
-    num_chains: int,
-) -> dict[str, np.ndarray] | None:
-    if not isinstance(init_params, dict) or not init_params:
-        return None
-    chains = max(1, int(num_chains))
-    out: dict[str, np.ndarray] = {}
-    for key, value in init_params.items():
-        arr = np.asarray(value, dtype=float)
-        if chains <= 1:
-            out[str(key)] = arr.copy()
-            continue
-        if arr.ndim == 0:
-            out[str(key)] = np.repeat(arr.reshape(1), chains, axis=0)
-            continue
-        out[str(key)] = np.repeat(np.expand_dims(arr, axis=0), chains, axis=0)
-    return out or None
-
-
-def _jitter_init_params_across_chains(
-    init_params: dict[str, np.ndarray] | None,
-    *,
-    num_chains: int,
-    seed: int,
-    jitter_scale: float = 0.08,
-) -> dict[str, np.ndarray] | None:
-    if not isinstance(init_params, dict) or not init_params:
-        return None
-    chains = max(1, int(num_chains))
-    if chains <= 1:
-        return _clone_numeric_dict(init_params)
-    rng = np.random.default_rng(int(seed))
-    out: dict[str, np.ndarray] = {}
-    scale = float(max(jitter_scale, 0.0))
-    for key, value in init_params.items():
-        arr = np.asarray(value, dtype=float).copy()
-        if arr.ndim == 0 or arr.shape[0] != chains:
-            out[str(key)] = arr
-            continue
-        noise = rng.normal(loc=0.0, scale=scale, size=arr.shape)
-        if str(key) in {"sigma", "tau", "tau_raw", "lambda"}:
-            arr = np.maximum(arr * np.exp(0.35 * noise), 1e-6)
-        elif str(key) in {"log_lambda_raw", "logit_kappa_raw", "logit_kappa_shared_raw", "beta_raw"}:
-            arr = arr + noise
-        out[str(key)] = np.asarray(arr, dtype=float)
-    return out or None
-
-
-def _profile_chain_balanced_init_params(
-    init_params: dict[str, np.ndarray] | None,
-    *,
-    num_chains: int,
-    shared_kappa: bool,
-) -> dict[str, np.ndarray] | None:
-    if not isinstance(init_params, dict) or not init_params:
-        return None
-    chains = max(1, int(num_chains))
-    if chains != 2:
-        return _clone_numeric_dict(init_params)
-    out = _clone_numeric_dict(init_params) or {}
-    if "tau" in out:
-        tau = np.asarray(out["tau"], dtype=float)
-        if tau.ndim >= 1 and tau.shape[0] == 2:
-            tau[0] = np.maximum(tau[0] * 0.88, 1e-6)
-            tau[1] = np.maximum(tau[1] * 1.12, 1e-6)
-            out["tau"] = tau
-    key = "logit_kappa_shared_raw" if bool(shared_kappa) else "logit_kappa_raw"
-    if key in out:
-        raw = np.asarray(out[key], dtype=float)
-        if raw.ndim >= 1 and raw.shape[0] == 2:
-            center = raw.mean(axis=0)
-            spread = raw - center
-            out[key] = np.asarray(
-                np.stack([
-                    center + 0.60 * spread[0] - 0.08,
-                    center + 0.60 * spread[1] + 0.08,
-                ], axis=0),
-                dtype=float,
-            )
     return out or None
 
 
@@ -514,54 +425,6 @@ def _design_hardness_profile(
     }
 
 
-def _build_nuts(
-    *,
-    task: str,
-    seed: int,
-    p0: int,
-    alpha_kappa: float,
-    beta_kappa: Any,
-    use_local_scale: bool,
-    shared_kappa: bool,
-    auto_calibrate_tau: bool,
-    tau0: float | None,
-    tau_target: str,
-    sigma_reference: float,
-    sampler: SamplerConfig,
-    adapt_delta: float,
-    max_treedepth: int,
-    progress_bar: bool,
-    init_params: dict[str, np.ndarray] | None = None,
-    resume_no_warmup: bool = False,
-    ) -> Any:
-    _, _, GRRHS_NUTS = _load_grrhs_classes()
-    likelihood = "logistic" if str(task).lower() == "logistic" else "gaussian"
-    return GRRHS_NUTS(
-        alpha_kappa=float(alpha_kappa),
-        beta_kappa=beta_kappa,
-        eta=1.0,
-        p0=int(max(p0, 1)),
-        tau0=None if tau0 is None else float(tau0),
-        auto_calibrate_tau=bool(auto_calibrate_tau),
-        tau_target=str(tau_target),
-        sigma_reference=float(sigma_reference),
-        likelihood=likelihood,
-        use_local_scale=bool(use_local_scale),
-        shared_kappa=bool(shared_kappa),
-        num_warmup=int(sampler.warmup),
-        num_samples=int(sampler.post_warmup_draws),
-        num_chains=int(sampler.chains),
-        target_accept_prob=float(adapt_delta),
-        max_tree_depth=int(max_treedepth),
-        dense_mass=False,
-        chain_method="sequential",
-        progress_bar=bool(progress_bar),
-        seed=int(seed),
-        init_params=_clone_numeric_dict(init_params),
-        resume_no_warmup=bool(resume_no_warmup),
-    )
-
-
 def _build_gibbs_staged(
     *,
     seed: int,
@@ -588,7 +451,7 @@ def _build_gibbs_staged(
     grouped_tau_refresh_repeats: int | None = None,
     grouped_sigma_tau_block_repeats: int | None = None,
 ) -> Any:
-    _, GRRHS_Gibbs_Staged, _ = _load_grrhs_classes()
+    _, GRRHS_Gibbs_Staged = _load_grrhs_classes()
     warmup = max(40, int(sampler.warmup))
     draws = max(20, int(sampler.post_warmup_draws))
     budget_scale_use = 1.0 if budget_scale is None else float(max(0.05, min(float(budget_scale), 4.0)))
@@ -778,7 +641,7 @@ def _build_collapsed_profile(
     dense_mass: bool = False,
 ) -> Any:
     """Build GR-RHS-CaP: collapsed-and-profile GR-RHS for high-dimensional Gaussian runs."""
-    GRRHS_CollapsedNUTS, _, _ = _load_grrhs_classes()
+    GRRHS_CollapsedNUTS, _ = _load_grrhs_classes()
     return GRRHS_CollapsedNUTS(
         alpha_kappa=float(alpha_kappa),
         beta_kappa=beta_kappa,
@@ -885,13 +748,11 @@ def fit_gr_rhs(
             "grrhs_cap": "collapsed_profile",
             "gr-rhs-cap": "collapsed_profile",
             "collapsed": "collapsed_profile",
-            "collapsed_nuts": "collapsed_profile",
             "profile_collapsed": "collapsed_profile",
             "collapsed_profile": "collapsed_profile",
             "gibbs": "gibbs_staged",
             "staged_gibbs": "gibbs_staged",
             "gibbs_staged": "gibbs_staged",
-            "nuts": "nuts",
         }.get(backend_name, "gibbs_staged")
         if beta_kappa_group_specific and backend_name == "gibbs_staged":
             backend_name = "collapsed_profile"
@@ -936,33 +797,6 @@ def fit_gr_rhs(
                 kappa_reparameterization=str(collapsed_kappa_reparameterization),
             )
 
-        def _make_nuts(
-            seed_: int,
-            adapt_delta: float,
-            max_treedepth: int,
-            resume_payload: dict[str, Any] | None,
-        ):
-            kw = dict(common_kwargs)
-            kw["sigma_reference"] = pseudo_sigma
-            kw["seed"] = seed_
-            kw["adapt_delta"] = adapt_delta
-            kw["max_treedepth"] = max_treedepth
-            init_params = _resume_init_params(resume_payload)
-            warm_init = init_params
-            if warm_init is None:
-                warm_init = _expand_manual_init_params_for_chains(
-                    _clone_numeric_dict(ridge_init),
-                    num_chains=int(sampler.chains),
-                )
-            kw["init_params"] = _filter_nuts_init_params(
-                warm_init,
-                task=task,
-                use_local_scale=use_local_scale,
-                shared_kappa=shared_kappa,
-            )
-            kw["resume_no_warmup"] = bool(init_params)
-            return _build_nuts(**kw)
-
         def _make_gibbs(
             seed_: int,
             resume_payload: dict[str, Any] | None,
@@ -1004,31 +838,9 @@ def fit_gr_rhs(
             warm_init = init_params
             if warm_init is None:
                 base_init = collapsed_ridge_init if collapsed_ridge_init is not None else ridge_init
-                warm_init = _expand_manual_init_params_for_chains(
-                    _clone_numeric_dict(base_init),
-                    num_chains=int(sampler.chains),
-                )
-            filtered_warm_init = _filter_nuts_init_params(
-                warm_init,
-                task=task,
-                use_local_scale=use_local_scale,
-                shared_kappa=shared_kappa,
-            )
-            hard_profile = bool(design_profile.get("hard_design", False))
-            if (
-                resume_payload is None
-                and hard_profile
-                and int(sampler.chains) > 1
-            ):
-                if bool(use_local_scale):
-                    filtered_warm_init = _jitter_init_params_across_chains(
-                        filtered_warm_init,
-                        num_chains=int(sampler.chains),
-                        seed=int(seed_) + 1701,
-                        jitter_scale=0.0,
-                    )
+                warm_init = _clone_numeric_dict(base_init)
             warm_init = _collapsed_profile_init_params(
-                filtered_warm_init,
+                warm_init,
                 alpha_kappa=alpha_kappa,
                 beta_kappa=beta_kappa,
                 shared_kappa=shared_kappa,
@@ -1036,6 +848,7 @@ def fit_gr_rhs(
                 tau_parameterization="sigma_scaled",
                 lambda_parameterization="prior_log_affine",
             )
+            hard_profile = bool(design_profile.get("hard_design", False))
             dense_mass_use = bool(collapsed_dense_mass) if collapsed_dense_mass is not None else (
                 bool(design_profile.get("hard_design", False))
                 and str(task).strip().lower() != "logistic"
@@ -1133,15 +946,8 @@ def fit_gr_rhs(
 
         if backend_name == "gibbs_staged":
             model = _make_gibbs(seed, resume_payload=retry_resume_payload)
-        elif backend_name == "collapsed_profile":
-            model = _make_collapsed_profile(
-                seed,
-                float(sampler.adapt_delta),
-                int(sampler.max_treedepth),
-                resume_payload=retry_resume_payload,
-            )
         else:
-            model = _make_nuts(
+            model = _make_collapsed_profile(
                 seed,
                 float(sampler.adapt_delta),
                 int(sampler.max_treedepth),
@@ -1165,23 +971,15 @@ def fit_gr_rhs(
         diagnostics_seconds = time.perf_counter() - diagnostics_t0
         postprocess_seconds = time.perf_counter() - postprocess_t0
 
-        # Retry HMC/NUTS designs with stricter adaptation when divergences are high.
-        if backend_name in {"nuts", "collapsed_profile"}:
+        # Retry collapsed-profile designs with stricter adaptation when divergences are high.
+        if backend_name == "collapsed_profile":
             if np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
-                if backend_name == "collapsed_profile":
-                    strict = _make_collapsed_profile(
-                        seed + 999,
-                        float(sampler.strict_adapt_delta),
-                        int(sampler.strict_max_treedepth),
-                        resume_payload=resume_payload_out,
-                    )
-                else:
-                    strict = _make_nuts(
-                        seed + 999,
-                        float(sampler.strict_adapt_delta),
-                        int(sampler.strict_max_treedepth),
-                        resume_payload=resume_payload_out,
-                    )
+                strict = _make_collapsed_profile(
+                    seed + 999,
+                    float(sampler.strict_adapt_delta),
+                    int(sampler.strict_max_treedepth),
+                    resume_payload=resume_payload_out,
+                )
                 strict, runtime2_fit_only = timed_call(strict.fit, X, y, groups=groups_use)
                 postprocess_t0 = time.perf_counter()
                 resume_payload_out = _extract_retry_resume_payload(model=strict)

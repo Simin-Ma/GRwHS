@@ -7,11 +7,10 @@ from pathlib import Path
 
 from simulation_project.src.core.models.baselines import GroupedHorseshoePlus, RegularizedHorseshoeRegression
 from simulation_project.src.core.models.gigg_regression import GIGGRegression
-from simulation_project.src.core.models.grrhs_nuts import GRRHS_NUTS, _normalize_init_params, _should_use_median_init
+from simulation_project.src.core.models.grrhs_nuts import _normalize_init_params, _should_use_median_init
 
 
 def test_core_models_importable() -> None:
-    assert GRRHS_NUTS is not None
     assert GIGGRegression is not None
     assert RegularizedHorseshoeRegression is not None
     assert GroupedHorseshoePlus is not None
