@@ -223,7 +223,7 @@ def main() -> int:
     parser.add_argument("--min-beta-kappa", type=float, default=1.0)
     parser.add_argument("--adaptive-strategy", default="ridge_screening_moment")
     parser.add_argument("--multiplicity-correction", default="fwer")
-    parser.add_argument("--multiplicity-level", type=float, default=0.10)
+    parser.add_argument("--multiplicity-level", type=float, default=0.05)
     parser.add_argument("--multiplicity-min-active-groups", type=float, default=1.0)
     parser.add_argument("--mcem-rounds", type=int, default=1)
     parser.add_argument("--mcem-step-size", type=float, default=1.0)

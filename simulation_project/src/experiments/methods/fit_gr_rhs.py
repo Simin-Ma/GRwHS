@@ -207,18 +207,21 @@ def _safe_logit(value: float, *, eps: float = 1e-4) -> float:
 
 
 def _beta_logit_moments(alpha: float, beta: float) -> tuple[float, float]:
-    a = max(float(alpha), 1e-8)
-    b = max(float(beta), 1e-8)
-    mean = math.log(a) - math.log(b)
-    var = max(1.0 / a + 1.0 / b, 1e-8)
-    return float(mean), float(math.sqrt(var))
+    a = np.maximum(np.asarray(alpha, dtype=float), 1e-8)
+    b = np.maximum(np.asarray(beta, dtype=float), 1e-8)
+    mean = np.log(a) - np.log(b)
+    var = np.maximum(1.0 / a + 1.0 / b, 1e-8)
+    scale = np.sqrt(var)
+    if np.ndim(mean) == 0:
+        return float(mean), float(scale)
+    return mean, scale
 
 
 def _collapsed_profile_init_params(
     init_params: dict[str, np.ndarray] | None,
     *,
     alpha_kappa: float,
-    beta_kappa: float,
+    beta_kappa: Any,
     shared_kappa: bool,
     kappa_reparameterization: str,
     tau_parameterization: str = "sigma_scaled",
@@ -247,13 +250,15 @@ def _collapsed_profile_init_params(
     if mode != "prior_logit_affine":
         return out or None
     loc, scale = _beta_logit_moments(alpha_kappa, beta_kappa)
-    if not np.isfinite(scale) or scale <= 0.0:
+    loc_arr = np.asarray(loc, dtype=float)
+    scale_arr = np.asarray(scale, dtype=float)
+    if not np.all(np.isfinite(scale_arr)) or np.any(scale_arr <= 0.0):
         return out or None
     key = "logit_kappa_shared_raw" if bool(shared_kappa) else "logit_kappa_raw"
     if key not in out:
         return out or None
     raw = np.asarray(out[key], dtype=float)
-    out[key] = np.asarray((raw - float(loc)) / float(scale), dtype=np.float32)
+    out[key] = np.asarray((raw - loc_arr) / scale_arr, dtype=np.float32)
     return out or None
 
 
@@ -327,12 +332,19 @@ def _ridge_init_params(
         group_mass[gid] = float(np.linalg.norm(beta_ridge[idxs]))
     if np.max(group_mass) > 0.0:
         group_mass = group_mass / float(np.max(group_mass))
-    prior_mean_kappa = float(alpha_kappa / max(alpha_kappa + beta_kappa, 1e-8))
+    beta_arr = np.asarray(beta_kappa, dtype=float)
+    if beta_arr.ndim == 0 or beta_arr.size == 1:
+        prior_mean_kappa = float(alpha_kappa / max(alpha_kappa + float(beta_arr.reshape(-1)[0]), 1e-8))
+        prior_mean_kappa_arr = np.full(G, prior_mean_kappa, dtype=float)
+    else:
+        prior_mean_kappa_arr = np.asarray(alpha_kappa / np.maximum(alpha_kappa + beta_arr.reshape(-1), 1e-8), dtype=float)
+        prior_mean_kappa_arr = np.clip(prior_mean_kappa_arr, 1e-4, 1.0 - 1e-4)
+        prior_mean_kappa = float(np.mean(prior_mean_kappa_arr))
     kappa_guess = np.clip(0.05 + 0.8 * group_mass, 0.02, 0.98)
     if not np.any(np.isfinite(kappa_guess)):
-        kappa_guess = np.full(G, _clip_prob(prior_mean_kappa), dtype=float)
-    kappa_guess = np.where(np.isfinite(kappa_guess), kappa_guess, _clip_prob(prior_mean_kappa))
-    kappa_guess = 0.5 * kappa_guess + 0.5 * _clip_prob(prior_mean_kappa)
+        kappa_guess = np.asarray([_clip_prob(v) for v in prior_mean_kappa_arr], dtype=float)
+    kappa_guess = np.where(np.isfinite(kappa_guess), kappa_guess, np.asarray([_clip_prob(v) for v in prior_mean_kappa_arr], dtype=float))
+    kappa_guess = 0.5 * kappa_guess + 0.5 * np.asarray([_clip_prob(v) for v in prior_mean_kappa_arr], dtype=float)
     logit_kappa = np.asarray([_safe_logit(v) for v in kappa_guess], dtype=np.float32)
 
     out: dict[str, np.ndarray] = {
@@ -405,18 +417,25 @@ def _collapsed_profile_ridge_init_params(
         tau_guess = float(max(tau_guess, tau0_eff * max(1.0, math.sqrt(max(active_score, 1.0)))))
         tau_guess = float(max(tau0_eff * 0.85, tau_guess * 0.80, 1e-4))
 
-    prior_mean_kappa = float(alpha_kappa / max(alpha_kappa + beta_kappa, 1e-8))
+    beta_arr = np.asarray(beta_kappa, dtype=float)
+    if beta_arr.ndim == 0 or beta_arr.size == 1:
+        prior_mean_kappa = float(alpha_kappa / max(alpha_kappa + float(beta_arr.reshape(-1)[0]), 1e-8))
+        prior_mean_kappa_arr = np.full(G, prior_mean_kappa, dtype=float)
+    else:
+        prior_mean_kappa_arr = np.asarray(alpha_kappa / np.maximum(alpha_kappa + beta_arr.reshape(-1), 1e-8), dtype=float)
+        prior_mean_kappa_arr = np.clip(prior_mean_kappa_arr, 1e-4, 1.0 - 1e-4)
+        prior_mean_kappa = float(np.mean(prior_mean_kappa_arr))
     centered_share = group_share - float(np.mean(group_share))
     share_scale = float(max(np.std(group_share), 1e-6))
     kappa_guess = np.clip(
-        prior_mean_kappa + 0.30 * centered_share / share_scale,
+        prior_mean_kappa_arr + 0.30 * centered_share / share_scale,
         0.02,
         0.98,
     )
     if not np.any(np.isfinite(kappa_guess)):
-        kappa_guess = np.full(G, _clip_prob(prior_mean_kappa), dtype=float)
-    kappa_guess = np.where(np.isfinite(kappa_guess), kappa_guess, _clip_prob(prior_mean_kappa))
-    kappa_guess = 0.35 * kappa_guess + 0.65 * _clip_prob(prior_mean_kappa)
+        kappa_guess = np.asarray([_clip_prob(v) for v in prior_mean_kappa_arr], dtype=float)
+    kappa_guess = np.where(np.isfinite(kappa_guess), kappa_guess, np.asarray([_clip_prob(v) for v in prior_mean_kappa_arr], dtype=float))
+    kappa_guess = 0.35 * kappa_guess + 0.65 * np.asarray([_clip_prob(v) for v in prior_mean_kappa_arr], dtype=float)
     logit_kappa = np.asarray([_safe_logit(v) for v in kappa_guess], dtype=np.float32)
 
     key = "logit_kappa_shared_raw" if bool(shared_kappa) else "logit_kappa_raw"
@@ -501,7 +520,7 @@ def _build_nuts(
     seed: int,
     p0: int,
     alpha_kappa: float,
-    beta_kappa: float,
+    beta_kappa: Any,
     use_local_scale: bool,
     shared_kappa: bool,
     auto_calibrate_tau: bool,
@@ -519,7 +538,7 @@ def _build_nuts(
     likelihood = "logistic" if str(task).lower() == "logistic" else "gaussian"
     return GRRHS_NUTS(
         alpha_kappa=float(alpha_kappa),
-        beta_kappa=float(beta_kappa),
+        beta_kappa=beta_kappa,
         eta=1.0,
         p0=int(max(p0, 1)),
         tau0=None if tau0 is None else float(tau0),
@@ -548,7 +567,7 @@ def _build_gibbs_staged(
     seed: int,
     p0: int,
     alpha_kappa: float,
-    beta_kappa: float,
+    beta_kappa: Any,
     use_local_scale: bool,
     shared_kappa: bool,
     auto_calibrate_tau: bool,
@@ -655,7 +674,7 @@ def _build_gibbs_staged(
 
     return GRRHS_Gibbs_Staged(
         alpha_kappa=float(alpha_kappa),
-        beta_kappa=float(beta_kappa),
+        beta_kappa=beta_kappa,
         eta=1.0,
         p0=int(max(p0, 1)),
         tau0=None if tau0 is None else float(tau0),
@@ -738,7 +757,7 @@ def _build_collapsed_profile(
     seed: int,
     p0: int,
     alpha_kappa: float,
-    beta_kappa: float,
+    beta_kappa: Any,
     use_local_scale: bool,
     shared_kappa: bool,
     auto_calibrate_tau: bool,
@@ -762,7 +781,7 @@ def _build_collapsed_profile(
     GRRHS_CollapsedNUTS, _, _ = _load_grrhs_classes()
     return GRRHS_CollapsedNUTS(
         alpha_kappa=float(alpha_kappa),
-        beta_kappa=float(beta_kappa),
+        beta_kappa=beta_kappa,
         eta=1.0,
         p0=int(max(p0, 1)),
         tau0=None if tau0 is None else float(tau0),
@@ -800,7 +819,7 @@ def fit_gr_rhs(
     p0: int,
     sampler: SamplerConfig,
     alpha_kappa: float = 0.5,
-    beta_kappa: float = 1.0,
+    beta_kappa: Any = 1.0,
     use_local_scale: bool = True,
     shared_kappa: bool = False,
     auto_calibrate_tau: bool = True,
@@ -845,6 +864,8 @@ def fit_gr_rhs(
 
     try:
         total_fit_t0 = time.perf_counter()
+        beta_kappa_arr = np.asarray(beta_kappa, dtype=float)
+        beta_kappa_group_specific = bool(beta_kappa_arr.ndim > 0 and beta_kappa_arr.size > 1)
         pseudo_sigma = 1.0
         if str(task).lower() == "logistic":
             pseudo_sigma = logistic_pseudo_sigma(y)
@@ -872,6 +893,8 @@ def fit_gr_rhs(
             "gibbs_staged": "gibbs_staged",
             "nuts": "nuts",
         }.get(backend_name, "gibbs_staged")
+        if beta_kappa_group_specific and backend_name == "gibbs_staged":
+            backend_name = "collapsed_profile"
         if task_name == "logistic" and backend_name == "gibbs_staged":
             raise NotImplementedError(
                 "GR_RHS staged Gibbs is currently implemented for Gaussian likelihood only; "

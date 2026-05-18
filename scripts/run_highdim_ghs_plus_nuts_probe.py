@@ -5,6 +5,8 @@ import json
 import math
 import sys
 import time
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +19,17 @@ from simulation_project.src.experiments.evaluation import _evaluate_row
 from simulation_project.src.utils import FitResult, save_fit_result_artifacts
 from simulation_second.src.config import load_benchmark_config
 from simulation_second.src.dataset import generate_grouped_dataset
+
+
+@dataclass
+class GHSPlusCaseState:
+    cfg: object
+    ds: object
+    X_j: object
+    y_j: object
+    gid_j: object
+    model: object
+    chains: int
 
 
 def _standardize_train(X: np.ndarray, y: np.ndarray):
@@ -37,6 +50,25 @@ def _group_id(groups, p: int) -> np.ndarray:
     return gid
 
 
+def _ghs_plus_model(X, y, gid, *, x_scale, n_groups: int):
+    import jax.numpy as jnp
+    import numpyro
+    import numpyro.distributions as dist
+
+    p_use = X.shape[1]
+    sigma = numpyro.sample("sigma", dist.HalfCauchy(1.0))
+    tau = numpyro.sample("tau", dist.HalfCauchy(1.0))
+    group_lambda = numpyro.sample("group_scale", dist.HalfCauchy(jnp.ones(int(n_groups))).to_event(1))
+    local_lambda = numpyro.sample("lambda", dist.HalfCauchy(jnp.ones(p_use)).to_event(1))
+    beta_raw = numpyro.sample("beta_raw", dist.Normal(jnp.zeros(p_use), jnp.ones(p_use)).to_event(1))
+    beta_std = numpyro.deterministic(
+        "beta_std",
+        beta_raw * sigma * tau * group_lambda[gid] * local_lambda,
+    )
+    numpyro.deterministic("beta", beta_std / jnp.asarray(x_scale))
+    numpyro.sample("y", dist.Normal(X @ beta_std, sigma), obs=y)
+
+
 def _json_scalar(value):
     if value is None:
         return None
@@ -47,27 +79,42 @@ def _json_scalar(value):
     return val if math.isfinite(val) else None
 
 
-def run_case(
+def _json_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _parse_budget_spec(spec: str) -> dict[str, object]:
+    parts = [part.strip() for part in str(spec).split(":")]
+    if len(parts) < 2 or len(parts) > 5:
+        raise ValueError("budget spec must be warmup:draws[:max_tree_depth[:target_accept[:dense_mass]]]")
+    out: dict[str, object] = {
+        "warmup": int(parts[0]),
+        "draws": int(parts[1]),
+        "max_tree_depth": None,
+        "target_accept": None,
+        "dense_mass": None,
+    }
+    if len(parts) >= 3 and parts[2]:
+        out["max_tree_depth"] = int(parts[2])
+    if len(parts) >= 4 and parts[3]:
+        out["target_accept"] = float(parts[3])
+    if len(parts) >= 5 and parts[4]:
+        out["dense_mass"] = _json_bool(parts[4])
+    return out
+
+
+def _prepare_case_state(
     *,
     config: str,
     setting_id: str,
     replicate: int,
-    outdir: str,
-    warmup: int,
-    draws: int,
     chains: int,
-    max_tree_depth: int,
-    target_accept: float,
-    dense_mass: bool,
-    seed_offset: int = 0,
-    save_artifacts: bool = False,
-) -> dict[str, object]:
+) -> GHSPlusCaseState:
     import jax
     import jax.numpy as jnp
     import numpyro
-    import numpyro.distributions as dist
-    from numpyro.diagnostics import summary as numpyro_summary
-    from numpyro.infer import MCMC, NUTS
 
     numpyro.set_host_device_count(int(chains))
     try:
@@ -75,7 +122,6 @@ def run_case(
     except Exception:
         pass
 
-    total_t0 = time.perf_counter()
     cfg = load_benchmark_config(config)
     setting = cfg.setting_map()[str(setting_id)]
     ds = generate_grouped_dataset(
@@ -84,32 +130,45 @@ def run_case(
         master_seed=int(cfg.runner.seed),
         family_specs=cfg.families,
     )
-    Xs, ys, x_mean, x_scale, y_mean = _standardize_train(ds.X_train, ds.y_train)
+    Xs, ys, _, x_scale, _ = _standardize_train(ds.X_train, ds.y_train)
     group_id = _group_id(ds.groups, Xs.shape[1])
-    X_j = jnp.asarray(Xs)
-    y_j = jnp.asarray(ys)
-    gid_j = jnp.asarray(group_id)
-    n, p = Xs.shape
-    G = int(max(group_id) + 1)
+    model = partial(
+        _ghs_plus_model,
+        x_scale=jnp.asarray(x_scale),
+        n_groups=int(max(group_id) + 1),
+    )
+    return GHSPlusCaseState(
+        cfg=cfg,
+        ds=ds,
+        X_j=jnp.asarray(Xs),
+        y_j=jnp.asarray(ys),
+        gid_j=jnp.asarray(group_id),
+        model=model,
+        chains=int(chains),
+    )
 
-    def model(X, y, gid):
-        p_use = X.shape[1]
-        G_use = int(G)
-        sigma = numpyro.sample("sigma", dist.HalfCauchy(1.0))
-        tau = numpyro.sample("tau", dist.HalfCauchy(1.0))
-        group_lambda = numpyro.sample("group_scale", dist.HalfCauchy(jnp.ones(G_use)).to_event(1))
-        local_lambda = numpyro.sample("lambda", dist.HalfCauchy(jnp.ones(p_use)).to_event(1))
-        beta_raw = numpyro.sample("beta_raw", dist.Normal(jnp.zeros(p_use), jnp.ones(p_use)).to_event(1))
-        beta_std = numpyro.deterministic(
-            "beta_std",
-            beta_raw * sigma * tau * group_lambda[gid] * local_lambda,
-        )
-        numpyro.deterministic("beta", beta_std / jnp.asarray(x_scale))
-        mean = X @ beta_std
-        numpyro.sample("y", dist.Normal(mean, sigma), obs=y)
 
+def _run_prepared_budget(
+    state: GHSPlusCaseState,
+    *,
+    setting_id: str,
+    replicate: int,
+    outdir: str,
+    warmup: int,
+    draws: int,
+    max_tree_depth: int,
+    target_accept: float,
+    dense_mass: bool,
+    seed_offset: int,
+    save_artifacts: bool,
+) -> dict[str, object]:
+    import jax
+    from numpyro.diagnostics import summary as numpyro_summary
+    from numpyro.infer import MCMC, NUTS
+
+    total_t0 = time.perf_counter()
     kernel = NUTS(
-        model,
+        state.model,
         target_accept_prob=float(target_accept),
         max_tree_depth=int(max_tree_depth),
         dense_mass=bool(dense_mass),
@@ -118,18 +177,18 @@ def run_case(
         kernel,
         num_warmup=int(warmup),
         num_samples=int(draws),
-        num_chains=int(chains),
+        num_chains=int(state.chains),
         progress_bar=False,
     )
     fit_t0 = time.perf_counter()
-    run_seed = int(cfg.runner.seed) + int(replicate) + 10000 * int(seed_offset)
-    mcmc.run(jax.random.PRNGKey(run_seed), X_j, y_j, gid_j)
+    run_seed = int(state.cfg.runner.seed) + int(replicate) + 10000 * int(seed_offset)
+    mcmc.run(jax.random.PRNGKey(run_seed), state.X_j, state.y_j, state.gid_j)
     runtime_seconds = time.perf_counter() - fit_t0
     samples = mcmc.get_samples(group_by_chain=True)
     diag = numpyro_summary(samples, prob=0.9, group_by_chain=True)
 
-    rhat_vals = []
-    ess_vals = []
+    rhat_vals: list[float] = []
+    ess_vals: list[float] = []
     for name in ("beta", "tau", "group_scale", "lambda", "sigma"):
         item = diag.get(name)
         if item is None:
@@ -162,7 +221,7 @@ def run_case(
             "tracked_params": ["beta", "tau", "group_scale", "lambda", "sigma"],
             "warmup": int(warmup),
             "draws": int(draws),
-            "chains": int(chains),
+            "chains": int(state.chains),
             "dense_mass": bool(dense_mass),
             "max_tree_depth": int(max_tree_depth),
             "target_accept": float(target_accept),
@@ -178,11 +237,11 @@ def run_case(
     )
     metrics = _evaluate_row(
         result,
-        ds.beta,
-        X_train=ds.X_train,
-        y_train=ds.y_train,
-        X_test=ds.X_test,
-        y_test=ds.y_test,
+        state.ds.beta,
+        X_train=state.ds.X_train,
+        y_train=state.ds.y_train,
+        X_test=state.ds.X_test,
+        y_test=state.ds.y_test,
     )
     payload = {
         "replicate": int(replicate),
@@ -203,7 +262,7 @@ def run_case(
         "probe_budget": {
             "warmup": int(warmup),
             "draws": int(draws),
-            "chains": int(chains),
+            "chains": int(state.chains),
             "max_tree_depth": int(max_tree_depth),
             "target_accept": float(target_accept),
             "dense_mass": bool(dense_mass),
@@ -216,7 +275,7 @@ def run_case(
     stem = f"{setting_id}__GHS_plus_NUTS__r{int(replicate)}_w{int(warmup)}_d{int(draws)}{seed_part}"
     out_path = outdir_path / f"{stem}.json"
     if bool(save_artifacts):
-        artifacts = save_fit_result_artifacts(
+        payload["artifacts"] = save_fit_result_artifacts(
             outdir_path / stem,
             result=result,
             run_context={
@@ -225,20 +284,124 @@ def run_case(
                 "replicate": int(replicate),
                 "source_script": "run_highdim_ghs_plus_nuts_probe.py",
             },
-            coefficient_truth=ds.beta,
+            coefficient_truth=state.ds.beta,
             dataset_arrays={
-                "X_train": ds.X_train,
-                "y_train": ds.y_train,
-                "X_test": ds.X_test,
-                "y_test": ds.y_test,
-                "beta": ds.beta,
+                "X_train": state.ds.X_train,
+                "y_train": state.ds.y_train,
+                "X_test": state.ds.X_test,
+                "y_test": state.ds.y_test,
+                "beta": state.ds.beta,
             },
-            dataset_metadata={"groups": [[int(i) for i in g] for g in ds.groups]},
+            dataset_metadata={"groups": [[int(i) for i in g] for g in state.ds.groups]},
             save_dataset_bundle=True,
         )
-        payload["artifacts"] = artifacts
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"out_path": str(out_path), **payload}
+
+
+def run_case(
+    *,
+    config: str,
+    setting_id: str,
+    replicate: int,
+    outdir: str,
+    warmup: int,
+    draws: int,
+    chains: int,
+    max_tree_depth: int,
+    target_accept: float,
+    dense_mass: bool,
+    seed_offset: int = 0,
+    save_artifacts: bool = False,
+) -> dict[str, object]:
+    state = _prepare_case_state(
+        config=config,
+        setting_id=setting_id,
+        replicate=replicate,
+        chains=chains,
+    )
+    return _run_prepared_budget(
+        state,
+        setting_id=setting_id,
+        replicate=replicate,
+        outdir=outdir,
+        warmup=warmup,
+        draws=draws,
+        max_tree_depth=max_tree_depth,
+        target_accept=target_accept,
+        dense_mass=dense_mass,
+        seed_offset=seed_offset,
+        save_artifacts=save_artifacts,
+    )
+
+
+def run_scan(
+    *,
+    config: str,
+    setting_id: str,
+    replicate: int,
+    outdir: str,
+    chains: int,
+    seed_offset: int,
+    save_artifacts: bool,
+    budgets: list[dict[str, object]],
+) -> dict[str, object]:
+    scan_t0 = time.perf_counter()
+    state = _prepare_case_state(
+        config=config,
+        setting_id=setting_id,
+        replicate=replicate,
+        chains=chains,
+    )
+    results: list[dict[str, object]] = []
+    for idx, budget in enumerate(budgets, start=1):
+        payload = _run_prepared_budget(
+            state,
+            setting_id=setting_id,
+            replicate=replicate,
+            outdir=outdir,
+            warmup=int(budget["warmup"]),
+            draws=int(budget["draws"]),
+            max_tree_depth=int(budget["max_tree_depth"]),
+            target_accept=float(budget["target_accept"]),
+            dense_mass=bool(budget["dense_mass"]),
+            seed_offset=seed_offset,
+            save_artifacts=save_artifacts,
+        )
+        payload["scan_index"] = int(idx)
+        results.append(payload)
+
+    converged = [row for row in results if bool(row.get("converged"))]
+    best = None
+    if converged:
+        row = min(converged, key=lambda item: float(item.get("wall_seconds", float("inf"))))
+        best = {
+            "warmup": int(row["probe_budget"]["warmup"]),
+            "draws": int(row["probe_budget"]["draws"]),
+            "max_tree_depth": int(row["probe_budget"]["max_tree_depth"]),
+            "target_accept": float(row["probe_budget"]["target_accept"]),
+            "dense_mass": bool(row["probe_budget"]["dense_mass"]),
+            "wall_seconds": _json_scalar(row.get("wall_seconds")),
+            "rhat_max": _json_scalar(row.get("rhat_max")),
+            "ess_min": _json_scalar(row.get("ess_min")),
+            "out_path": str(row.get("out_path", "")),
+        }
+    summary = {
+        "setting_id": str(setting_id),
+        "replicate": int(replicate),
+        "method": "GHS_plus_NUTS",
+        "n_runs": int(len(results)),
+        "n_converged": int(len(converged)),
+        "scan_wall_seconds": float(time.perf_counter() - scan_t0),
+        "best": best,
+    }
+    summary_path = ROOT / str(outdir) / f"{setting_id}__GHS_plus_NUTS__r{int(replicate)}__scan_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps({"scan_summary": summary, "results": results}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return {"scan_summary_path": str(summary_path), "scan_summary": summary, "results": results}
 
 
 def main() -> int:
@@ -255,21 +418,49 @@ def main() -> int:
     parser.add_argument("--dense-mass", action="store_true")
     parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--save-artifacts", action="store_true")
-    args = parser.parse_args()
-    payload = run_case(
-        config=str(args.config),
-        setting_id=str(args.setting_id),
-        replicate=int(args.replicate),
-        outdir=str(args.outdir),
-        warmup=int(args.warmup),
-        draws=int(args.draws),
-        chains=int(args.chains),
-        max_tree_depth=int(args.max_tree_depth),
-        target_accept=float(args.target_accept),
-        dense_mass=bool(args.dense_mass),
-        seed_offset=int(args.seed_offset),
-        save_artifacts=bool(args.save_artifacts),
+    parser.add_argument(
+        "--budget",
+        action="append",
+        default=None,
+        help="Scan spec: warmup:draws[:max_tree_depth[:target_accept[:dense_mass]]]. Repeat for multiple budgets in one process.",
     )
+    args = parser.parse_args()
+    if args.budget:
+        budgets = []
+        for spec in args.budget:
+            item = _parse_budget_spec(spec)
+            if item["max_tree_depth"] is None:
+                item["max_tree_depth"] = int(args.max_tree_depth)
+            if item["target_accept"] is None:
+                item["target_accept"] = float(args.target_accept)
+            if item["dense_mass"] is None:
+                item["dense_mass"] = bool(args.dense_mass)
+            budgets.append(item)
+        payload = run_scan(
+            config=str(args.config),
+            setting_id=str(args.setting_id),
+            replicate=int(args.replicate),
+            outdir=str(args.outdir),
+            chains=int(args.chains),
+            seed_offset=int(args.seed_offset),
+            save_artifacts=bool(args.save_artifacts),
+            budgets=budgets,
+        )
+    else:
+        payload = run_case(
+            config=str(args.config),
+            setting_id=str(args.setting_id),
+            replicate=int(args.replicate),
+            outdir=str(args.outdir),
+            warmup=int(args.warmup),
+            draws=int(args.draws),
+            chains=int(args.chains),
+            max_tree_depth=int(args.max_tree_depth),
+            target_accept=float(args.target_accept),
+            dense_mass=bool(args.dense_mass),
+            seed_offset=int(args.seed_offset),
+            save_artifacts=bool(args.save_artifacts),
+        )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 

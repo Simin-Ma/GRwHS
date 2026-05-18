@@ -17,7 +17,7 @@ from ...utils import FitResult, SamplerConfig
 class AdaptiveBetaCalibration:
     strategy: str
     alpha_kappa: float
-    beta_kappa: float
+    beta_kappa: Any
     details: dict[str, Any]
 
 
@@ -243,7 +243,7 @@ def calibrate_grrhs_beta_ridge_screening_multiplicity(
     groups: Sequence[Sequence[int]],
     *,
     alpha_kappa: float = 0.5,
-    null_level: float = 0.10,
+    null_level: float = 0.05,
     n_permutations: int = 500,
     ridge_scale: str = "sqrt_np",
     correction: str = "fwer",
@@ -455,6 +455,98 @@ def calibrate_grrhs_beta_validation_opt(
             "min_beta_kappa": None if min_beta_kappa is None else float(min_beta_kappa),
             "max_beta_kappa": None if max_beta_kappa is None else float(max_beta_kappa),
             "candidates": candidates,
+        },
+    )
+
+
+def calibrate_grrhs_beta_group_specific_multiplicity(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    *,
+    alpha_kappa: float = 0.5,
+    null_level: float = 0.05,
+    n_permutations: int = 500,
+    ridge_scale: str = "sqrt_np",
+    correction: str = "fwer",
+    min_beta_kappa: float = 1.0,
+    max_beta_kappa: float = 16.0,
+    min_mean_ceiling: float | None = None,
+    max_mean_ceiling: float | None = None,
+    seed: int = 1,
+) -> AdaptiveBetaCalibration:
+    """Group-specific EB calibration via soft mean-ceiling mapping.
+
+    This keeps the GR-RHS ceiling hierarchy intact and only adapts the second
+    Beta shape parameter across groups using multiplicity-adjusted screening
+    evidence. The calibrated quantity is the prior mean ceiling level
+    m_g = E(kappa_g), with beta_g recovered by
+        beta_g = alpha_kappa * (1 - m_g) / m_g.
+    """
+    group_list = [list(map(int, g)) for g in groups]
+    X_arr = np.asarray(X, dtype=float)
+    y_arr = np.asarray(y, dtype=float).reshape(-1)
+    n, p = int(X_arr.shape[0]), int(X_arr.shape[1])
+    mode = str(ridge_scale).strip().lower()
+    if mode == "sqrt_np":
+        ridge = float(math.sqrt(max(n * p, 1)))
+    elif mode == "n":
+        ridge = float(max(n, 1))
+    elif mode == "p":
+        ridge = float(max(p, 1))
+    else:
+        ridge = float(max(float(ridge_scale), 1e-8))
+    G = max(len(group_list), 1)
+    observed = _ridge_group_scores(X_arr, y_arr, group_list, ridge=ridge)
+    perms = int(max(1, n_permutations))
+    perm_scores = np.zeros((perms, G), dtype=float)
+    rng = np.random.default_rng(int(seed))
+    for b in range(perms):
+        perm_scores[b, :] = _ridge_group_scores(X_arr, rng.permutation(y_arr), group_list, ridge=ridge)
+
+    corr = str(correction).strip().lower()
+    level = float(min(max(null_level, 1e-6), 0.5))
+    if corr in {"fwer", "max", "maxt"}:
+        max_null = np.nanmax(perm_scores, axis=1)
+        p_values = np.asarray([(1.0 + np.sum(max_null >= obs)) / (perms + 1.0) for obs in observed], dtype=float)
+        threshold_detail: Any = float(np.nanquantile(max_null, 1.0 - level))
+    elif corr in {"pointwise", "per_group", "raw"}:
+        p_values = np.asarray([(1.0 + np.sum(perm_scores[:, g] >= observed[g])) / (perms + 1.0) for g in range(G)], dtype=float)
+        threshold_detail = np.nanquantile(perm_scores, 1.0 - level, axis=0).tolist()
+    else:
+        raise ValueError(f"Group-specific multiplicity supports 'fwer' or 'pointwise', got: {correction}")
+
+    evidence = np.clip(1.0 - p_values / level, 0.0, 1.0)
+    if min_mean_ceiling is None:
+        min_mean_ceiling = float(alpha_kappa) / (float(alpha_kappa) + float(max_beta_kappa))
+    if max_mean_ceiling is None:
+        max_mean_ceiling = float(alpha_kappa) / (float(alpha_kappa) + float(min_beta_kappa))
+    m_min = float(min(max(float(min_mean_ceiling), 1e-6), 1.0 - 1e-6))
+    m_max = float(min(max(float(max_mean_ceiling), m_min + 1e-6), 1.0 - 1e-6))
+    mean_ceiling_g = m_min + (m_max - m_min) * evidence
+    beta_g = float(alpha_kappa) * (1.0 - mean_ceiling_g) / np.maximum(mean_ceiling_g, 1e-12)
+    beta_g = np.clip(beta_g, float(min_beta_kappa), float(max_beta_kappa))
+
+    return AdaptiveBetaCalibration(
+        strategy="group_specific_multiplicity",
+        alpha_kappa=float(alpha_kappa),
+        beta_kappa=np.asarray(beta_g, dtype=float),
+        details={
+            "correction": corr,
+            "null_level": float(level),
+            "n_permutations": int(perms),
+            "ridge_scale": str(ridge_scale),
+            "ridge": float(ridge),
+            "n_groups": int(G),
+            "threshold": threshold_detail,
+            "p_values": p_values.tolist(),
+            "evidence": evidence.tolist(),
+            "mean_ceiling_min": float(m_min),
+            "mean_ceiling_max": float(m_max),
+            "mean_ceiling_g": np.asarray(mean_ceiling_g, dtype=float).tolist(),
+            "min_beta_kappa": float(min_beta_kappa),
+            "max_beta_kappa": float(max_beta_kappa),
+            "beta_kappa_g": np.asarray(beta_g, dtype=float).tolist(),
         },
     )
 
@@ -677,7 +769,7 @@ def fit_gr_rhs_adaptive_beta(
     screening_permutations: int = 500,
     ridge_screening_scale: str = "sqrt_np",
     multiplicity_correction: str = "fwer",
-    multiplicity_level: float = 0.10,
+    multiplicity_level: float = 0.05,
     multiplicity_min_active_groups: float = 1.0,
     mcem_rounds: int = 1,
     mcem_step_size: float = 1.0,
@@ -713,6 +805,8 @@ def fit_gr_rhs_adaptive_beta(
     kwargs.pop("mcem_calibration_max_treedepth", None)
     kwargs.pop("min_beta_kappa", None)
     kwargs.pop("max_beta_kappa", None)
+    kwargs.pop("alpha_kappa", None)
+    kwargs.pop("beta_kappa", None)
     kwargs.setdefault("progress_bar", False)
 
     strategy = str(adaptive_strategy).strip().lower()
@@ -805,6 +899,22 @@ def fit_gr_rhs_adaptive_beta(
             min_beta_kappa=min_beta_kappa,
             max_beta_kappa=max_beta_kappa,
         )
+    elif strategy in {"group_specific_multiplicity", "group_specific_eb", "group_eb"}:
+        calib = calibrate_grrhs_beta_group_specific_multiplicity(
+            X,
+            y,
+            groups,
+            alpha_kappa=float(alpha_kappa),
+            null_level=float(multiplicity_level),
+            n_permutations=int(screening_permutations),
+            ridge_scale=str(ridge_screening_scale),
+            correction=str(multiplicity_correction),
+            min_beta_kappa=float(1.0 if min_beta_kappa is None else min_beta_kappa),
+            max_beta_kappa=float(16.0 if max_beta_kappa is None else max_beta_kappa),
+            min_mean_ceiling=None,
+            max_mean_ceiling=None,
+            seed=int(seed) + 809,
+        )
     else:
         raise ValueError(f"Unknown GR-RHS adaptive beta strategy: {adaptive_strategy}")
 
@@ -818,14 +928,16 @@ def fit_gr_rhs_adaptive_beta(
         sampler=sampler,
         method_name=str(method_name),
         alpha_kappa=float(calib.alpha_kappa),
-        beta_kappa=float(calib.beta_kappa),
+        beta_kappa=calib.beta_kappa,
         **kwargs,
     )
     diag = dict(final.diagnostics or {})
     diag["grrhs_adaptive_beta"] = {
         "strategy": str(calib.strategy),
         "alpha_kappa": float(calib.alpha_kappa),
-        "beta_kappa": float(calib.beta_kappa),
+        "beta_kappa": np.asarray(calib.beta_kappa, dtype=float).tolist()
+        if np.ndim(np.asarray(calib.beta_kappa, dtype=float)) > 0
+        else float(calib.beta_kappa),
         "details": calib.details,
         "total_adaptive_wrapper_seconds": float(time.perf_counter() - total_t0),
     }

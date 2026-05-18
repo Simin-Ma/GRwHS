@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from simulation_project.src.experiments.methods.fit_gr_rhs_adaptive import (
     calibrate_grrhs_beta_mcem,
+    calibrate_grrhs_beta_group_specific_multiplicity,
     calibrate_grrhs_beta_ridge_screening_multiplicity,
 )
 from simulation_project.src.utils import SamplerConfig
@@ -53,9 +54,9 @@ def main() -> int:
     parser.add_argument("--calibration-max-treedepth", type=int, default=7)
     parser.add_argument("--screening-permutations", type=int, default=120)
     parser.add_argument("--screening-null-quantile", type=float, default=0.95)
-    parser.add_argument("--strategy", default="mcem_beta", choices=["mcem_beta", "multiplicity"])
+    parser.add_argument("--strategy", default="mcem_beta", choices=["mcem_beta", "multiplicity", "group_specific"])
     parser.add_argument("--multiplicity-correction", default="fwer")
-    parser.add_argument("--multiplicity-level", type=float, default=0.10)
+    parser.add_argument("--multiplicity-level", type=float, default=0.05)
     parser.add_argument("--multiplicity-min-active-groups", type=float, default=1.0)
     parser.add_argument("--mcem-rounds", type=int, default=1)
     parser.add_argument("--mcem-step-size", type=float, default=0.7)
@@ -91,7 +92,23 @@ def main() -> int:
         "use_local_scale": False,
         "progress_bar": False,
     })
-    if str(args.strategy) == "multiplicity":
+    if str(args.strategy) == "group_specific":
+        calib = calibrate_grrhs_beta_group_specific_multiplicity(
+            ds.X_train,
+            ds.y_train,
+            ds.groups,
+            alpha_kappa=0.5,
+            null_level=float(args.multiplicity_level),
+            n_permutations=int(args.screening_permutations),
+            ridge_scale="sqrt_np",
+            correction=str(args.multiplicity_correction),
+            min_beta_kappa=1.0,
+            max_beta_kappa=16.0,
+            min_mean_ceiling=0.03,
+            max_mean_ceiling=0.33,
+            seed=int(cfg.runner.seed) + 15 + 10000 * int(args.seed_offset),
+        )
+    elif str(args.strategy) == "multiplicity":
         calib = calibrate_grrhs_beta_ridge_screening_multiplicity(
             ds.X_train,
             ds.y_train,
@@ -137,7 +154,7 @@ def main() -> int:
         "replicate": int(args.replicate),
         "strategy": str(calib.strategy),
         "alpha_kappa": float(calib.alpha_kappa),
-        "beta_kappa": float(calib.beta_kappa),
+        "beta_kappa": _json_clean(calib.beta_kappa),
         "details": _json_clean(calib.details),
         "wall_seconds": float(time.perf_counter() - t0),
     }

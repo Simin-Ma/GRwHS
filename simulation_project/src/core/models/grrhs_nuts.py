@@ -147,7 +147,7 @@ class GRRHS_NUTS:
     eta: float = 0.5
     s0: float = 1.0
     alpha_kappa: float = 2.0
-    beta_kappa: float = 8.0
+    beta_kappa: Any = 8.0
     likelihood: str = "gaussian"
     use_local_scale: bool = True
     shared_kappa: bool = False
@@ -204,7 +204,7 @@ class GRRHS_NUTS:
             raise ValueError("likelihood must be 'gaussian' or 'logistic'.")
         if self.tau0 is not None and float(self.tau0) <= 0.0:
             raise ValueError("tau0 must be positive when provided.")
-        if float(self.alpha_kappa) <= 0.0 or float(self.beta_kappa) <= 0.0:
+        if np.any(np.asarray(self.alpha_kappa, dtype=float) <= 0.0) or np.any(np.asarray(self.beta_kappa, dtype=float) <= 0.0):
             raise ValueError("alpha_kappa and beta_kappa must be positive.")
         if self.num_warmup < 0 or self.num_samples <= 0:
             raise ValueError("num_warmup must be >=0 and num_samples must be >0.")
@@ -234,12 +234,14 @@ class GRRHS_NUTS:
         return 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(scale) - 0.5 * (x / scale) ** 2 + log_x
 
     @staticmethod
-    def _log_beta_on_logit(logit_x: jnp.ndarray, alpha: float, beta: float) -> jnp.ndarray:
+    def _log_beta_on_logit(logit_x: jnp.ndarray, alpha: Any, beta: Any) -> jnp.ndarray:
         x = jnp.clip(jnp.asarray(sigmoid(logit_x)), _EPS, 1.0 - _EPS)
+        alpha_arr = jnp.asarray(alpha, dtype=x.dtype)
+        beta_arr = jnp.asarray(beta, dtype=x.dtype)
         return (
-            (alpha - 1.0) * jnp.log(x)
-            + (beta - 1.0) * jnp.log1p(-x)
-            - float(_betaln(alpha, beta))
+            (alpha_arr - 1.0) * jnp.log(x)
+            + (beta_arr - 1.0) * jnp.log1p(-x)
+            - _betaln(alpha_arr, beta_arr)
             + jnp.log(x)
             + jnp.log1p(-x)
         )
@@ -269,13 +271,14 @@ class GRRHS_NUTS:
         else:
             lam = numpyro.deterministic("lambda", jnp.ones((p,), dtype=X.dtype))
 
+        beta_kappa_arr = jnp.asarray(self.beta_kappa, dtype=X.dtype)
         if self.shared_kappa:
             logit_kappa_raw = numpyro.sample("logit_kappa_shared_raw", dist.Normal(0.0, 1.0))
             kappa_shared = sigmoid(logit_kappa_raw)
             kappa = numpyro.deterministic("kappa", jnp.full((G,), kappa_shared, dtype=X.dtype))
             numpyro.factor(
                 "prior_logit_kappa",
-                self._log_beta_on_logit(logit_kappa_raw, self.alpha_kappa, self.beta_kappa)
+                self._log_beta_on_logit(logit_kappa_raw, self.alpha_kappa, beta_kappa_arr)
                 - dist.Normal(0.0, 1.0).log_prob(logit_kappa_raw),
             )
         else:
@@ -287,7 +290,7 @@ class GRRHS_NUTS:
             numpyro.factor(
                 "prior_logit_kappa",
                 jnp.sum(
-                    self._log_beta_on_logit(logit_kappa, self.alpha_kappa, self.beta_kappa)
+                    self._log_beta_on_logit(logit_kappa, self.alpha_kappa, beta_kappa_arr)
                     - dist.Normal(0.0, 1.0).log_prob(logit_kappa)
                 ),
             )
@@ -2613,7 +2616,7 @@ class GRRHS_CollapsedNUTS:
         numpyro, dist, _, _, _ = _load_numpyro_runtime()
         s0 = float(self.s0)
         alpha_kappa = float(self.alpha_kappa)
-        beta_kappa = float(self.beta_kappa)
+        beta_kappa = np.asarray(self.beta_kappa, dtype=float)
         use_local = bool(self.use_local_scale)
         shared_kappa = bool(self.shared_kappa)
         kappa_reparam = str(self.kappa_reparameterization).strip().lower()
