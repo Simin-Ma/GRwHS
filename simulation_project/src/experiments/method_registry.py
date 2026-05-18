@@ -73,6 +73,53 @@ def _mean_within_abs_corr(X: np.ndarray, groups: list[list[int]]) -> float:
     return float(np.mean(arr)) if arr.size else float("nan")
 
 
+def _sampler_budget_dict(sampler: SamplerConfig) -> dict[str, int | float]:
+    return {
+        "chains": int(sampler.chains),
+        "warmup": int(sampler.warmup),
+        "post_warmup_draws": int(sampler.post_warmup_draws),
+        "adapt_delta": float(sampler.adapt_delta),
+        "max_treedepth": int(sampler.max_treedepth),
+        "strict_adapt_delta": float(sampler.strict_adapt_delta),
+        "strict_max_treedepth": int(sampler.strict_max_treedepth),
+        "max_divergence_ratio": float(sampler.max_divergence_ratio),
+        "rhat_threshold": float(sampler.rhat_threshold),
+        "ess_threshold": float(sampler.ess_threshold),
+    }
+
+
+def _attach_computational_protocol(
+    res: FitResult,
+    *,
+    method_family: str,
+    protocol: str,
+    sampler_backend: str,
+    posterior_target: str = "same_model_family",
+    sampler: SamplerConfig | None = None,
+    implementation: str | None = None,
+    notes: list[str] | None = None,
+    extra: dict[str, object] | None = None,
+) -> FitResult:
+    diag = dict(res.diagnostics or {})
+    protocol_diag: dict[str, object] = {
+        "method_family": str(method_family),
+        "protocol": str(protocol),
+        "sampler_backend": str(sampler_backend),
+        "posterior_target": str(posterior_target),
+    }
+    if implementation is not None:
+        protocol_diag["implementation"] = str(implementation)
+    if sampler is not None:
+        protocol_diag["sampler_budget"] = _sampler_budget_dict(sampler)
+    if notes:
+        protocol_diag["notes"] = [str(x) for x in notes]
+    if extra:
+        protocol_diag.update(dict(extra))
+    diag["computational_protocol"] = protocol_diag
+    res.diagnostics = diag
+    return res
+
+
 def build_default_method_registry() -> MethodRegistry:
     reg = MethodRegistry()
 
@@ -85,7 +132,7 @@ def build_default_method_registry() -> MethodRegistry:
     def _fit_rhs_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_rhs import fit_rhs
 
-        return fit_rhs(
+        res = fit_rhs(
             c.X,
             c.y,
             c.groups,
@@ -94,6 +141,15 @@ def build_default_method_registry() -> MethodRegistry:
             p0=c.p0,
             sampler=c.sampler,
             method_name=str(method_name),
+        )
+        return _attach_computational_protocol(
+            res,
+            method_family="RHS",
+            protocol="low_dim",
+            sampler_backend="stan_rstanarm_hs",
+            sampler=c.sampler,
+            implementation="joint_stan_hmc",
+            notes=["Baseline low-dimensional RHS computation uses the unified Stan/HMC implementation."],
         )
 
     def _rhs_highdim_exact_sampler(c: MethodContext) -> SamplerConfig:
@@ -118,23 +174,6 @@ def build_default_method_registry() -> MethodRegistry:
             rhat_threshold=float(c.sampler.rhat_threshold),
             ess_threshold=float(c.sampler.ess_threshold),
         )
-
-    def _gigg_highdim_exact_kwargs(c: MethodContext) -> dict:
-        kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
-        within_corr = _mean_within_abs_corr(np.asarray(c.X, dtype=float), c.groups)
-        kwargs["exact_highdim_fastpath"] = True
-        if np.isfinite(within_corr) and within_corr >= 0.75:
-            kwargs["highdim_continuation_rounds"] = max(int(kwargs.get("highdim_continuation_rounds", 0)), 280)
-            kwargs["highdim_continuation_warmup"] = max(int(kwargs.get("highdim_continuation_warmup", 0) or 0), 2)
-            kwargs["highdim_continuation_draws"] = max(int(kwargs.get("highdim_continuation_draws", 0) or 0), 5)
-            kwargs["highdim_diagnostic_interval"] = max(int(kwargs.get("highdim_diagnostic_interval", 0) or 0), 10)
-            kwargs["highdim_early_stop"] = True
-            kwargs["highdim_early_stop_min_rounds"] = max(int(kwargs.get("highdim_early_stop_min_rounds", 0) or 0), 120)
-            kwargs["highdim_early_stop_patience"] = max(int(kwargs.get("highdim_early_stop_patience", 0) or 0), 2)
-            kwargs["highdim_store_history"] = False
-            kwargs["highdim_stage_a_burnin"] = max(int(kwargs.get("highdim_stage_a_burnin", 0) or 0), 8)
-            kwargs["highdim_stage_a_draws"] = max(int(kwargs.get("highdim_stage_a_draws", 0) or 0), 8)
-        return kwargs
 
     def _ghs_highdim_light_sampler(c: MethodContext) -> SamplerConfig:
         return SamplerConfig(
@@ -172,6 +211,8 @@ def build_default_method_registry() -> MethodRegistry:
             progress_bar=False,
         )
         diag = dict(res.diagnostics or {})
+        diag["rhs_sampler_name"] = str(method_name)
+        diag["rhs_sampler_strategy"] = "high_dim"
         diag["rhs_highdim_route"] = "stan_exact"
         diag["rhs_highdim_sampler_budget"] = {
             "chains": int(sampler_use.chains),
@@ -183,13 +224,21 @@ def build_default_method_registry() -> MethodRegistry:
             "strict_max_treedepth": int(sampler_use.strict_max_treedepth),
         }
         res.diagnostics = diag
-        return res
+        return _attach_computational_protocol(
+            res,
+            method_family="RHS",
+            protocol="high_dim",
+            sampler_backend="stan_exact",
+            sampler=sampler_use,
+            implementation="dimension_tuned_stan_hmc",
+            notes=["High-dimensional RHS keeps the RHS model family but uses a strengthened HMC budget."],
+        )
 
     def _fit_rhs_highdim_gibbs(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_rhs_gibbs import fit_rhs_gibbs
 
         kwargs = dict(c.rhs_kwargs)
-        return fit_rhs_gibbs(
+        res = fit_rhs_gibbs(
             c.X,
             c.y,
             c.groups,
@@ -199,6 +248,15 @@ def build_default_method_registry() -> MethodRegistry:
             sampler=c.sampler,
             method_name=str(method_name),
             **kwargs,
+        )
+        return _attach_computational_protocol(
+            res,
+            method_family="RHS",
+            protocol="high_dim",
+            sampler_backend="rhs_gibbs_woodbury",
+            sampler=c.sampler,
+            implementation="woodbury_gibbs",
+            notes=["Explicit RHS_Gibbs route is a high-dimensional computation protocol for Gaussian RHS."],
         )
 
     def _grrhs_kwargs_for_strategy(c: MethodContext, *, high_dim: bool) -> dict:
@@ -223,7 +281,7 @@ def build_default_method_registry() -> MethodRegistry:
     def _fit_grrhs_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_gr_rhs import fit_gr_rhs
 
-        return fit_gr_rhs(
+        res = fit_gr_rhs(
             c.X,
             c.y,
             c.groups,
@@ -234,6 +292,22 @@ def build_default_method_registry() -> MethodRegistry:
             method_name=str(method_name),
             **_grrhs_kwargs_for_strategy(c, high_dim=False),
         )
+        diag = dict(res.diagnostics or {})
+        diag.setdefault("grrhs_sampler_name", str(method_name))
+        diag.setdefault("grrhs_sampler_strategy", "low_dim")
+        strat = dict(diag.get("sampling_strategy") or {})
+        strat.setdefault("backend", "gibbs_staged")
+        diag["sampling_strategy"] = strat
+        res.diagnostics = diag
+        return _attach_computational_protocol(
+            res,
+            method_family="GR_RHS",
+            protocol="low_dim",
+            sampler_backend="gibbs_staged",
+            sampler=c.sampler,
+            implementation="staged_gibbs",
+            notes=["Low-dimensional GR-RHS uses full staged Gibbs sampling with group-level shrinkage."],
+        )
 
     def _fit_grrhs_lowdim_with_beta(c: MethodContext, *, method_name: str, beta_kappa: float) -> FitResult:
         from .methods.fit_gr_rhs import fit_gr_rhs
@@ -241,7 +315,7 @@ def build_default_method_registry() -> MethodRegistry:
         kwargs = _grrhs_kwargs_for_strategy(c, high_dim=False)
         kwargs["alpha_kappa"] = 0.5
         kwargs["beta_kappa"] = float(beta_kappa)
-        return fit_gr_rhs(
+        res = fit_gr_rhs(
             c.X,
             c.y,
             c.groups,
@@ -252,11 +326,28 @@ def build_default_method_registry() -> MethodRegistry:
             method_name=str(method_name),
             **kwargs,
         )
+        diag = dict(res.diagnostics or {})
+        diag.setdefault("grrhs_sampler_name", str(method_name))
+        diag.setdefault("grrhs_sampler_strategy", "low_dim")
+        strat = dict(diag.get("sampling_strategy") or {})
+        strat.setdefault("backend", "gibbs_staged")
+        diag["sampling_strategy"] = strat
+        res.diagnostics = diag
+        return _attach_computational_protocol(
+            res,
+            method_family="GR_RHS",
+            protocol="low_dim",
+            sampler_backend="gibbs_staged",
+            sampler=c.sampler,
+            implementation="staged_gibbs",
+            notes=["Low-dimensional GR-RHS beta-kappa variant uses the same staged Gibbs protocol."],
+            extra={"beta_kappa": float(beta_kappa)},
+        )
 
     def _fit_grrhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_gr_rhs import fit_gr_rhs
 
-        return fit_gr_rhs(
+        res = fit_gr_rhs(
             c.X,
             c.y,
             c.groups,
@@ -266,6 +357,22 @@ def build_default_method_registry() -> MethodRegistry:
             sampler=c.sampler,
             method_name=str(method_name),
             **_grrhs_kwargs_for_strategy(c, high_dim=True),
+        )
+        diag = dict(res.diagnostics or {})
+        diag.setdefault("grrhs_sampler_name", str(method_name))
+        diag.setdefault("grrhs_sampler_strategy", "high_dim")
+        strat = dict(diag.get("sampling_strategy") or {})
+        strat.setdefault("backend", "collapsed_profile")
+        diag["sampling_strategy"] = strat
+        res.diagnostics = diag
+        return _attach_computational_protocol(
+            res,
+            method_family="GR_RHS",
+            protocol="high_dim",
+            sampler_backend="collapsed_profile",
+            sampler=c.sampler,
+            implementation="collapsed_group_hyperparameter_profile",
+            notes=["High-dimensional GR-RHS keeps the method family but collapses/profile-samples the grouped hyperparameter posterior."],
         )
 
     def _fit_grrhs_highdim_with_beta(c: MethodContext, *, method_name: str, beta_kappa: float) -> FitResult:
@@ -274,7 +381,7 @@ def build_default_method_registry() -> MethodRegistry:
         kwargs = _grrhs_kwargs_for_strategy(c, high_dim=True)
         kwargs["alpha_kappa"] = 0.5
         kwargs["beta_kappa"] = float(beta_kappa)
-        return fit_gr_rhs(
+        res = fit_gr_rhs(
             c.X,
             c.y,
             c.groups,
@@ -285,11 +392,28 @@ def build_default_method_registry() -> MethodRegistry:
             method_name=str(method_name),
             **kwargs,
         )
+        diag = dict(res.diagnostics or {})
+        diag.setdefault("grrhs_sampler_name", str(method_name))
+        diag.setdefault("grrhs_sampler_strategy", "high_dim")
+        strat = dict(diag.get("sampling_strategy") or {})
+        strat.setdefault("backend", "collapsed_profile")
+        diag["sampling_strategy"] = strat
+        res.diagnostics = diag
+        return _attach_computational_protocol(
+            res,
+            method_family="GR_RHS",
+            protocol="high_dim",
+            sampler_backend="collapsed_profile",
+            sampler=c.sampler,
+            implementation="collapsed_group_hyperparameter_profile",
+            notes=["High-dimensional GR-RHS beta-kappa variant uses the collapsed/profile computation protocol."],
+            extra={"beta_kappa": float(beta_kappa)},
+        )
 
     def _fit_grrhs_eb_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_gr_rhs_adaptive import fit_gr_rhs_adaptive_beta
 
-        return fit_gr_rhs_adaptive_beta(
+        res = fit_gr_rhs_adaptive_beta(
             c.X,
             c.y,
             c.groups,
@@ -299,6 +423,22 @@ def build_default_method_registry() -> MethodRegistry:
             sampler=c.sampler,
             method_name=str(method_name),
             **_grrhs_kwargs_for_strategy(c, high_dim=True),
+        )
+        diag = dict(res.diagnostics or {})
+        diag.setdefault("grrhs_sampler_name", str(method_name))
+        diag.setdefault("grrhs_sampler_strategy", "high_dim")
+        strat = dict(diag.get("sampling_strategy") or {})
+        strat.setdefault("backend", "collapsed_profile")
+        diag["sampling_strategy"] = strat
+        res.diagnostics = diag
+        return _attach_computational_protocol(
+            res,
+            method_family="GR_RHS",
+            protocol="high_dim",
+            sampler_backend="collapsed_profile",
+            sampler=c.sampler,
+            implementation="adaptive_beta_collapsed_profile",
+            notes=["Adaptive GR-RHS EB is reported as a high-dimensional GR-RHS computation protocol."],
         )
 
     def _fit_grrhs_adaptive(c: MethodContext, *, method_name: str) -> FitResult:
@@ -313,7 +453,7 @@ def build_default_method_registry() -> MethodRegistry:
         kwargs["multiplicity_correction"] = "fwer"
         kwargs["multiplicity_level"] = 0.05
         kwargs["screening_permutations"] = 120 if str(c.rhs_sampler_strategy).strip().lower() == "high_dim" else 200
-        return fit_gr_rhs_adaptive_beta(
+        res = fit_gr_rhs_adaptive_beta(
             c.X,
             c.y,
             c.groups,
@@ -324,6 +464,24 @@ def build_default_method_registry() -> MethodRegistry:
             method_name=str(method_name),
             **kwargs,
         )
+        protocol = "high_dim" if str(c.rhs_sampler_strategy).strip().lower() == "high_dim" else "low_dim"
+        backend = "collapsed_profile" if protocol == "high_dim" else "gibbs_staged"
+        diag = dict(res.diagnostics or {})
+        diag.setdefault("grrhs_sampler_name", str(method_name))
+        diag.setdefault("grrhs_sampler_strategy", protocol)
+        strat = dict(diag.get("sampling_strategy") or {})
+        strat.setdefault("backend", backend)
+        diag["sampling_strategy"] = strat
+        res.diagnostics = diag
+        return _attach_computational_protocol(
+            res,
+            method_family="GR_RHS",
+            protocol=protocol,
+            sampler_backend=backend,
+            sampler=c.sampler,
+            implementation="adaptive_beta_group_specific_multiplicity",
+            notes=["Adaptive GR-RHS shares the selected dimensional computation protocol."],
+        )
 
     def _fit_gigg_mmle_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_gigg import fit_gigg_mmle
@@ -331,7 +489,7 @@ def build_default_method_registry() -> MethodRegistry:
         kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
         kwargs["exact_highdim_fastpath"] = False
         kwargs.setdefault("progress_bar", False)
-        return fit_gigg_mmle(
+        res = fit_gigg_mmle(
             c.X,
             c.y,
             c.groups,
@@ -341,14 +499,24 @@ def build_default_method_registry() -> MethodRegistry:
             p0=c.p0,
             method_label=str(method_name),
             **kwargs,
+        )
+        return _attach_computational_protocol(
+            res,
+            method_family="GIGG_MMLE",
+            protocol="low_dim",
+            sampler_backend="mmle_direct",
+            sampler=c.sampler,
+            implementation="paper_aligned_gibbs_mmle",
+            notes=["Low-dimensional GIGG-MMLE uses the direct paper-aligned MMLE Gibbs route."],
         )
 
     def _fit_gigg_mmle_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_gigg import fit_gigg_mmle
 
-        kwargs = _gigg_highdim_exact_kwargs(c)
+        kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
+        kwargs["exact_highdim_fastpath"] = True
         kwargs.setdefault("progress_bar", False)
-        return fit_gigg_mmle(
+        res = fit_gigg_mmle(
             c.X,
             c.y,
             c.groups,
@@ -359,11 +527,21 @@ def build_default_method_registry() -> MethodRegistry:
             method_label=str(method_name),
             **kwargs,
         )
+        return _attach_computational_protocol(
+            res,
+            method_family="GIGG_MMLE",
+            protocol="high_dim",
+            sampler_backend="mmle_btrick",
+            sampler=c.sampler,
+            implementation="single_mmle_gibbs_with_bhattacharya_beta_update",
+            notes=["High-dimensional GIGG-MMLE follows the original/official MMLE Gibbs route and uses the Bhattacharya Gaussian block trick for beta updates."],
+            extra={"exact_highdim_fastpath": True},
+        )
 
     def _fit_ghs_plus_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_ghs_plus import fit_ghs_plus
 
-        return fit_ghs_plus(
+        res = fit_ghs_plus(
             c.X,
             c.y,
             c.groups,
@@ -373,6 +551,15 @@ def build_default_method_registry() -> MethodRegistry:
             sampler=c.sampler,
             progress_bar=False,
             use_process_pool=True,
+        )
+        return _attach_computational_protocol(
+            res,
+            method_family="GHS_plus",
+            protocol="low_dim",
+            sampler_backend="gaussian_gibbs",
+            sampler=c.sampler,
+            implementation="paper_style_hbghs_gibbs",
+            notes=["Low-dimensional GHS+ uses the Xu et al. HBGHS Gaussian Gibbs protocol."],
         )
 
     def _fit_ghs_plus_highdim(c: MethodContext, *, method_name: str) -> FitResult:
@@ -410,7 +597,16 @@ def build_default_method_registry() -> MethodRegistry:
             "ess_threshold": float(sampler_use.ess_threshold),
         }
         res.diagnostics = diag
-        return res
+        return _attach_computational_protocol(
+            res,
+            method_family="GHS_plus",
+            protocol="high_dim",
+            sampler_backend="gibbs_light_exact",
+            sampler=sampler_use,
+            implementation="light_budget_hbghs_gibbs",
+            notes=["High-dimensional GHS+ keeps the HBGHS model family but uses a light exact Gibbs budget."],
+            extra={"iter_mult": int(iter_mult), "iter_floor": int(iter_floor), "iter_cap": int(iter_cap)},
+        )
 
     reg.register(
         "GR_RHS",
@@ -482,11 +678,7 @@ def build_default_method_registry() -> MethodRegistry:
     )
     reg.register(
         "GIGG_MMLE",
-        lambda c: (
-            _fit_gigg_mmle_highdim(c, method_name="GIGG_MMLE")
-            if str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
-            else _fit_gigg_mmle_lowdim(c, method_name="GIGG_MMLE")
-        ),
+        lambda c: _fit_gigg_mmle_highdim(c, method_name="GIGG_MMLE"),
     )
     reg.register(
         "GIGG_MMLE_LowDim",

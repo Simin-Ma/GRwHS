@@ -305,6 +305,34 @@ def test_grrhs_auto_alias_routes_to_highdim_backend_when_requested() -> None:
     assert diag.get("grrhs_sampler_name") == "GR_RHS"
     assert diag.get("grrhs_sampler_strategy") == "high_dim"
     assert strat.get("backend") == "collapsed_profile"
+    protocol = dict(diag.get("computational_protocol") or {})
+    assert protocol.get("method_family") == "GR_RHS"
+    assert protocol.get("protocol") == "high_dim"
+    assert protocol.get("sampler_backend") == "collapsed_profile"
+    assert protocol.get("posterior_target") == "same_model_family"
+
+
+def test_grrhs_lowdim_explicit_name_records_unified_computational_protocol() -> None:
+    X, y, groups, _beta_true = _tiny_gaussian_problem(seed=36)
+    sampler = SamplerConfig(chains=1, warmup=10, post_warmup_draws=10, ess_threshold=1.0)
+    out = _fit_all_methods(
+        X,
+        y,
+        groups,
+        task="gaussian",
+        seed=136,
+        p0=2,
+        sampler=sampler,
+        methods=["GR_RHS_LowDim"],
+        enforce_bayes_convergence=False,
+        rhs_sampler_strategy="low_dim",
+    )
+    diag = dict(out["GR_RHS_LowDim"].diagnostics or {})
+    protocol = dict(diag.get("computational_protocol") or {})
+    assert protocol.get("method_family") == "GR_RHS"
+    assert protocol.get("protocol") == "low_dim"
+    assert protocol.get("sampler_backend") == "gibbs_staged"
+    assert isinstance(protocol.get("sampler_budget"), dict)
 
 
 def test_grrhs_package_defaults_distinguish_low_vs_high_dimension_suites() -> None:

@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 from jax.nn import sigmoid
+from jax.scipy.special import gammaln
 import numpy as np
 from numpy.random import Generator, default_rng
 
@@ -22,10 +23,10 @@ from simulation_project.src.core.inference.woodbury import (
 _EPS = 1e-12
 
 
-def _betaln(alpha: float, beta: float) -> float:
-    a = float(alpha)
-    b = float(beta)
-    return float(math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b))
+def _betaln(alpha: Any, beta: Any) -> Any:
+    a = jnp.asarray(alpha)
+    b = jnp.asarray(beta, dtype=a.dtype)
+    return gammaln(a) + gammaln(b) - gammaln(a + b)
 
 
 def _load_numpyro_runtime():

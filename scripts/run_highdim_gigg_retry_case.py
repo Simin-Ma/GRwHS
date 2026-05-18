@@ -91,19 +91,6 @@ def run_case(
     gigg_kwargs.update(
         {
             "exact_highdim_fastpath": True,
-            "highdim_continuation_rounds": int(rounds),
-            "highdim_continuation_warmup": 2,
-            "highdim_continuation_draws": int(draws_per_round),
-            "highdim_stage_a_burnin": max(8, int(gigg_kwargs.get("highdim_stage_a_burnin", 8) or 8)),
-            "highdim_stage_a_draws": max(8, int(gigg_kwargs.get("highdim_stage_a_draws", 8) or 8)),
-            "highdim_stage_a_reference_mmle": True,
-            "highdim_select_best_round": True,
-            "highdim_diagnostic_interval": 10,
-            "highdim_early_stop": True,
-            "highdim_early_stop_min_rounds": 120,
-            "highdim_early_stop_patience": 2,
-            "highdim_store_history": False,
-            "highdim_chain_workers": int(max(1, chain_workers)),
             "progress_bar": False,
         }
     )

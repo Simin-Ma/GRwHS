@@ -55,7 +55,6 @@ def _param_table(payload: dict[str, Any]) -> dict[str, dict[str, float]]:
     candidates = [
         diag.get("convergence_detail"),
         diag.get("param_diagnostics"),
-        _dig(diag, "staged_runtime", "stage_b_continuation", "convergence_detail"),
     ]
     for cand in candidates:
         if not isinstance(cand, dict):

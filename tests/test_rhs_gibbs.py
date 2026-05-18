@@ -230,7 +230,13 @@ def test_rhs_auto_alias_routes_to_highdim_sampler_when_requested() -> None:
     assert res.method == "RHS"
     assert diag.get("rhs_sampler_name") == "RHS"
     assert diag.get("rhs_sampler_strategy") == "high_dim"
-    assert sampler_diag.get("backend") == "rhs_gibbs_woodbury"
+    assert diag.get("rhs_highdim_route") == "stan_exact"
+    protocol = dict(diag.get("computational_protocol") or {})
+    assert protocol.get("method_family") == "RHS"
+    assert protocol.get("protocol") == "high_dim"
+    assert protocol.get("sampler_backend") == "stan_exact"
+    assert protocol.get("posterior_target") == "same_model_family"
+    assert isinstance(protocol.get("sampler_budget"), dict)
 
 
 def test_rhs_package_strategy_helper_distinguishes_low_vs_high_dimension_suites() -> None:
@@ -238,12 +244,63 @@ def test_rhs_package_strategy_helper_distinguishes_low_vs_high_dimension_suites(
     assert _rhs_sampler_strategy_for_package("Simulation_highdimension") == "high_dim"
 
 
-def test_rhs_gibbs_method_name_helpers_and_resolution() -> None:
-    assert _resolve_method_list(["RHS_Gibbs"]) == ["RHS_Gibbs"]
-    assert _resolve_method_list(["RHS", "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs"]) == ["RHS", "RHS_LowDim", "RHS_HighDim", "RHS_Gibbs"]
-    assert method_display_name("RHS_LowDim") == "RHS-LowDim"
-    assert method_display_name("RHS_HighDim") == "RHS-HighDim"
-    assert method_display_name("RHS_Gibbs") == "RHS-Gibbs"
-    assert method_result_label("RHS_LowDim") == "RHS-LowDim [stan_rstanarm_hs]"
-    assert method_result_label("RHS_HighDim") == "RHS-HighDim [woodbury_slice]"
-    assert method_result_label("RHS_Gibbs") == "RHS-Gibbs [woodbury_slice]"
+def test_method_registry_records_unified_protocol_for_gigg_and_ghs_monkeypatched(monkeypatch) -> None:
+    from simulation_project.src.experiments import method_registry as registry_mod
+    from simulation_project.src.utils import FitResult
+
+    X, y, groups, _beta_true = _tiny_gaussian_problem(seed=19)
+    sampler = SamplerConfig(chains=1, warmup=5, post_warmup_draws=5, ess_threshold=1.0)
+
+    def _fake_fit(*args, method_label: str = "GIGG_MMLE", **kwargs) -> FitResult:
+        return FitResult(
+            method=str(method_label),
+            status="ok",
+            beta_mean=np.zeros(X.shape[1]),
+            beta_draws=np.zeros((1, 5, X.shape[1])),
+            kappa_draws=None,
+            group_scale_draws=None,
+            runtime_seconds=0.0,
+            rhat_max=1.0,
+            bulk_ess_min=10.0,
+            divergence_ratio=0.0,
+            converged=True,
+            diagnostics={},
+        )
+
+    monkeypatch.setattr(
+        "simulation_project.src.experiments.methods.fit_gigg.fit_gigg_mmle",
+        _fake_fit,
+    )
+    import importlib
+
+    ghs_module = importlib.import_module("simulation_project.src.experiments.methods.fit_ghs_plus")
+    monkeypatch.setattr(ghs_module, "fit_ghs_plus", lambda *args, **kwargs: _fake_fit(method_label="GHS_plus"))
+
+    reg = registry_mod.build_default_method_registry()
+    ctx = registry_mod.MethodContext(
+        X=X,
+        y=y,
+        groups=groups,
+        task="gaussian",
+        seed=19,
+        p0=5,
+        grrhs_p0=5,
+        n=X.shape[0],
+        sampler=sampler,
+        rhs_sampler_strategy="high_dim",
+        rhs_kwargs={},
+        grrhs_kwargs={},
+        gigg_mmle_kwargs={},
+        gigg_fixed_kwargs={},
+    )
+
+    gigg = reg.run("GIGG_MMLE", ctx)
+    ghs = reg.run("GHS_plus", ctx)
+    gigg_protocol = dict((gigg.diagnostics or {}).get("computational_protocol") or {})
+    ghs_protocol = dict((ghs.diagnostics or {}).get("computational_protocol") or {})
+    assert gigg_protocol.get("method_family") == "GIGG_MMLE"
+    assert gigg_protocol.get("protocol") == "high_dim"
+    assert gigg_protocol.get("sampler_backend") == "mmle_btrick"
+    assert ghs_protocol.get("method_family") == "GHS_plus"
+    assert ghs_protocol.get("protocol") == "high_dim"
+    assert ghs_protocol.get("sampler_backend") == "gibbs_light_exact"

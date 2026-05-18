@@ -129,25 +129,12 @@ def run_case(
             )
         if method_name == "GIGG_MMLE":
             from simulation_project.src.experiments.methods.fit_gigg import fit_gigg_mmle
-            from simulation_project.src.experiments.method_registry import _mean_within_abs_corr
 
             gigg_kwargs_raw = dict(cfg.methods.gigg_config)
             for key in ("allow_budget_retry", "extra_retry", "retry_cap"):
                 gigg_kwargs_raw.pop(key, None)
             gigg_kwargs = dict(gigg_kwargs_raw)
-            within_corr = _mean_within_abs_corr(ds.X_train, ds.groups)
             gigg_kwargs["exact_highdim_fastpath"] = True
-            if math.isfinite(within_corr) and within_corr >= 0.75:
-                gigg_kwargs["highdim_continuation_rounds"] = max(int(gigg_kwargs.get("highdim_continuation_rounds", 0)), 280)
-                gigg_kwargs["highdim_continuation_warmup"] = max(int(gigg_kwargs.get("highdim_continuation_warmup", 0) or 0), 2)
-                gigg_kwargs["highdim_continuation_draws"] = max(int(gigg_kwargs.get("highdim_continuation_draws", 0) or 0), 5)
-                gigg_kwargs["highdim_stage_a_burnin"] = max(int(gigg_kwargs.get("highdim_stage_a_burnin", 0) or 0), 8)
-                gigg_kwargs["highdim_stage_a_draws"] = max(int(gigg_kwargs.get("highdim_stage_a_draws", 0) or 0), 8)
-                gigg_kwargs["highdim_diagnostic_interval"] = max(int(gigg_kwargs.get("highdim_diagnostic_interval", 0) or 0), 10)
-                gigg_kwargs["highdim_early_stop"] = True
-                gigg_kwargs["highdim_early_stop_min_rounds"] = max(int(gigg_kwargs.get("highdim_early_stop_min_rounds", 0) or 0), 120)
-                gigg_kwargs["highdim_early_stop_patience"] = max(int(gigg_kwargs.get("highdim_early_stop_patience", 0) or 0), 2)
-                gigg_kwargs["highdim_store_history"] = False
             gigg_kwargs["progress_bar"] = False
             sampler_base = _sampler_for_bayesian_default(
                 sampler,

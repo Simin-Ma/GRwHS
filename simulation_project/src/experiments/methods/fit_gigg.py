@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Sequence
-import traceback
 
 import numpy as np
 
@@ -82,19 +80,6 @@ def _resolve_exact_highdim_gigg_toggles(
 def _is_highdim_case(X: np.ndarray) -> bool:
     n, p = map(int, X.shape)
     return bool(p > n and p >= 150)
-
-
-def _highdim_mmle_stage_a_iters(gigg_burnin: int, gigg_draws: int) -> tuple[int, int]:
-    burnin = int(min(gigg_burnin, max(40, min(120, gigg_burnin // 4 if gigg_burnin > 0 else 40))))
-    draws = int(min(gigg_draws, max(40, min(120, gigg_draws // 4 if gigg_draws > 0 else 40))))
-    return max(10, burnin), max(10, draws)
-
-
-def _highdim_stage_b_schedule(gigg_burnin: int, gigg_draws: int) -> tuple[int, int]:
-    total = int(max(20, gigg_burnin + gigg_draws))
-    burnin = int(min(max(50, gigg_burnin // 12 if gigg_burnin > 0 else 50), max(50, total // 8)))
-    draws = int(max(20, total - burnin))
-    return burnin, draws
 
 
 def _run_gigg_model(
@@ -250,278 +235,6 @@ def _extract_draw_diag(
     )
 
 
-def _run_highdim_stage_b_continuation(
-    *,
-    X: np.ndarray,
-    y: np.ndarray,
-    groups_use: Sequence[Sequence[int]],
-    a_hat: np.ndarray,
-    b_hat_arr: np.ndarray,
-    toggles: dict[str, object],
-    init_strategy: str,
-    init_ridge: float,
-    init_scale_blend: float,
-    randomize_group_order: bool,
-    lambda_vectorized_update: bool,
-    extra_beta_refresh_prob: float,
-    lambda_constraint_mode: str,
-    q_constraint_mode: str,
-    progress_bar: bool,
-    seed: int,
-    num_chains: int,
-    rounds: int,
-    warmup: int,
-    draws: int,
-    beta_seed: np.ndarray | None,
-    lambda_sq_seed: np.ndarray | None,
-    gamma_sq_seed: np.ndarray | None,
-    tau_sq_seed: float,
-    sigma_sq_seed: float,
-    select_best_round: bool,
-    diagnostic_interval: int = 1,
-    early_stop: bool = False,
-    early_stop_min_rounds: int = 80,
-    early_stop_patience: int = 2,
-    rhat_threshold: float = 1.01,
-    ess_threshold: float = 400.0,
-    store_history: bool = True,
-    chain_workers: int = 1,
-) -> tuple[np.ndarray, float, dict[str, Any]]:
-    chains = int(max(1, num_chains))
-    rounds_use = int(max(1, rounds))
-    warmup_use = int(max(1, warmup))
-    draws_use = int(max(1, draws))
-    payloads: list[dict[str, np.ndarray] | None] = []
-    rng = np.random.default_rng(int(seed) + 9000)
-    p = int(X.shape[1])
-    g = int(len(groups_use))
-
-    beta_base = None if beta_seed is None else np.asarray(beta_seed, dtype=float).reshape(-1)
-    lambda_base = None if lambda_sq_seed is None else np.asarray(lambda_sq_seed, dtype=float).reshape(-1)
-    gamma_base = None if gamma_sq_seed is None else np.asarray(gamma_sq_seed, dtype=float).reshape(-1)
-
-    for chain_idx in range(chains):
-        beta_init = None if beta_base is None else np.asarray(beta_base, dtype=float).reshape(-1)
-        lambda_init = None if lambda_base is None else np.asarray(lambda_base, dtype=float).reshape(-1)
-        gamma_init = None if gamma_base is None else np.asarray(gamma_base, dtype=float).reshape(-1)
-        payloads.append(
-            {
-                "beta_inits": (
-                    None
-                    if beta_init is None
-                    else beta_init + rng.normal(0.0, 0.005, size=p)
-                ),
-                "lambda_sq_inits": (
-                    None
-                    if lambda_init is None
-                    else np.clip(lambda_init * np.exp(rng.normal(0.0, 0.01, size=p)), 1e-8, 1e3)
-                ),
-                "gamma_sq_inits": (
-                    None
-                    if gamma_init is None
-                    else np.clip(gamma_init * np.exp(rng.normal(0.0, 0.01, size=g)), 1e-8, 1e3)
-                ),
-            }
-        )
-
-    chain_beta_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
-    chain_gamma2_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
-    chain_lambda_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
-    chain_tau_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
-    chain_sigma_rounds: list[list[np.ndarray]] = [[] for _ in range(chains)]
-    history: list[dict[str, Any]] = []
-    total_runtime = 0.0
-    best_round = 1
-    best_rhat = float("inf")
-    best_ess = float("nan")
-    diag_interval = int(max(1, diagnostic_interval))
-    workers = int(max(1, min(chains, chain_workers)))
-    stable_ok_checks = 0
-    last_diag_round = 0
-
-    def _merge_beta_chains(rounds_keep: int) -> np.ndarray:
-        aligned_use = [
-            np.concatenate(chain_beta_rounds[idx][:rounds_keep], axis=0)
-            for idx in range(chains)
-        ]
-        min_draws_use = min(arr.shape[0] for arr in aligned_use)
-        return np.stack([arr[:min_draws_use] for arr in aligned_use], axis=0)
-
-    def _merge_optional_chains(store: list[list[np.ndarray]], rounds_keep: int) -> np.ndarray | None:
-        if any(len(store[idx]) < rounds_keep for idx in range(chains)):
-            return None
-        aligned_use = [np.concatenate(store[idx][:rounds_keep], axis=0) for idx in range(chains)]
-        if any(arr.size == 0 for arr in aligned_use):
-            return None
-        min_draws_use = min(arr.shape[0] for arr in aligned_use)
-        return np.stack([arr[:min_draws_use] for arr in aligned_use], axis=0)
-
-    def _run_one_chain(round_idx: int, chain_idx: int, payload: dict[str, np.ndarray] | None):
-            model = GIGGRegression(
-                method="fixed",
-                n_burn_in=warmup_use,
-                n_samples=draws_use,
-                n_thin=1,
-                seed=int(seed) + 1000 * int(round_idx) + chain_idx,
-                num_chains=1,
-                fit_intercept=False,
-                store_lambda=True,
-                a_value=None,
-                b_init=float(np.mean(b_hat_arr)) if b_hat_arr.size else 1e-6,
-                tau_sq_init=1.0,
-                sigma_sq_init=1.0,
-                btrick=bool(toggles["use_btrick"]),
-                stable_solve=bool(toggles["stable_solve"]),
-                init_strategy=str(init_strategy),
-                init_ridge=float(init_ridge),
-                init_scale_blend=float(init_scale_blend),
-                randomize_group_order=False,
-                locals_first_beta_update=False,
-                extra_local_scale_sweeps=0,
-                lambda_vectorized_update=bool(lambda_vectorized_update),
-                extra_beta_refresh_prob=float(extra_beta_refresh_prob),
-                lambda_constraint_mode=str(lambda_constraint_mode),
-                q_constraint_mode=str(q_constraint_mode),
-                mmle_highdim_fastpath=True,
-                progress_bar=bool(progress_bar),
-            )
-            fit, wall = _run_gigg_model(
-                model,
-                X,
-                y,
-                groups=groups_use,
-                a=a_hat.tolist(),
-                b=b_hat_arr.tolist(),
-                beta_inits=None if payload is None else payload.get("beta_inits"),
-                lambda_sq_inits=None if payload is None else payload.get("lambda_sq_inits"),
-                gamma_sq_inits=None if payload is None else payload.get("gamma_sq_inits"),
-            )
-            draws_arr = np.asarray(fit.coef_samples_, dtype=float)
-            gamma2_arr = None if fit.gamma2_samples_ is None else np.asarray(fit.gamma2_samples_, dtype=float)
-            lambda_arr = None if fit.lambda_samples_ is None else np.asarray(fit.lambda_samples_, dtype=float)
-            tau_arr = None if fit.tau_samples_ is None else np.asarray(fit.tau_samples_, dtype=float)
-            sigma_arr = None if fit.sigma_samples_ is None else np.asarray(fit.sigma_samples_, dtype=float)
-            next_payload = {
-                "beta_inits": np.asarray(fit.coef_samples_[-1], dtype=float).reshape(-1),
-                "lambda_sq_inits": np.asarray(fit.lambda_samples_[-1], dtype=float).reshape(-1),
-                "gamma_sq_inits": np.asarray(fit.gamma2_samples_[-1], dtype=float).reshape(-1),
-            }
-            return int(chain_idx), draws_arr, gamma2_arr, lambda_arr, tau_arr, sigma_arr, next_payload, float(wall)
-
-    for round_idx in range(1, rounds_use + 1):
-        round_rec: dict[str, Any] = {"round": int(round_idx), "chains": []}
-        if workers <= 1:
-            chain_results = [
-                _run_one_chain(int(round_idx), int(chain_idx), payloads[chain_idx])
-                for chain_idx in range(chains)
-            ]
-        else:
-            chain_results = []
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                futs = [
-                    ex.submit(_run_one_chain, int(round_idx), int(chain_idx), payloads[chain_idx])
-                    for chain_idx in range(chains)
-                ]
-                for fut in as_completed(futs):
-                    chain_results.append(fut.result())
-            chain_results.sort(key=lambda item: int(item[0]))
-
-        for chain_idx, draws_arr, gamma2_arr, lambda_arr, tau_arr, sigma_arr, next_payload, wall in chain_results:
-            total_runtime += float(wall)
-            chain_beta_rounds[int(chain_idx)].append(np.asarray(draws_arr, dtype=float))
-            if gamma2_arr is not None:
-                chain_gamma2_rounds[int(chain_idx)].append(np.asarray(gamma2_arr, dtype=float))
-            if lambda_arr is not None:
-                chain_lambda_rounds[int(chain_idx)].append(np.asarray(lambda_arr, dtype=float))
-            if tau_arr is not None:
-                chain_tau_rounds[int(chain_idx)].append(np.asarray(tau_arr, dtype=float))
-            if sigma_arr is not None:
-                chain_sigma_rounds[int(chain_idx)].append(np.asarray(sigma_arr, dtype=float))
-            payloads[int(chain_idx)] = next_payload
-            round_rec["chains"].append({"chain": int(chain_idx + 1), "wall_seconds": float(wall)})
-
-        should_diagnose = (
-            round_idx == 1
-            or round_idx == rounds_use
-            or (round_idx % diag_interval == 0)
-        )
-        if should_diagnose:
-            beta_chains = _merge_beta_chains(int(round_idx))
-            rhat_now, ess_now, detail_now = _extract_draw_diag(
-                beta_chains,
-                gamma2_chains=_merge_optional_chains(chain_gamma2_rounds, int(round_idx)),
-                lambda_chains=_merge_optional_chains(chain_lambda_rounds, int(round_idx)),
-                tau_chains=_merge_optional_chains(chain_tau_rounds, int(round_idx)),
-                sigma_chains=_merge_optional_chains(chain_sigma_rounds, int(round_idx)),
-            )
-            last_diag_round = int(round_idx)
-            round_rec["merged_beta_diag"] = dict(detail_now.get("convergence_detail", {}).get("beta", {}))
-            round_rec["merged_shape"] = [int(x) for x in beta_chains.shape]
-            if np.isfinite(rhat_now) and rhat_now < best_rhat:
-                best_rhat = float(rhat_now)
-                best_ess = float(ess_now)
-                best_round = int(round_idx)
-            if (
-                bool(early_stop)
-                and round_idx >= int(max(1, early_stop_min_rounds))
-                and np.isfinite(rhat_now)
-                and np.isfinite(ess_now)
-                and rhat_now <= float(rhat_threshold)
-                and ess_now >= float(ess_threshold)
-            ):
-                stable_ok_checks += 1
-            else:
-                stable_ok_checks = 0
-        else:
-            round_rec["diagnostic_skipped"] = True
-
-        if bool(store_history) or should_diagnose:
-            history.append(round_rec)
-
-        if bool(early_stop) and stable_ok_checks >= int(max(1, early_stop_patience)):
-            break
-
-    rounds_keep = int(best_round if bool(select_best_round) else rounds_use)
-    rounds_executed = int(round_idx)
-    if not bool(select_best_round):
-        rounds_keep = int(rounds_executed)
-    beta_chains = _merge_beta_chains(rounds_keep)
-    gamma2_chains = _merge_optional_chains(chain_gamma2_rounds, rounds_keep)
-    lambda_chains = _merge_optional_chains(chain_lambda_rounds, rounds_keep)
-    tau_chains = _merge_optional_chains(chain_tau_rounds, rounds_keep)
-    sigma_chains = _merge_optional_chains(chain_sigma_rounds, rounds_keep)
-    _, _, detail = _extract_draw_diag(
-        beta_chains,
-        gamma2_chains=gamma2_chains,
-        lambda_chains=lambda_chains,
-        tau_chains=tau_chains,
-        sigma_chains=sigma_chains,
-    )
-    return beta_chains, float(total_runtime), {
-        "final_gamma2_chains": gamma2_chains,
-        "final_lambda_chains": lambda_chains,
-        "final_tau_chains": tau_chains,
-        "final_sigma_chains": sigma_chains,
-        "continuation_history": history,
-        "best_round": int(best_round),
-        "best_rhat": float(best_rhat),
-        "best_ess": float(best_ess),
-        "rounds_requested": int(rounds_use),
-        "rounds_executed": int(rounds_executed),
-        "rounds_used_for_final_artifact": int(rounds_keep),
-        "continuation_warmup": int(warmup_use),
-        "continuation_draws": int(draws_use),
-        "diagnostic_interval": int(diag_interval),
-        "chain_workers": int(workers),
-        "last_diagnostic_round": int(last_diag_round),
-        "early_stop": bool(early_stop),
-        "early_stop_min_rounds": int(max(1, early_stop_min_rounds)),
-        "early_stop_patience": int(max(1, early_stop_patience)),
-        "history_stored": bool(store_history),
-        **detail,
-    }
-
-
 # GIGG MMLE
 
 def fit_gigg_mmle(
@@ -552,20 +265,7 @@ def fit_gigg_mmle(
     mmle_max_iters: int = 50000,
     lambda_constraint_mode: str = "none",
     q_constraint_mode: str = "hard",
-    exact_highdim_fastpath: bool = False,
-    highdim_continuation_rounds: int = 0,
-    highdim_continuation_warmup: int | None = None,
-    highdim_continuation_draws: int | None = None,
-    highdim_stage_a_burnin: int | None = None,
-    highdim_stage_a_draws: int | None = None,
-    highdim_select_best_round: bool = True,
-    highdim_stage_a_reference_mmle: bool = False,
-    highdim_diagnostic_interval: int = 1,
-    highdim_early_stop: bool = False,
-    highdim_early_stop_min_rounds: int = 80,
-    highdim_early_stop_patience: int = 2,
-    highdim_store_history: bool = True,
-    highdim_chain_workers: int = 1,
+    exact_highdim_fastpath: bool = True,
     method_label: str = "GIGG_MMLE",
     no_retry: bool = False,
     progress_bar: bool = True,
@@ -624,279 +324,46 @@ def fit_gigg_mmle(
     }
 
     try:
-        b_hat = None
-        stage_info: dict[str, object] = {}
-        total_runtime = 0.0
-        final_model: GIGGRegression
-
-        if highdim_case:
-            stage_a_burnin, stage_a_draws = _highdim_mmle_stage_a_iters(gigg_burnin, gigg_draws)
-            if highdim_stage_a_burnin is not None:
-                stage_a_burnin = int(max(1, highdim_stage_a_burnin))
-            if highdim_stage_a_draws is not None:
-                stage_a_draws = int(max(1, highdim_stage_a_draws))
-            stage_a_chain_count = 1
-            stage_a_toggles = _resolve_exact_highdim_gigg_toggles(
-                X=np.asarray(X, dtype=float),
-                sampler=sampler,
-                btrick=bool(btrick),
-                num_chains=stage_a_chain_count,
-                lambda_vectorized_update=bool(lambda_vectorized_update),
-                stable_solve=True,
-                min_highdim_chains=stage_a_chain_count,
-            )
-            stage_a_model = GIGGRegression(
-                method="mmle",
-                n_burn_in=stage_a_burnin,
-                n_samples=stage_a_draws,
-                n_thin=1,
-                seed=int(seed),
-                num_chains=stage_a_chain_count,
-                fit_intercept=False,
-                store_lambda=True,
-                tau_sq_init=1.0,
-                btrick=bool(stage_a_toggles["use_btrick"]),
-                stable_solve=bool(stage_a_toggles["stable_solve"]),
-                mmle_burnin_only=bool(mmle_burnin_only),
-                mmle_highdim_fastpath=bool(stage_a_toggles["mmle_highdim_fastpath"]),
-                init_strategy=str(init_strategy),
-                init_ridge=float(init_ridge),
-                init_scale_blend=float(init_scale_blend),
-                randomize_group_order=False if bool(highdim_stage_a_reference_mmle) else bool(randomize_group_order),
-                lambda_vectorized_update=bool(stage_a_toggles["lambda_vectorized_update"]),
-                extra_beta_refresh_prob=float(extra_beta_refresh_prob),
-                mmle_step_size=1.0 if bool(highdim_stage_a_reference_mmle) else float(mmle_step_size),
-                mmle_update_every=1 if bool(highdim_stage_a_reference_mmle) else int(mmle_update_every),
-                mmle_window=1 if bool(highdim_stage_a_reference_mmle) else int(mmle_window),
-                mmle_samp_size=2 if bool(highdim_stage_a_reference_mmle) else int(mmle_samp_size),
-                mmle_tol_scale=1.0 if bool(highdim_stage_a_reference_mmle) else float(mmle_tol_scale),
-                mmle_max_iters=2 if bool(highdim_stage_a_reference_mmle) else int(mmle_max_iters),
-                lambda_constraint_mode=str(lambda_constraint_mode),
-                q_constraint_mode=str(q_constraint_mode),
-                progress_bar=bool(progress_bar),
-            )
-            stage_a_model, stage_a_runtime = _run_gigg_model(
-                stage_a_model,
-                X,
-                y,
-                groups=groups_use,
-                method="mmle",
-            )
-            total_runtime += float(stage_a_runtime)
-            b_hat = getattr(stage_a_model, "b_mean_", None)
-            if b_hat is None:
-                raise RuntimeError("High-dimensional MMLE stage did not produce a q estimate.")
-            a_hat = np.full(len(groups_use), 1.0 / max(int(n), 1), dtype=float)
-            b_hat_arr = np.asarray(b_hat, dtype=float).reshape(-1)
-            beta_seed = np.asarray(getattr(stage_a_model, "coef_samples_", None)[-1], dtype=float).reshape(-1) if getattr(stage_a_model, "coef_samples_", None) is not None else None
-            lambda_sq_seed = np.asarray(getattr(stage_a_model, "lambda_samples_", None)[-1], dtype=float).reshape(-1) if getattr(stage_a_model, "lambda_samples_", None) is not None else None
-            gamma_sq_seed = np.asarray(getattr(stage_a_model, "gamma2_samples_", None)[-1], dtype=float).reshape(-1) if getattr(stage_a_model, "gamma2_samples_", None) is not None else None
-            tau2_stage_a = getattr(stage_a_model, "tau2_samples_", None)
-            sigma2_stage_a = getattr(stage_a_model, "sigma2_samples_", None)
-            tau_sq_seed = float(np.mean(np.asarray(tau2_stage_a, dtype=float))) if tau2_stage_a is not None else 1.0
-            sigma_sq_seed = float(np.mean(np.asarray(sigma2_stage_a, dtype=float))) if sigma2_stage_a is not None else 1.0
-            stage_b_burnin, stage_b_draws = _highdim_stage_b_schedule(gigg_burnin, gigg_draws)
-            if int(highdim_continuation_rounds) > 0:
-                beta_chains, stage_b_runtime, cont_info = _run_highdim_stage_b_continuation(
-                    X=np.asarray(X, dtype=float),
-                    y=np.asarray(y, dtype=float),
-                    groups_use=groups_use,
-                    a_hat=a_hat,
-                    b_hat_arr=b_hat_arr,
-                    toggles=toggles,
-                    init_strategy=str(init_strategy),
-                    init_ridge=float(init_ridge),
-                    init_scale_blend=float(init_scale_blend),
-                    randomize_group_order=bool(highdim_case or randomize_group_order),
-                    lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
-                    extra_beta_refresh_prob=float(extra_beta_refresh_prob),
-                    lambda_constraint_mode=str(lambda_constraint_mode),
-                    q_constraint_mode=str(q_constraint_mode),
-                    progress_bar=bool(progress_bar),
-                    seed=int(seed),
-                    num_chains=int(toggles["num_chains"]),
-                    rounds=int(highdim_continuation_rounds),
-                    warmup=int(stage_b_burnin if highdim_continuation_warmup is None else highdim_continuation_warmup),
-                    draws=int(stage_b_draws if highdim_continuation_draws is None else highdim_continuation_draws),
-                    beta_seed=None if beta_seed is None else np.asarray(beta_seed, dtype=float),
-                    lambda_sq_seed=None if lambda_sq_seed is None else np.asarray(lambda_sq_seed, dtype=float),
-                    gamma_sq_seed=None if gamma_sq_seed is None else np.asarray(gamma_sq_seed, dtype=float),
-                    tau_sq_seed=float(tau_sq_seed),
-                    sigma_sq_seed=float(sigma_sq_seed),
-                    select_best_round=bool(highdim_select_best_round),
-                    diagnostic_interval=int(highdim_diagnostic_interval),
-                    early_stop=bool(highdim_early_stop),
-                    early_stop_min_rounds=int(highdim_early_stop_min_rounds),
-                    early_stop_patience=int(highdim_early_stop_patience),
-                    rhat_threshold=float(sampler.rhat_threshold),
-                    ess_threshold=float(sampler.ess_threshold),
-                    store_history=bool(highdim_store_history),
-                    chain_workers=int(highdim_chain_workers),
-                )
-                total_runtime += float(stage_b_runtime)
-                rhat_max, ess_min, detail = _extract_draw_diag(
-                    beta_chains,
-                    gamma2_chains=None if cont_info.get("final_gamma2_chains") is None else np.asarray(cont_info["final_gamma2_chains"], dtype=float),
-                    lambda_chains=None if cont_info.get("final_lambda_chains") is None else np.asarray(cont_info["final_lambda_chains"], dtype=float),
-                    tau_chains=None if cont_info.get("final_tau_chains") is None else np.asarray(cont_info["final_tau_chains"], dtype=float),
-                    sigma_chains=None if cont_info.get("final_sigma_chains") is None else np.asarray(cont_info["final_sigma_chains"], dtype=float),
-                )
-                result = FitResult(
-                    method=str(method_label),
-                    status="ok",
-                    beta_mean=np.asarray(beta_chains, dtype=float).reshape(-1, beta_chains.shape[-1]).mean(axis=0),
-                    beta_draws=np.asarray(beta_chains, dtype=float),
-                    kappa_draws=None,
-                    group_scale_draws=None if cont_info.get("final_gamma2_chains") is None else np.asarray(cont_info["final_gamma2_chains"], dtype=float),
-                    tau_draws=None if cont_info.get("final_tau_chains") is None else np.asarray(cont_info["final_tau_chains"], dtype=float),
-                    runtime_seconds=float(total_runtime),
-                    rhat_max=float(rhat_max),
-                    bulk_ess_min=float(ess_min),
-                    divergence_ratio=float("nan"),
-                    converged=bool(np.isfinite(rhat_max) and rhat_max <= float(sampler.rhat_threshold) and np.isfinite(ess_min) and ess_min >= float(sampler.ess_threshold)),
-                    diagnostics={},
-                )
-                stage_info = {
-                    "highdim_two_stage": True,
-                    "stage_a_mmle": {
-                        "num_chains": int(stage_a_chain_count),
-                        "burnin": int(stage_a_burnin),
-                        "draws": int(stage_a_draws),
-                        "runtime_seconds": float(stage_a_runtime),
-                    },
-                    "stage_b_continuation": {
-                        "num_chains": int(toggles["num_chains"]),
-                        "rounds": int(highdim_continuation_rounds),
-                        "warmup_per_round": int(stage_b_burnin if highdim_continuation_warmup is None else highdim_continuation_warmup),
-                        "draws_per_round": int(stage_b_draws if highdim_continuation_draws is None else highdim_continuation_draws),
-                        "runtime_seconds": float(stage_b_runtime),
-                        "tau_sq_init": 1.0,
-                        "sigma_sq_init": 1.0,
-                        "beta_init_mode": "stage_a_draw_quantiles" if beta_seed is not None and np.asarray(beta_seed).ndim == 2 else "stage_a_draw_last",
-                        "lambda_sq_seeded": bool(lambda_sq_seed is not None),
-                        "gamma_sq_seeded": bool(gamma_sq_seed is not None),
-                        "randomize_group_order": bool(highdim_case or randomize_group_order),
-                        "locals_first_beta_update": False,
-                        "extra_local_scale_sweeps": 0,
-                        "extra_beta_refresh_prob": float(extra_beta_refresh_prob),
-                        **{k: v for k, v in cont_info.items() if not str(k).startswith("final_")},
-                    },
-                }
-                diag = dict(result.diagnostics or {})
-                diag.update(detail)
-                final_model = None
-            else:
-                stage_b_model = GIGGRegression(
-                    method="fixed",
-                    n_burn_in=stage_b_burnin,
-                    n_samples=stage_b_draws,
-                    n_thin=1,
-                    seed=int(seed),
-                    num_chains=int(toggles["num_chains"]),
-                    fit_intercept=False,
-                    store_lambda=True,
-                    a_value=None,
-                    b_init=float(np.mean(b_hat_arr)) if b_hat_arr.size else float(max(1.0 / max(int(n), 1), 1e-6)),
-                    tau_sq_init=float(max(tau_sq_seed, 1e-8)),
-                    sigma_sq_init=float(max(sigma_sq_seed, 1e-8)),
-                    btrick=bool(toggles["use_btrick"]),
-                    stable_solve=bool(toggles["stable_solve"]),
-                    init_strategy=str(init_strategy),
-                    init_ridge=float(init_ridge),
-                    init_scale_blend=float(init_scale_blend),
-                    randomize_group_order=bool(highdim_case or randomize_group_order),
-                    locals_first_beta_update=False,
-                    extra_local_scale_sweeps=0,
-                    lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
-                    extra_beta_refresh_prob=float(extra_beta_refresh_prob),
-                    lambda_constraint_mode=str(lambda_constraint_mode),
-                    q_constraint_mode=str(q_constraint_mode),
-                    progress_bar=bool(progress_bar),
-                )
-                final_model, stage_b_runtime = _run_gigg_model(
-                    stage_b_model,
-                    X,
-                    y,
-                    groups=groups_use,
-                    a=a_hat.tolist(),
-                    b=b_hat_arr.tolist(),
-                    beta_inits=None if beta_seed is None else np.asarray(beta_seed, dtype=float),
-                    lambda_sq_inits=None if lambda_sq_seed is None else np.asarray(lambda_sq_seed, dtype=float),
-                    gamma_sq_inits=None if gamma_sq_seed is None else np.asarray(gamma_sq_seed, dtype=float),
-                )
-                total_runtime += float(stage_b_runtime)
-                stage_info = {
-                    "highdim_two_stage": True,
-                    "stage_a_mmle": {
-                        "num_chains": int(stage_a_chain_count),
-                        "burnin": int(stage_a_burnin),
-                        "draws": int(stage_a_draws),
-                        "runtime_seconds": float(stage_a_runtime),
-                    },
-                    "stage_b_fixed": {
-                        "num_chains": int(toggles["num_chains"]),
-                        "burnin": int(stage_b_burnin),
-                        "draws": int(stage_b_draws),
-                        "total_iters": int(stage_b_burnin + stage_b_draws),
-                        "runtime_seconds": float(stage_b_runtime),
-                        "tau_sq_init": float(max(tau_sq_seed, 1e-8)),
-                        "sigma_sq_init": float(max(sigma_sq_seed, 1e-8)),
-                        "beta_init_mode": "stage_a_draw_quantiles" if beta_seed is not None and np.asarray(beta_seed).ndim == 2 else "stage_a_draw_last",
-                        "lambda_sq_seeded": bool(lambda_sq_seed is not None),
-                        "gamma_sq_seeded": bool(gamma_sq_seed is not None),
-                        "randomize_group_order": bool(highdim_case or randomize_group_order),
-                        "locals_first_beta_update": False,
-                        "extra_local_scale_sweeps": 0,
-                        "extra_beta_refresh_prob": float(extra_beta_refresh_prob),
-                    },
-                }
-        else:
-            model = GIGGRegression(
-                method="mmle",
-                n_burn_in=gigg_burnin,
-                n_samples=gigg_draws,
-                n_thin=1,
-                seed=int(seed),
-                num_chains=int(toggles["num_chains"]),
-                fit_intercept=False,
-                store_lambda=True,
-                tau_sq_init=1.0,
-                btrick=bool(toggles["use_btrick"]),
-                stable_solve=bool(toggles["stable_solve"]),
-                mmle_burnin_only=bool(mmle_burnin_only),
-                mmle_highdim_fastpath=bool(toggles["mmle_highdim_fastpath"]),
-                init_strategy=str(init_strategy),
-                init_ridge=float(init_ridge),
-                init_scale_blend=float(init_scale_blend),
-                randomize_group_order=bool(randomize_group_order),
-                lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
-                extra_beta_refresh_prob=float(extra_beta_refresh_prob),
-                mmle_step_size=float(mmle_step_size),
-                mmle_update_every=int(mmle_update_every),
-                mmle_window=int(mmle_window),
-                mmle_samp_size=int(mmle_samp_size),
-                mmle_tol_scale=float(mmle_tol_scale),
-                mmle_max_iters=int(mmle_max_iters),
-                lambda_constraint_mode=str(lambda_constraint_mode),
-                q_constraint_mode=str(q_constraint_mode),
-                progress_bar=bool(progress_bar),
-            )
-            final_model, total_runtime = _run_gigg_model(
-                model,
-                X,
-                y,
-                groups=groups_use,
-                method="mmle",
-            )
-            b_hat = getattr(final_model, "b_mean_", None)
-
-        if highdim_case and int(highdim_continuation_rounds) > 0:
-            diag = dict(result.diagnostics or {})
-        else:
-            result = _extract_and_diagnose(final_model, str(method_label), sampler, float(total_runtime))
-            diag = dict(result.diagnostics or {})
-        if stage_info:
-            diag["staged_runtime"] = stage_info
+        model = GIGGRegression(
+            method="mmle",
+            n_burn_in=gigg_burnin,
+            n_samples=gigg_draws,
+            n_thin=1,
+            seed=int(seed),
+            num_chains=int(toggles["num_chains"]),
+            fit_intercept=False,
+            store_lambda=True,
+            tau_sq_init=1.0,
+            btrick=bool(toggles["use_btrick"]),
+            stable_solve=bool(toggles["stable_solve"]),
+            mmle_burnin_only=bool(mmle_burnin_only),
+            mmle_highdim_fastpath=bool(toggles["mmle_highdim_fastpath"]),
+            init_strategy=str(init_strategy),
+            init_ridge=float(init_ridge),
+            init_scale_blend=float(init_scale_blend),
+            randomize_group_order=bool(randomize_group_order),
+            lambda_vectorized_update=bool(toggles["lambda_vectorized_update"]),
+            extra_beta_refresh_prob=float(extra_beta_refresh_prob),
+            mmle_step_size=float(mmle_step_size),
+            mmle_update_every=int(mmle_update_every),
+            mmle_window=int(mmle_window),
+            mmle_samp_size=int(mmle_samp_size),
+            mmle_tol_scale=float(mmle_tol_scale),
+            mmle_max_iters=int(mmle_max_iters),
+            lambda_constraint_mode=str(lambda_constraint_mode),
+            q_constraint_mode=str(q_constraint_mode),
+            progress_bar=bool(progress_bar),
+        )
+        final_model, total_runtime = _run_gigg_model(
+            model,
+            X,
+            y,
+            groups=groups_use,
+            method="mmle",
+        )
+        b_hat = getattr(final_model, "b_mean_", None)
+        result = _extract_and_diagnose(final_model, str(method_label), sampler, float(total_runtime))
+        diag = dict(result.diagnostics or {})
         if b_hat is not None:
             diag["mmle_estimate"] = {
                 "q_estimate": np.asarray(b_hat, dtype=float).reshape(-1).tolist(),
@@ -911,7 +378,7 @@ def fit_gigg_mmle(
             "lambda_vectorized_update": bool(toggles["lambda_vectorized_update"]),
             "stable_solve": bool(toggles["stable_solve"]),
             "mmle_highdim_fastpath": bool(toggles["mmle_highdim_fastpath"]),
-            "highdim_two_stage_mmle": bool(highdim_case),
+            "highdim_original_mmle_btrick": bool(highdim_case),
             "path_name": "GIGG_MMLE_HighDim" if bool(highdim_case) else "GIGG_MMLE_LowDim",
         }
         result.diagnostics = diag
@@ -924,7 +391,6 @@ def fit_gigg_mmle(
             f"{type(exc).__name__}: {exc}",
             diagnostics={
                 "exception_type": str(type(exc).__name__),
-                "traceback": traceback.format_exc(),
                 "exact_highdim_fastpath": bool(exact_highdim_fastpath),
             },
         )
