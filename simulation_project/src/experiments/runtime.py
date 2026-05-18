@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from typing import Any, Sequence
 
+import numpy as np
 from tqdm.auto import tqdm
 
 from ..core.utils.parallel_runtime import can_use_process_pool
@@ -219,6 +220,89 @@ def _sampler_for_bayesian_default(base: SamplerConfig, *, min_chains: int | None
         rhat_threshold=float(base.rhat_threshold),
         ess_threshold=float(base.ess_threshold),
     )
+
+
+def _mean_within_abs_corr(X: np.ndarray, groups: Sequence[Sequence[int]]) -> float:
+    X_arr = np.asarray(X, dtype=float)
+    vals: list[float] = []
+    for members in groups:
+        idx = np.asarray(list(members), dtype=int).reshape(-1)
+        if idx.size <= 1:
+            continue
+        block = X_arr[:, idx]
+        corr = np.corrcoef(block, rowvar=False)
+        corr = np.asarray(corr, dtype=float)
+        if corr.ndim != 2 or corr.shape[0] != corr.shape[1]:
+            continue
+        mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
+        if not np.any(mask):
+            continue
+        vals.extend(np.abs(corr[mask]).reshape(-1).tolist())
+    if not vals:
+        return float("nan")
+    arr = np.asarray(vals, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    return float(np.mean(arr)) if arr.size else float("nan")
+
+
+def highdim_sampler_budget(
+    base: SamplerConfig,
+    X: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    *,
+    role: str,
+) -> SamplerConfig:
+    role_key = str(role).strip().lower()
+    within_corr = _mean_within_abs_corr(X, groups)
+    high_corr = bool(np.isfinite(within_corr) and within_corr >= 0.75)
+
+    if role_key in {"rhs_exact", "gigg_mmle"}:
+        chains_floor = 4 if role_key == "rhs_exact" else 2
+        warmup_floor = 1100 if high_corr else 1000
+        draws_floor = 2400 if high_corr else 2000
+        adapt_delta_floor = 0.99 if high_corr else 0.985
+        max_treedepth_floor = 14
+        strict_adapt_delta_floor = 0.995
+        strict_max_treedepth_floor = 15
+        ess_floor = 400.0
+    elif role_key == "ghs_plus":
+        chains_floor = 4
+        warmup_floor = 500
+        draws_floor = 500
+        adapt_delta_floor = 0.95
+        max_treedepth_floor = 12
+        strict_adapt_delta_floor = 0.99
+        strict_max_treedepth_floor = 14
+        ess_floor = 400.0
+    else:
+        chains_floor = 4
+        warmup_floor = 1000
+        draws_floor = 2000
+        adapt_delta_floor = 0.985
+        max_treedepth_floor = 14
+        strict_adapt_delta_floor = 0.995
+        strict_max_treedepth_floor = 15
+        ess_floor = 400.0
+
+    return SamplerConfig(
+        chains=max(chains_floor, int(base.chains)),
+        warmup=max(warmup_floor, int(base.warmup)),
+        post_warmup_draws=max(draws_floor, int(base.post_warmup_draws)),
+        adapt_delta=max(adapt_delta_floor, float(base.adapt_delta)),
+        max_treedepth=max(max_treedepth_floor, int(base.max_treedepth)),
+        strict_adapt_delta=max(strict_adapt_delta_floor, float(base.strict_adapt_delta)),
+        strict_max_treedepth=max(strict_max_treedepth_floor, int(base.strict_max_treedepth)),
+        max_divergence_ratio=min(0.01, float(base.max_divergence_ratio)),
+        rhat_threshold=float(base.rhat_threshold),
+        ess_threshold=max(ess_floor, float(base.ess_threshold)),
+    )
+
+
+def highdim_iter_budget(*, within_corr: float | None = None) -> tuple[int, int, int]:
+    high_corr = bool(within_corr is not None and np.isfinite(within_corr) and float(within_corr) >= 0.75)
+    if high_corr:
+        return 1, 500, 800
+    return 1, 450, 700
 
 
 def _default_repeats(exp: str) -> int:

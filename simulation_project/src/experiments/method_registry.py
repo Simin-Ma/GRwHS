@@ -6,6 +6,7 @@ from typing import Callable
 import numpy as np
 
 from ..utils import FitResult, SamplerConfig
+from .runtime import _mean_within_abs_corr, highdim_iter_budget, highdim_sampler_budget
 
 
 @dataclass(frozen=True)
@@ -48,29 +49,6 @@ class MethodRegistry:
 
     def names(self) -> list[str]:
         return sorted(self._runners.keys())
-
-
-def _mean_within_abs_corr(X: np.ndarray, groups: list[list[int]]) -> float:
-    X_arr = np.asarray(X, dtype=float)
-    vals: list[float] = []
-    for members in groups:
-        idx = np.asarray(list(members), dtype=int).reshape(-1)
-        if idx.size <= 1:
-            continue
-        block = X_arr[:, idx]
-        corr = np.corrcoef(block, rowvar=False)
-        corr = np.asarray(corr, dtype=float)
-        if corr.ndim != 2 or corr.shape[0] != corr.shape[1]:
-            continue
-        mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
-        if not np.any(mask):
-            continue
-        vals.extend(np.abs(corr[mask]).reshape(-1).tolist())
-    if not vals:
-        return float("nan")
-    arr = np.asarray(vals, dtype=float)
-    arr = arr[np.isfinite(arr)]
-    return float(np.mean(arr)) if arr.size else float("nan")
 
 
 def _sampler_budget_dict(sampler: SamplerConfig) -> dict[str, int | float]:
@@ -153,47 +131,17 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _rhs_highdim_exact_sampler(c: MethodContext) -> SamplerConfig:
-        within_corr = _mean_within_abs_corr(np.asarray(c.X, dtype=float), c.groups)
-        if np.isfinite(within_corr) and within_corr >= 0.75:
-            warmup = max(int(c.sampler.warmup), 1100)
-            draws = max(int(c.sampler.post_warmup_draws), 2400)
-            adapt_delta = max(0.99, float(c.sampler.adapt_delta))
-        else:
-            warmup = max(int(c.sampler.warmup), 1000)
-            draws = max(int(c.sampler.post_warmup_draws), 2000)
-            adapt_delta = max(0.985, float(c.sampler.adapt_delta))
-        return SamplerConfig(
-            chains=max(4, int(c.sampler.chains)),
-            warmup=int(warmup),
-            post_warmup_draws=int(draws),
-            adapt_delta=float(adapt_delta),
-            max_treedepth=max(14, int(c.sampler.max_treedepth)),
-            strict_adapt_delta=max(0.995, float(c.sampler.strict_adapt_delta)),
-            strict_max_treedepth=max(15, int(c.sampler.strict_max_treedepth)),
-            max_divergence_ratio=min(0.01, float(c.sampler.max_divergence_ratio)),
-            rhat_threshold=float(c.sampler.rhat_threshold),
-            ess_threshold=float(c.sampler.ess_threshold),
-        )
+        return highdim_sampler_budget(c.sampler, c.X, c.groups, role="rhs_exact")
+
+    def _gigg_highdim_sampler(c: MethodContext) -> SamplerConfig:
+        return highdim_sampler_budget(c.sampler, c.X, c.groups, role="gigg_mmle")
 
     def _ghs_highdim_light_sampler(c: MethodContext) -> SamplerConfig:
-        return SamplerConfig(
-            chains=max(4, int(c.sampler.chains)),
-            warmup=max(500, int(c.sampler.warmup)),
-            post_warmup_draws=max(500, int(c.sampler.post_warmup_draws)),
-            adapt_delta=max(0.95, float(c.sampler.adapt_delta)),
-            max_treedepth=max(12, int(c.sampler.max_treedepth)),
-            strict_adapt_delta=max(0.99, float(c.sampler.strict_adapt_delta)),
-            strict_max_treedepth=max(14, int(c.sampler.strict_max_treedepth)),
-            max_divergence_ratio=min(0.01, float(c.sampler.max_divergence_ratio)),
-            rhat_threshold=float(c.sampler.rhat_threshold),
-            ess_threshold=max(400.0, float(c.sampler.ess_threshold)),
-        )
+        return highdim_sampler_budget(c.sampler, c.X, c.groups, role="ghs_plus")
 
     def _ghs_highdim_iter_budget(c: MethodContext) -> tuple[int, int, int]:
         within_corr = _mean_within_abs_corr(np.asarray(c.X, dtype=float), c.groups)
-        if np.isfinite(within_corr) and within_corr >= 0.75:
-            return 1, 500, 800
-        return 1, 450, 700
+        return highdim_iter_budget(within_corr=within_corr)
 
     def _fit_rhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
         from .methods.fit_rhs import fit_rhs
@@ -495,7 +443,7 @@ def build_default_method_registry() -> MethodRegistry:
             c.groups,
             task=c.task,
             seed=c.seed,
-            sampler=c.sampler,
+            sampler=_gigg_highdim_sampler(c),
             p0=c.p0,
             method_label=str(method_name),
             **kwargs,
@@ -532,7 +480,7 @@ def build_default_method_registry() -> MethodRegistry:
             method_family="GIGG_MMLE",
             protocol="high_dim",
             sampler_backend="mmle_btrick",
-            sampler=c.sampler,
+            sampler=_gigg_highdim_sampler(c),
             implementation="single_mmle_gibbs_with_bhattacharya_beta_update",
             notes=["High-dimensional GIGG-MMLE follows the original/official MMLE Gibbs route and uses the Bhattacharya Gaussian block trick for beta updates."],
             extra={"exact_highdim_fastpath": True},

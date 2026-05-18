@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 
 from simulation_project.src.experiments.evaluation import _evaluate_row
 from simulation_project.src.experiments.fitting import _fit_all_methods, _fit_with_convergence_retry
-from simulation_project.src.experiments.runtime import _sampler_for_bayesian_default
+from simulation_project.src.experiments.runtime import _sampler_for_bayesian_default, highdim_sampler_budget
 from simulation_project.src.utils import SamplerConfig
 from simulation_second.src.config import load_benchmark_config
 from simulation_second.src.dataset import generate_grouped_dataset
@@ -130,17 +130,14 @@ def run_case(
         if method_name == "GIGG_MMLE":
             from simulation_project.src.experiments.methods.fit_gigg import fit_gigg_mmle
 
-            gigg_kwargs_raw = dict(cfg.methods.gigg_config)
-            for key in list(gigg_kwargs_raw.keys()):
-                if str(key).startswith("highdim_"):
-                    gigg_kwargs_raw.pop(key, None)
-            for key in ("allow_budget_retry", "extra_retry", "retry_cap"):
-                gigg_kwargs_raw.pop(key, None)
-            gigg_kwargs = dict(gigg_kwargs_raw)
-            gigg_kwargs["exact_highdim_fastpath"] = True
-            gigg_kwargs["progress_bar"] = False
+            gigg_kwargs = {"exact_highdim_fastpath": True, "progress_bar": False}
             sampler_base = _sampler_for_bayesian_default(
-                sampler,
+                highdim_sampler_budget(
+                    sampler,
+                    ds.X_train,
+                    ds.groups,
+                    role="gigg_mmle",
+                ),
                 min_chains=int(cfg.convergence_gate.bayes_min_chains),
             )
 
@@ -169,28 +166,10 @@ def run_case(
             )
         if method_name == "RHS":
             from simulation_project.src.experiments.methods.fit_rhs import fit_rhs
-            from simulation_project.src.experiments.method_registry import _mean_within_abs_corr
 
-            within_corr = _mean_within_abs_corr(ds.X_train, ds.groups)
-            if math.isfinite(within_corr) and within_corr >= 0.75:
-                warmup = max(int(sampler.warmup), 1100)
-                draws = max(int(sampler.post_warmup_draws), 2400)
-                adapt_delta = max(0.99, float(sampler.adapt_delta))
-            else:
-                warmup = max(int(sampler.warmup), 1000)
-                draws = max(int(sampler.post_warmup_draws), 2000)
-                adapt_delta = max(0.985, float(sampler.adapt_delta))
-            sampler_base = SamplerConfig(
-                chains=max(4, int(sampler.chains)),
-                warmup=int(warmup),
-                post_warmup_draws=int(draws),
-                adapt_delta=float(adapt_delta),
-                max_treedepth=max(14, int(sampler.max_treedepth)),
-                strict_adapt_delta=max(0.995, float(sampler.strict_adapt_delta)),
-                strict_max_treedepth=max(15, int(sampler.strict_max_treedepth)),
-                max_divergence_ratio=min(0.01, float(sampler.max_divergence_ratio)),
-                rhat_threshold=float(sampler.rhat_threshold),
-                ess_threshold=float(sampler.ess_threshold),
+            sampler_base = _sampler_for_bayesian_default(
+                highdim_sampler_budget(sampler, ds.X_train, ds.groups, role="rhs_exact"),
+                min_chains=int(cfg.convergence_gate.bayes_min_chains),
             )
 
             def _runner(sampler_try, attempt, resume_payload=None):
