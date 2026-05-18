@@ -131,6 +131,9 @@ def run_case(
             from simulation_project.src.experiments.methods.fit_gigg import fit_gigg_mmle
 
             gigg_kwargs_raw = dict(cfg.methods.gigg_config)
+            for key in list(gigg_kwargs_raw.keys()):
+                if str(key).startswith("highdim_"):
+                    gigg_kwargs_raw.pop(key, None)
             for key in ("allow_budget_retry", "extra_retry", "retry_cap"):
                 gigg_kwargs_raw.pop(key, None)
             gigg_kwargs = dict(gigg_kwargs_raw)

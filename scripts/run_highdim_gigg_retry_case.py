@@ -86,6 +86,9 @@ def run_case(
         max_divergence_ratio=float(cfg.convergence_gate.max_divergence_ratio),
     )
     gigg_kwargs = dict(cfg.methods.gigg_config)
+    for key in list(gigg_kwargs.keys()):
+        if str(key).startswith("highdim_"):
+            gigg_kwargs.pop(key, None)
     for key in ("allow_budget_retry", "extra_retry", "retry_cap"):
         gigg_kwargs.pop(key, None)
     gigg_kwargs.update(
