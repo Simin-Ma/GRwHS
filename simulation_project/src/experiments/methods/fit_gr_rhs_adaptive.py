@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 import numpy as np
+from scipy.optimize import brentq
+from scipy.special import digamma
 
 from .fit_gr_rhs import fit_gr_rhs
 from ...utils import FitResult, SamplerConfig
@@ -350,6 +352,191 @@ def calibrate_grrhs_beta_validation_opt(
     )
 
 
+def _flatten_kappa_draws(kappa_draws: Any) -> np.ndarray:
+    arr = np.asarray(kappa_draws, dtype=float)
+    if arr.size == 0:
+        raise ValueError("kappa_draws is empty.")
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    else:
+        arr = arr.reshape(-1, arr.shape[-1])
+    arr = np.nan_to_num(arr, nan=0.5, posinf=1.0 - 1e-8, neginf=1e-8)
+    return np.clip(arr, 1e-8, 1.0 - 1e-8)
+
+
+def _mcem_beta_update_from_kappa(
+    kappa_draws: Any,
+    *,
+    alpha_kappa: float,
+    min_beta_kappa: float | None,
+    max_beta_kappa: float | None,
+) -> dict[str, Any]:
+    draws = _flatten_kappa_draws(kappa_draws)
+    n_groups = max(int(draws.shape[1]), 1)
+    elog1m_by_group = np.mean(np.log1p(-draws), axis=0)
+    sum_elog1m = float(np.sum(elog1m_by_group))
+    alpha = float(max(alpha_kappa, 1e-8))
+    lo = float(1e-6 if min_beta_kappa is None else max(float(min_beta_kappa), 1e-6))
+    hi = float(1e6 if max_beta_kappa is None else max(float(max_beta_kappa), lo * 1.0001))
+
+    def score(beta_value: float) -> float:
+        beta = float(max(beta_value, 1e-12))
+        return float(n_groups * (digamma(alpha + beta) - digamma(beta)) + sum_elog1m)
+
+    score_lo = score(lo)
+    score_hi = score(hi)
+    boundary = None
+    if score_lo <= 0.0:
+        beta_hat = lo
+        boundary = "lower"
+    elif score_hi >= 0.0:
+        beta_hat = hi
+        boundary = "upper"
+    else:
+        beta_hat = float(brentq(score, lo, hi, maxiter=100, xtol=1e-8, rtol=1e-8))
+    return {
+        "beta_kappa_root": float(beta_hat),
+        "score_at_min": float(score_lo),
+        "score_at_max": float(score_hi),
+        "score_at_root": float(score(beta_hat)),
+        "boundary": boundary,
+        "n_kappa_draws": int(draws.shape[0]),
+        "n_groups": int(n_groups),
+        "sum_E_log1m_kappa": float(sum_elog1m),
+        "mean_E_log1m_kappa": float(sum_elog1m / float(n_groups)),
+        "mean_posterior_kappa": float(np.mean(draws)),
+    }
+
+
+def calibrate_grrhs_beta_mcem(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    *,
+    task: str,
+    seed: int,
+    p0: int,
+    sampler: SamplerConfig,
+    grrhs_kwargs: dict[str, Any],
+    alpha_kappa: float = 0.5,
+    beta_kappa: float = 1.0,
+    init_strategy: str = "ridge_screening_moment",
+    rounds: int = 1,
+    calibration_warmup: int | None = None,
+    calibration_draws: int | None = None,
+    step_size: float = 1.0,
+    screening_null_quantile: float = 0.95,
+    screening_permutations: int = 300,
+    ridge_screening_scale: str = "sqrt_np",
+    min_beta_kappa: float | None = 1.0,
+    max_beta_kappa: float | None = 16.0,
+) -> AdaptiveBetaCalibration:
+    """MCEM/Type-II EB calibration for beta_kappa.
+
+    With alpha_kappa fixed, this maximizes a Monte Carlo expected complete-data
+    log prior for kappa_g under short GR-RHS calibration posteriors.
+    """
+    strategy0 = str(init_strategy).strip().lower()
+    if strategy0 in {"ridge", "ridge_screening", "ridge_screening_moment"}:
+        init = calibrate_grrhs_beta_ridge_screening_moment(
+            X,
+            y,
+            groups,
+            alpha_kappa=float(alpha_kappa),
+            null_quantile=float(screening_null_quantile),
+            n_permutations=int(screening_permutations),
+            ridge_scale=str(ridge_screening_scale),
+            min_beta_kappa=min_beta_kappa,
+            max_beta_kappa=max_beta_kappa,
+            seed=int(seed) + 421,
+        )
+        beta_current = float(init.beta_kappa)
+        init_details: dict[str, Any] = {
+            "init_strategy": str(init.strategy),
+            "init_beta_kappa": float(init.beta_kappa),
+            "init_details": init.details,
+        }
+    else:
+        beta_current = float(beta_kappa)
+        if min_beta_kappa is not None:
+            beta_current = float(max(beta_current, float(min_beta_kappa)))
+        if max_beta_kappa is not None:
+            beta_current = float(min(beta_current, float(max_beta_kappa)))
+        init_details = {"init_strategy": "fixed", "init_beta_kappa": float(beta_current)}
+
+    cal_sampler = _sampler_with_budget(
+        sampler,
+        warmup=calibration_warmup,
+        draws=calibration_draws,
+    )
+    history: list[dict[str, Any]] = []
+    damping = float(min(max(step_size, 0.05), 1.0))
+    for round_idx in range(max(1, int(rounds))):
+        kwargs = dict(grrhs_kwargs)
+        kwargs["alpha_kappa"] = float(alpha_kappa)
+        kwargs["beta_kappa"] = float(beta_current)
+        kwargs.setdefault("progress_bar", False)
+        result = fit_gr_rhs(
+            X,
+            y,
+            groups,
+            task=str(task),
+            seed=int(seed) + 2003 + 97 * int(round_idx),
+            p0=int(p0),
+            sampler=cal_sampler,
+            method_name="GR_RHS_EB_MCEM_CAL",
+            retry_resume_payload=None,
+            **{
+                **kwargs,
+                "retry_attempt": 0,
+                "collapsed_hard_min_warmup": int(cal_sampler.warmup),
+                "collapsed_hard_min_draws": int(cal_sampler.post_warmup_draws),
+            },
+        )
+        if result.kappa_draws is None:
+            raise RuntimeError("GR-RHS MCEM calibration requires kappa_draws.")
+        update = _mcem_beta_update_from_kappa(
+            result.kappa_draws,
+            alpha_kappa=float(alpha_kappa),
+            min_beta_kappa=min_beta_kappa,
+            max_beta_kappa=max_beta_kappa,
+        )
+        beta_root = float(update["beta_kappa_root"])
+        beta_next = float(math.exp((1.0 - damping) * math.log(max(beta_current, 1e-12)) + damping * math.log(max(beta_root, 1e-12))))
+        if min_beta_kappa is not None:
+            beta_next = float(max(beta_next, float(min_beta_kappa)))
+        if max_beta_kappa is not None:
+            beta_next = float(min(beta_next, float(max_beta_kappa)))
+        history.append({
+            "round": int(round_idx + 1),
+            "beta_kappa_in": float(beta_current),
+            "beta_kappa_root": float(beta_root),
+            "beta_kappa_out": float(beta_next),
+            "converged": bool(result.converged),
+            "status": str(result.status),
+            "rhat_max": float(result.rhat_max) if np.isfinite(result.rhat_max) else float("nan"),
+            "ess_min": float(result.bulk_ess_min) if np.isfinite(result.bulk_ess_min) else float("nan"),
+            **update,
+        })
+        beta_current = beta_next
+
+    return AdaptiveBetaCalibration(
+        strategy="mcem_beta",
+        alpha_kappa=float(alpha_kappa),
+        beta_kappa=float(beta_current),
+        details={
+            **init_details,
+            "rounds": int(max(1, int(rounds))),
+            "step_size": float(damping),
+            "calibration_warmup": int(cal_sampler.warmup),
+            "calibration_draws": int(cal_sampler.post_warmup_draws),
+            "min_beta_kappa": None if min_beta_kappa is None else float(min_beta_kappa),
+            "max_beta_kappa": None if max_beta_kappa is None else float(max_beta_kappa),
+            "history": history,
+        },
+    )
+
+
 def fit_gr_rhs_adaptive_beta(
     X: np.ndarray,
     y: np.ndarray,
@@ -373,6 +560,9 @@ def fit_gr_rhs_adaptive_beta(
     screening_null_quantile: float = 0.90,
     screening_permutations: int = 500,
     ridge_screening_scale: str = "sqrt_np",
+    mcem_rounds: int = 1,
+    mcem_step_size: float = 1.0,
+    mcem_init_strategy: str = "ridge_screening_moment",
     min_beta_kappa: float | None = 1.0,
     max_beta_kappa: float | None = None,
     **grrhs_kwargs: Any,
@@ -390,6 +580,9 @@ def fit_gr_rhs_adaptive_beta(
     kwargs.pop("screening_null_quantile", None)
     kwargs.pop("screening_permutations", None)
     kwargs.pop("ridge_screening_scale", None)
+    kwargs.pop("mcem_rounds", None)
+    kwargs.pop("mcem_step_size", None)
+    kwargs.pop("mcem_init_strategy", None)
     kwargs.pop("min_beta_kappa", None)
     kwargs.pop("max_beta_kappa", None)
     kwargs.setdefault("progress_bar", False)
@@ -419,6 +612,29 @@ def fit_gr_rhs_adaptive_beta(
             min_beta_kappa=min_beta_kappa,
             max_beta_kappa=max_beta_kappa,
             seed=int(seed) + 809,
+        )
+    elif strategy in {"mcem", "mcem_beta", "type2", "type_ii", "typeii"}:
+        calib = calibrate_grrhs_beta_mcem(
+            X,
+            y,
+            groups,
+            task=str(task),
+            seed=int(seed) + 813,
+            p0=int(p0),
+            sampler=sampler,
+            grrhs_kwargs=kwargs,
+            alpha_kappa=float(alpha_kappa),
+            beta_kappa=float(beta_kappa),
+            init_strategy=str(mcem_init_strategy),
+            rounds=int(mcem_rounds),
+            calibration_warmup=calibration_warmup,
+            calibration_draws=calibration_draws,
+            step_size=float(mcem_step_size),
+            screening_null_quantile=float(screening_null_quantile),
+            screening_permutations=int(screening_permutations),
+            ridge_screening_scale=str(ridge_screening_scale),
+            min_beta_kappa=min_beta_kappa,
+            max_beta_kappa=max_beta_kappa,
         )
     elif strategy in {"validation", "validation_opt", "val"}:
         calib = calibrate_grrhs_beta_validation_opt(

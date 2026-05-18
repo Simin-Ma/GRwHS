@@ -70,6 +70,10 @@ def run_case(
     log_beta_min: float,
     log_beta_max: float,
     min_beta_kappa: float | None,
+    adaptive_strategy: str,
+    mcem_rounds: int,
+    mcem_step_size: float,
+    mcem_init_strategy: str,
     label: str | None,
 ) -> dict[str, object]:
     total_t0 = time.perf_counter()
@@ -103,11 +107,16 @@ def run_case(
             "sampler_backend": "collapsed_profile",
             "use_local_scale": False,
             "progress_bar": False,
-            "adaptive_strategy": "ridge_screening_moment",
+            "adaptive_strategy": str(adaptive_strategy),
             "alpha_kappa": 0.5,
             "screening_null_quantile": float(validation_fraction),
             "screening_permutations": int(calibration_draws),
             "ridge_screening_scale": "sqrt_np",
+            "calibration_warmup": int(calibration_warmup),
+            "calibration_draws": int(calibration_draws),
+            "mcem_rounds": int(mcem_rounds),
+            "mcem_step_size": float(mcem_step_size),
+            "mcem_init_strategy": str(mcem_init_strategy),
             "min_beta_kappa": min_beta_kappa,
             "max_beta_kappa": 16.0,
         }
@@ -200,6 +209,10 @@ def main() -> int:
     parser.add_argument("--log-beta-min", type=float, default=math.log(0.5))
     parser.add_argument("--log-beta-max", type=float, default=math.log(16.0))
     parser.add_argument("--min-beta-kappa", type=float, default=1.0)
+    parser.add_argument("--adaptive-strategy", default="ridge_screening_moment")
+    parser.add_argument("--mcem-rounds", type=int, default=1)
+    parser.add_argument("--mcem-step-size", type=float, default=1.0)
+    parser.add_argument("--mcem-init-strategy", default="ridge_screening_moment")
     parser.add_argument("--label", default=None)
     args = parser.parse_args()
     payload = run_case(
@@ -220,6 +233,10 @@ def main() -> int:
         log_beta_min=float(args.log_beta_min),
         log_beta_max=float(args.log_beta_max),
         min_beta_kappa=args.min_beta_kappa,
+        adaptive_strategy=str(args.adaptive_strategy),
+        mcem_rounds=int(args.mcem_rounds),
+        mcem_step_size=float(args.mcem_step_size),
+        mcem_init_strategy=str(args.mcem_init_strategy),
         label=args.label,
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
