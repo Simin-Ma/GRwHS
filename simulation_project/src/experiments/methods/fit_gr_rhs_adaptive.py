@@ -24,13 +24,14 @@ class AdaptiveBetaCalibration:
 def _sampler_with_budget(
     sampler: SamplerConfig,
     *,
+    chains: int | None = None,
     warmup: int | None,
     draws: int | None,
     adapt_delta: float | None = None,
     max_treedepth: int | None = None,
 ) -> SamplerConfig:
     return SamplerConfig(
-        chains=int(sampler.chains),
+        chains=int(sampler.chains if chains is None else chains),
         warmup=int(sampler.warmup if warmup is None else warmup),
         post_warmup_draws=int(sampler.post_warmup_draws if draws is None else draws),
         adapt_delta=float(sampler.adapt_delta if adapt_delta is None else adapt_delta),
@@ -422,8 +423,11 @@ def calibrate_grrhs_beta_mcem(
     beta_kappa: float = 1.0,
     init_strategy: str = "ridge_screening_moment",
     rounds: int = 1,
+    calibration_chains: int | None = None,
     calibration_warmup: int | None = None,
     calibration_draws: int | None = None,
+    calibration_adapt_delta: float | None = None,
+    calibration_max_treedepth: int | None = None,
     step_size: float = 1.0,
     screening_null_quantile: float = 0.95,
     screening_permutations: int = 300,
@@ -466,8 +470,11 @@ def calibrate_grrhs_beta_mcem(
 
     cal_sampler = _sampler_with_budget(
         sampler,
+        chains=calibration_chains,
         warmup=calibration_warmup,
         draws=calibration_draws,
+        adapt_delta=calibration_adapt_delta,
+        max_treedepth=calibration_max_treedepth,
     )
     history: list[dict[str, Any]] = []
     damping = float(min(max(step_size, 0.05), 1.0))
@@ -528,8 +535,11 @@ def calibrate_grrhs_beta_mcem(
             **init_details,
             "rounds": int(max(1, int(rounds))),
             "step_size": float(damping),
+            "calibration_chains": int(cal_sampler.chains),
             "calibration_warmup": int(cal_sampler.warmup),
             "calibration_draws": int(cal_sampler.post_warmup_draws),
+            "calibration_adapt_delta": float(cal_sampler.adapt_delta),
+            "calibration_max_treedepth": int(cal_sampler.max_treedepth),
             "min_beta_kappa": None if min_beta_kappa is None else float(min_beta_kappa),
             "max_beta_kappa": None if max_beta_kappa is None else float(max_beta_kappa),
             "history": history,
@@ -563,6 +573,9 @@ def fit_gr_rhs_adaptive_beta(
     mcem_rounds: int = 1,
     mcem_step_size: float = 1.0,
     mcem_init_strategy: str = "ridge_screening_moment",
+    mcem_calibration_chains: int | None = None,
+    mcem_calibration_adapt_delta: float | None = None,
+    mcem_calibration_max_treedepth: int | None = None,
     min_beta_kappa: float | None = 1.0,
     max_beta_kappa: float | None = None,
     **grrhs_kwargs: Any,
@@ -583,6 +596,9 @@ def fit_gr_rhs_adaptive_beta(
     kwargs.pop("mcem_rounds", None)
     kwargs.pop("mcem_step_size", None)
     kwargs.pop("mcem_init_strategy", None)
+    kwargs.pop("mcem_calibration_chains", None)
+    kwargs.pop("mcem_calibration_adapt_delta", None)
+    kwargs.pop("mcem_calibration_max_treedepth", None)
     kwargs.pop("min_beta_kappa", None)
     kwargs.pop("max_beta_kappa", None)
     kwargs.setdefault("progress_bar", False)
@@ -627,8 +643,11 @@ def fit_gr_rhs_adaptive_beta(
             beta_kappa=float(beta_kappa),
             init_strategy=str(mcem_init_strategy),
             rounds=int(mcem_rounds),
+            calibration_chains=mcem_calibration_chains,
             calibration_warmup=calibration_warmup,
             calibration_draws=calibration_draws,
+            calibration_adapt_delta=mcem_calibration_adapt_delta,
+            calibration_max_treedepth=mcem_calibration_max_treedepth,
             step_size=float(mcem_step_size),
             screening_null_quantile=float(screening_null_quantile),
             screening_permutations=int(screening_permutations),

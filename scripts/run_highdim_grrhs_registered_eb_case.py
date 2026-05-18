@@ -74,6 +74,9 @@ def run_case(
     mcem_rounds: int,
     mcem_step_size: float,
     mcem_init_strategy: str,
+    mcem_calibration_chains: int | None,
+    mcem_calibration_adapt_delta: float | None,
+    mcem_calibration_max_treedepth: int | None,
     label: str | None,
 ) -> dict[str, object]:
     total_t0 = time.perf_counter()
@@ -117,6 +120,9 @@ def run_case(
             "mcem_rounds": int(mcem_rounds),
             "mcem_step_size": float(mcem_step_size),
             "mcem_init_strategy": str(mcem_init_strategy),
+            "mcem_calibration_chains": mcem_calibration_chains,
+            "mcem_calibration_adapt_delta": mcem_calibration_adapt_delta,
+            "mcem_calibration_max_treedepth": mcem_calibration_max_treedepth,
             "min_beta_kappa": min_beta_kappa,
             "max_beta_kappa": 16.0,
         }
@@ -213,6 +219,9 @@ def main() -> int:
     parser.add_argument("--mcem-rounds", type=int, default=1)
     parser.add_argument("--mcem-step-size", type=float, default=1.0)
     parser.add_argument("--mcem-init-strategy", default="ridge_screening_moment")
+    parser.add_argument("--mcem-calibration-chains", type=int, default=None)
+    parser.add_argument("--mcem-calibration-adapt-delta", type=float, default=None)
+    parser.add_argument("--mcem-calibration-max-treedepth", type=int, default=None)
     parser.add_argument("--label", default=None)
     args = parser.parse_args()
     payload = run_case(
@@ -237,6 +246,9 @@ def main() -> int:
         mcem_rounds=int(args.mcem_rounds),
         mcem_step_size=float(args.mcem_step_size),
         mcem_init_strategy=str(args.mcem_init_strategy),
+        mcem_calibration_chains=args.mcem_calibration_chains,
+        mcem_calibration_adapt_delta=args.mcem_calibration_adapt_delta,
+        mcem_calibration_max_treedepth=args.mcem_calibration_max_treedepth,
         label=args.label,
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
