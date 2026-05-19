@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.utils import load_pandas, method_display_name
+from simulation_second.src.bayes_kernel.utils import load_pandas, method_display_name
 
 from .reporting import (
     build_group_selection_frequency,
@@ -420,3 +420,4 @@ def build_paper_tables_from_results_dir(
         group_cols=group_cols,
         required_metric_cols=required_metric_cols,
     )
+

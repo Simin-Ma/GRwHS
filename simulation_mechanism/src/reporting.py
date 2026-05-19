@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from simulation_project.src.experiments.reporting import _paired_converged_subset
-from simulation_project.src.utils import load_pandas
+from simulation_second.src.bayes_kernel.experiments.reporting import _paired_converged_subset
+from simulation_second.src.bayes_kernel.utils import load_pandas
 
 from .utils import mechanism_method_label
 
@@ -383,3 +383,4 @@ def build_paired_deltas(
                     }
                 )
     return pd.DataFrame(rows)
+

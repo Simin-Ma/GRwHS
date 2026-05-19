@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Tuple
 
 import numpy as np
 
-from simulation_project.src.utils import FitResult
+from simulation_second.src.bayes_kernel.utils import FitResult
 from simulation_second.src.schemas import ConvergenceGateSpec, DEFAULT_METHOD_ROSTER
 
 
@@ -192,3 +192,4 @@ class PreparedSplit:
 class RealDataMethodEvaluation:
     row: Mapping[str, Any]
     fit_result: FitResult
+

@@ -11,9 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from simulation_project.src.utils import load_pandas
-
-from .utils import ensure_dir, resolve_history_results_dir
+from .utils import ensure_dir, load_pandas, resolve_history_results_dir
 
 
 _METHOD_COLORS: dict[str, str] = {

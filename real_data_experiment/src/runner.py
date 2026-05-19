@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from dataclasses import replace
@@ -8,8 +8,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from simulation_project.src.experiments.runtime import _parallel_rows
-from simulation_project.src.utils import FitResult, append_jsonl_records, load_pandas, save_fit_result_artifacts
+from simulation_second.src.bayes_kernel.experiments.runtime import _parallel_rows
+from simulation_second.src.bayes_kernel.utils import FitResult, append_jsonl_records, load_pandas, save_fit_result_artifacts
 
 from .config import dataset_spec_from_dict, force_until_converged_gate
 from .dataset import load_prepared_real_dataset, prepare_split, save_prepared_real_dataset, save_prepared_split
@@ -565,3 +565,4 @@ def finalize_real_data_results_dir(
     paths["run_dir"] = str(out_dir)
     paths["run_manifest"] = str(manifest_path)
     return paths
+

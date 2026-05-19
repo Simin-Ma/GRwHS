@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import shutil
 from datetime import datetime
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 
-from simulation_project.src.utils import load_pandas
+from simulation_second.src.bayes_kernel.utils import load_pandas
 
 from .utils import ensure_dir, resolve_history_results_dir
 
@@ -1139,3 +1139,4 @@ def build_mechanism_figures_from_results_dir(results_dir: Path | str) -> dict[st
     if maybe:
         outputs["figure6_ablation"] = maybe
     return outputs
+

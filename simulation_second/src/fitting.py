@@ -4,8 +4,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.experiments.fitting import _fit_all_methods as legacy_fit_all_methods
-from simulation_project.src.utils import FitResult, SamplerConfig
+from simulation_second.src.bayes_kernel.experiments.fitting import _fit_all_methods as real_fit_all_methods
+from simulation_second.src.bayes_kernel.utils import FitResult, SamplerConfig
 
 from .schemas import ConvergenceGateSpec
 
@@ -19,29 +19,30 @@ def _rhs_sampler_strategy_for_package(package: str | None) -> str:
 
 def _grrhs_defaults_for_package(package: str | None) -> dict[str, Any]:
     strategy = _rhs_sampler_strategy_for_package(package)
-    if strategy == "high_dim":
-        return {
-            "tau_target": "groups",
-            "sampler_backend": "collapsed_profile",
-            "use_local_scale": False,
-            "progress_bar": False,
-        }
-    return {
+    base = {
         "tau_target": "groups",
-        "sampler_backend": "gibbs_staged",
+        "alpha_kappa": 0.5,
+        "adaptive_strategy": "regularized_posterior_eb",
+        "beta_kappa": 4.0,
+        "posterior_eb_prior_center": 4.0,
+        "posterior_eb_prior_log_sd": 0.75,
+        "posterior_eb_damping": 0.5,
+        "min_beta_kappa": 1.0,
+        "max_beta_kappa": 12.0,
         "progress_bar": False,
     }
+    if strategy == "high_dim":
+        base.update({"sampler_backend": "collapsed_profile", "use_local_scale": False})
+    else:
+        base.update({"sampler_backend": "gibbs_staged"})
+    return base
 
 
 def _gigg_mmle_defaults_for_package(package: str | None) -> dict[str, Any]:
     strategy = _rhs_sampler_strategy_for_package(package)
     if strategy == "high_dim":
-        return {
-            "exact_highdim_fastpath": True,
-        }
-    return {
-        "exact_highdim_fastpath": False,
-    }
+        return {"exact_highdim_fastpath": True}
+    return {"exact_highdim_fastpath": False}
 
 
 def sampler_config_from_gate(gate: ConvergenceGateSpec) -> SamplerConfig:
@@ -83,7 +84,7 @@ def fit_benchmark_methods(
         **_gigg_mmle_defaults_for_package(benchmark_package),
         **dict(gigg_config or {}),
     }
-    return legacy_fit_all_methods(
+    return real_fit_all_methods(
         X,
         y,
         groups,

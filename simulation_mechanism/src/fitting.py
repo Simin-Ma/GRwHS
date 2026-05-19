@@ -1,17 +1,17 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import numpy as np
 
-from simulation_project.src.experiments.fitting import (
+from simulation_second.src.bayes_kernel.experiments.fitting import (
     _fit_all_methods as legacy_fit_all_methods,
     _fit_with_convergence_retry,
 )
-from simulation_project.src.experiments.methods.fit_gr_rhs import fit_gr_rhs
-from simulation_project.src.experiments.methods.fit_rhs import fit_rhs
-from simulation_project.src.utils import FitResult, SamplerConfig, rhs_style_tau0
+from simulation_second.src.bayes_kernel.experiments.methods.fit_gr_rhs import fit_gr_rhs
+from simulation_second.src.bayes_kernel.experiments.methods.fit_rhs import fit_rhs
+from simulation_second.src.bayes_kernel.utils import FitResult, SamplerConfig, rhs_style_tau0
 
 from .schemas import ConvergenceGateSpec, MechanismDataset, MechanismSettingSpec
 from .utils import mechanism_method_family
@@ -184,3 +184,4 @@ def fit_setting_methods(
             key, result = fut.result()
             done[str(key)] = result
     return {name: done[name] for name in methods}
+

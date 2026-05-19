@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from simulation_project.src.utils import load_pandas
+from simulation_second.src.bayes_kernel.utils import load_pandas
 
 from .utils import ensure_dir, mechanism_method_label, resolve_history_results_dir
 
@@ -851,3 +851,4 @@ def build_paper_tables_from_results_dir(results_dir: Path | str) -> dict[str, st
         per_group_kappa=per_group_kappa,
         out_dir=root / "paper_tables",
     )
+

@@ -5,8 +5,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.experiments.reporting import _paired_converged_subset
-from simulation_project.src.utils import load_pandas, method_display_name
+from .utils import load_pandas, method_display_name
 
 
 DEFAULT_SETTING_GROUP_COLS = (
@@ -28,6 +27,60 @@ DEFAULT_SETTING_GROUP_COLS = (
 
 DEFAULT_REQUIRED_METRICS = ("mse_null", "mse_signal", "mse_overall", "lpd_test")
 DEFAULT_DELTA_METRICS = ("mse_null", "mse_signal", "mse_overall", "lpd_test")
+
+
+def _paired_converged_subset(
+    raw,
+    *,
+    group_cols: Sequence[str],
+    method_levels: Sequence[str],
+    required_metric_cols: Sequence[str] | None = None,
+    method_col: str = "method",
+    replicate_col: str = "replicate_id",
+    converged_col: str = "converged",
+    required_cols: Sequence[str] | None = None,
+    status_col: str = "status",
+    status_ok_values: Sequence[str] = ("ok",),
+):
+    if raw.empty:
+        pd = load_pandas()
+        return raw.copy(), pd.DataFrame(columns=list(group_cols) + ["n_total_replicates", "n_common_replicates", "common_rate"])
+    metric_cols = tuple(required_cols if required_cols is not None else (required_metric_cols or ()))
+    valid = raw.copy()
+    if status_col in valid.columns:
+        ok_values = {str(value).strip().lower() for value in status_ok_values}
+        valid = valid.loc[valid[status_col].astype(str).str.strip().str.lower().isin(ok_values)].copy()
+    if converged_col in valid.columns:
+        valid = valid.loc[valid[converged_col].fillna(False).astype(bool)].copy()
+    for col in metric_cols:
+        if col in valid.columns:
+            valid = valid.loc[valid[col].notna()].copy()
+    if valid.empty:
+        pd = load_pandas()
+        return valid, pd.DataFrame(columns=list(group_cols) + ["n_total_replicates", "n_common_replicates", "common_rate"])
+    pair_cols = [col for col in list(group_cols) + ["replicate_id"] if col in valid.columns]
+    methods = [str(method) for method in method_levels]
+    if replicate_col in valid.columns:
+        pair_cols = [col for col in list(group_cols) + [replicate_col] if col in valid.columns]
+    counts = valid.groupby(pair_cols)[method_col].apply(lambda s: set(s.astype(str))).reset_index(name="_methods")
+    keep = counts["_methods"].apply(lambda present: set(methods).issubset(present))
+    keys = counts.loc[keep, pair_cols]
+    if keys.empty:
+        paired = valid.iloc[0:0].copy()
+    else:
+        paired = valid.merge(keys, on=pair_cols, how="inner")
+        paired = paired.loc[paired[method_col].astype(str).isin(methods)].copy()
+    pd = load_pandas()
+    total = raw.groupby(list(group_cols))[replicate_col].nunique().reset_index(name="n_total_replicates")
+    common = keys.groupby(list(group_cols))[replicate_col].nunique().reset_index(name="n_common_replicates") if not keys.empty else pd.DataFrame(columns=list(group_cols) + ["n_common_replicates"])
+    stats = total.merge(common, on=list(group_cols), how="left")
+    stats["n_common_replicates"] = stats["n_common_replicates"].fillna(0).astype(int)
+    stats["common_rate"] = np.where(
+        stats["n_total_replicates"].astype(float) > 0,
+        stats["n_common_replicates"].astype(float) / stats["n_total_replicates"].astype(float),
+        np.nan,
+    )
+    return paired, stats
 
 
 def default_setting_group_cols(raw=None) -> list[str]:

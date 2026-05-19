@@ -8,9 +8,6 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from simulation_project.src.experiments.runtime import _parallel_rows
-from simulation_project.src.utils import FitResult, append_jsonl_records, load_pandas, save_fit_result_artifacts
-
 from .config import (
     BenchmarkConfig,
     family_spec_from_dict,
@@ -30,7 +27,43 @@ from .reporting import (
     write_json_manifest,
 )
 from .table_builder import build_paper_tables
-from .utils import ensure_dir, prepare_history_run_dir, save_json, write_history_run_index
+from simulation_second.src.bayes_kernel.utils import FitResult
+
+from .utils import append_jsonl_records, ensure_dir, load_pandas, prepare_history_run_dir, save_fit_result_artifacts, save_json, write_history_run_index
+
+
+def _parallel_rows(
+    tasks: Sequence[Mapping[str, Any]],
+    worker,
+    *,
+    n_jobs: int = 1,
+    prefer_process: bool = False,
+    process_fallback: str = "thread",
+    progress_desc: str = "",
+    on_task_done=None,
+) -> list[Any]:
+    del prefer_process, process_fallback, progress_desc
+    if int(n_jobs) <= 1:
+        out = []
+        for task in tasks:
+            result = worker(task)
+            if on_task_done is not None:
+                on_task_done(task, result)
+            out.append(result)
+        return out
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    out = [None] * len(tasks)
+    with ThreadPoolExecutor(max_workers=int(n_jobs)) as pool:
+        futures = {pool.submit(worker, task): (idx, task) for idx, task in enumerate(tasks)}
+        for fut in as_completed(futures):
+            idx, task = futures[fut]
+            result = fut.result()
+            if on_task_done is not None:
+                on_task_done(task, result)
+            out[idx] = result
+    return out
 
 
 def _group_config_name(group_sizes: Sequence[int]) -> str:

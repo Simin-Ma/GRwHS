@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import math
@@ -7,14 +7,14 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.experiments.evaluation import (
+from simulation_second.src.bayes_kernel.experiments.evaluation import (
     _bridge_ratio_diagnostics,
     _kappa_group_means,
     _kappa_group_prob_gt,
 )
-from simulation_project.src.experiments.runtime import _attempts_used, _is_bayesian_method
-from simulation_project.src.experiments.analysis.metrics import compute_test_lpd_ppd
-from simulation_project.src.utils import FitResult, method_display_name
+from simulation_second.src.bayes_kernel.experiments.runtime import _attempts_used, _is_bayesian_method
+from simulation_second.src.bayes_kernel.experiments.analysis.metrics import compute_test_lpd_ppd
+from simulation_second.src.bayes_kernel.utils import FitResult, method_display_name
 
 from .schemas import PreparedSplit
 
@@ -383,3 +383,4 @@ def evaluate_method_result(
         "kappa_prob_gt_0_5_overall": float(_overall_mean(kappa_prob_gt)),
         **bridge,
     }
+

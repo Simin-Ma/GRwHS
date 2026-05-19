@@ -1,14 +1,14 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from typing import Any
 
 import numpy as np
 
-from simulation_project.src.experiments.evaluation import _kappa_group_means, _kappa_group_prob_gt
-from simulation_project.src.experiments.group_aware_v2_common import summarize_method_row
-from simulation_project.src.experiments.runtime import _is_bayesian_method
-from simulation_project.src.utils import FitResult
+from simulation_second.src.bayes_kernel.experiments.evaluation import _kappa_group_means, _kappa_group_prob_gt
+from simulation_second.src.bayes_kernel.experiments.group_aware_v2_common import summarize_method_row
+from simulation_second.src.bayes_kernel.experiments.runtime import _is_bayesian_method
+from simulation_second.src.bayes_kernel.utils import FitResult
 
 from .schemas import MechanismDataset, active_group_mask
 from .utils import mechanism_method_family, mechanism_method_label
@@ -117,3 +117,4 @@ def build_group_kappa_rows(
             }
         )
     return rows
+

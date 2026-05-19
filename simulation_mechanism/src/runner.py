@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from dataclasses import replace
@@ -8,8 +8,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from simulation_project.src.experiments.runtime import _parallel_rows
-from simulation_project.src.utils import FitResult, append_jsonl_records, load_pandas, save_fit_result_artifacts
+from simulation_second.src.bayes_kernel.experiments.runtime import _parallel_rows
+from simulation_second.src.bayes_kernel.utils import FitResult, append_jsonl_records, load_pandas, save_fit_result_artifacts
 
 from .config import MechanismConfig, force_until_converged_gate, setting_spec_from_dict
 from .dgp import generate_mechanism_dataset, save_mechanism_dataset
@@ -488,3 +488,4 @@ def run_mechanism(config: MechanismConfig) -> dict[str, str]:
         )
     )
     return result_paths
+

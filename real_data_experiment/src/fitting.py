@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.experiments.fitting import _fit_all_methods as legacy_fit_all_methods
-from simulation_project.src.utils import FitResult, SamplerConfig
+from simulation_second.src.bayes_kernel.experiments.fitting import _fit_all_methods as legacy_fit_all_methods
+from simulation_second.src.bayes_kernel.utils import FitResult, SamplerConfig
 
 from .schemas import ConvergenceGateSpec
 
@@ -57,3 +57,4 @@ def fit_real_data_methods(
         max_convergence_retries=int(gate.max_convergence_retries),
         method_jobs=int(method_jobs),
     )
+

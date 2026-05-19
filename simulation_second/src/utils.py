@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
+import time
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Mapping, Sequence, Tuple
@@ -8,6 +11,38 @@ from typing import Any, List, Mapping, Sequence, Tuple
 import numpy as np
 
 MASTER_SEED = 20260425
+
+
+@dataclass
+class SamplerConfig:
+    chains: int = 4
+    warmup: int = 250
+    post_warmup_draws: int = 250
+    adapt_delta: float = 0.9
+    max_treedepth: int = 12
+    strict_adapt_delta: float = 0.95
+    strict_max_treedepth: int = 14
+    max_divergence_ratio: float = 0.01
+    rhat_threshold: float = 1.01
+    ess_threshold: float = 200.0
+
+
+@dataclass
+class FitResult:
+    method: str
+    status: str
+    beta_mean: Any = None
+    beta_draws: Any = None
+    kappa_draws: Any = None
+    group_scale_draws: Any = None
+    runtime_seconds: float = 0.0
+    rhat_max: float = math.nan
+    bulk_ess_min: float = math.nan
+    divergence_ratio: float = 0.0
+    converged: bool = False
+    tau_draws: Any = None
+    error: str = ""
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 def ensure_dir(path: Path | str) -> Path:
@@ -21,6 +56,88 @@ def save_json(payload: Any, path: Path | str) -> Path:
     ensure_dir(out.parent)
     out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return out
+
+
+def load_pandas():
+    import pandas as pd
+
+    return pd
+
+
+def append_jsonl_records(path: Path | str, records: Sequence[Mapping[str, Any]]) -> Path:
+    out = Path(path)
+    ensure_dir(out.parent)
+    with out.open("a", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(_json_clean(record), ensure_ascii=True, sort_keys=True) + "\n")
+    return out
+
+
+def method_display_name(method: str) -> str:
+    labels = {
+        "GR_RHS": "GR-RHS",
+        "GR_RHS_Adaptive": "GR-RHS adaptive EB",
+        "GR_RHS_B01": "GR-RHS Beta(0.5,1)",
+        "GR_RHS_B04": "GR-RHS Beta(0.5,4)",
+        "GR_RHS_B08": "GR-RHS Beta(0.5,8)",
+        "RHS": "RHS",
+        "GHS_plus": "GHS+",
+        "GIGG_MMLE": "GIGG-MMLE",
+        "LASSO_CV": "LASSO-CV",
+        "OLS": "OLS",
+    }
+    return labels.get(str(method), str(method).replace("_", "-"))
+
+
+def method_result_label(method: str) -> str:
+    return method_display_name(method)
+
+
+def _json_clean(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_clean(asdict(value))
+    if isinstance(value, Mapping):
+        return {str(key): _json_clean(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_clean(val) for val in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def save_fit_result_artifacts(
+    fit_dir: Path | str,
+    *,
+    result: FitResult,
+    run_context: Mapping[str, Any] | None = None,
+    coefficient_truth: Any = None,
+    extra_json: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    out = ensure_dir(fit_dir)
+    result_path = save_json(_json_clean(result), out / "fit_result.json")
+    context_path = save_json(_json_clean(dict(run_context or {})), out / "run_context.json")
+    extra_path = save_json(_json_clean(dict(extra_json or {})), out / "extra.json")
+    paths = {
+        "fit_dir": str(out),
+        "fit_result": str(result_path),
+        "run_context": str(context_path),
+        "extra": str(extra_path),
+    }
+    if coefficient_truth is not None:
+        truth_path = out / "coefficient_truth.npy"
+        np.save(truth_path, np.asarray(coefficient_truth, dtype=float))
+        paths["coefficient_truth"] = str(truth_path)
+    return paths
+
+
+def timed_call(fn, *args, **kwargs):
+    start = time.perf_counter()
+    value = fn(*args, **kwargs)
+    return value, float(time.perf_counter() - start)
 
 
 def canonical_groups(group_sizes: Sequence[int]) -> List[List[int]]:

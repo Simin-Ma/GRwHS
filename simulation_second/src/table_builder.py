@@ -5,9 +5,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.utils import load_pandas, method_display_name
-
 from .utils import ensure_dir, resolve_history_results_dir
+from .utils import load_pandas, method_display_name
 from .reporting import build_paired_summary, default_setting_group_cols
 
 

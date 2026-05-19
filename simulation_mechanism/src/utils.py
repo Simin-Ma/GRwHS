@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from datetime import datetime
@@ -7,7 +7,7 @@ from typing import Any, List, Mapping, Sequence, Tuple
 
 import numpy as np
 
-from simulation_project.src.utils import method_display_name, method_result_label
+from simulation_second.src.bayes_kernel.utils import method_display_name, method_result_label
 
 MASTER_SEED = 20260425
 
@@ -228,3 +228,4 @@ def resolve_history_results_dir(
     if latest_run_dir is not None and _contains_required_files(latest_run_dir, required_files):
         return latest_run_dir
     return root
+

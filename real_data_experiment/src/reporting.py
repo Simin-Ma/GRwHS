@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -6,8 +6,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from simulation_project.src.experiments.reporting import _paired_converged_subset
-from simulation_project.src.utils import load_pandas, method_display_name
+from simulation_second.src.bayes_kernel.experiments.reporting import _paired_converged_subset
+from simulation_second.src.bayes_kernel.utils import load_pandas, method_display_name
 
 
 DEFAULT_DATASET_GROUP_COLS = (
@@ -440,3 +440,4 @@ def write_json_manifest(payload: dict[str, Any], path: Path | str) -> Path:
     path_obj.parent.mkdir(parents=True, exist_ok=True)
     path_obj.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path_obj
+
