@@ -3,46 +3,16 @@ from __future__ import annotations
 import json
 import math
 import time
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Mapping, Sequence, Tuple
 
 import numpy as np
 
+from simulation_second.src.bayes_kernel.utils import FitResult, SamplerConfig
+
 MASTER_SEED = 20260425
-
-
-@dataclass
-class SamplerConfig:
-    chains: int = 4
-    warmup: int = 250
-    post_warmup_draws: int = 250
-    adapt_delta: float = 0.9
-    max_treedepth: int = 12
-    strict_adapt_delta: float = 0.95
-    strict_max_treedepth: int = 14
-    max_divergence_ratio: float = 0.01
-    rhat_threshold: float = 1.01
-    ess_threshold: float = 200.0
-
-
-@dataclass
-class FitResult:
-    method: str
-    status: str
-    beta_mean: Any = None
-    beta_draws: Any = None
-    kappa_draws: Any = None
-    group_scale_draws: Any = None
-    runtime_seconds: float = 0.0
-    rhat_max: float = math.nan
-    bulk_ess_min: float = math.nan
-    divergence_ratio: float = 0.0
-    converged: bool = False
-    tau_draws: Any = None
-    error: str = ""
-    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 def ensure_dir(path: Path | str) -> Path:

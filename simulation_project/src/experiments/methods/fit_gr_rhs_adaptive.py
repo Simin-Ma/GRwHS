@@ -740,7 +740,28 @@ def calibrate_grrhs_beta_regularized_posterior_eb(
         },
     )
     if pilot.kappa_draws is None:
-        raise RuntimeError("GR-RHS regularized posterior EB calibration requires kappa_draws.")
+        return AdaptiveBetaCalibration(
+            strategy="regularized_posterior_eb",
+            alpha_kappa=float(alpha_kappa),
+            beta_kappa=float(beta_init),
+            details={
+                "pilot_beta_kappa": float(beta_init),
+                "beta_kappa_out": float(beta_init),
+                "damping": float(min(max(float(damping), 0.0), 1.0)),
+                "pilot_status": str(pilot.status),
+                "pilot_converged": bool(pilot.converged),
+                "pilot_rhat_max": float(pilot.rhat_max) if np.isfinite(pilot.rhat_max) else float("nan"),
+                "pilot_ess_min": float(pilot.bulk_ess_min) if np.isfinite(pilot.bulk_ess_min) else float("nan"),
+                "calibration_chains": int(cal_sampler.chains),
+                "calibration_warmup": int(cal_sampler.warmup),
+                "calibration_draws": int(cal_sampler.post_warmup_draws),
+                "calibration_adapt_delta": float(cal_sampler.adapt_delta),
+                "calibration_max_treedepth": int(cal_sampler.max_treedepth),
+                "min_beta_kappa": None if min_beta_kappa is None else float(min_beta_kappa),
+                "max_beta_kappa": None if max_beta_kappa is None else float(max_beta_kappa),
+                "fallback_reason": "pilot_missing_kappa_draws",
+            },
+        )
     update = _regularized_beta_update_from_kappa(
         pilot.kappa_draws,
         alpha_kappa=float(alpha_kappa),

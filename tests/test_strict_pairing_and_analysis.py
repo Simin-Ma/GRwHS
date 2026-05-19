@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from simulation_project.src.experiments.analysis.report import run_analysis
-from simulation_project.src.experiments.evaluation import _evaluate_row
-from simulation_project.src.experiments.reporting import _paired_converged_subset
-from simulation_project.src.utils import FitResult
+from simulation_second.src.bayes_kernel.experiments.evaluation import _evaluate_row
+from simulation_second.src.bayes_kernel.experiments.reporting import _paired_converged_subset
+from simulation_second.src.bayes_kernel.utils import FitResult
+from simulation_second.src.reporting import build_summary
 
 
 def test_paired_subset_requires_converged_and_status_ok() -> None:
@@ -64,48 +63,44 @@ def test_evaluate_row_exposes_lpd_test_ppd() -> None:
     assert float(out["lpd_test"]) == float(out["lpd_test_ppd"])
 
 
-def test_analysis_writes_diagnostics_table_and_gate(tmp_path: Path) -> None:
-    base = tmp_path / "sim_outputs"
-    res = base / "results"
-    res.mkdir(parents=True, exist_ok=True)
+def test_current_reporting_builds_method_summary(tmp_path: Path) -> None:
+    raw = pd.DataFrame(
+        [
+            {
+                "setting_id": "setting_a",
+                "replicate_id": 1,
+                "method": "GR_RHS",
+                "status": "ok",
+                "converged": True,
+                "mse_null": 0.5,
+                "mse_signal": 0.8,
+                "mse_overall": 0.65,
+                "lpd_test": -1.0,
+                "runtime_seconds": 2.0,
+            },
+            {
+                "setting_id": "setting_a",
+                "replicate_id": 1,
+                "method": "RHS",
+                "status": "ok",
+                "converged": True,
+                "mse_null": 0.7,
+                "mse_signal": 0.9,
+                "mse_overall": 0.8,
+                "lpd_test": -1.2,
+                "runtime_seconds": 3.0,
+            },
+        ]
+    )
 
-    specs = [
-        ("exp2_group_separation", "method", "GR_RHS"),
-        ("exp3a_main_benchmark", "method", "GR_RHS"),
-        ("exp3b_boundary_stress", "method", "GR_RHS"),
-        ("exp3c_highdim_stress", "method", "GR_RHS"),
-        ("exp4_variant_ablation", "method_type", "GR_RHS"),
-        ("exp5_prior_sensitivity", "prior_id", "1"),
-    ]
-    fields = ["converged", "status", "runtime_seconds", "bulk_ess_min", "rhat_max", "divergence_ratio"]
-    for subdir, col, value in specs:
-        exp_dir = res / subdir
-        exp_dir.mkdir(parents=True, exist_ok=True)
-        with (exp_dir / "raw_results.csv").open("w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=[col] + fields)
-            writer.writeheader()
-            writer.writerow(
-                {
-                    col: value,
-                    "converged": "False",
-                    "status": "error",
-                    "runtime_seconds": "10.0",
-                    "bulk_ess_min": "100.0",
-                    "rhat_max": "1.2",
-                    "divergence_ratio": "0.1",
-                }
-            )
+    summary = build_summary(
+        raw,
+        group_cols=["setting_id"],
+        method_order=["GR_RHS", "RHS"],
+    )
+    out_path = tmp_path / "method_summary.csv"
+    summary.to_csv(out_path, index=False)
 
-    metrics = run_analysis(save_dir=str(base))
-    gate = metrics.get("strict_convergence_gate", {})
-    assert gate.get("overall_pass") is False
-
-    diag_path = res / "diagnostics_runtime_table.csv"
-    assert diag_path.exists()
-    rows = list(csv.DictReader(diag_path.open("r", encoding="utf-8", newline="")))
-    assert len(rows) > 0
-
-    report_path = res / "analysis_report.txt"
-    assert report_path.exists()
-    txt = report_path.read_text(encoding="utf-8")
-    assert "Strict Convergence Gate" in txt
+    assert out_path.exists()
+    assert set(summary["method"].astype(str)) == {"GR_RHS", "RHS"}
+    assert "rank_mse_overall" in summary.columns

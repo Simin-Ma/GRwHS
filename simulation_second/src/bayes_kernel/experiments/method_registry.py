@@ -425,7 +425,7 @@ def build_default_method_registry() -> MethodRegistry:
             c.groups,
             task=c.task,
             seed=c.seed,
-            sampler=_gigg_highdim_sampler(c),
+            sampler=c.sampler,
             p0=c.p0,
             method_label=str(method_name),
             **kwargs,
@@ -446,13 +446,14 @@ def build_default_method_registry() -> MethodRegistry:
         kwargs = _clean_gigg_kwargs(c.gigg_mmle_kwargs)
         kwargs["exact_highdim_fastpath"] = True
         kwargs.setdefault("progress_bar", False)
+        sampler_use = _gigg_highdim_sampler(c)
         res = fit_gigg_mmle(
             c.X,
             c.y,
             c.groups,
             task=c.task,
             seed=c.seed,
-            sampler=c.sampler,
+            sampler=sampler_use,
             p0=c.p0,
             method_label=str(method_name),
             **kwargs,
@@ -462,7 +463,7 @@ def build_default_method_registry() -> MethodRegistry:
             method_family="GIGG_MMLE",
             protocol="high_dim",
             sampler_backend="mmle_btrick",
-            sampler=_gigg_highdim_sampler(c),
+            sampler=sampler_use,
             implementation="single_mmle_gibbs_with_bhattacharya_beta_update",
             notes=["High-dimensional GIGG-MMLE follows the original/official MMLE Gibbs route and uses the Bhattacharya Gaussian block trick for beta updates."],
             extra={"exact_highdim_fastpath": True},
@@ -608,7 +609,11 @@ def build_default_method_registry() -> MethodRegistry:
     )
     reg.register(
         "GIGG_MMLE",
-        lambda c: _fit_gigg_mmle_highdim(c, method_name="GIGG_MMLE"),
+        lambda c: (
+            _fit_gigg_mmle_highdim(c, method_name="GIGG_MMLE")
+            if str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
+            else _fit_gigg_mmle_lowdim(c, method_name="GIGG_MMLE")
+        ),
     )
     reg.register(
         "GIGG_MMLE_LowDim",
