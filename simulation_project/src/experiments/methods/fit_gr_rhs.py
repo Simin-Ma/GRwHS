@@ -346,8 +346,14 @@ def _collapsed_profile_ridge_init_params(
     key = "logit_kappa_shared_raw" if bool(shared_kappa) else "logit_kappa_raw"
     if str(kappa_reparameterization).strip().lower() == "prior_logit_affine":
         loc, scale = _beta_logit_moments(alpha_kappa, beta_kappa)
-        scale_use = float(max(scale, 1e-6))
-        logit_kappa = ((logit_kappa.astype(float) - float(loc)) / scale_use).astype(np.float32)
+        loc_arr = np.asarray(loc, dtype=float)
+        scale_arr = np.maximum(np.asarray(scale, dtype=float), 1e-6)
+        if bool(shared_kappa):
+            loc_use = float(np.mean(loc_arr))
+            scale_use = float(max(np.mean(scale_arr), 1e-6))
+            logit_kappa = ((logit_kappa.astype(float) - loc_use) / scale_use).astype(np.float32)
+        else:
+            logit_kappa = ((logit_kappa.astype(float) - loc_arr) / scale_arr).astype(np.float32)
 
     out: dict[str, np.ndarray] = {
         "sigma": np.asarray(float(max(sigma_guess, 1e-4)), dtype=np.float32),

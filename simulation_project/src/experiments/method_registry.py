@@ -396,11 +396,16 @@ def build_default_method_registry() -> MethodRegistry:
             c,
             high_dim=(str(c.rhs_sampler_strategy).strip().lower() == "high_dim"),
         )
+        high_dim = str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
         kwargs["alpha_kappa"] = 0.5
-        kwargs["adaptive_strategy"] = "group_specific_multiplicity"
+        kwargs["adaptive_strategy"] = (
+            "group_specific_multiplicity"
+            if bool(high_dim)
+            else "ridge_screening_multiplicity"
+        )
         kwargs["multiplicity_correction"] = "fwer"
         kwargs["multiplicity_level"] = 0.05
-        kwargs["screening_permutations"] = 120 if str(c.rhs_sampler_strategy).strip().lower() == "high_dim" else 200
+        kwargs["screening_permutations"] = 120 if bool(high_dim) else 200
         res = fit_gr_rhs_adaptive_beta(
             c.X,
             c.y,

@@ -2173,15 +2173,18 @@ class GRRHS_CollapsedNUTS:
         return jnp.maximum(base, sigma_term * jnp.sqrt(n_term) * jnp.asarray(1e-8, dtype=X_dtype))
 
     @staticmethod
-    def _beta_logit_moments(alpha: float, beta: float) -> tuple[float, float]:
+    def _beta_logit_moments(alpha: float, beta: Any) -> tuple[Any, Any]:
         # Moment-matched logit-Beta approximation used only as an exact
         # reparameterization aid for NUTS geometry; the target posterior stays
         # unchanged because the Jacobian/prior correction is applied explicitly.
-        a = float(max(alpha, 1e-8))
-        b = float(max(beta, 1e-8))
-        mean = math.log(a) - math.log(b)
-        var = max(1.0 / a + 1.0 / b, 1e-8)
-        return float(mean), float(math.sqrt(var))
+        a = np.maximum(np.asarray(alpha, dtype=float), 1e-8)
+        b = np.maximum(np.asarray(beta, dtype=float), 1e-8)
+        mean = np.log(a) - np.log(b)
+        var = np.maximum(1.0 / a + 1.0 / b, 1e-8)
+        scale = np.sqrt(var)
+        if np.ndim(mean) == 0:
+            return float(mean), float(scale)
+        return mean, scale
 
     @staticmethod
     def _half_cauchy_log_density_on_log(x: Any) -> Any:
@@ -2266,7 +2269,7 @@ class GRRHS_CollapsedNUTS:
                     )
                     proposal_log_prob = (
                         dist.Normal(0.0, 1.0).log_prob(logit_kappa_latent)
-                        - jnp.log(jnp.asarray(logit_scale_jnp, dtype=X.dtype))
+                        - jnp.log(jnp.asarray(jnp.mean(logit_scale_jnp), dtype=X.dtype))
                     )
                 else:
                     logit_kappa_raw = numpyro.deterministic("logit_kappa", logit_kappa_latent)
@@ -2291,7 +2294,7 @@ class GRRHS_CollapsedNUTS:
                     )
                     proposal_log_prob = jnp.sum(
                         dist.Normal(jnp.zeros(G, dtype=X.dtype), jnp.ones(G, dtype=X.dtype)).log_prob(logit_kappa_latent)
-                    ) - G * jnp.log(jnp.asarray(logit_scale_jnp, dtype=X.dtype))
+                    ) - jnp.sum(jnp.log(jnp.asarray(logit_scale_jnp, dtype=X.dtype)))
                 else:
                     logit_kappa = numpyro.deterministic("logit_kappa", logit_kappa_latent)
                     proposal_log_prob = jnp.sum(
