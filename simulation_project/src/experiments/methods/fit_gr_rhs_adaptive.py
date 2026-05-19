@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 import numpy as np
-from scipy.optimize import brentq
+from scipy.optimize import brentq, minimize_scalar
 from scipy.special import digamma
 
 from .fit_gr_rhs import fit_gr_rhs
@@ -607,6 +607,181 @@ def _mcem_beta_update_from_kappa(
     }
 
 
+def _regularized_beta_update_from_kappa(
+    kappa_draws: Any,
+    *,
+    alpha_kappa: float,
+    prior_center: float,
+    prior_log_sd: float,
+    min_beta_kappa: float | None,
+    max_beta_kappa: float | None,
+) -> dict[str, Any]:
+    draws = _flatten_kappa_draws(kappa_draws)
+    n_groups = max(int(draws.shape[1]), 1)
+    elog1m_by_group = np.mean(np.log1p(-draws), axis=0)
+    sum_elog1m = float(np.sum(elog1m_by_group))
+    alpha = float(max(alpha_kappa, 1e-8))
+    lo = float(1e-6 if min_beta_kappa is None else max(float(min_beta_kappa), 1e-6))
+    hi = float(1e6 if max_beta_kappa is None else max(float(max_beta_kappa), lo * 1.0001))
+    center = float(min(max(float(prior_center), lo), hi))
+    log_center = math.log(max(center, 1e-12))
+    log_sd = float(max(float(prior_log_sd), 1e-6))
+
+    def likelihood_score(beta_value: float) -> float:
+        beta = float(max(beta_value, 1e-12))
+        return float(n_groups * (digamma(alpha + beta) - digamma(beta)) + sum_elog1m)
+
+    def theta_score(theta: float) -> float:
+        beta = float(math.exp(theta))
+        return float(beta * likelihood_score(beta) - (float(theta) - log_center) / (log_sd * log_sd))
+
+    def objective(theta: float) -> float:
+        beta = float(math.exp(theta))
+        log_beta_fn = math.lgamma(alpha) + math.lgamma(beta) - math.lgamma(alpha + beta)
+        q_like = float((beta - 1.0) * sum_elog1m - n_groups * log_beta_fn)
+        q_prior = -0.5 * ((float(theta) - log_center) / log_sd) ** 2
+        return -float(q_like + q_prior)
+
+    update = _mcem_beta_update_from_kappa(
+        draws,
+        alpha_kappa=float(alpha_kappa),
+        min_beta_kappa=min_beta_kappa,
+        max_beta_kappa=max_beta_kappa,
+    )
+    log_lo = math.log(max(lo, 1e-12))
+    log_hi = math.log(max(hi, lo * 1.0001))
+    score_lo = theta_score(log_lo)
+    score_hi = theta_score(log_hi)
+    boundary = None
+    if np.isfinite(score_lo) and np.isfinite(score_hi) and score_lo * score_hi < 0.0:
+        theta_hat = float(brentq(theta_score, log_lo, log_hi, maxiter=100, xtol=1e-8, rtol=1e-8))
+    else:
+        opt = minimize_scalar(objective, bounds=(log_lo, log_hi), method="bounded", options={"xatol": 1e-8})
+        theta_hat = float(opt.x)
+        if abs(theta_hat - log_lo) < 1e-5:
+            boundary = "lower"
+        elif abs(theta_hat - log_hi) < 1e-5:
+            boundary = "upper"
+    beta_hat = float(min(max(math.exp(theta_hat), lo), hi))
+    return {
+        **update,
+        "beta_kappa_regularized_map": float(beta_hat),
+        "regularized_score_at_min": float(score_lo),
+        "regularized_score_at_max": float(score_hi),
+        "regularized_score_at_map": float(theta_score(theta_hat)),
+        "regularized_boundary": boundary,
+        "prior_center": float(center),
+        "prior_log_sd": float(log_sd),
+        "regularized_objective_at_map": float(objective(theta_hat)),
+    }
+
+
+def calibrate_grrhs_beta_regularized_posterior_eb(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: Sequence[Sequence[int]],
+    *,
+    task: str,
+    seed: int,
+    p0: int,
+    sampler: SamplerConfig,
+    grrhs_kwargs: dict[str, Any],
+    alpha_kappa: float = 0.5,
+    beta_kappa: float = 4.0,
+    prior_center: float = 4.0,
+    prior_log_sd: float = 0.75,
+    damping: float = 0.5,
+    calibration_chains: int | None = None,
+    calibration_warmup: int | None = None,
+    calibration_draws: int | None = None,
+    calibration_adapt_delta: float | None = None,
+    calibration_max_treedepth: int | None = None,
+    min_beta_kappa: float | None = 1.0,
+    max_beta_kappa: float | None = 12.0,
+) -> AdaptiveBetaCalibration:
+    """Regularized one-step posterior EB calibration for common beta_kappa.
+
+    The pilot posterior supplies continuous kappa information. A log-normal
+    prior centered at a conservative fixed setting and log-scale damping keep
+    small-G low-dimensional cases from chasing an unstable EB boundary.
+    """
+    beta_init = float(beta_kappa)
+    if min_beta_kappa is not None:
+        beta_init = float(max(beta_init, float(min_beta_kappa)))
+    if max_beta_kappa is not None:
+        beta_init = float(min(beta_init, float(max_beta_kappa)))
+    cal_sampler = _sampler_with_budget(
+        sampler,
+        chains=calibration_chains,
+        warmup=calibration_warmup,
+        draws=calibration_draws,
+        adapt_delta=calibration_adapt_delta,
+        max_treedepth=calibration_max_treedepth,
+    )
+    kwargs = dict(grrhs_kwargs)
+    kwargs["alpha_kappa"] = float(alpha_kappa)
+    kwargs["beta_kappa"] = float(beta_init)
+    kwargs.setdefault("progress_bar", False)
+    pilot = fit_gr_rhs(
+        X,
+        y,
+        groups,
+        task=str(task),
+        seed=int(seed) + 2609,
+        p0=int(p0),
+        sampler=cal_sampler,
+        method_name="GR_RHS_REG_POST_EB_CAL",
+        retry_resume_payload=None,
+        **{
+            **kwargs,
+            "retry_attempt": 0,
+            "collapsed_hard_min_warmup": int(cal_sampler.warmup),
+            "collapsed_hard_min_draws": int(cal_sampler.post_warmup_draws),
+        },
+    )
+    if pilot.kappa_draws is None:
+        raise RuntimeError("GR-RHS regularized posterior EB calibration requires kappa_draws.")
+    update = _regularized_beta_update_from_kappa(
+        pilot.kappa_draws,
+        alpha_kappa=float(alpha_kappa),
+        prior_center=float(prior_center),
+        prior_log_sd=float(prior_log_sd),
+        min_beta_kappa=min_beta_kappa,
+        max_beta_kappa=max_beta_kappa,
+    )
+    beta_map = float(update["beta_kappa_regularized_map"])
+    damp = float(min(max(float(damping), 0.0), 1.0))
+    beta_out = float(math.exp((1.0 - damp) * math.log(max(beta_init, 1e-12)) + damp * math.log(max(beta_map, 1e-12))))
+    if min_beta_kappa is not None:
+        beta_out = float(max(beta_out, float(min_beta_kappa)))
+    if max_beta_kappa is not None:
+        beta_out = float(min(beta_out, float(max_beta_kappa)))
+    return AdaptiveBetaCalibration(
+        strategy="regularized_posterior_eb",
+        alpha_kappa=float(alpha_kappa),
+        beta_kappa=float(beta_out),
+        details={
+            "pilot_beta_kappa": float(beta_init),
+            "beta_kappa_unregularized_root": float(update["beta_kappa_root"]),
+            "beta_kappa_regularized_map": float(beta_map),
+            "beta_kappa_out": float(beta_out),
+            "damping": float(damp),
+            "pilot_status": str(pilot.status),
+            "pilot_converged": bool(pilot.converged),
+            "pilot_rhat_max": float(pilot.rhat_max) if np.isfinite(pilot.rhat_max) else float("nan"),
+            "pilot_ess_min": float(pilot.bulk_ess_min) if np.isfinite(pilot.bulk_ess_min) else float("nan"),
+            "calibration_chains": int(cal_sampler.chains),
+            "calibration_warmup": int(cal_sampler.warmup),
+            "calibration_draws": int(cal_sampler.post_warmup_draws),
+            "calibration_adapt_delta": float(cal_sampler.adapt_delta),
+            "calibration_max_treedepth": int(cal_sampler.max_treedepth),
+            "min_beta_kappa": None if min_beta_kappa is None else float(min_beta_kappa),
+            "max_beta_kappa": None if max_beta_kappa is None else float(max_beta_kappa),
+            "update": update,
+        },
+    )
+
+
 def calibrate_grrhs_beta_mcem(
     X: np.ndarray,
     y: np.ndarray,
@@ -777,6 +952,9 @@ def fit_gr_rhs_adaptive_beta(
     mcem_calibration_chains: int | None = None,
     mcem_calibration_adapt_delta: float | None = None,
     mcem_calibration_max_treedepth: int | None = None,
+    posterior_eb_prior_center: float = 4.0,
+    posterior_eb_prior_log_sd: float = 0.75,
+    posterior_eb_damping: float = 0.5,
     min_beta_kappa: float | None = 1.0,
     max_beta_kappa: float | None = None,
     **grrhs_kwargs: Any,
@@ -803,6 +981,9 @@ def fit_gr_rhs_adaptive_beta(
     kwargs.pop("mcem_calibration_chains", None)
     kwargs.pop("mcem_calibration_adapt_delta", None)
     kwargs.pop("mcem_calibration_max_treedepth", None)
+    kwargs.pop("posterior_eb_prior_center", None)
+    kwargs.pop("posterior_eb_prior_log_sd", None)
+    kwargs.pop("posterior_eb_damping", None)
     kwargs.pop("min_beta_kappa", None)
     kwargs.pop("max_beta_kappa", None)
     kwargs.pop("alpha_kappa", None)
@@ -876,6 +1057,35 @@ def fit_gr_rhs_adaptive_beta(
             screening_null_quantile=float(screening_null_quantile),
             screening_permutations=int(screening_permutations),
             ridge_screening_scale=str(ridge_screening_scale),
+            min_beta_kappa=min_beta_kappa,
+            max_beta_kappa=max_beta_kappa,
+        )
+    elif strategy in {
+        "regularized_posterior_eb",
+        "posterior_eb_regularized",
+        "reg_posterior_eb",
+        "regularized_mcem",
+        "regularized_type2",
+    }:
+        calib = calibrate_grrhs_beta_regularized_posterior_eb(
+            X,
+            y,
+            groups,
+            task=str(task),
+            seed=int(seed) + 817,
+            p0=int(p0),
+            sampler=sampler,
+            grrhs_kwargs=kwargs,
+            alpha_kappa=float(alpha_kappa),
+            beta_kappa=float(beta_kappa),
+            prior_center=float(posterior_eb_prior_center),
+            prior_log_sd=float(posterior_eb_prior_log_sd),
+            damping=float(posterior_eb_damping),
+            calibration_chains=mcem_calibration_chains,
+            calibration_warmup=calibration_warmup,
+            calibration_draws=calibration_draws,
+            calibration_adapt_delta=mcem_calibration_adapt_delta,
+            calibration_max_treedepth=mcem_calibration_max_treedepth,
             min_beta_kappa=min_beta_kappa,
             max_beta_kappa=max_beta_kappa,
         )

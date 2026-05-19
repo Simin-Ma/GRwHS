@@ -56,25 +56,11 @@ def _collect_existing_paths(obj: Any) -> set[Path]:
 def _analyze_single_experiment(exp_key: str, results_dir: Path) -> dict[str, Any]:
     try:
         from .analysis.report import (
-            analyze_exp1,
-            analyze_exp2,
-            analyze_exp3,
-            analyze_exp4,
-            analyze_exp5,
             analyze_ga_v2_complexity_mismatch,
             analyze_ga_v2_correlation_stress,
             analyze_ga_v2_group_separation,
         )
         analyzers = {
-            "exp1": analyze_exp1,
-            "exp2": analyze_exp2,
-            "exp3": analyze_exp3,
-            "exp3a": analyze_exp3,
-            "exp3b": analyze_exp3,
-            "exp3c": analyze_exp3,
-            "exp3d": analyze_exp3,
-            "exp4": analyze_exp4,
-            "exp5": analyze_exp5,
             "ga_v2_group_separation": analyze_ga_v2_group_separation,
             "ga_v2_complexity_mismatch": analyze_ga_v2_complexity_mismatch,
             "ga_v2_correlation_stress": analyze_ga_v2_correlation_stress,
@@ -100,40 +86,6 @@ def _build_run_summary_table(exp_key: str, results_dir: Path):
         rows: list[dict[str, Any]] = [{"metric": "parse_warning_count", "value": int(len(parse_warnings))}]
         for idx, msg in enumerate(parse_warnings, start=1):
             rows.append({"metric": f"parse_warning_{idx}", "value": str(msg)})
-        return pd.DataFrame(rows)
-
-    if exp_norm == "exp1":
-        rows: list[dict[str, Any]] = []
-        slope_path = results_dir / "null_slope_check.json"
-        if slope_path.exists():
-            try:
-                slope_obj = json.loads(slope_path.read_text(encoding="utf-8"))
-                rows.append({
-                    "metric": "panel_A_slope",
-                    "value": float(slope_obj.get("slope", float("nan"))),
-                })
-                ci = slope_obj.get("slope_ci", [float("nan"), float("nan")])
-                rows.append({"metric": "panel_A_slope_ci_lo", "value": float(ci[0])})
-                rows.append({"metric": "panel_A_slope_ci_hi", "value": float(ci[1])})
-                rows.append({"metric": "panel_A_pass", "value": int(bool(slope_obj.get("pass", False)))})
-            except Exception as exc:
-                _warn(f"null_slope_check parse failed: {type(exc).__name__}: {exc}")
-
-        phase_path = results_dir / "summary_phase.csv"
-        if phase_path.exists():
-            try:
-                phase_df = pd.read_csv(phase_path)
-                if {"xi_ratio", "mean_prob_kappa_gt_u0"}.issubset(set(phase_df.columns)):
-                    below = phase_df.loc[phase_df["xi_ratio"] < 1.0, "mean_prob_kappa_gt_u0"]
-                    above = phase_df.loc[phase_df["xi_ratio"] > 1.0, "mean_prob_kappa_gt_u0"]
-                    rows.append({"metric": "panel_B_prob_below_xi_crit", "value": float(below.mean()) if len(below) else float("nan")})
-                    rows.append({"metric": "panel_B_prob_above_xi_crit", "value": float(above.mean()) if len(above) else float("nan")})
-                    if len(below) and len(above):
-                        rows.append({"metric": "panel_B_separation", "value": float(above.mean() - below.mean())})
-            except Exception as exc:
-                _warn(f"summary_phase parse failed: {type(exc).__name__}: {exc}")
-        if parse_warnings:
-            rows.extend(_warning_table().to_dict(orient="records"))
         return pd.DataFrame(rows)
 
     summary_path = results_dir / "summary.csv"

@@ -28,8 +28,6 @@ KNOWN_METHODS = [
     "GIGG_MMLE_LowDim",
     "GIGG_MMLE_HighDim",
 ]
-EXP3_GIGG_MODES = ("paper_ref",)
-
 _BAYESIAN_METHODS = {
     "GR_RHS",
     "GR_RHS_B01",
@@ -71,20 +69,14 @@ _DEFAULT_BAYES_RHAT_THRESHOLD = 1.015
 # clearly within common MCMC practice and materially stricter than 1.02/1.03.
 _DEFAULT_BAYES_ESS_THRESHOLD = 400.0
 _DEFAULT_BAYES_MAX_DIVERGENCE_RATIO = 0.005
-_EXP4_DEFAULT_ESS_THRESHOLD = 250.0
-_EXP4_DEFAULT_MAX_DIVERGENCE_RATIO = 0.01
-_EXP5_DEFAULT_ESS_THRESHOLD = 300.0
-_EXP5_DEFAULT_MAX_DIVERGENCE_RATIO = 0.015
 _SCREENING_RHAT_THRESHOLD = 1.02
 _SCREENING_ESS_THRESHOLD = 250.0
 _GHS_PLUS_DEFAULT_RHAT_THRESHOLD = _DEFAULT_BAYES_RHAT_THRESHOLD
 _GHS_PLUS_DEFAULT_ESS_THRESHOLD = 400.0
-_EXP4_DEFAULT_CHAINS = 4
-_EXP4_DEFAULT_WARMUP = 400
-_EXP4_DEFAULT_POST_DRAWS = 400
-_EXP4_DEFAULT_MAX_CONV_RETRIES = 2
-_EXP5_DEFAULT_MAX_CONV_RETRIES = 5
-_DEFAULT_REPEATS = {"exp1": 500, "exp2": 100, "exp3": 100, "exp3c": 30, "exp3d": 100, "exp4": 10, "exp5": 20}
+_MODERATE_BAYES_CHAINS = 4
+_MODERATE_BAYES_WARMUP = 400
+_MODERATE_BAYES_POST_DRAWS = 400
+_DEFAULT_REPEATS = {"ga_v2a": 100, "ga_v2b": 40, "ga_v2c": 30}
 
 
 def bayes_rhat_threshold_default() -> float:
@@ -111,18 +103,6 @@ def screening_ess_threshold_default() -> float:
 # ---------------------------------------------------------------------------
 
 
-def _normalize_exp3_gigg_mode(gigg_mode: str) -> str:
-    mode = str(gigg_mode).strip().lower()
-    if mode not in EXP3_GIGG_MODES:
-        raise ValueError(f"unknown exp3 gigg_mode: {gigg_mode!r}; expected one of {EXP3_GIGG_MODES}")
-    return mode
-
-
-def _exp3_gigg_config_for_mode(base_cfg: dict[str, Any], *, gigg_mode: str) -> dict[str, Any]:
-    _normalize_exp3_gigg_mode(gigg_mode)
-    return dict(base_cfg)
-
-
 def _resolve_method_list(methods: Sequence[str] | None) -> list[str]:
     if methods is None:
         return list(METHODS)
@@ -140,19 +120,18 @@ def _sampler_for_standard(*, experiment: str = "") -> SamplerConfig:
 
 
 def _sampler_for_exp4(base: SamplerConfig) -> SamplerConfig:
-    # Exp4 compares multiple Bayesian variants on the same small Gaussian DGP.
-    # Keep a moderate NUTS budget so single-experiment runs remain practical.
+    # Retained as a moderate-budget helper used by current GA-V2 routes.
     return SamplerConfig(
-        chains=max(int(_EXP4_DEFAULT_CHAINS), min(int(base.chains), int(_EXP4_DEFAULT_CHAINS))),
-        warmup=max(int(_EXP4_DEFAULT_WARMUP), min(int(base.warmup), int(_EXP4_DEFAULT_WARMUP))),
-        post_warmup_draws=max(int(_EXP4_DEFAULT_POST_DRAWS), min(int(base.post_warmup_draws), int(_EXP4_DEFAULT_POST_DRAWS))),
+        chains=max(int(_MODERATE_BAYES_CHAINS), min(int(base.chains), int(_MODERATE_BAYES_CHAINS))),
+        warmup=max(int(_MODERATE_BAYES_WARMUP), min(int(base.warmup), int(_MODERATE_BAYES_WARMUP))),
+        post_warmup_draws=max(int(_MODERATE_BAYES_POST_DRAWS), min(int(base.post_warmup_draws), int(_MODERATE_BAYES_POST_DRAWS))),
         adapt_delta=max(0.95, float(base.adapt_delta)),
         max_treedepth=max(12, int(base.max_treedepth)),
         strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
         strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
-        max_divergence_ratio=max(_EXP4_DEFAULT_MAX_DIVERGENCE_RATIO, float(base.max_divergence_ratio)),
+        max_divergence_ratio=max(0.01, float(base.max_divergence_ratio)),
         rhat_threshold=max(_DEFAULT_BAYES_RHAT_THRESHOLD, float(base.rhat_threshold)),
-        ess_threshold=min(_EXP4_DEFAULT_ESS_THRESHOLD, float(base.ess_threshold)),
+        ess_threshold=min(250.0, float(base.ess_threshold)),
     )
 
 
@@ -173,20 +152,6 @@ def _gigg_config_default() -> dict[str, Any]:
         "allow_budget_retry": False,
         "no_retry": True,
     }
-def _sampler_for_exp5(base: SamplerConfig) -> SamplerConfig:
-    # Unified robust budget for prior-sensitivity in the single-default protocol.
-    return SamplerConfig(
-        chains=max(4, int(base.chains)),
-        warmup=max(800, int(base.warmup)),
-        post_warmup_draws=max(800, int(base.post_warmup_draws)),
-        adapt_delta=max(0.95, float(base.adapt_delta)),
-        max_treedepth=max(12, int(base.max_treedepth)),
-        strict_adapt_delta=max(0.99, float(base.strict_adapt_delta)),
-        strict_max_treedepth=max(14, int(base.strict_max_treedepth)),
-        max_divergence_ratio=max(_EXP5_DEFAULT_MAX_DIVERGENCE_RATIO, float(base.max_divergence_ratio)),
-        rhat_threshold=max(_DEFAULT_BAYES_RHAT_THRESHOLD, float(base.rhat_threshold)),
-        ess_threshold=min(_EXP5_DEFAULT_ESS_THRESHOLD, float(base.ess_threshold)),
-    )
 
 
 def _sampler_for_ghs_plus_default(base: SamplerConfig) -> SamplerConfig:

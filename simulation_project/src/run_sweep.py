@@ -15,15 +15,6 @@ from typing import Any, Callable, Mapping
 import yaml
 
 from .experiments import (
-    run_exp1_kappa_profile_regimes,
-    run_exp2_group_separation,
-    run_exp3_linear_benchmark,
-    run_exp3a_main_benchmark,
-    run_exp3b_boundary_stress,
-    run_exp3c_highdim_stress,
-    run_exp3d_within_group_mixed,
-    run_exp4_variant_ablation,
-    run_exp5_prior_sensitivity,
     run_ga_v2_group_separation,
     run_ga_v2_complexity_mismatch,
     run_ga_v2_correlation_stress,
@@ -36,15 +27,6 @@ from .utils import ensure_dir, save_json
 
 _RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {
     "all": run_all_experiments,
-    "exp1": run_exp1_kappa_profile_regimes,
-    "exp2": run_exp2_group_separation,
-    "exp3": run_exp3_linear_benchmark,
-    "exp3a": run_exp3a_main_benchmark,
-    "exp3b": run_exp3b_boundary_stress,
-    "exp3c": run_exp3c_highdim_stress,
-    "exp3d": run_exp3d_within_group_mixed,
-    "exp4": run_exp4_variant_ablation,
-    "exp5": run_exp5_prior_sensitivity,
     "ga_v2a": run_ga_v2_group_separation,
     "ga_v2b": run_ga_v2_complexity_mismatch,
     "ga_v2c": run_ga_v2_correlation_stress,

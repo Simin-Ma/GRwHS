@@ -90,7 +90,7 @@ Analysis artifacts include:
 
 ## Bayesian Methods
 
-- `GR_RHS`: project-default staged Gibbs implementation for Gaussian fits
+- `GR_RHS`: project-default GR-RHS route with regularized posterior-EB selection of common `beta_kappa`; low-dimensional runs use staged Gibbs and high-dimensional runs use collapsed/profile sampling
 - `RHS`: single Stan/HMC regularized horseshoe baseline aligned with `rstanarm::hs()`
 - `GIGG_*`: Gibbs samplers aligned to the `gigg-master` reference path
 - `GHS_plus`: Xu et al. (2016) hierarchical Bayesian grouped horseshoe with paper-aligned Gaussian Gibbs defaults

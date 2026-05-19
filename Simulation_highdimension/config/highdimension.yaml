@@ -18,8 +18,14 @@ method_config:
     sampler_backend: collapsed_profile
     use_local_scale: false
     alpha_kappa: 0.5
-    beta_kappa: 1.0
     progress_bar: false
+    adaptive_strategy: regularized_posterior_eb
+    beta_kappa: 4.0
+    posterior_eb_prior_center: 4.0
+    posterior_eb_prior_log_sd: 0.75
+    posterior_eb_damping: 0.5
+    min_beta_kappa: 1.0
+    max_beta_kappa: 12.0
   gigg_config:
     allow_budget_retry: true
     extra_retry: 0

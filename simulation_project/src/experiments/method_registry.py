@@ -227,35 +227,7 @@ def build_default_method_registry() -> MethodRegistry:
         return {**defaults, **base}
 
     def _fit_grrhs_lowdim(c: MethodContext, *, method_name: str) -> FitResult:
-        from .methods.fit_gr_rhs import fit_gr_rhs
-
-        res = fit_gr_rhs(
-            c.X,
-            c.y,
-            c.groups,
-            task=c.task,
-            seed=c.seed,
-            p0=c.grrhs_p0,
-            sampler=c.sampler,
-            method_name=str(method_name),
-            **_grrhs_kwargs_for_strategy(c, high_dim=False),
-        )
-        diag = dict(res.diagnostics or {})
-        diag.setdefault("grrhs_sampler_name", str(method_name))
-        diag.setdefault("grrhs_sampler_strategy", "low_dim")
-        strat = dict(diag.get("sampling_strategy") or {})
-        strat.setdefault("backend", "gibbs_staged")
-        diag["sampling_strategy"] = strat
-        res.diagnostics = diag
-        return _attach_computational_protocol(
-            res,
-            method_family="GR_RHS",
-            protocol="low_dim",
-            sampler_backend="gibbs_staged",
-            sampler=c.sampler,
-            implementation="staged_gibbs",
-            notes=["Low-dimensional GR-RHS uses full staged Gibbs sampling with group-level shrinkage."],
-        )
+        return _fit_grrhs_adaptive(c, method_name=str(method_name))
 
     def _fit_grrhs_lowdim_with_beta(c: MethodContext, *, method_name: str, beta_kappa: float) -> FitResult:
         from .methods.fit_gr_rhs import fit_gr_rhs
@@ -293,35 +265,7 @@ def build_default_method_registry() -> MethodRegistry:
         )
 
     def _fit_grrhs_highdim(c: MethodContext, *, method_name: str) -> FitResult:
-        from .methods.fit_gr_rhs import fit_gr_rhs
-
-        res = fit_gr_rhs(
-            c.X,
-            c.y,
-            c.groups,
-            task=c.task,
-            seed=c.seed,
-            p0=c.grrhs_p0,
-            sampler=c.sampler,
-            method_name=str(method_name),
-            **_grrhs_kwargs_for_strategy(c, high_dim=True),
-        )
-        diag = dict(res.diagnostics or {})
-        diag.setdefault("grrhs_sampler_name", str(method_name))
-        diag.setdefault("grrhs_sampler_strategy", "high_dim")
-        strat = dict(diag.get("sampling_strategy") or {})
-        strat.setdefault("backend", "collapsed_profile")
-        diag["sampling_strategy"] = strat
-        res.diagnostics = diag
-        return _attach_computational_protocol(
-            res,
-            method_family="GR_RHS",
-            protocol="high_dim",
-            sampler_backend="collapsed_profile",
-            sampler=c.sampler,
-            implementation="collapsed_group_hyperparameter_profile",
-            notes=["High-dimensional GR-RHS keeps the method family but collapses/profile-samples the grouped hyperparameter posterior."],
-        )
+        return _fit_grrhs_adaptive(c, method_name=str(method_name))
 
     def _fit_grrhs_highdim_with_beta(c: MethodContext, *, method_name: str, beta_kappa: float) -> FitResult:
         from .methods.fit_gr_rhs import fit_gr_rhs
@@ -398,11 +342,12 @@ def build_default_method_registry() -> MethodRegistry:
         )
         high_dim = str(c.rhs_sampler_strategy).strip().lower() == "high_dim"
         kwargs["alpha_kappa"] = 0.5
-        kwargs["adaptive_strategy"] = (
-            "group_specific_multiplicity"
-            if bool(high_dim)
-            else "ridge_screening_multiplicity"
-        )
+        kwargs["adaptive_strategy"] = "regularized_posterior_eb"
+        kwargs["beta_kappa"] = 4.0
+        kwargs["posterior_eb_prior_center"] = 4.0
+        kwargs["posterior_eb_prior_log_sd"] = 0.75
+        kwargs["posterior_eb_damping"] = 0.5
+        kwargs["max_beta_kappa"] = 12.0
         kwargs["multiplicity_correction"] = "fwer"
         kwargs["multiplicity_level"] = 0.05
         kwargs["screening_permutations"] = 120 if bool(high_dim) else 200
@@ -432,8 +377,8 @@ def build_default_method_registry() -> MethodRegistry:
             protocol=protocol,
             sampler_backend=backend,
             sampler=c.sampler,
-            implementation="adaptive_beta_group_specific_multiplicity",
-            notes=["Adaptive GR-RHS shares the selected dimensional computation protocol."],
+            implementation="adaptive_beta_regularized_posterior_eb",
+            notes=["GR-RHS uses regularized posterior EB for common beta_kappa; only the posterior computation backend changes across regimes."],
         )
 
     def _fit_gigg_mmle_lowdim(c: MethodContext, *, method_name: str) -> FitResult:

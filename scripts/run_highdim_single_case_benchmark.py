@@ -91,42 +91,6 @@ def run_case(
 
     def _fit_direct_single_method():
         method_name = str(method)
-        if method_name == "GR_RHS":
-            from simulation_project.src.experiments.methods.fit_gr_rhs import fit_gr_rhs
-
-            grrhs_kwargs = dict(cfg.methods.grrhs_kwargs)
-            grrhs_kwargs.setdefault("collapsed_hard_min_warmup", 150)
-            grrhs_kwargs.setdefault("collapsed_hard_min_draws", 320)
-            tau_target_use = str(grrhs_kwargs.get("tau_target", "coefficients")).strip().lower()
-            grrhs_p0 = int(p0_groups) if tau_target_use == "groups" else int(p0)
-            sampler_base = _sampler_for_bayesian_default(
-                sampler,
-                min_chains=int(cfg.convergence_gate.bayes_min_chains),
-            )
-
-            def _runner(sampler_try, attempt, resume_payload=None):
-                return fit_gr_rhs(
-                    ds.X_train,
-                    ds.y_train,
-                    ds.groups,
-                    task=str(cfg.runner.task),
-                    seed=int(cfg.runner.seed) + 1,
-                    p0=int(grrhs_p0),
-                    sampler=sampler_try,
-                    method_name="GR_RHS",
-                    retry_resume_payload=resume_payload,
-                    **{**grrhs_kwargs, "retry_attempt": int(attempt)},
-                )
-
-            return _fit_with_convergence_retry(
-                _runner,
-                method="GR_RHS",
-                sampler=sampler_base,
-                bayes_min_chains=int(cfg.convergence_gate.bayes_min_chains),
-                max_convergence_retries=int(cfg.convergence_gate.max_convergence_retries),
-                enforce_bayes_convergence=bool(cfg.convergence_gate.enforce_bayes_convergence),
-                continue_on_retry=True,
-            )
         if method_name == "GIGG_MMLE":
             from simulation_project.src.experiments.methods.fit_gigg import fit_gigg_mmle
 
