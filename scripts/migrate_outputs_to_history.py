@@ -43,7 +43,6 @@ SECOND_NAME_HINTS = (
 )
 MECHANISM_NAME_HINTS = (
     "simulation_mechanism",
-    "ga_v2",
     "mixed_boundary",
     "phase_map",
     "q_constraint",
