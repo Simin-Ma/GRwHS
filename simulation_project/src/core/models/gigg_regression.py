@@ -29,6 +29,13 @@ except Exception:
     _njit = None
     _NUMBA_AVAILABLE = False
 
+try:
+    from threadpoolctl import threadpool_limits as _threadpool_limits
+    _THREADPOOLCTL_AVAILABLE = True
+except Exception:
+    _threadpool_limits = None
+    _THREADPOOLCTL_AVAILABLE = False
+
 _POS_FLOOR = 1e-8
 _POS_CAP = 1e3
 _BETA_CAP = 1e3
@@ -41,6 +48,20 @@ _GIG_SAMPLER_STATS: dict[str, int] = {
     "rejection_success": 0,
     "fallback_used": 0,
 }
+
+
+class _NullThreadpoolContext:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def _blas_limit_context(limit: int):
+    if _THREADPOOLCTL_AVAILABLE and int(limit) > 0:
+        return _threadpool_limits(limits=int(limit), user_api="blas")
+    return _NullThreadpoolContext()
 def _digamma_approx(x: float) -> float:
     """Lightweight digamma approximation with recurrence + asymptotic expansion."""
     xx = float(x)
@@ -643,20 +664,23 @@ def _fit_gigg_chain_task(payload: dict) -> dict:
         lambda_soft_cap=float(payload.get("lambda_soft_cap", payload.get("lambda_cap", _POS_CAP))),
         progress_bar=bool(payload.get("progress_bar", False)),
         enable_profiling=bool(payload.get("enable_profiling", False)),
+        blas_threads_per_chain=int(payload.get("blas_threads_per_chain", 1)),
     )
-    fitted = model.fit(
-        X_arr,
-        y_arr,
-        groups=payload["groups"],
-        C=C_arr,
-        alpha_inits=alpha_inits_arr,
-        beta_inits=beta_inits_arr,
-        lambda_sq_inits=lambda_sq_inits_arr,
-        gamma_sq_inits=gamma_sq_inits_arr,
-        a=a_arr,
-        b=b_arr,
-        method=str(payload["method"]),
-    )
+    blas_threads = int(payload.get("blas_threads_per_chain", 1))
+    with _blas_limit_context(blas_threads):
+        fitted = model.fit(
+            X_arr,
+            y_arr,
+            groups=payload["groups"],
+            C=C_arr,
+            alpha_inits=alpha_inits_arr,
+            beta_inits=beta_inits_arr,
+            lambda_sq_inits=lambda_sq_inits_arr,
+            gamma_sq_inits=gamma_sq_inits_arr,
+            a=a_arr,
+            b=b_arr,
+            method=str(payload["method"]),
+        )
     return {
         "coef_samples": None if fitted.coef_samples_ is None else np.asarray(fitted.coef_samples_),
         "alpha_samples": None if fitted.alpha_samples_ is None else np.asarray(fitted.alpha_samples_),
@@ -726,6 +750,7 @@ class GIGGRegression:
     lambda_soft_cap: float = _POS_CAP
     progress_bar: bool = True
     enable_profiling: bool = False
+    blas_threads_per_chain: int = 1
 
     rng_: Generator = field(init=False, repr=False)
     coef_samples_: Optional[np.ndarray] = field(default=None, init=False)
@@ -796,6 +821,7 @@ class GIGGRegression:
         self.q_constraint_mode = q_mode
         self.lambda_cap = float(max(self.lambda_cap, self.jitter * 10.0))
         self.lambda_soft_cap = float(max(self.lambda_soft_cap, self.jitter * 10.0))
+        self.blas_threads_per_chain = int(max(1, self.blas_threads_per_chain))
         self.burnin = self.n_burn_in
         self.iters = self.n_burn_in + (self.n_samples * self.n_thin)
         self.thin = self.n_thin
@@ -991,6 +1017,7 @@ class GIGGRegression:
                         "lambda_soft_cap": self.lambda_soft_cap,
                         "progress_bar": bool(self.progress_bar),
                         "enable_profiling": bool(self.enable_profiling),
+                        "blas_threads_per_chain": int(self.blas_threads_per_chain),
                         "X": None if data_paths else np.asarray(X, dtype=float),
                         "y": None if data_paths else np.asarray(y, dtype=float),
                         "C": None if data_paths else (None if C is None else np.asarray(C, dtype=float)),

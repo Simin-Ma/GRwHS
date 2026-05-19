@@ -171,7 +171,7 @@ def _extract_and_diagnose(
     sampler: SamplerConfig,
     runtime: float,
 ) -> FitResult:
-    tracked = ["beta", "gamma2"]
+    tracked = ["beta"]
     beta_draws = getattr(model, "coef_samples_", None)
     beta_mean = getattr(model, "coef_mean_", None)
     gamma2_draws = getattr(model, "gamma2_samples_", None)
@@ -182,6 +182,19 @@ def _extract_and_diagnose(
         beta_draws=beta_draws,
         config=sampler,
     )
+    if gamma2_draws is not None:
+        gamma_detail = summarize_convergence({"gamma2": np.asarray(gamma2_draws, dtype=float)})
+        gamma_diag = dict(gamma_detail.get("gamma2", {}))
+        gamma_rhat = float(gamma_diag.get("rhat_max", float("nan")))
+        gamma_ess = float(gamma_diag.get("ess_min", float("nan")))
+        details = dict(details or {})
+        details["gigg_auxiliary_scale_diagnostics"] = {
+            "tracked_for_convergence": False,
+            "reason": "gamma2 is a nuisance group-scale parameter; convergence is gated on beta, matching the GHS_plus Gibbs diagnostic policy.",
+            "rhat_max": float(gamma_rhat),
+            "ess_min": float(gamma_ess),
+            "detail": dict(gamma_detail or {}),
+        }
     return FitResult(
         method=method_label,
         status="ok",
@@ -268,6 +281,7 @@ def fit_gigg_mmle(
     method_label: str = "GIGG_MMLE",
     no_retry: bool = False,
     progress_bar: bool = True,
+    blas_threads_per_chain: int = 1,
 ) -> FitResult:
     """GIGG with MMLE hyperparameter estimation aligned to gigg-master defaults.
 
@@ -352,6 +366,7 @@ def fit_gigg_mmle(
             lambda_constraint_mode=str(lambda_constraint_mode),
             q_constraint_mode=str(q_constraint_mode),
             progress_bar=bool(progress_bar),
+            blas_threads_per_chain=int(blas_threads_per_chain),
         )
         final_model, total_runtime = _run_gigg_model(
             model,
@@ -376,6 +391,7 @@ def fit_gigg_mmle(
             "num_chains": int(toggles["num_chains"]),
             "lambda_vectorized_update": bool(toggles["lambda_vectorized_update"]),
             "stable_solve": bool(toggles["stable_solve"]),
+            "blas_threads_per_chain": int(blas_threads_per_chain),
             "mmle_highdim_fastpath": bool(toggles["mmle_highdim_fastpath"]),
             "highdim_original_mmle_btrick": bool(highdim_case),
             "path_name": "GIGG_MMLE_HighDim" if bool(highdim_case) else "GIGG_MMLE_LowDim",
@@ -424,6 +440,7 @@ def fit_gigg_fixed(
     exact_highdim_fastpath: bool = False,
     no_retry: bool = False,
     progress_bar: bool = True,
+    blas_threads_per_chain: int = 1,
 ) -> FitResult:
     """GIGG with fixed hyperparameters aligned to gigg-master defaults.
 
@@ -502,6 +519,7 @@ def fit_gigg_fixed(
             lambda_constraint_mode=str(lambda_constraint_mode),
             q_constraint_mode=str(q_constraint_mode),
             progress_bar=bool(progress_bar),
+            blas_threads_per_chain=int(blas_threads_per_chain),
         )
         a_arr = [a_fixed] * n_groups
         b_arr = [float(b_val)] * n_groups
@@ -521,6 +539,7 @@ def fit_gigg_fixed(
             "num_chains": int(toggles["num_chains"]),
             "lambda_vectorized_update": bool(toggles["lambda_vectorized_update"]),
             "stable_solve": bool(toggles["stable_solve"]),
+            "blas_threads_per_chain": int(blas_threads_per_chain),
             "mmle_highdim_fastpath": bool(toggles["mmle_highdim_fastpath"]),
         }
         result.diagnostics = diag

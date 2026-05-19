@@ -8,6 +8,7 @@ import numpy as np
 
 from .helpers import as_int_groups, fit_error_result
 from ...utils import FitResult, SamplerConfig, diagnostics_summary_for_method, logistic_pseudo_sigma, timed_call
+from simulation_project.src.core.models.grrhs_nuts import calibrate_tau0
 
 
 def _load_grrhs_classes():
@@ -17,13 +18,6 @@ def _load_grrhs_classes():
     )
 
     return GRRHS_CollapsedNUTS, GRRHS_Gibbs_Staged
-
-
-def _calibrate_tau0(*, p0: float, D: int, n: int, sigma_ref: float) -> float:
-    p0_use = max(float(p0), 1.0)
-    D_use = max(int(D), 1)
-    denom = max(float(D_use) - p0_use, 1.0)
-    return float((p0_use / denom) * float(max(sigma_ref, 1e-12)) / math.sqrt(max(int(n), 1)))
 
 
 def _clone_numeric_dict(obj: dict[str, Any] | None) -> dict[str, np.ndarray] | None:
@@ -227,7 +221,7 @@ def _ridge_init_params(
         sigma_guess = float(max(sigma_reference, 1.0))
 
     target_dim = p if str(tau_target).strip().lower() == "coefficients" else max(G, 1)
-    tau0_eff = _calibrate_tau0(
+    tau0_eff = calibrate_tau0(
         p0=max(float(p0), 1.0),
         D=max(int(target_dim), 1),
         n=max(int(X_arr.shape[0]), 1),
@@ -303,7 +297,7 @@ def _collapsed_profile_ridge_init_params(
         sigma_guess = float(max(sigma_reference, 1.0))
 
     target_dim = p if str(tau_target).strip().lower() == "coefficients" else max(G, 1)
-    tau0_eff = _calibrate_tau0(
+    tau0_eff = calibrate_tau0(
         p0=max(float(p0), 1.0),
         D=max(int(target_dim), 1),
         n=max(int(X_arr.shape[0]), 1),
@@ -672,6 +666,30 @@ def _build_collapsed_profile(
     )
 
 
+def _collapsed_profile_resume_payload_is_stable(payload: dict[str, Any] | None) -> bool:
+    if not payload:
+        return False
+    init_params = payload.get("init_params")
+    if not isinstance(init_params, dict):
+        return False
+    sigma_raw = init_params.get("sigma")
+    tau_raw = init_params.get("tau_raw")
+    try:
+        sigma_arr = np.asarray(sigma_raw, dtype=float).reshape(-1)
+        tau_arr = np.asarray(tau_raw, dtype=float).reshape(-1)
+    except Exception:
+        return False
+    if sigma_arr.size == 0 or tau_arr.size == 0:
+        return False
+    if not np.all(np.isfinite(sigma_arr)) or not np.all(np.isfinite(tau_arr)):
+        return False
+    if float(np.max(np.abs(sigma_arr))) > 25.0:
+        return False
+    if float(np.max(np.abs(tau_arr))) > 250.0:
+        return False
+    return True
+
+
 def fit_gr_rhs(
     X: np.ndarray,
     y: np.ndarray,
@@ -874,10 +892,18 @@ def fit_gr_rhs(
                 hard_min_draws = 560 if collapsed_hard_min_draws is None else int(collapsed_hard_min_draws)
                 hard_mid_min_warmup = 190 if collapsed_hard_min_warmup is None else int(collapsed_hard_min_warmup)
                 hard_mid_min_draws = 540 if collapsed_hard_min_draws is None else int(collapsed_hard_min_draws)
+                hard_max_min_warmup = max(hard_min_warmup, 320)
+                hard_max_min_draws = max(hard_min_draws, 900)
                 if int(sampler.chains) > 1:
                     adapt_delta_use = max(adapt_delta_use, 0.90)
                     max_treedepth_use = max(max_treedepth_use, 9)
-                    if within_corr < 0.70 and 0.35 <= corr_gap < 0.50:
+                    if within_corr >= 0.75 and corr_gap >= 0.58:
+                        adapt_delta_use = max(adapt_delta_use, 0.94)
+                        max_treedepth_use = max(max_treedepth_use, 11)
+                        step_size_use = 0.018
+                        warmup_use = max(warmup_use, int(max(1, hard_max_min_warmup)))
+                        draws_use = max(draws_use, int(max(1, hard_max_min_draws)))
+                    elif within_corr < 0.70 and 0.35 <= corr_gap < 0.50:
                         step_size_use = 0.032
                         warmup_use = max(warmup_use, int(max(1, hard_mid_min_warmup)))
                         draws_use = max(draws_use, int(max(1, hard_mid_min_draws)))
@@ -974,11 +1000,16 @@ def fit_gr_rhs(
         # Retry collapsed-profile designs with stricter adaptation when divergences are high.
         if backend_name == "collapsed_profile":
             if np.isfinite(div_ratio) and div_ratio >= float(sampler.max_divergence_ratio):
+                strict_resume_payload = (
+                    resume_payload_out
+                    if _collapsed_profile_resume_payload_is_stable(resume_payload_out)
+                    else None
+                )
                 strict = _make_collapsed_profile(
                     seed + 999,
                     float(sampler.strict_adapt_delta),
                     int(sampler.strict_max_treedepth),
-                    resume_payload=resume_payload_out,
+                    resume_payload=strict_resume_payload,
                 )
                 strict, runtime2_fit_only = timed_call(strict.fit, X, y, groups=groups_use)
                 postprocess_t0 = time.perf_counter()
