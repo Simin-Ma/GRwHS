@@ -131,7 +131,7 @@ def _split_sizes(spec: DatasetSpec, n_samples: int) -> tuple[int, int]:
 
 def _replicate_seed(master_seed: int, dataset_id: str, replicate_id: int) -> int:
     digest = hashlib.sha1(f"{dataset_id}|{replicate_id}|{master_seed}".encode("utf-8")).hexdigest()
-    return int(master_seed) + int(digest[:8], 16)
+    return 1 + (int(digest[:12], 16) % (2_147_000_000 - 1))
 
 
 def _split_hash(train_idx: np.ndarray, test_idx: np.ndarray) -> str:

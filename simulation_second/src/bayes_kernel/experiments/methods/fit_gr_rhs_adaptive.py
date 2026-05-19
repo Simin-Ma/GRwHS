@@ -676,6 +676,88 @@ def _regularized_beta_update_from_kappa(
     }
 
 
+def _clipped_beta_candidate(
+    value: float,
+    *,
+    min_beta_kappa: float | None,
+    max_beta_kappa: float | None,
+) -> float | None:
+    try:
+        out = float(value)
+    except Exception:
+        return None
+    if not np.isfinite(out) or out <= 0.0:
+        return None
+    if min_beta_kappa is not None:
+        out = float(max(out, float(min_beta_kappa)))
+    if max_beta_kappa is not None:
+        out = float(min(out, float(max_beta_kappa)))
+    return out if np.isfinite(out) and out > 0.0 else None
+
+
+def _regularized_posterior_eb_fallback(
+    *,
+    alpha_kappa: float,
+    beta_init: float,
+    prior_center: float,
+    damping: float,
+    pilot: FitResult,
+    cal_sampler: SamplerConfig,
+    min_beta_kappa: float | None,
+    max_beta_kappa: float | None,
+    reason: str,
+) -> AdaptiveBetaCalibration:
+    center = _clipped_beta_candidate(
+        float(prior_center),
+        min_beta_kappa=min_beta_kappa,
+        max_beta_kappa=max_beta_kappa,
+    )
+    fixed_b04 = _clipped_beta_candidate(
+        4.0,
+        min_beta_kappa=min_beta_kappa,
+        max_beta_kappa=max_beta_kappa,
+    )
+    initial = _clipped_beta_candidate(
+        float(beta_init),
+        min_beta_kappa=min_beta_kappa,
+        max_beta_kappa=max_beta_kappa,
+    )
+    if center is not None:
+        beta_out = float(center)
+        stage = "prior_center"
+    elif fixed_b04 is not None:
+        beta_out = float(fixed_b04)
+        stage = "fixed_b04"
+    else:
+        beta_out = float(initial if initial is not None else 1.0)
+        stage = "initial_beta"
+    return AdaptiveBetaCalibration(
+        strategy="regularized_posterior_eb",
+        alpha_kappa=float(alpha_kappa),
+        beta_kappa=float(beta_out),
+        details={
+            "pilot_beta_kappa": float(beta_init),
+            "beta_kappa_out": float(beta_out),
+            "damping": float(min(max(float(damping), 0.0), 1.0)),
+            "pilot_status": str(pilot.status),
+            "pilot_converged": bool(pilot.converged),
+            "pilot_rhat_max": float(pilot.rhat_max) if np.isfinite(pilot.rhat_max) else float("nan"),
+            "pilot_ess_min": float(pilot.bulk_ess_min) if np.isfinite(pilot.bulk_ess_min) else float("nan"),
+            "calibration_chains": int(cal_sampler.chains),
+            "calibration_warmup": int(cal_sampler.warmup),
+            "calibration_draws": int(cal_sampler.post_warmup_draws),
+            "calibration_adapt_delta": float(cal_sampler.adapt_delta),
+            "calibration_max_treedepth": int(cal_sampler.max_treedepth),
+            "min_beta_kappa": None if min_beta_kappa is None else float(min_beta_kappa),
+            "max_beta_kappa": None if max_beta_kappa is None else float(max_beta_kappa),
+            "fallback_reason": str(reason),
+            "fallback_stage": str(stage),
+            "fallback_prior_center": None if center is None else float(center),
+            "fallback_fixed_b04": None if fixed_b04 is None else float(fixed_b04),
+        },
+    )
+
+
 def calibrate_grrhs_beta_regularized_posterior_eb(
     X: np.ndarray,
     y: np.ndarray,
@@ -740,36 +822,38 @@ def calibrate_grrhs_beta_regularized_posterior_eb(
         },
     )
     if pilot.kappa_draws is None:
-        return AdaptiveBetaCalibration(
-            strategy="regularized_posterior_eb",
+        return _regularized_posterior_eb_fallback(
             alpha_kappa=float(alpha_kappa),
-            beta_kappa=float(beta_init),
-            details={
-                "pilot_beta_kappa": float(beta_init),
-                "beta_kappa_out": float(beta_init),
-                "damping": float(min(max(float(damping), 0.0), 1.0)),
-                "pilot_status": str(pilot.status),
-                "pilot_converged": bool(pilot.converged),
-                "pilot_rhat_max": float(pilot.rhat_max) if np.isfinite(pilot.rhat_max) else float("nan"),
-                "pilot_ess_min": float(pilot.bulk_ess_min) if np.isfinite(pilot.bulk_ess_min) else float("nan"),
-                "calibration_chains": int(cal_sampler.chains),
-                "calibration_warmup": int(cal_sampler.warmup),
-                "calibration_draws": int(cal_sampler.post_warmup_draws),
-                "calibration_adapt_delta": float(cal_sampler.adapt_delta),
-                "calibration_max_treedepth": int(cal_sampler.max_treedepth),
-                "min_beta_kappa": None if min_beta_kappa is None else float(min_beta_kappa),
-                "max_beta_kappa": None if max_beta_kappa is None else float(max_beta_kappa),
-                "fallback_reason": "pilot_missing_kappa_draws",
-            },
+            beta_init=float(beta_init),
+            prior_center=float(prior_center),
+            damping=float(damping),
+            pilot=pilot,
+            cal_sampler=cal_sampler,
+            min_beta_kappa=min_beta_kappa,
+            max_beta_kappa=max_beta_kappa,
+            reason="pilot_missing_kappa_draws",
         )
-    update = _regularized_beta_update_from_kappa(
-        pilot.kappa_draws,
-        alpha_kappa=float(alpha_kappa),
-        prior_center=float(prior_center),
-        prior_log_sd=float(prior_log_sd),
-        min_beta_kappa=min_beta_kappa,
-        max_beta_kappa=max_beta_kappa,
-    )
+    try:
+        update = _regularized_beta_update_from_kappa(
+            pilot.kappa_draws,
+            alpha_kappa=float(alpha_kappa),
+            prior_center=float(prior_center),
+            prior_log_sd=float(prior_log_sd),
+            min_beta_kappa=min_beta_kappa,
+            max_beta_kappa=max_beta_kappa,
+        )
+    except Exception as exc:
+        return _regularized_posterior_eb_fallback(
+            alpha_kappa=float(alpha_kappa),
+            beta_init=float(beta_init),
+            prior_center=float(prior_center),
+            damping=float(damping),
+            pilot=pilot,
+            cal_sampler=cal_sampler,
+            min_beta_kappa=min_beta_kappa,
+            max_beta_kappa=max_beta_kappa,
+            reason=f"posterior_eb_update_failed:{type(exc).__name__}",
+        )
     beta_map = float(update["beta_kappa_regularized_map"])
     damp = float(min(max(float(damping), 0.0), 1.0))
     beta_out = float(math.exp((1.0 - damp) * math.log(max(beta_init, 1e-12)) + damp * math.log(max(beta_map, 1e-12))))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import sys
 
@@ -161,6 +162,10 @@ def test_run_benchmark_pipeline_smoke(monkeypatch, tmp_path) -> None:
     assert (run_dir / "summary_paired_deltas.csv").exists()
     assert (run_dir / "coefficient_estimates.csv").exists()
     assert (run_dir / "coefficient_estimates_paired.csv").exists()
+    assert (run_dir / "raw_results_partial.csv").exists()
+    assert (run_dir / "coefficient_estimates_partial.csv").exists()
+    assert (run_dir / "artifact_catalog_partial.json").exists()
+    assert (run_dir / "checkpoint_manifest.json").exists()
     assert (run_dir / "paper_tables" / "paper_table_main.md").exists()
     assert (run_dir / "paper_tables" / "paper_table_appendix_full.md").exists()
     assert (run_dir / "paper_tables" / "figure_data" / "figure1_coefficient_recovery_profile.csv").exists()
@@ -168,6 +173,9 @@ def test_run_benchmark_pipeline_smoke(monkeypatch, tmp_path) -> None:
     assert (tmp_path / "latest_run.json").exists()
     assert Path(result_paths["summary_paired"]).exists()
     assert Path(result_paths["run_dir"]).exists()
+    checkpoint = json.loads((run_dir / "checkpoint_manifest.json").read_text(encoding="utf-8"))
+    assert checkpoint["completed_tasks"] == checkpoint["total_tasks"] == 2
+    assert checkpoint["n_raw_rows"] > 0
     assert Path(result_paths["run_manifest"]).exists()
 
     raw = pd.read_csv(run_dir / "raw_results.csv")

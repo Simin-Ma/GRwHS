@@ -66,6 +66,42 @@ def _sampler_budget_dict(sampler: SamplerConfig) -> dict[str, int | float]:
     }
 
 
+def _as_float_or_none(value: object) -> float | None:
+    try:
+        arr = np.asarray(value, dtype=float)
+        if arr.size != 1:
+            return None
+        out = float(arr.reshape(-1)[0])
+    except Exception:
+        return None
+    return out if np.isfinite(out) else None
+
+
+def _extract_grrhs_beta_diag(diag: dict[str, object]) -> dict[str, object]:
+    adaptive = diag.get("grrhs_adaptive_beta")
+    if not isinstance(adaptive, dict):
+        return {}
+    details = adaptive.get("details")
+    if not isinstance(details, dict):
+        details = {}
+    out: dict[str, object] = {
+        "strategy": str(adaptive.get("strategy", "adaptive_beta")),
+    }
+    alpha = _as_float_or_none(adaptive.get("alpha_kappa"))
+    beta = _as_float_or_none(adaptive.get("beta_kappa"))
+    if alpha is not None:
+        out["alpha_kappa"] = float(alpha)
+    if beta is not None:
+        out["beta_kappa"] = float(beta)
+    fallback_reason = details.get("fallback_reason")
+    fallback_stage = details.get("fallback_stage")
+    if fallback_reason is not None:
+        out["fallback_reason"] = str(fallback_reason)
+    if fallback_stage is not None:
+        out["fallback_stage"] = str(fallback_stage)
+    return out
+
+
 def _attach_computational_protocol(
     res: FitResult,
     *,
@@ -93,7 +129,27 @@ def _attach_computational_protocol(
         protocol_diag["notes"] = [str(x) for x in notes]
     if extra:
         protocol_diag.update(dict(extra))
+    if method_family == "GR_RHS":
+        protocol_diag.update(_extract_grrhs_beta_diag(diag))
     diag["computational_protocol"] = protocol_diag
+    diag["method_family"] = str(method_family)
+    diag["protocol"] = str(protocol)
+    diag["sampler_backend"] = str(sampler_backend)
+    diag["strategy"] = str(protocol_diag.get("strategy", implementation or protocol))
+    if "alpha_kappa" in protocol_diag:
+        diag["alpha_kappa"] = protocol_diag["alpha_kappa"]
+    if "beta_kappa" in protocol_diag:
+        diag["beta_kappa"] = protocol_diag["beta_kappa"]
+    if "fallback_reason" in protocol_diag:
+        diag["fallback_reason"] = protocol_diag["fallback_reason"]
+    if "fallback_stage" in protocol_diag:
+        diag["fallback_stage"] = protocol_diag["fallback_stage"]
+    diag["rhat_max"] = float(res.rhat_max) if np.isfinite(res.rhat_max) else float("nan")
+    diag["bulk_ess_min"] = float(res.bulk_ess_min) if np.isfinite(res.bulk_ess_min) else float("nan")
+    diag["divergence_ratio"] = float(res.divergence_ratio) if np.isfinite(res.divergence_ratio) else float("nan")
+    diag["converged"] = bool(res.converged)
+    if "fit_attempts" not in diag:
+        diag["fit_attempts"] = 1
     res.diagnostics = diag
     return res
 

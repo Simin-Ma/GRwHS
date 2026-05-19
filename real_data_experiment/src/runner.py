@@ -271,6 +271,14 @@ def _run_replicate_task(task: Mapping[str, Any]) -> dict[str, list[dict[str, Any
     return {"raw_rows": rows, "artifact_rows": artifact_rows}
 
 
+def _write_partial_csv(pd, rows: Sequence[Mapping[str, Any]], path: Path, *, sort_cols: Sequence[str]) -> None:
+    frame = pd.DataFrame([dict(row) for row in rows])
+    present = [col for col in sort_cols if col in frame.columns]
+    if present and not frame.empty:
+        frame = frame.sort_values(present, kind="stable").reset_index(drop=True)
+    frame.to_csv(path, index=False)
+
+
 def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
     pd = load_pandas()
     config = replace(config, convergence_gate=force_until_converged_gate(config.convergence_gate))
@@ -297,6 +305,9 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
     tasks = _task_payloads(config)
     incremental_raw_path = out_dir / "raw_results_incremental.jsonl"
     incremental_artifacts_path = out_dir / "artifact_catalog_incremental.jsonl"
+    partial_raw_path = out_dir / "raw_results_partial.csv"
+    partial_artifact_catalog_path = out_dir / "artifact_catalog_partial.json"
+    checkpoint_manifest_path = out_dir / "checkpoint_manifest.json"
     for checkpoint_path in (
         incremental_raw_path,
         incremental_artifacts_path,
@@ -304,17 +315,55 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
         ensure_dir(checkpoint_path.parent)
         checkpoint_path.write_text("", encoding="utf-8")
 
+    task_progress = {"completed": 0, "total": len(tasks)}
+    checkpoint_rows: list[dict[str, Any]] = []
+    checkpoint_artifacts: list[dict[str, Any]] = []
+
+    def _write_checkpoint_snapshot() -> None:
+        _write_partial_csv(
+            pd,
+            checkpoint_rows,
+            partial_raw_path,
+            sort_cols=["dataset_id", "replicate_id", "method"],
+        )
+        save_json(checkpoint_artifacts, partial_artifact_catalog_path)
+        save_json(
+            {
+                "package": "real_data_experiment",
+                "run_dir": str(out_dir),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+                "completed_tasks": int(task_progress["completed"]),
+                "total_tasks": int(task_progress["total"]),
+                "n_raw_rows": int(len(checkpoint_rows)),
+                "n_artifact_rows": int(len(checkpoint_artifacts)),
+                "partial_paths": {
+                    "raw_results_partial": str(partial_raw_path),
+                    "artifact_catalog_partial": str(partial_artifact_catalog_path),
+                    "raw_results_incremental": str(incremental_raw_path),
+                    "artifact_catalog_incremental": str(incremental_artifacts_path),
+                },
+            },
+            checkpoint_manifest_path,
+        )
+    _write_checkpoint_snapshot()
+
     def _on_task_done(task: Mapping[str, Any], result_rows: Any) -> None:
         _ = task
+        task_progress["completed"] += 1
         if isinstance(result_rows, Mapping):
+            raw_rows_done = [dict(row) for row in result_rows.get("raw_rows", [])]
+            artifact_rows_done = [dict(row) for row in result_rows.get("artifact_rows", [])]
             append_jsonl_records(
                 incremental_raw_path,
-                [dict(row) for row in result_rows.get("raw_rows", [])],
+                raw_rows_done,
             )
             append_jsonl_records(
                 incremental_artifacts_path,
-                [dict(row) for row in result_rows.get("artifact_rows", [])],
+                artifact_rows_done,
             )
+            checkpoint_rows.extend(raw_rows_done)
+            checkpoint_artifacts.extend(artifact_rows_done)
+            _write_checkpoint_snapshot()
 
     task_chunks = _parallel_rows(
         tasks,
@@ -405,6 +454,9 @@ def run_real_data_experiment(config: RealDataConfig) -> dict[str, str]:
         "artifact_catalog": str(artifact_catalog_path),
         "raw_results_incremental": str(incremental_raw_path),
         "artifact_catalog_incremental": str(incremental_artifacts_path),
+        "raw_results_partial": str(partial_raw_path),
+        "artifact_catalog_partial": str(partial_artifact_catalog_path),
+        "checkpoint_manifest": str(checkpoint_manifest_path),
         "fit_details_dir": str(out_dir / "fit_details"),
         "datasets_dir": str(out_dir / "datasets"),
         "splits_dir": str(out_dir / "splits"),

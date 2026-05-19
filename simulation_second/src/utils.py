@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import hashlib
 import time
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
@@ -13,6 +14,7 @@ import numpy as np
 from simulation_second.src.bayes_kernel.utils import FitResult, SamplerConfig
 
 MASTER_SEED = 20260425
+MAX_EXPERIMENT_SEED = 2_147_000_000
 
 
 def ensure_dir(path: Path | str) -> Path:
@@ -172,11 +174,14 @@ def sample_correlated_design(
 
 
 def stable_string_seed(text: str) -> int:
-    return int(sum((idx + 1) * ord(ch) for idx, ch in enumerate(str(text))))
+    digest = hashlib.sha1(str(text).encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % 1_000_003
 
 
 def setting_replicate_seed(setting_id: str, replicate_id: int, master_seed: int = MASTER_SEED) -> int:
-    return int(master_seed + 1000 * stable_string_seed(setting_id) + int(replicate_id))
+    payload = f"simulation_second|{int(master_seed)}|{setting_id}|{int(replicate_id)}"
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()
+    return 1 + (int(digest[:12], 16) % (MAX_EXPERIMENT_SEED - 1))
 
 
 def run_timestamp_tag() -> str:

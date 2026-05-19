@@ -443,6 +443,14 @@ def _print_task_result_line(
     print(line, flush=True)
 
 
+def _write_partial_csv(pd, rows: Sequence[Mapping[str, Any]], path: Path, *, sort_cols: Sequence[str]) -> None:
+    frame = pd.DataFrame([dict(row) for row in rows])
+    present = [col for col in sort_cols if col in frame.columns]
+    if present and not frame.empty:
+        frame = frame.sort_values(present, kind="stable").reset_index(drop=True)
+    frame.to_csv(path, index=False)
+
+
 def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
     pd = load_pandas()
     config = replace(config, convergence_gate=force_until_converged_gate(config.convergence_gate))
@@ -455,6 +463,10 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
     incremental_raw_path = out_dir / "raw_results_incremental.jsonl"
     incremental_coefficients_path = out_dir / "coefficient_estimates_incremental.jsonl"
     incremental_artifacts_path = out_dir / "artifact_catalog_incremental.jsonl"
+    partial_raw_path = out_dir / "raw_results_partial.csv"
+    partial_coefficients_path = out_dir / "coefficient_estimates_partial.csv"
+    partial_artifact_catalog_path = out_dir / "artifact_catalog_partial.json"
+    checkpoint_manifest_path = out_dir / "checkpoint_manifest.json"
     for checkpoint_path in (
         incremental_raw_path,
         incremental_coefficients_path,
@@ -465,22 +477,69 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
 
     tasks = _task_payloads(config)
     task_progress = {"completed": 0, "total": len(tasks)}
+    checkpoint_rows: list[dict[str, Any]] = []
+    checkpoint_coefficients: list[dict[str, Any]] = []
+    checkpoint_artifacts: list[dict[str, Any]] = []
+
+    def _write_checkpoint_snapshot() -> None:
+        _write_partial_csv(
+            pd,
+            checkpoint_rows,
+            partial_raw_path,
+            sort_cols=["setting_id", "replicate_id", "method"],
+        )
+        _write_partial_csv(
+            pd,
+            checkpoint_coefficients,
+            partial_coefficients_path,
+            sort_cols=["setting_id", "replicate_id", "method_order", "method", "coefficient_index"],
+        )
+        save_json(checkpoint_artifacts, partial_artifact_catalog_path)
+        save_json(
+            {
+                "package": str(config.package),
+                "run_dir": str(out_dir),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+                "completed_tasks": int(task_progress["completed"]),
+                "total_tasks": int(task_progress["total"]),
+                "n_raw_rows": int(len(checkpoint_rows)),
+                "n_coefficient_rows": int(len(checkpoint_coefficients)),
+                "n_artifact_rows": int(len(checkpoint_artifacts)),
+                "partial_paths": {
+                    "raw_results_partial": str(partial_raw_path),
+                    "coefficient_estimates_partial": str(partial_coefficients_path),
+                    "artifact_catalog_partial": str(partial_artifact_catalog_path),
+                    "raw_results_incremental": str(incremental_raw_path),
+                    "coefficient_estimates_incremental": str(incremental_coefficients_path),
+                    "artifact_catalog_incremental": str(incremental_artifacts_path),
+                },
+            },
+            checkpoint_manifest_path,
+        )
+    _write_checkpoint_snapshot()
 
     def _on_task_done(task: Mapping[str, Any], result_rows: Any) -> None:
         task_progress["completed"] += 1
         if isinstance(result_rows, Mapping):
+            raw_rows_done = [dict(row) for row in result_rows.get("raw_rows", [])]
+            coefficient_rows_done = [dict(row) for row in result_rows.get("coefficient_rows", [])]
+            artifact_rows_done = [dict(row) for row in result_rows.get("artifact_rows", [])]
             append_jsonl_records(
                 incremental_raw_path,
-                [dict(row) for row in result_rows.get("raw_rows", [])],
+                raw_rows_done,
             )
             append_jsonl_records(
                 incremental_coefficients_path,
-                [dict(row) for row in result_rows.get("coefficient_rows", [])],
+                coefficient_rows_done,
             )
             append_jsonl_records(
                 incremental_artifacts_path,
-                [dict(row) for row in result_rows.get("artifact_rows", [])],
+                artifact_rows_done,
             )
+            checkpoint_rows.extend(raw_rows_done)
+            checkpoint_coefficients.extend(coefficient_rows_done)
+            checkpoint_artifacts.extend(artifact_rows_done)
+            _write_checkpoint_snapshot()
         _print_task_result_line(
             task,
             (result_rows or {}).get("raw_rows") if isinstance(result_rows, Mapping) else result_rows,
@@ -597,6 +656,10 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
         "raw_results_incremental": str(incremental_raw_path),
         "coefficient_estimates_incremental": str(incremental_coefficients_path),
         "artifact_catalog_incremental": str(incremental_artifacts_path),
+        "raw_results_partial": str(partial_raw_path),
+        "coefficient_estimates_partial": str(partial_coefficients_path),
+        "artifact_catalog_partial": str(partial_artifact_catalog_path),
+        "checkpoint_manifest": str(checkpoint_manifest_path),
         "fit_details_dir": str(out_dir / "fit_details"),
         "datasets_dir": str(out_dir / "datasets"),
     }
@@ -615,7 +678,7 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, str]:
         result_paths.update(build_benchmark_figures_from_results_dir(out_dir))
 
     manifest = {
-        "package": "simulation_second",
+        "package": str(config.package),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "run_timestamp": str(run_timestamp),
         "history_root": str(history_root),

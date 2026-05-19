@@ -13,6 +13,7 @@ from simulation_second.src.bayes_kernel.experiments.fitting import (
 )
 from simulation_second.src.bayes_kernel.experiments.method_registry import (
     MethodRegistry,
+    _attach_computational_protocol,
     build_default_method_registry,
 )
 from simulation_second.src.bayes_kernel.experiments.methods.helpers import (
@@ -113,6 +114,59 @@ def test_architecture_models_and_registry() -> None:
     names = registry.names()
     for method in ("GR_RHS", "GR_RHS_B01", "GR_RHS_B04", "GR_RHS_B08", "GR_RHS_Adaptive", "RHS", "GIGG_MMLE"):
         assert method in names
+
+
+def test_computational_protocol_promotes_common_bayesian_diagnostics() -> None:
+    res = FitResult(
+        method="GR_RHS",
+        status="ok",
+        beta_mean=np.asarray([0.0], dtype=float),
+        beta_draws=np.asarray([[0.0]], dtype=float),
+        kappa_draws=None,
+        group_scale_draws=None,
+        runtime_seconds=1.0,
+        rhat_max=1.01,
+        bulk_ess_min=123.0,
+        divergence_ratio=0.0,
+        converged=True,
+        diagnostics={
+            "grrhs_adaptive_beta": {
+                "strategy": "regularized_posterior_eb",
+                "alpha_kappa": 0.5,
+                "beta_kappa": 4.0,
+                "details": {
+                    "fallback_reason": "pilot_missing_kappa_draws",
+                    "fallback_stage": "prior_center",
+                },
+            }
+        },
+    )
+    out = _attach_computational_protocol(
+        res,
+        method_family="GR_RHS",
+        protocol="high_dim",
+        sampler_backend="collapsed_profile",
+        sampler=SamplerConfig(),
+        implementation="adaptive_beta_regularized_posterior_eb",
+    )
+    diag = dict(out.diagnostics or {})
+    for key in (
+        "method_family",
+        "protocol",
+        "sampler_backend",
+        "strategy",
+        "alpha_kappa",
+        "beta_kappa",
+        "rhat_max",
+        "bulk_ess_min",
+        "divergence_ratio",
+        "converged",
+        "fit_attempts",
+        "fallback_reason",
+        "fallback_stage",
+    ):
+        assert key in diag
+    assert diag["fallback_stage"] == "prior_center"
 
 
 def test_fit_with_convergence_retry_passes_resume_payload_when_enabled() -> None:

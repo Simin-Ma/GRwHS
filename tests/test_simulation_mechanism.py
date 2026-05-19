@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import sys
 
@@ -238,6 +239,10 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     run_dir = Path(result_paths["run_dir"])
     assert Path(result_paths["summary_paired"]).exists()
     assert Path(result_paths["per_group_kappa"]).exists()
+    assert (run_dir / "raw_results_partial.csv").exists()
+    assert (run_dir / "per_group_kappa_partial.csv").exists()
+    assert (run_dir / "artifact_catalog_partial.json").exists()
+    assert (run_dir / "checkpoint_manifest.json").exists()
     assert (run_dir / "paper_tables" / "paper_table_mechanism.md").exists()
     assert (run_dir / "paper_tables" / "paper_table_mechanism_compact.md").exists()
     assert (run_dir / "paper_tables" / "figure_data" / "figure4_representative_profile.csv").exists()
@@ -248,6 +253,9 @@ def test_run_mechanism_pipeline_smoke(monkeypatch, tmp_path) -> None:
     assert (tmp_path / "latest_run.json").exists()
     assert Path(result_paths["run_dir"]).exists()
     assert Path(result_paths["run_manifest"]).exists()
+    checkpoint = json.loads((run_dir / "checkpoint_manifest.json").read_text(encoding="utf-8"))
+    assert checkpoint["completed_tasks"] == checkpoint["total_tasks"] == 14
+    assert checkpoint["n_raw_rows"] > 0
 
     raw = pd.read_csv(run_dir / "raw_results.csv")
     paired_deltas = pd.read_csv(run_dir / "summary_paired_deltas.csv")
